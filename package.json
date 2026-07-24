@@ -1,0 +1,11 @@
+{
+  "name": "ignition-outbound",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Architecture and interactive frontend prototype for Ignition Outbound",
+  "packageManager": "bun@1.3.4",
+  "scripts": {
+    "prototype": "bunx serve prototype -l 4173",
+    "check": "bun scripts/verify-prototype.ts"
+  }
+}

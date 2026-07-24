@@ -1,0 +1,12 @@
+{
+  "source_mockup": null,
+  "source_plan": "docs/architecture/ARCHITECTURE.md",
+  "mode": "plan-driven",
+  "html_file": "prototype/dashboard.html",
+  "pretext_tier": "card-grid-and-chat",
+  "framework": "vanilla",
+  "iterations": 0,
+  "date": "2026-07-24T00:00:00+02:00",
+  "screen": "full-application-prototype",
+  "branch": "main"
+}
