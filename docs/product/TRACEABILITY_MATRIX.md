@@ -17,6 +17,7 @@ Elle ne remplace pas les DTO OpenAPI à écrire avant chaque vertical slice.
 | `companies.html` | `/w/[workspaceSlug]/companies` | F-020 | company search, create |
 | `company-detail.html` | `/w/[workspaceSlug]/companies/[companyId]` | F-020, F-027 | company, contacts, signals, campaigns |
 | `product-reading.html` | `/w/[workspaceSlug]/strategy/product-reading` | F-009 | product analysis, segments, ICP drafts |
+| `icp-builder.html` | `/w/[workspaceSlug]/icps/new` | F-011 | company criteria, personas, signals, exclusions |
 | `offers.html` | `/w/[workspaceSlug]/offers` | F-010 | offer draft, publish version |
 | `icps.html` | `/w/[workspaceSlug]/icps` | F-011 | ICP draft, publish version |
 | `campaigns.html` | `/w/[workspaceSlug]/campaigns` | F-031 | campaign list, create, pause |
@@ -89,6 +90,6 @@ Elle ne remplace pas les DTO OpenAPI à écrire avant chaque vertical slice.
 
 ## Couverture du prototype
 
-Les 24 écrans ont une destination fonctionnelle. `ai-studio.html` reste une
+Les 25 écrans ont une destination fonctionnelle. `ai-studio.html` reste une
 référence visuelle non implémentée avant la Wave 7. `components.html` devient
 une documentation Storybook et n’est pas une route de production.

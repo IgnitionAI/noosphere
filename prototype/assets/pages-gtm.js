@@ -67,7 +67,7 @@ export function productReadingPage() {
         </div>
         <footer class="flex flex-col gap-3 border-t border-line bg-slate-50/70 p-4 sm:flex-row sm:items-center sm:justify-between">
           <p class="text-xs text-muted"><strong class="text-ink">Étape suivante :</strong> préciser les entreprises et décideurs de chaque segment.</p>
-          <a href="icps.html" class="btn btn-primary" data-deepen-segments>${icon("ArrowRight")}Approfondir les 6 segments</a>
+          <a href="icp-builder.html" class="btn btn-primary" data-deepen-segments>${icon("ArrowRight")}Approfondir les 6 segments</a>
         </footer>
       </section>
     </div>`;

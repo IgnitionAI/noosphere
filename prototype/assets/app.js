@@ -6,6 +6,7 @@ import { inboxPage, pipelinePage } from "./pages-revenue.js";
 import { knowledgePage, aiStudioPage, analyticsPage } from "./pages-intelligence.js";
 import { integrationsPage, settingsPage, onboardingPage } from "./pages-admin.js";
 import { offersPage, icpsPage, discoverPage, companyDetailPage, productReadingPage, initProductReading } from "./pages-gtm.js";
+import { icpBuilderPage, initIcpBuilder } from "./pages-icp-builder.js";
 
 const pages = {
   dashboard: [dashboardPage, {}],
@@ -16,6 +17,7 @@ const pages = {
   "company-detail": [companyDetailPage, {}],
   discover: [discoverPage, {}],
   "product-reading": [productReadingPage, {}],
+  "icp-builder": [icpBuilderPage, {}],
   offers: [offersPage, {}],
   icps: [icpsPage, {}],
   campaigns: [campaignsPage, {}],
@@ -50,6 +52,7 @@ if (page === "prospects") {
 }
 
 if (page === "product-reading") initProductReading();
+if (page === "icp-builder") initIcpBuilder();
 
 if (page === "login" || page === "onboarding") {
   window.lucide?.createIcons();

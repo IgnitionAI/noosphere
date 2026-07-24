@@ -80,7 +80,7 @@ rôle, états loading/empty/error/forbidden/provider-down et responsive.
 
 **Critères d’acceptation**
 
-- les 24 écrans du prototype possèdent une route ou une destination déclarée ;
+- les 25 écrans du prototype possèdent une route ou une destination déclarée ;
 - la navigation masque les actions interdites sans remplacer les contrôles
   serveur ;
 - les pages principales sont utilisables à 375, 768, 1024 et 1440 px ;
@@ -149,6 +149,9 @@ technologies, signaux, pondérations et publication immuable.
 
 **Dépendances** : F-002, F-003.  
 **Surface** : `/w/[workspaceSlug]/icps`.
+
+**Spécification** :
+[`F-011-ICP-BUILDER.md`](features/F-011-ICP-BUILDER.md).
 
 ### F-012 — Stratégie de message et politique de supervision (`P0`)
 

@@ -12,6 +12,7 @@ backlog d’implémentation.
 - [Definition of Ready et Definition of Done](QUALITY_GATES.md)
 - [Modèle de fiche feature](FEATURE_TEMPLATE.md)
 - [Première slice — Lecture produit et ICP](features/F-009-PRODUCT-READING-ICP.md)
+- [Approfondissement d’un segment en ICP](features/F-011-ICP-BUILDER.md)
 
 ## Règle de lecture
 

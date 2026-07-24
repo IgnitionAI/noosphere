@@ -1,0 +1,12 @@
+{
+  "source_mockup": null,
+  "source_plan": "docs/product/features/F-009-PRODUCT-READING-ICP.md",
+  "mode": "evolve",
+  "html_file": "prototype/icp-builder.html",
+  "pretext_tier": "basic",
+  "framework": "vanilla",
+  "iterations": 1,
+  "date": "2026-07-24",
+  "screen": "icp-builder",
+  "branch": "main"
+}

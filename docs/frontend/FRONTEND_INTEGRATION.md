@@ -4,7 +4,7 @@
 
 Le prototype de référence versionné se trouve dans `prototype/`.
 
-Il contient 24 écrans HTML, un shell partagé, des données réalistes et une
+Il contient 25 écrans HTML, un shell partagé, des données réalistes et une
 bibliothèque de composants. Le HTML sert à valider le produit et la hiérarchie
 visuelle. Il ne doit pas être copié tel quel dans la production.
 
@@ -22,6 +22,7 @@ visuelle. Il ne doit pas être copié tel quel dans la production.
 | `companies.html` | `/w/[workspaceSlug]/companies` | companies |
 | `company-detail.html` | `/w/[workspaceSlug]/companies/[companyId]` | company |
 | `product-reading.html` | `/w/[workspaceSlug]/strategy/product-reading` | product analysis |
+| `icp-builder.html` | `/w/[workspaceSlug]/icps/new` | ICP builder |
 | `offers.html` | `/w/[workspaceSlug]/offers` | offer versions |
 | `icps.html` | `/w/[workspaceSlug]/icps` | ICP versions |
 | `campaigns.html` | `/w/[workspaceSlug]/campaigns` | campaigns |
