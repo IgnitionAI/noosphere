@@ -1,6 +1,129 @@
 import { companies, prospects } from "./data.js";
 import { icon, badge, button, pageHeader, metric, panel, scoreRing } from "./core.js";
 
+const detectedSegments = [
+  ["Scale", "Cabinets d’avocats", "Structurer les usages IA, les accès et les preuves pour les dossiers clients."],
+  ["Landmark", "Directions juridiques internes", "Piloter les risques et répondre aux exigences internes de gouvernance."],
+  ["Stamp", "Études notariales", "Documenter les outils utilisés sur des données et actes sensibles."],
+  ["BookOpenText", "Éditeurs juridiques", "Encadrer les produits enrichis par IA et la provenance des contenus."],
+  ["BriefcaseBusiness", "Cabinets de conseil", "Rassurer les clients sur les usages IA intégrés aux missions."],
+  ["ShieldCheck", "Équipes conformité de PME", "Centraliser le registre, les risques et les preuves sans déployer un GRC lourd."]
+];
+
+function segmentOption([ico, name, rationale]) {
+  return `<article class="segment-option segment-option-selected" data-icp-segment>
+    <button type="button" class="segment-toggle" aria-pressed="true" aria-label="Écarter ${name}">
+      <span class="segment-check">${icon("Check",15)}</span>
+    </button>
+    <span class="grid h-10 w-10 flex-none place-items-center rounded-lg bg-slate-100 text-navy">${icon(ico,18)}</span>
+    <span class="min-w-0 flex-1">
+      <span class="segment-name" contenteditable="true" data-pretext>${name}</span>
+      <span class="mt-1 block text-xs leading-5 text-muted">${rationale}</span>
+    </span>
+    <button type="button" class="btn icon-btn btn-ghost h-8 w-8 flex-none" data-remove-segment aria-label="Supprimer ${name}">${icon("X",15)}</button>
+  </article>`;
+}
+
+export function productReadingPage() {
+  return `
+    <div class="mb-5 flex flex-wrap items-center gap-2 text-xs font-semibold text-muted">
+      <span class="inline-flex items-center gap-2 text-success">${icon("CheckCircle2",15)}Produit</span>
+      <span class="h-px w-7 bg-line"></span>
+      <span class="inline-flex items-center gap-2 text-navy"><span class="grid h-5 w-5 place-items-center rounded-full bg-navy text-[10px] text-white">2</span>Segments</span>
+      <span class="h-px w-7 bg-line"></span>
+      <span class="inline-flex items-center gap-2"><span class="grid h-5 w-5 place-items-center rounded-full border border-line bg-white text-[10px]">3</span>Affiner</span>
+    </div>
+    ${pageHeader("Trouver votre ICP", "Décrivez le produit. Nous suggérons les types d’organisations qui pourraient l’acheter.")}
+    <div class="grid gap-5 xl:grid-cols-[340px_minmax(0,1fr)]">
+      <aside class="space-y-4">
+        <section class="panel">
+          <div class="panel-header"><div><div class="text-xs font-semibold uppercase tracking-wide text-muted">Produit analysé</div><h2 class="mt-1 font-semibold">Preuvio</h2></div>${badge("Terminé","success")}</div>
+          <div class="panel-body space-y-4">
+            <label><span class="label">Site du produit</span><div class="relative">${icon("Globe2",16,"absolute left-3 top-2.5 text-muted")}<input class="input pl-9" value="https://preuvio.com" aria-label="Site du produit"></div></label>
+            <label><span class="label">Description</span><textarea class="textarea min-h-[124px]">Registre opérationnel des usages IA, cartographie des risques et collecte de preuves pour préparer les revues de gouvernance.</textarea></label>
+            <button type="button" class="btn w-full" data-run-product-analysis data-toast="Analyse relancée · les corrections sont conservées">${icon("RefreshCw")}Relancer l’analyse</button>
+          </div>
+        </section>
+        <section class="rounded-xl border border-signal/70 bg-[#f6ffdf] p-4">
+          <div class="flex items-start gap-3">
+            <span class="grid h-9 w-9 flex-none place-items-center rounded-lg bg-signal text-signal-ink">${icon("Lightbulb",18)}</span>
+            <div><strong class="text-sm">Un premier tri, pas une vérité</strong><p class="mt-1 text-xs leading-5 text-signal-ink/80">Retenez les marchés intéressants. Vous préciserez ensuite la taille, les rôles et les signaux pour chacun.</p></div>
+          </div>
+        </section>
+      </aside>
+      <section class="panel overflow-hidden">
+        <div class="panel-header items-start">
+          <div><div class="flex items-center gap-2"><h2 class="font-semibold">Segments détectés</h2>${badge("6 suggestions","signal")}</div><p class="mt-1 text-xs text-muted">Tous sont sélectionnés. Cliquez sur la coche pour écarter un segment.</p></div>
+          <div class="text-right"><strong class="font-mono text-xl"><span data-segment-count>6</span>/6</strong><span class="block text-[10px] uppercase tracking-wide text-muted">retenus</span></div>
+        </div>
+        <div class="panel-body">
+          <div class="grid gap-3 lg:grid-cols-2" data-segment-list>
+            ${detectedSegments.map(segmentOption).join("")}
+          </div>
+          <form class="mt-4 flex flex-col gap-2 rounded-lg border border-dashed border-line bg-canvas p-3 sm:flex-row" data-add-segment-form>
+            <div class="relative min-w-0 flex-1">${icon("Plus",16,"absolute left-3 top-2.5 text-muted")}<input class="input pl-9" data-add-segment-input placeholder="Ajouter un autre segment…" aria-label="Nouveau segment"></div>
+            <button type="submit" class="btn">Ajouter</button>
+          </form>
+        </div>
+        <footer class="flex flex-col gap-3 border-t border-line bg-slate-50/70 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <p class="text-xs text-muted"><strong class="text-ink">Étape suivante :</strong> préciser les entreprises et décideurs de chaque segment.</p>
+          <a href="icps.html" class="btn btn-primary" data-deepen-segments>${icon("ArrowRight")}Approfondir les 6 segments</a>
+        </footer>
+      </section>
+    </div>`;
+}
+
+export function initProductReading() {
+  const list = document.querySelector("[data-segment-list]");
+  const deepen = document.querySelector("[data-deepen-segments]");
+  const form = document.querySelector("[data-add-segment-form]");
+  const input = document.querySelector("[data-add-segment-input]");
+  if (!list || !deepen) return;
+
+  const refresh = () => {
+    const options = [...list.querySelectorAll("[data-icp-segment]")];
+    const selected = options.filter(option => option.classList.contains("segment-option-selected")).length;
+    const count = document.querySelector("[data-segment-count]");
+    if (count) {
+      count.textContent = String(selected);
+      count.nextSibling.textContent = `/${options.length}`;
+    }
+    const label = selected ? `Approfondir ${selected === 1 ? "ce segment" : `les ${selected} segments`}` : "Sélectionnez un segment";
+    deepen.innerHTML = `${icon("ArrowRight")}${label}`;
+    deepen.setAttribute("aria-disabled", selected ? "false" : "true");
+    deepen.classList.toggle("pointer-events-none", !selected);
+    deepen.classList.toggle("opacity-50", !selected);
+    window.lucide?.createIcons();
+  };
+
+  list.addEventListener("click", event => {
+    const option = event.target.closest("[data-icp-segment]");
+    if (!option || event.target.closest("[contenteditable]")) return;
+    if (event.target.closest("[data-remove-segment]")) {
+      option.remove();
+      refresh();
+      return;
+    }
+    if (!event.target.closest(".segment-toggle")) return;
+    option.classList.toggle("segment-option-selected");
+    const pressed = option.classList.contains("segment-option-selected");
+    option.querySelector(".segment-toggle")?.setAttribute("aria-pressed", String(pressed));
+    refresh();
+  });
+
+  form?.addEventListener("submit", event => {
+    event.preventDefault();
+    const value = input?.value.trim();
+    if (!value) return;
+    const wrapper = document.createElement("div");
+    wrapper.innerHTML = segmentOption(["Target", value, "Segment ajouté manuellement, à approfondir."]);
+    list.append(wrapper.firstElementChild);
+    input.value = "";
+    refresh();
+    window.lucide?.createIcons();
+  });
+}
+
 export function offersPage() {
   const offers=[
     ["IgnitionRAG Entreprise","Service + licence","v3","Publié","3 campagnes","45–120 k€"],

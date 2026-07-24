@@ -10,7 +10,7 @@ feedback nécessaires, mais aucun use case P0 ne dépend d’une génération.
 
 | Besoin futur | Fonctionnement initial | Évolution IA |
 |---|---|---|
-| lecture produit | résultats réalistes simulés et revue complète | extraction sourcée |
+| lecture produit | segments réalistes simulés et éditables | détection de segments |
 | score prospect | règles et pondérations de l’ICP | score assisté et explication |
 | personnalisation | variables contrôlées + rédaction humaine | brouillon sourcé |
 | qualification réponse | statut choisi par l’opérateur | classification proposée |

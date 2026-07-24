@@ -80,7 +80,7 @@ rôle, états loading/empty/error/forbidden/provider-down et responsive.
 
 **Critères d’acceptation**
 
-- les 23 écrans du prototype possèdent une route ou une destination déclarée ;
+- les 24 écrans du prototype possèdent une route ou une destination déclarée ;
 - la navigation masque les actions interdites sans remplacer les contrôles
   serveur ;
 - les pages principales sont utilisables à 375, 768, 1024 et 1440 px ;
@@ -93,19 +93,18 @@ rôle, états loading/empty/error/forbidden/provider-down et responsive.
 
 ### F-009 — Lecture produit et construction de l’ICP (`P0`)
 
-**Valeur** : transformer un site, un texte ou un document en offre et ICP
-structurés, sourcés et révisables.
+**Valeur** : transformer une URL ou une description produit en liste simple de
+segments clients à confirmer.
 
-**Périmètre** : sources bornées, lecture produit, faits/hypothèses/conflits,
-proposition d’offre, proposition d’ICP et revue humaine avant publication.
+**Périmètre** : analyse produit, trois à dix segments suggérés, sélection,
+renommage, ajout manuel et création d’un ICP brouillon par segment retenu.
 
 **Critères d’acceptation**
 
-- l’utilisateur sélectionne les sources avant leur lecture ;
-- chaque proposition cite une source ou reste marquée comme hypothèse ;
-- prix et preuves client ne sont jamais déduits ;
-- les conflits de sources sont visibles et bloquent le champ ;
-- la lecture crée des drafts et ne publie rien automatiquement ;
+- la liste tient sur le premier écran et reste modifiable ;
+- chaque segment peut être retenu ou écarté en un clic ;
+- l’utilisateur peut ajouter un segment absent ;
+- approfondir crée uniquement des ICP brouillons ;
 - aucune prospection n’est déclenchée par ce workflow.
 
 **Dépendances** : F-002, F-003, F-004.

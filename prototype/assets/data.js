@@ -54,8 +54,9 @@ export const navGroups = [
     ["sequences","Séquences","ListTree","sequences.html"]
   ]},
   { label:"Intelligence", items:[
+    ["product-reading","Trouver mon ICP","ScanSearch","product-reading.html"],
     ["offers","Offres","Package","offers.html"],
-    ["icps","ICP","ScanSearch","icps.html"],
+    ["icps","ICP","Target","icps.html"],
     ["knowledge","Connaissance","LibraryBig","knowledge.html"],
     ["ai-studio","Studio IA","Sparkles","ai-studio.html"],
     ["analytics","Analytics","ChartNoAxesCombined","analytics.html"]

@@ -12,6 +12,7 @@ const requiredScreens = [
   "prospect-detail.html",
   "companies.html",
   "company-detail.html",
+  "product-reading.html",
   "offers.html",
   "icps.html",
   "campaigns.html",

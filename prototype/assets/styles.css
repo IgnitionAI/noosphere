@@ -121,6 +121,21 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .score-ring::after { content: ""; position: absolute; inset: 4px; border-radius: 50%; background: white; }
 .score-ring > span { position: relative; z-index: 1; }
 
+.segment-option {
+  display: flex; align-items: flex-start; gap: 12px; min-height: 112px; padding: 14px;
+  border: 1px solid var(--line); border-radius: 10px; background: white; transition: 120ms ease;
+}
+.segment-option:hover { border-color: #bec6cf; }
+.segment-option-selected { border-color: var(--navy); background: #fafbf8; box-shadow: inset 3px 0 0 var(--signal); }
+.segment-toggle {
+  width: 22px; height: 22px; flex: 0 0 auto; display: grid; place-items: center;
+  border-radius: 6px; border: 1px solid #cbd2da; background: white; color: transparent;
+  cursor: pointer;
+}
+.segment-option-selected .segment-toggle { border-color: var(--navy); background: var(--navy); color: white; }
+.segment-name { display: block; width: fit-content; max-width: 100%; font-weight: 650; line-height: 1.35; }
+.segment-name:focus { border-radius: 3px; }
+
 .empty { text-align: center; padding: 52px 24px; color: var(--muted); }
 .skeleton { border-radius: 6px; background: linear-gradient(90deg,#eef0ed,#f8f8f5,#eef0ed); background-size: 200% 100%; animation: shimmer 1.4s infinite; }
 @keyframes shimmer { to { background-position: -200% 0; } }

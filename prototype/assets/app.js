@@ -5,7 +5,7 @@ import { campaignsPage, campaignBuilderPage, campaignDetailPage, sequencesPage }
 import { inboxPage, pipelinePage } from "./pages-revenue.js";
 import { knowledgePage, aiStudioPage, analyticsPage } from "./pages-intelligence.js";
 import { integrationsPage, settingsPage, onboardingPage } from "./pages-admin.js";
-import { offersPage, icpsPage, discoverPage, companyDetailPage } from "./pages-gtm.js";
+import { offersPage, icpsPage, discoverPage, companyDetailPage, productReadingPage, initProductReading } from "./pages-gtm.js";
 
 const pages = {
   dashboard: [dashboardPage, {}],
@@ -15,6 +15,7 @@ const pages = {
   companies: [companiesPage, {}],
   "company-detail": [companyDetailPage, {}],
   discover: [discoverPage, {}],
+  "product-reading": [productReadingPage, {}],
   offers: [offersPage, {}],
   icps: [icpsPage, {}],
   campaigns: [campaignsPage, {}],
@@ -47,6 +48,8 @@ if (page === "prospects") {
     openDrawer(prospectDetailDrawer(Number(row.dataset.prospect)));
   }));
 }
+
+if (page === "product-reading") initProductReading();
 
 if (page === "login" || page === "onboarding") {
   window.lucide?.createIcons();

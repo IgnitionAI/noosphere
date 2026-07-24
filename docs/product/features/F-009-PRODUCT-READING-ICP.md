@@ -1,288 +1,211 @@
-# F-009 — Lecture produit et construction de l’ICP
+# F-009 — Détecter les ICP d’un produit
 
 ## Résultat utilisateur
 
-À partir d’un site, d’un document ou d’une description, l’utilisateur obtient
-une offre et un ICP structurés, sourcés et révisables, sans publier une
-hypothèse comme un fait.
+À partir de l’URL ou d’une courte description d’un produit, l’utilisateur
+obtient une liste simple de segments clients possibles. Il peut les retenir,
+les retirer, les renommer ou en ajouter avant de choisir lesquels approfondir.
 
-## Pourquoi commencer ici
+## Décision produit
 
-Toutes les décisions suivantes dépendent de cette lecture :
+La première version ne construit pas immédiatement un ICP complet.
 
-- quels problèmes et résultats vendre ;
-- quelles entreprises et personas rechercher ;
-- quels signaux indiquent une intention ;
-- quels claims peuvent être utilisés ;
-- quelles exclusions protègent la campagne ;
-- quelles informations manquent avant de prospecter.
+Elle répond d’abord à une seule question :
 
-La lecture produit ne déclenche aucune découverte de prospect ni aucun message.
+> Quels types d’organisations pourraient acheter ce produit ?
 
-## Acteurs et permissions
+Exemple de résultat observé dans Explee :
 
-| Acteur | Consulter | Lancer une lecture | Modifier les drafts | Publier |
-|---|---:|---:|---:|---:|
-| owner | oui | oui | oui | oui |
-| admin | oui | oui | oui | oui |
-| operator | oui | oui | oui | non |
-| reviewer | oui | non | non | non |
-| viewer | oui | non | non | non |
+- cabinets d’avocats ;
+- directions juridiques internes ;
+- études notariales ;
+- éditeurs juridiques ;
+- cabinets de conseil ;
+- équipes conformité de PME.
 
-## Entrées acceptées
+Ces éléments sont des **segments suggérés**, pas encore des ICP opérationnels.
 
-L’utilisateur fournit au moins une source :
+## Parcours V1
 
-1. URL du site produit ;
-2. texte libre ou pitch ;
-3. document commercial, brochure ou présentation ;
-4. source déjà présente dans la connaissance du workspace.
+### 1. Décrire le produit
 
-Pour une URL, l’utilisateur voit et sélectionne les pages proposées avant la
-lecture. Le système ne parcourt pas un domaine entier silencieusement.
+Une seule entrée est obligatoire :
 
-## Parcours principal
+- URL du site produit ; ou
+- description courte du produit.
 
-### Étape 1 — Ajouter le produit
+Le nom du produit et sa catégorie peuvent être corrigés avant l’analyse.
 
-- nom du produit ou service ;
-- catégorie : service, SaaS, licence, formation ou autre ;
-- site, texte et/ou documents ;
-- marché et langue supposés, modifiables.
+### 2. Détecter les segments
 
-**Sortie** : une `ProductReading` en brouillon avec ses `ProductSource`.
+L’analyse retourne entre trois et dix segments, sous forme de liste.
 
-### Étape 2 — Contrôler les sources
+Chaque segment contient seulement :
 
-- pages et documents détectés ;
-- statut d’accès et date de capture ;
-- aperçu du contenu ;
-- inclusion ou exclusion explicite ;
-- avertissement pour contenu inaccessible, ancien ou contradictoire.
+- un nom ;
+- une justification en une phrase ;
+- un statut sélectionné ou écarté.
 
-**Sortie** : un corpus borné, enregistré avec provenance.
+Les résultats restent des suggestions. Aucun segment n’est publié ni utilisé
+pour rechercher des prospects sans validation.
 
-### Étape 3 — Lire le produit
-
-La lecture produit produit des propositions structurées :
-
-- problème résolu ;
-- catégories d’offre et modes de vente ;
-- proposition de valeur ;
-- capacités et cas d’usage ;
-- différenciateurs ;
-- résultats ou claims ;
-- preuves disponibles ;
-- objections et contraintes ;
-- prix uniquement s’ils sont présents dans les sources ;
-- marchés, secteurs et géographies mentionnés.
-
-Chaque proposition possède :
-
-- son statut `fact`, `hypothesis`, `conflict` ou `missing` ;
-- une ou plusieurs citations de source ;
-- une confiance ;
-- une explication courte ;
-- une décision humaine.
-
-**Sortie** : un `Offer` brouillon. Aucun champ n’est publié automatiquement.
-
-### Étape 4 — Construire l’ICP
-
-À partir de l’offre revue, le système propose :
-
-- type d’entreprise ;
-- taille, géographie et secteurs ;
-- maturité, technologies et contraintes ;
-- persona, rôle, ancienneté et pouvoir de décision ;
-- problèmes et résultats recherchés ;
-- signaux d’intention ;
-- critères d’inclusion ;
-- exclusions ;
-- données manquantes à confirmer ;
-- poids initiaux des critères.
-
-Chaque critère indique s’il provient :
-
-- directement d’une source ;
-- d’une déduction à valider ;
-- d’une règle ajoutée par l’utilisateur.
-
-**Sortie** : un `ICP` brouillon lié à l’Offer draft.
-
-### Étape 5 — Revoir et publier
-
-L’écran de revue affiche côte à côte :
-
-- la fiche produit ;
-- le profil entreprise ;
-- les personas ;
-- les signaux ;
-- les exclusions ;
-- les preuves et hypothèses ;
-- les conflits et champs manquants.
+### 3. Corriger la liste
 
 L’utilisateur peut :
 
-- accepter, modifier ou rejeter chaque proposition ;
-- ajouter une preuve ou une note ;
-- laisser un élément manquant ;
-- enregistrer sans publier ;
-- publier l’offre et l’ICP séparément.
+- sélectionner ou désélectionner un segment ;
+- renommer un segment ;
+- supprimer un segment ;
+- ajouter un segment manuellement ;
+- relancer l’analyse.
 
-Une fois les deux versions publiées, l’utilisateur peut lancer la découverte.
+### 4. Approfondir
 
-## Règles métier et invariants
+L’utilisateur choisit un ou plusieurs segments retenus et crée ensuite un ICP
+opérationnel pour chacun.
 
-1. Une `ProductReading` appartient exactement à un workspace.
-2. Une source conserve URL ou référence, date de capture, empreinte et statut.
-3. Un contenu externe n’est jamais traité comme une instruction système.
-4. Une proposition sans source reste une hypothèse explicite.
-5. Un prix ou une preuve client ne peut pas être créé par déduction.
-6. Un conflit entre sources bloque la publication du champ concerné.
-7. La lecture ne modifie jamais une OfferVersion ou ICPVersion publiée.
-8. Relancer une lecture crée une révision ; elle n’écrase pas la précédente.
-9. Publier l’offre et l’ICP reste une décision humaine.
-10. Aucune lecture ne déclenche sourcing, enrichissement, enrollment ou envoi.
+L’approfondissement ajoute :
+
+- géographie ;
+- taille d’entreprise ;
+- personas et rôles ;
+- problèmes ;
+- signaux d’intention ;
+- critères d’inclusion et d’exclusion.
+
+Cette étape utilise F-011. Elle ne doit pas alourdir le premier écran.
+
+## Écran de référence
+
+**Route** : `/w/[workspaceSlug]/strategy/product-reading`
+
+Prototype : [`product-reading.html`](../../../prototype/product-reading.html)
+
+```text
+┌────────────────────────────────────────────────────────────────────┐
+│ Trouver votre ICP                                                  │
+│ Décrivez le produit, nous suggérons les organisations à cibler.    │
+├───────────────────────────┬────────────────────────────────────────┤
+│ Produit analysé           │ Segments détectés                  6/6 │
+│                           │                                        │
+│ URL                       │ [✓] Cabinets d’avocats                 │
+│ [https://…             ]  │ [✓] Directions juridiques internes    │
+│                           │ [✓] Études notariales                  │
+│ [Analyser le produit]     │ [✓] Éditeurs juridiques               │
+│                           │ [✓] Cabinets de conseil                │
+│ Analyse terminée          │ [✓] Équipes conformité de PME         │
+│                           │                                        │
+│                           │ [+ Ajouter un segment]                 │
+│                           │                      [Approfondir →]    │
+└───────────────────────────┴────────────────────────────────────────┘
+```
+
+## Permissions
+
+| Rôle | Consulter | Analyser | Modifier | Approfondir |
+|---|---:|---:|---:|---:|
+| owner | oui | oui | oui | oui |
+| admin | oui | oui | oui | oui |
+| operator | oui | oui | oui | oui |
+| reviewer | oui | non | non | non |
+| viewer | oui | non | non | non |
+
+## Règles métier
+
+1. Une analyse appartient exactement à un workspace.
+2. Une analyse ne déclenche jamais une recherche de prospects.
+3. Un segment suggéré doit être confirmé par un utilisateur.
+4. Un segment écarté reste visible dans l’historique de l’analyse.
+5. Relancer l’analyse ne supprime pas les corrections précédentes.
+6. Un segment retenu devient un ICP brouillon, jamais une version publiée.
+7. L’utilisateur doit pouvoir continuer même si l’analyse échoue, en ajoutant
+   ses segments manuellement.
 
 ## Critères d’acceptation
 
-- étant donné une URL valide, l’utilisateur sélectionne les pages à inclure
-  avant la lecture ;
-- étant donné plusieurs sources, chaque proposition permet de retrouver son
-  passage d’origine ;
-- lorsqu’aucune preuve ne soutient une proposition, elle est marquée
-  `hypothesis` et non `fact` ;
-- lorsqu’un prix n’apparaît pas dans les sources, le champ reste manquant ;
-- lorsque deux sources se contredisent, le conflit est visible et empêche la
-  publication du champ ;
-- l’utilisateur peut corriger une proposition sans altérer la source capturée ;
-- une OfferVersion et une ICPVersion publiées sont immuables ;
-- relancer la lecture conserve les décisions et versions précédentes ;
-- un operator peut préparer les drafts mais seul un admin ou owner publie ;
-- deux workspaces utilisant la même URL ne partagent aucune donnée métier.
+- l’utilisateur peut lancer l’analyse avec une URL ou une description ;
+- le résultat affiche entre trois et dix segments lisibles sans ouvrir de
+  panneau supplémentaire ;
+- les six segments de l’exemple tiennent sur un écran desktop ;
+- chaque segment peut être sélectionné ou écarté en un clic ;
+- l’utilisateur peut ajouter un segment absent ;
+- le compteur de sélection se met à jour immédiatement ;
+- le bouton d’approfondissement est désactivé si aucun segment n’est retenu ;
+- approfondir crée un ICP brouillon par segment choisi ;
+- aucun segment ne lance automatiquement sourcing ou prospection ;
+- l’écran reste utilisable à 375, 768, 1024 et 1440 px.
 
-## États d’interface
+## États
 
-| État | Comportement |
+| État | Présentation |
 |---|---|
-| initial | trois entrées visibles : URL, texte, document |
-| sources détectées | sélection et aperçu avant lancement |
-| lecture en cours | progression par source, annulation possible |
-| résultat partiel | propositions disponibles et sources en erreur visibles |
-| source inaccessible | correction URL, nouvel essai ou retrait |
-| contradiction | comparaison des passages et décision requise |
-| hypothèse | badge distinct, confirmation ou rejet |
-| brouillon sauvegardé | reprise depuis l’étape exacte |
-| prêt à publier | préflight avec éléments bloquants et avertissements |
-| publié | liens vers OfferVersion, ICPVersion et découverte |
+| initial | URL/description et CTA d’analyse |
+| analyse | skeleton de trois segments et progression |
+| résultat | liste sélectionnable et compteur |
+| vide | ajout manuel mis en avant |
+| erreur | explication, nouvel essai et ajout manuel |
+| modifié | badge « Modifié » et possibilité de relancer |
+| prêt | CTA « Approfondir les segments » |
 
 ## Contrats applicatifs
 
 ### Use cases
 
-- `CreateProductReading`
-- `AddProductSource`
-- `InspectProductSources`
-- `SelectProductSources`
-- `StartProductReading`
-- `CompleteProductReading`
-- `ReviewProductFinding`
-- `CreateOfferDraftFromReading`
-- `CreateICPDraftFromReading`
-- `PublishOfferVersion`
-- `PublishICPVersion`
+- `CreateProductAnalysis`
+- `DetectCustomerSegments`
+- `SelectCustomerSegment`
+- `RenameCustomerSegment`
+- `AddCustomerSegment`
+- `RemoveCustomerSegment`
+- `CreateICPDraftsFromSegments`
 
-### API à spécifier
+### API
 
 | Méthode | Route | Usage |
 |---|---|---|
-| POST | `/api/v1/product-readings` | créer la lecture |
-| POST | `/api/v1/product-readings/:id/sources` | ajouter URL, texte ou document |
-| POST | `/api/v1/product-readings/:id/actions/inspect` | détecter les sources |
-| POST | `/api/v1/product-readings/:id/actions/start` | lancer la lecture |
-| GET | `/api/v1/product-readings/:id` | état et résultats |
-| PATCH | `/api/v1/product-readings/:id/findings/:findingId` | décider ou corriger |
-| POST | `/api/v1/product-readings/:id/actions/create-drafts` | créer Offer et ICP drafts |
+| POST | `/api/v1/product-analyses` | créer et lancer une analyse |
+| GET | `/api/v1/product-analyses/:id` | lire le résultat |
+| PATCH | `/api/v1/product-analyses/:id/segments/:segmentId` | modifier la sélection ou le nom |
+| POST | `/api/v1/product-analyses/:id/segments` | ajouter un segment |
+| POST | `/api/v1/product-analyses/:id/actions/create-icps` | créer les ICP brouillons |
 
-Les actions `inspect`, `start` et `create-drafts` sont idempotentes.
-
-### Événements
-
-- `ProductReadingCreated`
-- `ProductSourcesInspected`
-- `ProductReadingStarted`
-- `ProductReadingCompleted`
-- `ProductReadingNeedsReview`
-- `OfferDraftCreatedFromReading`
-- `ICPDraftCreatedFromReading`
-
-## Modèle conceptuel
+### Modèle minimal
 
 ```mermaid
 erDiagram
-    WORKSPACE ||--o{ PRODUCT_READING : owns
-    PRODUCT_READING ||--o{ PRODUCT_SOURCE : contains
-    PRODUCT_READING ||--o{ PRODUCT_FINDING : proposes
-    PRODUCT_FINDING ||--o{ FINDING_EVIDENCE : cites
-    PRODUCT_SOURCE ||--o{ FINDING_EVIDENCE : supports
-    PRODUCT_READING o|--o| OFFER : creates
-    PRODUCT_READING o|--o| ICP : creates
+    WORKSPACE ||--o{ PRODUCT_ANALYSIS : owns
+    PRODUCT_ANALYSIS ||--o{ CUSTOMER_SEGMENT : suggests
+    CUSTOMER_SEGMENT o|--o| ICP : creates
 ```
-
-`ProductSource` peut ensuite être promu en `KnowledgeSource`, mais la première
-slice ne dépend pas du moteur de connaissance ni du RAG.
 
 ## Frontière IA
 
-Le workflow, les états, la revue et les objets produits ne dépendent pas d’un
-fournisseur de modèle.
+Le prototype utilise des résultats simulés. Plus tard,
+`ProductUnderstandingService` retournera uniquement :
 
-### Prototype et premier développement
+```text
+product_name
+product_summary
+segments[{ name, rationale }]
+```
 
-- sources et résultats réalistes simulés ;
-- édition et validation complètes ;
-- création d’Offer et ICP drafts ;
-- aucune génération réelle nécessaire pour valider l’UX.
+Le modèle ne publie pas d’ICP, ne crée pas de prospects et ne déclenche aucun
+message.
 
-### Branchement ultérieur
+## Hors périmètre du premier écran
 
-Un `ProductUnderstandingService` implémente :
-
-- entrée : sources sélectionnées et schéma de sortie versionné ;
-- sortie : findings structurés, citations, confiance et données manquantes ;
-- interdiction : écrire directement dans une version publiée.
-
-## Analytics de la feature
-
-- lecture créée ;
-- source ajoutée, retenue ou rejetée ;
-- lecture terminée, partielle ou échouée ;
-- proposition acceptée, modifiée ou rejetée ;
-- temps jusqu’au premier draft ;
-- taux de propositions sans preuve ;
-- taux de correction humaine ;
-- offre publiée ;
-- ICP publié ;
-- passage de l’ICP à la découverte.
-
-## Hors périmètre
-
-- crawl illimité ;
-- analyse des concurrents ;
-- calcul de TAM ;
-- génération de séquences ou messages ;
-- découverte de prospects ;
-- enrichissement de contacts ;
-- publication automatique ;
-- apprentissage automatique à partir des corrections ;
-- RAG ou ParadeDB.
+- preuves et citations par champ ;
+- crawl avancé ;
+- personas détaillés ;
+- scoring et pondérations ;
+- analyse concurrentielle ;
+- TAM ;
+- sourcing de contacts ;
+- génération de messages ;
+- publication automatique.
 
 ## Définition de sortie
 
-La feature est démontrable lorsqu’un utilisateur peut partir du site
-IgnitionAI, revoir les éléments sourcés, corriger les hypothèses et publier une
-offre ainsi qu’un ICP cohérents, sans lancer de prospection.
-
-Le résultat de référence est défini dans
-[`IGNITIONAI-PRODUCT-READING.md`](../fixtures/IGNITIONAI-PRODUCT-READING.md).
+La feature est démontrable lorsqu’un utilisateur peut analyser un produit,
+retrouver les six segments de référence, corriger la liste puis ouvrir
+l’approfondissement des segments retenus.

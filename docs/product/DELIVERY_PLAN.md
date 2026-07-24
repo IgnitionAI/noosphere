@@ -28,14 +28,14 @@ workspace et voit une navigation conforme à son rôle.
 
 **Démo de sortie**
 
-Lire un produit depuis des sources bornées, revoir puis publier son offre et
-son ICP, importer une liste, résoudre les doublons, consulter les fiches et
-exclure un contact.
+Lire un produit, sélectionner les segments clients suggérés, approfondir puis
+publier les ICP retenus, importer une liste, résoudre les doublons, consulter
+les fiches et exclure un contact.
 
 **Gate**
 
 - versions publiées immuables ;
-- chaque fait produit est sourcé et chaque déduction reste une hypothèse ;
+- aucun segment détecté n’est utilisé sans validation humaine ;
 - import idempotent ;
 - fusion annulable ;
 - suppression revérifiée dans les cas d’usage sensibles.
