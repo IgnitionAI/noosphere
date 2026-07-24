@@ -4,7 +4,7 @@
 
 Le prototype de référence versionné se trouve dans `prototype/`.
 
-Il contient 25 écrans HTML, un shell partagé, des données réalistes et une
+Il contient 26 écrans HTML, un shell partagé, des données réalistes et une
 bibliothèque de composants. Le HTML sert à valider le produit et la hiérarchie
 visuelle. Il ne doit pas être copié tel quel dans la production.
 
@@ -21,8 +21,9 @@ visuelle. Il ne doit pas être copié tel quel dans la production.
 | `prospect-detail.html` | `/w/[workspaceSlug]/prospects/[contactId]` | contact |
 | `companies.html` | `/w/[workspaceSlug]/companies` | companies |
 | `company-detail.html` | `/w/[workspaceSlug]/companies/[companyId]` | company |
-| `product-reading.html` | `/w/[workspaceSlug]/strategy/product-reading` | product analysis |
-| `icp-builder.html` | `/w/[workspaceSlug]/icps/new` | ICP builder |
+| `product-reading.html` | `/w/[workspaceSlug]/strategy/product-reading` | research brief |
+| `research-progress.html` | `/w/[workspaceSlug]/research/[runId]` | deep research progress |
+| `icp-builder.html` | `/w/[workspaceSlug]/research/[runId]/report` | sourced ICP report |
 | `offers.html` | `/w/[workspaceSlug]/offers` | offer versions |
 | `icps.html` | `/w/[workspaceSlug]/icps` | ICP versions |
 | `campaigns.html` | `/w/[workspaceSlug]/campaigns` | campaigns |

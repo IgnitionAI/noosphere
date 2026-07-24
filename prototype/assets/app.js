@@ -5,8 +5,9 @@ import { campaignsPage, campaignBuilderPage, campaignDetailPage, sequencesPage }
 import { inboxPage, pipelinePage } from "./pages-revenue.js";
 import { knowledgePage, aiStudioPage, analyticsPage } from "./pages-intelligence.js";
 import { integrationsPage, settingsPage, onboardingPage } from "./pages-admin.js";
-import { offersPage, icpsPage, discoverPage, companyDetailPage, productReadingPage, initProductReading } from "./pages-gtm.js";
+import { offersPage, icpsPage, discoverPage, companyDetailPage } from "./pages-gtm.js";
 import { icpBuilderPage, initIcpBuilder } from "./pages-icp-builder.js";
+import { productResearchBriefPage, researchProgressPage, initProductResearchBrief } from "./pages-research.js";
 
 const pages = {
   dashboard: [dashboardPage, {}],
@@ -16,7 +17,8 @@ const pages = {
   companies: [companiesPage, {}],
   "company-detail": [companyDetailPage, {}],
   discover: [discoverPage, {}],
-  "product-reading": [productReadingPage, {}],
+  "product-reading": [productResearchBriefPage, {}],
+  "research-progress": [researchProgressPage, {}],
   "icp-builder": [icpBuilderPage, {}],
   offers: [offersPage, {}],
   icps: [icpsPage, {}],
@@ -51,7 +53,7 @@ if (page === "prospects") {
   }));
 }
 
-if (page === "product-reading") initProductReading();
+if (page === "product-reading") initProductResearchBrief();
 if (page === "icp-builder") initIcpBuilder();
 
 if (page === "login" || page === "onboarding") {

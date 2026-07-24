@@ -1,12 +1,12 @@
 {
   "source_mockup": null,
-  "source_plan": "docs/product/features/F-011-ICP-BUILDER.md",
+  "source_plan": "docs/product/features/F-009-PRODUCT-READING-ICP.md",
   "mode": "evolve",
-  "html_file": "prototype/icp-builder.html",
+  "html_file": "prototype/research-progress.html",
   "pretext_tier": "basic",
   "framework": "vanilla",
   "iterations": 1,
   "date": "2026-07-24",
-  "screen": "icp-research-report",
+  "screen": "research-progress",
   "branch": "main"
 }

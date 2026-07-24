@@ -149,6 +149,27 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 }
 .criteria-chip:hover { border-color: #bfc7d0; }
 .criteria-chip-active { border-color: var(--navy); background: #f8fafc; color: var(--navy); box-shadow: inset 0 -2px 0 var(--signal); }
+.research-depth {
+  min-height: 142px; padding: 14px; border: 1px solid var(--line); border-radius: 10px;
+  background: white; color: var(--ink); text-align: left; transition: 120ms ease;
+}
+.research-depth:hover { border-color: #bfc7d0; }
+.research-depth-active { border-color: var(--navy); background: #fafbf8; box-shadow: inset 0 -3px 0 var(--signal); }
+.evidence-ref {
+  display: inline-flex; min-height: 24px; align-items: center; border: 1px solid #bcd0ff;
+  border-radius: 6px; background: #eef4ff; padding: 2px 7px; color: #244fc8;
+  font: 600 10px "JetBrains Mono", monospace;
+}
+.evidence-ref:hover { border-color: var(--blue); }
+.icp-proposal {
+  min-height: 132px; padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: white;
+}
+.icp-proposal-active { border-color: var(--navy); background: #fafbf8; box-shadow: inset 0 -3px 0 var(--signal); }
+.source-card {
+  width: 100%; padding: 12px; border: 1px solid var(--line); border-radius: 9px; background: white;
+}
+.source-card:hover { border-color: #bfc7d0; }
+.source-card-active { border-color: var(--navy); background: #fafbf8; box-shadow: inset 3px 0 0 var(--signal); }
 
 .empty { text-align: center; padding: 52px 24px; color: var(--muted); }
 .skeleton { border-radius: 6px; background: linear-gradient(90deg,#eef0ed,#f8f8f5,#eef0ed); background-size: 200% 100%; animation: shimmer 1.4s infinite; }

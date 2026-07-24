@@ -80,7 +80,7 @@ rôle, états loading/empty/error/forbidden/provider-down et responsive.
 
 **Critères d’acceptation**
 
-- les 25 écrans du prototype possèdent une route ou une destination déclarée ;
+- les 26 écrans du prototype possèdent une route ou une destination déclarée ;
 - la navigation masque les actions interdites sans remplacer les contrôles
   serveur ;
 - les pages principales sont utilisables à 375, 768, 1024 et 1440 px ;
@@ -91,20 +91,20 @@ rôle, états loading/empty/error/forbidden/provider-down et responsive.
 
 ## Epic 2 — Stratégie commerciale
 
-### F-009 — Lecture produit et construction de l’ICP (`P0`)
+### F-009 — Mission deep research ICP (`P0`)
 
-**Valeur** : transformer une URL ou une description produit en liste simple de
-segments clients à confirmer.
+**Valeur** : analyser le produit et ses concurrents afin de proposer des ICP
+classés, sourcés et révisables.
 
-**Périmètre** : analyse produit, trois à dix segments suggérés, sélection,
-renommage, ajout manuel et création d’un ICP brouillon par segment retenu.
+**Périmètre** : brief, deep research, concurrents directs/adjacents, segments,
+ICP proposés, checkpoints, preuves et audit des extrapolations.
 
 **Critères d’acceptation**
 
-- la liste tient sur le premier écran et reste modifiable ;
-- chaque segment peut être retenu ou écarté en un clic ;
-- l’utilisateur peut ajouter un segment absent ;
-- approfondir crée uniquement des ICP brouillons ;
+- la progression et les résultats partiels restent visibles ;
+- chaque finding cite une preuve ou reste une hypothèse ;
+- les retries ne recommencent pas les étapes validées ;
+- le livrable propose au moins un ICP classé ;
 - aucune prospection n’est déclenchée par ce workflow.
 
 **Dépendances** : F-002, F-003, F-004.
@@ -132,12 +132,12 @@ preuves, objections, prix communicables, contraintes et publication immuable.
 **Dépendances** : F-002, F-003.  
 **Surface** : `/w/[workspaceSlug]/offers`.
 
-### F-011 — ICP et versions publiées (`P0`)
+### F-011 — Revue ICP et versions publiées (`P0`)
 
 **Valeur** : définir précisément les entreprises et personnes à cibler.
 
-**Périmètre** : critères d’inclusion/exclusion, personas, géographies, tailles,
-technologies, signaux, pondérations et publication immuable.
+**Périmètre** : rapport deep research, comparaison des ICP, preuves,
+corrections humaines, critères opérationnels et publication immuable.
 
 **Critères d’acceptation**
 

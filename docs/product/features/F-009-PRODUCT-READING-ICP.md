@@ -1,211 +1,98 @@
-# F-009 — Détecter les ICP d’un produit
+# F-009 — Mission deep research ICP
 
 ## Résultat utilisateur
 
-À partir de l’URL ou d’une courte description d’un produit, l’utilisateur
-obtient une liste simple de segments clients possibles. Il peut les retenir,
-les retirer, les renommer ou en ajouter avant de choisir lesquels approfondir.
+À partir d’un produit et d’un marché, un deep agent recherche les concurrents,
+analyse leurs positionnements et produit plusieurs propositions d’ICP sourcées.
 
-## Décision produit
+## Entrées
 
-La première version ne construit pas immédiatement un ICP complet.
+- URL, nom et description du produit ;
+- géographie et langues ;
+- type de vente ;
+- concurrents connus, facultatifs ;
+- documents internes, facultatifs ;
+- profondeur de recherche.
 
-Elle répond d’abord à une seule question :
-
-> Quels types d’organisations pourraient acheter ce produit ?
-
-Exemple de résultat observé dans Explee :
-
-- cabinets d’avocats ;
-- directions juridiques internes ;
-- études notariales ;
-- éditeurs juridiques ;
-- cabinets de conseil ;
-- équipes conformité de PME.
-
-Ces éléments sont des **segments suggérés**, pas encore des ICP opérationnels.
-
-## Parcours V1
-
-### 1. Décrire le produit
-
-Une seule entrée est obligatoire :
-
-- URL du site produit ; ou
-- description courte du produit.
-
-Le nom du produit et sa catégorie peuvent être corrigés avant l’analyse.
-
-### 2. Détecter les segments
-
-L’analyse retourne entre trois et dix segments, sous forme de liste.
-
-Chaque segment contient seulement :
-
-- un nom ;
-- une justification en une phrase ;
-- un statut sélectionné ou écarté.
-
-Les résultats restent des suggestions. Aucun segment n’est publié ni utilisé
-pour rechercher des prospects sans validation.
-
-### 3. Corriger la liste
-
-L’utilisateur peut :
-
-- sélectionner ou désélectionner un segment ;
-- renommer un segment ;
-- supprimer un segment ;
-- ajouter un segment manuellement ;
-- relancer l’analyse.
-
-### 4. Approfondir
-
-L’utilisateur choisit un ou plusieurs segments retenus et crée ensuite un ICP
-opérationnel pour chacun.
-
-L’approfondissement ajoute :
-
-- géographie ;
-- taille d’entreprise ;
-- personas et rôles ;
-- problèmes ;
-- signaux d’intention ;
-- critères d’inclusion et d’exclusion.
-
-Cette étape utilise F-011. Elle ne doit pas alourdir le premier écran.
-
-## Écran de référence
-
-**Route** : `/w/[workspaceSlug]/strategy/product-reading`
-
-Prototype : [`product-reading.html`](../../../prototype/product-reading.html)
+## Workflow
 
 ```text
-┌────────────────────────────────────────────────────────────────────┐
-│ Trouver votre ICP                                                  │
-│ Décrivez le produit, nous suggérons les organisations à cibler.    │
-├───────────────────────────┬────────────────────────────────────────┤
-│ Produit analysé           │ Segments détectés                  6/6 │
-│                           │                                        │
-│ URL                       │ [✓] Cabinets d’avocats                 │
-│ [https://…             ]  │ [✓] Directions juridiques internes    │
-│                           │ [✓] Études notariales                  │
-│ [Analyser le produit]     │ [✓] Éditeurs juridiques               │
-│                           │ [✓] Cabinets de conseil                │
-│ Analyse terminée          │ [✓] Équipes conformité de PME         │
-│                           │                                        │
-│                           │ [+ Ajouter un segment]                 │
-│                           │                      [Approfondir →]    │
-└───────────────────────────┴────────────────────────────────────────┘
+draft
+→ queued
+→ product_analysis
+→ competitor_discovery
+→ competitor_analysis
+→ segment_synthesis
+→ icp_synthesis
+→ evidence_review
+→ ready_for_review
 ```
 
-## Permissions
+Chaque étape écrit un checkpoint durable. Une reprise ne recommence pas les
+étapes déjà validées.
 
-| Rôle | Consulter | Analyser | Modifier | Approfondir |
-|---|---:|---:|---:|---:|
-| owner | oui | oui | oui | oui |
-| admin | oui | oui | oui | oui |
-| operator | oui | oui | oui | oui |
-| reviewer | oui | non | non | non |
-| viewer | oui | non | non | non |
+## Rôles du deep agent
 
-## Règles métier
+- `ProductAnalyst` : structure le produit, ses claims et ses inconnues ;
+- `CompetitorResearcher` : découvre et qualifie concurrents et alternatives ;
+- `ICPStrategist` : synthétise segments, personas, problèmes et signaux ;
+- `EvidenceReviewer` : contrôle sources, contradictions et extrapolations ;
+- `ResearchOrchestrator` : planifie, reprend et assemble le livrable.
 
-1. Une analyse appartient exactement à un workspace.
-2. Une analyse ne déclenche jamais une recherche de prospects.
-3. Un segment suggéré doit être confirmé par un utilisateur.
-4. Un segment écarté reste visible dans l’historique de l’analyse.
-5. Relancer l’analyse ne supprime pas les corrections précédentes.
-6. Un segment retenu devient un ICP brouillon, jamais une version publiée.
-7. L’utilisateur doit pouvoir continuer même si l’analyse échoue, en ajoutant
-   ses segments manuellement.
+## Règles
 
-## Critères d’acceptation
+1. Une mission appartient exactement à un workspace.
+2. Une source publique conserve URL, date, extrait et empreinte.
+3. Un document interne est distingué d’une preuve publique.
+4. Une affirmation sans preuve reste une hypothèse.
+5. Les chiffres non confirmés sont retirés ou signalés.
+6. Un concurrent découvert reste candidat avant qualification.
+7. Un retry n’écrase jamais un résultat humainement validé.
+8. La mission ne crée ni entreprise CRM, ni contact, ni campagne.
+9. Le deep agent ne publie jamais directement un ICP.
 
-- l’utilisateur peut lancer l’analyse avec une URL ou une description ;
-- le résultat affiche entre trois et dix segments lisibles sans ouvrir de
-  panneau supplémentaire ;
-- les six segments de l’exemple tiennent sur un écran desktop ;
-- chaque segment peut être sélectionné ou écarté en un clic ;
-- l’utilisateur peut ajouter un segment absent ;
-- le compteur de sélection se met à jour immédiatement ;
-- le bouton d’approfondissement est désactivé si aucun segment n’est retenu ;
-- approfondir crée un ICP brouillon par segment choisi ;
-- aucun segment ne lance automatiquement sourcing ou prospection ;
-- l’écran reste utilisable à 375, 768, 1024 et 1440 px.
+## Objets
 
-## États
+- `ProductResearchRun` : mission, état et checkpoints ;
+- `ResearchStageRun` : exécution d’une étape ;
+- `AIRun` : appel de modèle individuel ;
+- `CompetitorCandidate` : concurrent découvert ;
+- `MarketEvidence` : source et passage ;
+- `ResearchFinding` : affirmation, confiance et preuves ;
+- `ICPProposal` : proposition produite par la mission.
 
-| État | Présentation |
-|---|---|
-| initial | URL/description et CTA d’analyse |
-| analyse | skeleton de trois segments et progression |
-| résultat | liste sélectionnable et compteur |
-| vide | ajout manuel mis en avant |
-| erreur | explication, nouvel essai et ajout manuel |
-| modifié | badge « Modifié » et possibilité de relancer |
-| prêt | CTA « Approfondir les segments » |
-
-## Contrats applicatifs
-
-### Use cases
-
-- `CreateProductAnalysis`
-- `DetectCustomerSegments`
-- `SelectCustomerSegment`
-- `RenameCustomerSegment`
-- `AddCustomerSegment`
-- `RemoveCustomerSegment`
-- `CreateICPDraftsFromSegments`
-
-### API
+## API à spécifier
 
 | Méthode | Route | Usage |
 |---|---|---|
-| POST | `/api/v1/product-analyses` | créer et lancer une analyse |
-| GET | `/api/v1/product-analyses/:id` | lire le résultat |
-| PATCH | `/api/v1/product-analyses/:id/segments/:segmentId` | modifier la sélection ou le nom |
-| POST | `/api/v1/product-analyses/:id/segments` | ajouter un segment |
-| POST | `/api/v1/product-analyses/:id/actions/create-icps` | créer les ICP brouillons |
+| POST | `/api/v1/product-research-runs` | créer la mission |
+| POST | `/api/v1/product-research-runs/:id/actions/start` | lancer |
+| GET | `/api/v1/product-research-runs/:id` | état et progression |
+| GET | `/api/v1/product-research-runs/:id/evidence` | sources |
+| POST | `/api/v1/product-research-runs/:id/actions/pause` | pause |
+| POST | `/api/v1/product-research-runs/:id/actions/resume` | reprise |
+| POST | `/api/v1/product-research-runs/:id/actions/research-more` | recherche complémentaire |
 
-### Modèle minimal
+## Critères d’acceptation
 
-```mermaid
-erDiagram
-    WORKSPACE ||--o{ PRODUCT_ANALYSIS : owns
-    PRODUCT_ANALYSIS ||--o{ CUSTOMER_SEGMENT : suggests
-    CUSTOMER_SEGMENT o|--o| ICP : creates
-```
+- le brief peut être lancé avec une URL et un marché ;
+- les concurrents connus restent facultatifs ;
+- la progression expose l’étape active et les résultats partiels ;
+- une source en échec ne masque pas les autres résultats ;
+- pause, reprise et retry sont idempotents ;
+- chaque finding affiche preuves ou statut d’hypothèse ;
+- le livrable contient au moins un ICP classé ;
+- aucune prospection n’est déclenchée.
 
-## Frontière IA
+## Prototypes
 
-Le prototype utilise des résultats simulés. Plus tard,
-`ProductUnderstandingService` retournera uniquement :
+- [Brief de mission](../../../prototype/product-reading.html)
+- [Progression de la recherche](../../../prototype/research-progress.html)
 
-```text
-product_name
-product_summary
-segments[{ name, rationale }]
-```
+## Hors périmètre
 
-Le modèle ne publie pas d’ICP, ne crée pas de prospects et ne déclenche aucun
-message.
-
-## Hors périmètre du premier écran
-
-- preuves et citations par champ ;
-- crawl avancé ;
-- personas détaillés ;
-- scoring et pondérations ;
-- analyse concurrentielle ;
-- TAM ;
-- sourcing de contacts ;
-- génération de messages ;
-- publication automatique.
-
-## Définition de sortie
-
-La feature est démontrable lorsqu’un utilisateur peut analyser un produit,
-retrouver les six segments de référence, corriger la liste puis ouvrir
-l’approfondissement des segments retenus.
+- sourcing d’entreprises et de contacts ;
+- estimation de TAM non sourcée ;
+- publication automatique ;
+- génération de campagne ;
+- apprentissage automatique à partir des corrections.

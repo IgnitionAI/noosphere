@@ -1,5 +1,5 @@
 {
-  "source_mockup": "/tmp/codex-remote-attachments/019f9369-88b9-7872-a620-9e4efb7de589/ae30475a-dcc9-411b-ac3b-a2bd5bfaf014/1-Photo-1.jpg",
+  "source_mockup": null,
   "source_plan": "docs/product/features/F-009-PRODUCT-READING-ICP.md",
   "mode": "evolve",
   "html_file": "prototype/product-reading.html",
@@ -7,6 +7,6 @@
   "framework": "vanilla",
   "iterations": 1,
   "date": "2026-07-24",
-  "screen": "product-reading",
+  "screen": "product-research-brief",
   "branch": "main"
 }

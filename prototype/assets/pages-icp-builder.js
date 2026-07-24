@@ -1,224 +1,144 @@
 import { icon, badge, button, pageHeader, panel } from "./core.js";
 
-const segments = [
-  ["Cabinets d’avocats", "En cours", "Scale"],
-  ["Directions juridiques internes", "À faire", "Landmark"],
-  ["Études notariales", "À faire", "Stamp"],
-  ["Éditeurs juridiques", "À faire", "BookOpenText"],
-  ["Cabinets de conseil", "À faire", "BriefcaseBusiness"],
-  ["Équipes conformité de PME", "À faire", "ShieldCheck"]
+const sourceCards = [
+  ["S01","OneTrust · AI Governance","Source officielle","Inventaire central, ownership et contrôles sur le cycle de vie IA.","onetrust.com/solutions/ai-governance","success"],
+  ["S02","Holistic AI · Platform","Source officielle","Découverte, évaluation, monitoring et gouvernance IA à l’échelle enterprise.","holisticai.com","success"],
+  ["S03","Credo AI · Product","Source officielle","Gouvernance des agents, modèles et applications avec suivi du cycle de vie.","credo.ai/product","success"],
+  ["S04","Saidot · Product","Source officielle","Graphe de risques, politiques et contrôles pour gouverner les systèmes IA.","saidot.ai/product","success"],
+  ["D01","Description fournie · Preuvio","Document interne","Registre opérationnel, risques et collecte de preuves pour la gouvernance.","Brief de mission","blue"]
 ];
 
-const personaChoices = [
-  ["Associé gérant", "Décideur économique"],
-  ["Responsable innovation", "Champion métier"],
-  ["DSI / Responsable IT", "Validation technique"],
-  ["DPO / Compliance", "Influenceur risque"],
-  ["Knowledge manager", "Utilisateur clé"]
+const icpOptions = [
+  ["ICP principal","PME et ETI déjà utilisatrices d’IA","Fort","78 %"],
+  ["ICP secondaire","Cabinets de conseil et intégrateurs","Moyen","64 %"],
+  ["ICP exploratoire","Professions juridiques structurées","À valider","51 %"]
 ];
 
-const signalChoices = [
-  ["Bot", "Déploiement récent d’un outil IA"],
-  ["ClipboardCheck", "Questionnaire client ou audit fournisseur"],
-  ["ShieldAlert", "Revue sécurité, RGPD ou AI Act"],
-  ["Users", "Recrutement innovation, data ou conformité"],
-  ["FileWarning", "Difficulté à rassembler les preuves"],
-  ["Landmark", "Demande du comité de direction"]
-];
-
-const segmentDetails = {
-  "Cabinets d’avocats": ["Cabinets d’avocats qui utilisent ou évaluent des outils d’IA et doivent documenter leurs usages, leurs accès aux données et leurs preuves de gouvernance.", "Cabinet d’avocats", "10 à 250 personnes"],
-  "Directions juridiques internes": ["Équipes juridiques d’entreprises qui encadrent des usages IA internes ou évaluent les risques de fournisseurs intégrant de l’IA.", "Direction juridique interne", "250 à 5 000 employés"],
-  "Études notariales": ["Études notariales qui utilisent des outils d’IA sur des documents sensibles et doivent clarifier les accès, validations et responsabilités.", "Étude notariale", "10 à 250 personnes"],
-  "Éditeurs juridiques": ["Éditeurs qui intègrent l’IA dans la recherche, la rédaction ou l’enrichissement de contenus juridiques.", "Éditeur juridique", "50 à 1 000 employés"],
-  "Cabinets de conseil": ["Cabinets qui utilisent l’IA dans leurs missions et doivent rassurer leurs clients sur les données, outils et contrôles.", "Cabinet de conseil", "10 à 500 personnes"],
-  "Équipes conformité de PME": ["Responsables conformité de PME qui doivent établir un premier registre IA et réunir des preuves sans plateforme GRC lourde.", "PME avec équipe conformité", "50 à 2 000 employés"]
-};
-
-function segmentButton([name, state, ico], index) {
-  return `<button type="button" class="builder-segment ${index === 0 ? "builder-segment-active" : ""}" data-builder-segment data-segment-name="${name}">
-    <span class="grid h-8 w-8 flex-none place-items-center rounded-lg ${index === 0 ? "bg-navy text-white" : "bg-slate-100 text-navy"}">${icon(ico,15)}</span>
-    <span class="min-w-0 flex-1 text-left"><strong class="block truncate text-xs">${name}</strong><span class="mt-1 block text-[10px] ${index === 0 ? "text-brandblue" : "text-muted"}" data-segment-state>${state}</span></span>
-    ${index === 0 ? icon("ChevronRight",14,"text-muted") : ""}
-  </button>`;
-}
-
-function personaOption([name, role], index) {
-  return `<label class="flex cursor-pointer items-start gap-3 rounded-lg border border-line p-3 hover:bg-slate-50">
-    <input type="checkbox" ${index < 4 ? "checked" : ""} class="mt-0.5 accent-navy">
-    <span><strong class="block text-sm">${name}</strong><span class="mt-1 block text-xs text-muted">${role}</span></span>
-  </label>`;
-}
-
-function signalOption([ico, label], index) {
-  return `<button type="button" class="criteria-chip ${index < 4 ? "criteria-chip-active" : ""}" data-toggle-criterion aria-pressed="${index < 4}">
-    ${icon(ico,15)}<span>${label}</span>
-  </button>`;
+function evidenceRef(id) {
+  return `<button type="button" class="evidence-ref" data-evidence="${id}" aria-label="Voir la preuve ${id}">${id}</button>`;
 }
 
 export function icpBuilderPage() {
   return `
-    <div class="mb-5 flex flex-wrap items-center gap-2 text-xs font-semibold text-muted">
-      <span class="inline-flex items-center gap-2 text-success">${icon("CheckCircle2",15)}Produit</span>
-      <span class="h-px w-7 bg-line"></span>
-      <span class="inline-flex items-center gap-2 text-success">${icon("CheckCircle2",15)}Segments</span>
-      <span class="h-px w-7 bg-line"></span>
-      <span class="inline-flex items-center gap-2 text-navy"><span class="grid h-5 w-5 place-items-center rounded-full bg-navy text-[10px] text-white">3</span>Affiner</span>
-    </div>
-    ${pageHeader("Affiner l’ICP", "Précisez les entreprises, les décideurs et les signaux qui rendent ce segment réellement prospectable.", button("Enregistrer le brouillon","Save","","data-toast='Brouillon enregistré'"))}
+    ${pageHeader("Rapport ICP · Preuvio", "Proposition produite par le deep agent à partir des concurrents, sources publiques et informations fournies.", `${button("Relancer une recherche","Search","","data-toast='Nouvelle instruction de recherche ouverte'")}${button("Publier l’ICP principal","CheckCircle2","primary","data-toast='ICP principal publié en version 1'")}`)}
+    <div class="mb-5 flex flex-wrap items-center gap-2">${badge("Livrable v1","blue")}${badge("Audit des preuves terminé","success")}${badge("47 sources consultées")}${badge("5 concurrents retenus")}</div>
 
-    <label class="mb-4 block xl:hidden"><span class="label">Segment en cours</span><select class="select" data-mobile-segment>${segments.map(([name], index) => `<option ${index === 0 ? "selected" : ""}>${name}</option>`).join("")}</select></label>
-
-    <div class="grid items-start gap-5 xl:grid-cols-[250px_minmax(0,1fr)_310px]">
-      <aside class="panel hidden p-3 xl:block">
-        <div class="mb-3 flex items-center justify-between px-1"><span class="text-xs font-semibold uppercase tracking-wide text-muted">6 segments retenus</span><span class="badge"><span data-completed-count>0</span> / 6</span></div>
-        <div class="space-y-2">${segments.map(segmentButton).join("")}</div>
-        <a href="product-reading.html" class="btn mt-3 w-full">${icon("ArrowLeft")}Modifier les segments</a>
+    <div class="grid items-start gap-5 xl:grid-cols-[220px_minmax(0,1fr)_330px]">
+      <aside class="panel hidden p-3 xl:block xl:sticky xl:top-20">
+        <div class="mb-3 px-2 text-xs font-semibold uppercase tracking-wide text-muted">Sommaire</div>
+        <nav class="space-y-1 text-xs" aria-label="Sections du rapport">
+          ${[
+            ["Synthèse","FileText"],["Concurrents","TableProperties"],["ICP proposés","Target"],["ICP principal","Building2"],["Comité d’achat","Users"],["Problèmes & signaux","Radar"],["Exclusions","ShieldX"],["Inconnues","CircleHelp"]
+          ].map(([label,ico],index)=>`<a href="#report-${index}" class="flex items-center gap-2 rounded-lg px-3 py-2 font-semibold ${index===0?"bg-slate-100 text-navy":"text-muted hover:bg-slate-50 hover:text-ink"}">${icon(ico,15)}${label}</a>`).join("")}
+        </nav>
+        <a href="research-progress.html" class="btn mt-4 w-full">${icon("Activity")}Voir la recherche</a>
       </aside>
 
       <main class="min-w-0 space-y-4">
-        <section class="panel">
-          <div class="panel-header">
-            <div><div class="text-xs font-semibold uppercase tracking-wide text-muted">ICP <span data-segment-position>1</span> sur 6</div><h2 class="mt-1 text-lg font-semibold" data-active-segment data-pretext>Cabinets d’avocats</h2></div>
-            ${badge("Brouillon","warning")}
-          </div>
+        <section class="panel" id="report-0">
+          <div class="panel-header"><h2 class="font-semibold">Synthèse exécutive</h2>${badge("Confiance élevée","success")}</div>
           <div class="panel-body">
-            <label><span class="label">Définition du segment</span><textarea class="textarea min-h-[86px]" data-segment-description>Cabinets d’avocats qui utilisent ou évaluent des outils d’IA et doivent documenter leurs usages, leurs accès aux données et leurs preuves de gouvernance.</textarea></label>
+            <p class="max-w-prose text-sm leading-7" contenteditable="true" data-pretext>Preuvio semble mieux différencié lorsqu’il est présenté comme une première couche opérationnelle de gouvernance IA pour les organisations qui ont déjà des usages, mais pas encore de programme enterprise structuré. Les concurrents étudiés couvrent fortement l’inventaire, le risque et les contrôles à grande échelle. L’opportunité à tester porte sur un démarrage assisté, centré sur la collecte de preuves et un dossier partageable.</p>
+            <div class="mt-4 flex flex-wrap gap-2">${evidenceRef("S01")}${evidenceRef("S02")}${evidenceRef("S03")}${evidenceRef("S04")}${evidenceRef("D01")}</div>
+            <div class="mt-5 grid gap-3 sm:grid-cols-3">
+              <div class="rounded-lg border border-line p-3"><span class="text-xs text-muted">Recommandation</span><strong class="mt-1 block">Cibler le mid-market actif sur l’IA</strong></div>
+              <div class="rounded-lg border border-line p-3"><span class="text-xs text-muted">Angle différenciant</span><strong class="mt-1 block">Preuves prêtes à partager</strong></div>
+              <div class="rounded-lg border border-line p-3"><span class="text-xs text-muted">Risque principal</span><strong class="mt-1 block">Budget et urgence à valider</strong></div>
+            </div>
           </div>
         </section>
 
-        ${panel("1. Entreprises à cibler", `
-          <div class="grid gap-4 md:grid-cols-2">
-            <label><span class="label">Géographie</span><select class="select"><option>France</option><option>France + Belgique + Luxembourg</option><option>Europe francophone</option></select></label>
-            <label><span class="label">Taille de la structure</span><select class="select" data-segment-size><option>10 à 250 personnes</option><option>1 à 50 personnes</option><option>50 à 500 personnes</option><option>250 à 5 000 employés</option><option>50 à 1 000 employés</option><option>10 à 500 personnes</option><option>50 à 2 000 employés</option><option>500+ personnes</option></select></label>
-            <label><span class="label">Type d’organisation</span><input class="input" value="Cabinet d’avocats" data-segment-type></label>
-            <label><span class="label">Maturité recherchée</span><select class="select"><option>Utilise déjà au moins un outil IA</option><option>Évalue actuellement des outils IA</option><option>Projet IA annoncé</option></select></label>
+        ${panel("Carte concurrentielle", `
+          <div id="report-1" class="overflow-x-auto rounded-lg border border-line"><table class="data-table min-w-[760px]"><thead><tr><th>Acteur</th><th>Segment apparent</th><th>Promesse observée</th><th>Relation</th><th>Preuve</th></tr></thead><tbody>${[
+            ["OneTrust","Enterprise","Gouvernance IA intégrée à une plateforme trust","Direct",evidenceRef("S01")],
+            ["Holistic AI","Enterprise","Découvrir, évaluer, surveiller et gouverner l’IA","Direct",evidenceRef("S02")],
+            ["Credo AI","Enterprise régulé","Gouverner agents, modèles et applications","Direct",evidenceRef("S03")],
+            ["Saidot","Mid-market / Enterprise","Gouvernance guidée par graphe de risques et contrôles","Direct",evidenceRef("S04")],
+            ["Tableurs + conseil","PME / ETI","Registre et preuves assemblés manuellement","Alternative","À confirmer"]
+          ].map(row=>`<tr>${row.map((cell,index)=>`<td class="${index===0?"font-semibold":index===2?"text-xs leading-5 text-muted":""}">${cell}</td>`).join("")}</tr>`).join("")}</tbody></table></div>
+          <p class="mt-3 text-xs text-muted">Les segments sont inférés depuis les positionnements observés. Ils ne prouvent pas la composition réelle du portefeuille client.</p>
+        `)}
+
+        <section class="panel" id="report-2">
+          <div class="panel-header"><div><h2 class="font-semibold">ICP proposés</h2><p class="mt-1 text-xs text-muted">Classés par cohérence produit et qualité des preuves.</p></div>${badge("3 propositions","signal")}</div>
+          <div class="panel-body grid gap-3 lg:grid-cols-3" data-icp-proposals>
+            ${icpOptions.map(([rank,name,confidence,score],index)=>`<button type="button" class="icp-proposal ${index===0?"icp-proposal-active":""}" data-icp-proposal aria-pressed="${index===0}"><span class="flex items-center justify-between gap-2">${badge(rank,index===0?"signal":"")}<strong class="font-mono text-sm">${score}</strong></span><strong class="mt-4 block text-left">${name}</strong><span class="mt-2 block text-left text-xs text-muted">Confiance ${confidence.toLowerCase()}</span></button>`).join("")}
           </div>
-          <div class="mt-4"><span class="label">Spécialités prioritaires</span><div class="flex flex-wrap gap-2">${["Droit des affaires","Données & numérique","Social","Fiscal","Contentieux"].map((item,index)=>`<button type="button" class="criteria-chip ${index < 2 ? "criteria-chip-active" : ""}" data-toggle-criterion aria-pressed="${index < 2}">${item}</button>`).join("")}</div></div>
-        `)}
+        </section>
 
-        ${panel("2. Décideurs et influenceurs", `
-          <p class="mb-4 text-xs text-muted">Sélectionnez les rôles qui participent réellement à l’achat ou à la validation.</p>
-          <div class="grid gap-3 md:grid-cols-2">${personaChoices.map(personaOption).join("")}</div>
-          <button type="button" class="btn mt-4" data-toast="Ajout d’un persona ouvert">${icon("Plus")}Ajouter un rôle</button>
-        `)}
-
-        ${panel("3. Problèmes à résoudre", `
-          <div class="grid gap-4 md:grid-cols-2">
-            <label><span class="label">Problème principal</span><textarea class="textarea min-h-[112px]">Les usages IA sont dispersés entre les équipes et il est difficile de savoir quelles données sont exposées, qui a validé l’outil et quelles preuves fournir à un client.</textarea></label>
-            <label><span class="label">Résultat recherché</span><textarea class="textarea min-h-[112px]">Obtenir un registre clair, un plan d’action et un dossier de preuves partageable sans déployer une plateforme GRC complexe.</textarea></label>
+        <section class="panel" id="report-3">
+          <div class="panel-header"><div><div class="text-xs font-semibold uppercase tracking-wide text-muted">Recommandation principale</div><h2 class="mt-1 text-lg font-semibold">PME et ETI déjà utilisatrices d’IA</h2></div>${badge("78 %","signal")}</div>
+          <div class="panel-body">
+            <div class="grid gap-4 md:grid-cols-2">
+              ${[
+                ["Géographie","France, puis Europe francophone","D01"],
+                ["Taille","50 à 2 000 employés","D01"],
+                ["Maturité","Plusieurs usages GenAI déjà actifs","D01"],
+                ["Contexte","Gouvernance encore dispersée","S01"],
+                ["Type d’achat","SaaS accompagné ou audit initial","D01"],
+                ["Priorité","Revue client, audit ou comité à venir","Hypothèse"]
+              ].map(([key,value,source])=>`<div class="rounded-lg border border-line p-3"><span class="text-xs text-muted">${key}</span><strong class="mt-1 block" contenteditable="true">${value}</strong><div class="mt-2">${source.startsWith("S")||source.startsWith("D")?evidenceRef(source):badge(source,"warning")}</div></div>`).join("")}
+            </div>
           </div>
+        </section>
+
+        ${panel("Comité d’achat", `
+          <div id="report-4" class="grid gap-3 md:grid-cols-2">${[
+            ["CEO / Direction générale","Sponsor économique","Veut réduire le risque sans lancer un programme lourd."],
+            ["DSI / CTO","Décideur technique","Valide les accès, intégrations et responsabilités."],
+            ["Head of AI / Data","Champion","Porte les usages et cherche à accélérer leur validation."],
+            ["Compliance / DPO","Influenceur risque","Évalue les preuves, obligations et données exposées."]
+          ].map(([persona,role,need])=>`<article class="rounded-lg border border-line p-4"><div class="flex items-start gap-3"><span class="grid h-9 w-9 flex-none place-items-center rounded-lg bg-slate-100 text-navy">${icon("UserRound",17)}</span><div><strong>${persona}</strong><span class="mt-1 block text-xs font-semibold text-brandblue">${role}</span><p class="mt-2 text-xs leading-5 text-muted">${need}</p></div></div></article>`).join("")}</div>
         `)}
 
-        ${panel("4. Signaux d’intention", `
-          <p class="mb-4 text-xs text-muted">Ces événements permettront ensuite de prioriser les comptes.</p>
-          <div class="flex flex-wrap gap-2">${signalChoices.map(signalOption).join("")}</div>
+        ${panel("Problèmes et signaux", `
+          <div id="report-5" class="grid gap-5 md:grid-cols-2"><div><h3 class="text-xs font-semibold uppercase tracking-wide text-muted">Problèmes probables</h3><ul class="mt-3 space-y-3">${[
+            "Usages IA dispersés et ownership incomplet",
+            "Données et accès difficiles à cartographier",
+            "Preuves longues à réunir pour une revue",
+            "Outils enterprise perçus comme trop lourds"
+          ].map(item=>`<li class="flex gap-2 text-sm">${icon("CircleDot",14,"mt-1 text-brandblue")}<span>${item}</span></li>`).join("")}</ul></div><div><h3 class="text-xs font-semibold uppercase tracking-wide text-muted">Signaux à tester</h3><ul class="mt-3 space-y-3">${[
+            "Lancement d’un Copilot, RAG ou agent interne",
+            "Questionnaire assurance d’un client enterprise",
+            "Audit, revue sécurité ou comité de direction",
+            "Recrutement AI, Data, DPO ou Compliance"
+          ].map(item=>`<li class="flex gap-2 text-sm">${icon("Radar",14,"mt-1 text-success")}<span>${item}</span></li>`).join("")}</ul></div></div>
+          <div class="mt-4 flex flex-wrap gap-2">${evidenceRef("S01")}${evidenceRef("D01")}${badge("Signaux à valider","warning")}</div>
         `)}
 
-        ${panel("5. Exclusions", `
-          <div class="grid gap-4 md:grid-cols-2">
-            <label><span class="label">Exclure si…</span><textarea class="textarea min-h-[92px]">Aucun usage IA actuel ou prévu\nStructure individuelle sans équipe\nBesoin limité à une formation générale</textarea></label>
-            <label><span class="label">Notes de qualification</span><textarea class="textarea min-h-[92px]" placeholder="Ajoutez les cas à traiter manuellement…"></textarea></label>
-          </div>
+        ${panel("Exclusions et inconnues", `
+          <div class="grid gap-4 md:grid-cols-2"><div id="report-6"><h3 class="text-xs font-semibold uppercase tracking-wide text-muted">Exclure ou déprioriser</h3><ul class="mt-3 space-y-2 text-sm"><li>• Aucun usage IA actif ou prévu</li><li>• Besoin limité à une formation générale</li><li>• Programme GRC/AI governance déjà mature</li><li>• Structure sans owner technique ou métier</li></ul></div><div id="report-7"><h3 class="text-xs font-semibold uppercase tracking-wide text-muted">Encore inconnu</h3><ul class="mt-3 space-y-2 text-sm"><li>• Budget minimal réellement disponible</li><li>• Urgence moyenne du problème</li><li>• Taux d’usage mensuel attendu</li><li>• Segment au meilleur cycle de vente</li></ul></div></div>
+          <div class="mt-4 rounded-lg border border-warning/30 bg-amber-50 p-3 text-xs leading-5 text-warning">${icon("TriangleAlert",15,"mr-2 inline")}Ces inconnues doivent être validées par des conversations marché, pas complétées automatiquement par le modèle.</div>
         `)}
       </main>
 
       <aside class="space-y-4 xl:sticky xl:top-20">
         <section class="panel">
-          <div class="panel-header"><h2 class="font-semibold">Résumé de l’ICP</h2>${badge("78 %","signal")}</div>
-          <div class="panel-body">
-            <div class="mb-4 progress"><span style="width:78%;background:var(--signal)"></span></div>
-            <div class="space-y-3 text-xs">
-              ${[
-                ["Segment","Cabinets d’avocats"],
-                ["Zone","France"],
-                ["Taille","10 à 250 personnes"],
-                ["Personas","4 sélectionnés"],
-                ["Signaux","4 sélectionnés"],
-                ["Exclusions","3 règles"]
-              ].map(([key,value],index)=>`<div class="flex justify-between gap-3 border-b border-line pb-2"><span class="text-muted">${key}</span><strong class="text-right" ${index === 0 ? "data-summary-segment" : index === 2 ? "data-summary-size" : ""}>${value}</strong></div>`).join("")}
-            </div>
-            <div class="mt-5 rounded-lg border border-warning/30 bg-amber-50 p-3">
-              <div class="flex items-center gap-2 text-xs font-semibold text-warning">${icon("CircleAlert",15)}À préciser</div>
-              <ul class="mt-2 space-y-1 pl-4 text-xs leading-5 text-muted"><li class="list-disc">Budget ou capacité d’achat</li><li class="list-disc">Outils IA déjà utilisés</li></ul>
-            </div>
-          </div>
-          <footer class="space-y-2 border-t border-line p-4">
-            <button type="button" class="btn btn-primary w-full" data-next-segment>${icon("ArrowRight")}Enregistrer et passer au suivant</button>
-            <button type="button" class="btn btn-ghost w-full" data-toast="ICP créé en brouillon">${icon("FilePlus2")}Créer seulement cet ICP</button>
-          </footer>
+          <div class="panel-header"><h2 class="font-semibold">Preuves</h2>${badge("5 visibles","success")}</div>
+          <div class="p-3 space-y-2">${sourceCards.map(([id,title,type,excerpt,url,tone],index)=>`<button type="button" class="source-card ${index===0?"source-card-active":""}" data-source-card data-source-id="${id}"><span class="flex items-center justify-between gap-2"><strong class="font-mono text-[10px] text-brandblue">${id}</strong>${badge(type,tone)}</span><strong class="mt-2 block text-left text-xs">${title}</strong><span class="mt-2 block text-left text-[11px] leading-5 text-muted">${excerpt}</span><span class="mt-2 block truncate text-left font-mono text-[10px] text-muted">${url}</span></button>`).join("")}</div>
         </section>
-        <section class="rounded-xl border border-line bg-white p-4">
-          <div class="flex gap-3"><span class="grid h-9 w-9 flex-none place-items-center rounded-lg bg-slate-100 text-navy">${icon("Info",17)}</span><p class="text-xs leading-5 text-muted">Aucune recherche ne démarre ici. Cet écran prépare uniquement les critères du futur sourcing.</p></div>
+        <section class="rounded-xl border border-signal bg-[#f6ffdf] p-4">
+          <div class="flex gap-3"><span class="grid h-9 w-9 flex-none place-items-center rounded-lg bg-signal text-signal-ink">${icon("ShieldCheck",17)}</span><div><strong class="text-sm">Evidence Reviewer</strong><p class="mt-1 text-xs leading-5 text-signal-ink/80">4 affirmations ont été reformulées et 2 chiffres non confirmés ont été retirés du rapport.</p></div></div>
         </section>
       </aside>
     </div>`;
 }
 
 export function initIcpBuilder() {
-  const buttons = [...document.querySelectorAll("[data-builder-segment]")];
-  const title = document.querySelector("[data-active-segment]");
-  const summary = document.querySelector("[data-summary-segment]");
-  const summarySize = document.querySelector("[data-summary-size]");
-  const mobile = document.querySelector("[data-mobile-segment]");
-  const description = document.querySelector("[data-segment-description]");
-  const type = document.querySelector("[data-segment-type]");
-  const size = document.querySelector("[data-segment-size]");
-  const position = document.querySelector("[data-segment-position]");
-  const completedCount = document.querySelector("[data-completed-count]");
-
-  const activate = name => {
-    buttons.forEach(button => {
-      const active = button.dataset.segmentName === name;
-      button.classList.toggle("builder-segment-active", active);
-      const iconBox = button.querySelector(".grid");
-      iconBox?.classList.toggle("bg-navy", active);
-      iconBox?.classList.toggle("text-white", active);
-      iconBox?.classList.toggle("bg-slate-100", !active);
-      iconBox?.classList.toggle("text-navy", !active);
-      const state = button.querySelector("[data-segment-state]");
-      if (state && button.dataset.complete !== "true") {
-        state.textContent = active ? "En cours" : "À faire";
-        state.classList.toggle("text-brandblue", active);
-        state.classList.toggle("text-muted", !active);
-      }
+  document.querySelectorAll("[data-icp-proposal]").forEach(option => option.addEventListener("click", () => {
+    document.querySelectorAll("[data-icp-proposal]").forEach(item => {
+      item.classList.toggle("icp-proposal-active", item === option);
+      item.setAttribute("aria-pressed", String(item === option));
     });
-    if (title) title.textContent = name;
-    if (summary) summary.textContent = name;
-    if (mobile && mobile.value !== name) mobile.value = name;
-    const details = segmentDetails[name];
-    if (details) {
-      if (description) description.value = details[0];
-      if (type) type.value = details[1];
-      if (size) size.value = details[2];
-      if (summarySize) summarySize.textContent = details[2];
-    }
-    if (position) position.textContent = String(buttons.findIndex(button => button.dataset.segmentName === name) + 1);
-  };
-
-  buttons.forEach(button => button.addEventListener("click", () => activate(button.dataset.segmentName)));
-  mobile?.addEventListener("change", () => activate(mobile.value));
-
-  document.querySelectorAll("[data-toggle-criterion]").forEach(button => button.addEventListener("click", () => {
-    button.classList.toggle("criteria-chip-active");
-    button.setAttribute("aria-pressed", String(button.classList.contains("criteria-chip-active")));
   }));
-
-  document.querySelector("[data-next-segment]")?.addEventListener("click", () => {
-    const current = buttons.findIndex(button => button.classList.contains("builder-segment-active"));
-    const currentButton = buttons[current];
-    if (currentButton && currentButton.dataset.complete !== "true") {
-      currentButton.dataset.complete = "true";
-      const state = currentButton.querySelector("[data-segment-state]");
-      if (state) {
-        state.textContent = "Terminé";
-        state.classList.remove("text-muted", "text-brandblue");
-        state.classList.add("text-success");
-      }
-      if (completedCount) completedCount.textContent = String(buttons.filter(button => button.dataset.complete === "true").length);
-    }
-    const next = buttons[Math.min(current + 1, buttons.length - 1)];
-    if (next) activate(next.dataset.segmentName);
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  });
+  document.querySelectorAll("[data-source-card]").forEach(card => card.addEventListener("click", () => {
+    document.querySelectorAll("[data-source-card]").forEach(item => item.classList.toggle("source-card-active", item === card));
+    document.querySelector(`[data-evidence="${card.dataset.sourceId}"]`)?.scrollIntoView({ behavior:"smooth", block:"center" });
+  }));
+  document.querySelectorAll("[data-evidence]").forEach(reference => reference.addEventListener("click", () => {
+    const card = document.querySelector(`[data-source-id="${reference.dataset.evidence}"]`);
+    document.querySelectorAll("[data-source-card]").forEach(item => item.classList.remove("source-card-active"));
+    card?.scrollIntoView({ behavior:"smooth", block:"center" });
+    card?.classList.add("source-card-active");
+  }));
 }

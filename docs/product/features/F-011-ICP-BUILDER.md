@@ -1,73 +1,71 @@
-# F-011 — Approfondir un segment en ICP
+# F-011 — Revue et publication du livrable ICP
 
 ## Résultat utilisateur
 
-Transformer un segment client validé en critères suffisamment précis pour
-rechercher des entreprises et identifier les bons décideurs.
+Examiner la recommandation du deep agent, vérifier les preuves, corriger les
+propositions et publier un ICP opérationnel.
 
-## Entrée
+## Contenu du livrable
 
-Un `CustomerSegment` retenu dans F-009.
-
-## Sortie
-
-Un ICP brouillon contenant :
-
-- définition du segment ;
-- géographie ;
-- type et taille d’organisation ;
-- maturité attendue ;
-- spécialités éventuelles ;
-- décideurs, champions, validateurs et utilisateurs ;
-- problème principal et résultat recherché ;
+- synthèse exécutive ;
+- carte concurrentielle ;
+- ICP principal, secondaires et exploratoires ;
+- caractéristiques d’entreprise ;
+- comité d’achat ;
+- problèmes et résultats recherchés ;
 - signaux d’intention ;
-- exclusions et notes de qualification.
+- exclusions ;
+- preuves et niveau de confiance ;
+- contradictions et inconnues ;
+- critères exploitables par le futur sourcing.
 
 ## Parcours
 
-1. choisir un segment retenu ;
-2. préciser les entreprises ciblées ;
-3. sélectionner les rôles impliqués dans l’achat ;
-4. décrire le problème et le résultat recherché ;
-5. sélectionner les signaux observables ;
-6. définir les exclusions ;
-7. enregistrer le brouillon et passer au segment suivant.
-
-L’utilisateur peut créer un seul ICP ou traiter successivement tous les segments.
+1. lire la synthèse ;
+2. comparer les concurrents ;
+3. choisir une proposition ICP ;
+4. ouvrir les preuves associées ;
+5. corriger ou rejeter un finding ;
+6. demander une recherche complémentaire si nécessaire ;
+7. publier une `ICPVersion`.
 
 ## Règles
 
-1. chaque segment crée son propre ICP brouillon ;
-2. aucun critère n’est inventé comme une donnée de marché vérifiée ;
-3. les rôles distinguent décision, influence, validation et utilisation ;
-4. un signal doit être observable via une source ou saisissable manuellement ;
-5. une exclusion est évaluée avant tout sourcing ;
-6. enregistrer ne publie pas l’ICP ;
-7. aucun sourcing ne démarre depuis le builder.
+1. le rapport est une proposition, jamais une vérité automatique ;
+2. une preuve publique et une donnée fournie restent distinguées ;
+3. une correction humaine ne disparaît pas lors d’un retry ;
+4. une contradiction non résolue bloque le finding concerné ;
+5. une inconnue reste visible après publication ;
+6. publier crée une version immuable ;
+7. le sourcing n’utilise que la version publiée.
+
+## API à spécifier
+
+| Méthode | Route | Usage |
+|---|---|---|
+| GET | `/api/v1/product-research-runs/:id/report` | lire le livrable et ses propositions |
+| PATCH | `/api/v1/product-research-runs/:id/findings/:findingId` | corriger ou rejeter un finding |
+| PATCH | `/api/v1/product-research-runs/:id/icp-proposals/:proposalId` | corriger une proposition |
+| POST | `/api/v1/product-research-runs/:id/actions/publish-icp` | publier une version immuable |
 
 ## Critères d’acceptation
 
-- changer de segment conserve le brouillon précédent ;
-- les champs entreprise, persona, problème, signaux et exclusions sont présents ;
-- les critères sélectionnables réagissent en un clic ;
-- le résumé reflète le segment courant ;
-- l’utilisateur peut enregistrer et passer au segment suivant ;
-- l’utilisateur peut créer uniquement l’ICP courant ;
-- les valeurs non précisées restent visibles dans « À préciser » ;
+- chaque affirmation importante possède une preuve ou un badge hypothèse ;
+- sélectionner une preuve permet d’identifier sa source ;
+- plusieurs ICP peuvent être comparés ;
+- les inconnues sont regroupées et lisibles ;
+- l’utilisateur peut corriger les champs proposés ;
+- une recherche complémentaire ne relance que les étapes concernées ;
+- seul un admin ou owner publie ;
 - l’écran fonctionne à 375, 768, 1024 et 1440 px.
 
-## Route et prototype
+## Prototype
 
-**Route cible** : `/w/[workspaceSlug]/icps/new`
-
-Prototype :
-[`icp-builder.html`](../../../prototype/icp-builder.html)
+[Rapport ICP sourcé](../../../prototype/icp-builder.html)
 
 ## Hors périmètre
 
-- estimation de population sans fournisseur de données ;
 - recherche d’entreprises ;
-- recherche de contacts ;
-- scoring ;
-- publication automatique ;
-- génération de messages.
+- recherche de personnes ;
+- génération de messages ;
+- modification rétroactive d’un ICP publié.
