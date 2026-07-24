@@ -38,6 +38,7 @@ Elle ne remplace pas les DTO OpenAPI à écrire avant chaque vertical slice.
 | F-001 | Better Auth | session contract et erreurs |
 | F-002 | `GET/POST /workspaces`, invitations, members | invitation accept/revoke |
 | F-003 | health endpoints | audit, jobs et dead letters admin |
+| F-009 | — | product readings, sources, findings et création des drafts |
 | F-010 | `GET/POST /offers`, publish | versions, claims et preuves |
 | F-011 | `GET/POST /icps`, publish | versions et validation critères |
 | F-012 | — | messaging strategies et AI policies |
@@ -70,6 +71,7 @@ Elle ne remplace pas les DTO OpenAPI à écrire avant chaque vertical slice.
 | Feature | Événements de domaine |
 |---|---|
 | F-002 | `WorkspaceMemberInvited` |
+| F-009 | `ProductReadingCompleted`, `OfferDraftCreatedFromReading`, `ICPDraftCreatedFromReading` |
 | F-010 | `OfferVersionPublished` |
 | F-011 | `ICPVersionPublished` |
 | F-023 | `ProspectDiscovered` |

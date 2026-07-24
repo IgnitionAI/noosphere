@@ -11,6 +11,8 @@ backlog d’implémentation.
 - [Matrice de traçabilité](TRACEABILITY_MATRIX.md)
 - [Definition of Ready et Definition of Done](QUALITY_GATES.md)
 - [Modèle de fiche feature](FEATURE_TEMPLATE.md)
+- [Première slice — Lecture produit et ICP](features/F-009-PRODUCT-READING-ICP.md)
+- [Fixture de référence IgnitionAI](fixtures/IGNITIONAI-PRODUCT-READING.md)
 
 ## Règle de lecture
 

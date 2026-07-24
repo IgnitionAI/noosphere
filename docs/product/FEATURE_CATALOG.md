@@ -91,6 +91,30 @@ rôle, états loading/empty/error/forbidden/provider-down et responsive.
 
 ## Epic 2 — Stratégie commerciale
 
+### F-009 — Lecture produit et construction de l’ICP (`P0`)
+
+**Valeur** : transformer un site, un texte ou un document en offre et ICP
+structurés, sourcés et révisables.
+
+**Périmètre** : sources bornées, lecture produit, faits/hypothèses/conflits,
+proposition d’offre, proposition d’ICP et revue humaine avant publication.
+
+**Critères d’acceptation**
+
+- l’utilisateur sélectionne les sources avant leur lecture ;
+- chaque proposition cite une source ou reste marquée comme hypothèse ;
+- prix et preuves client ne sont jamais déduits ;
+- les conflits de sources sont visibles et bloquent le champ ;
+- la lecture crée des drafts et ne publie rien automatiquement ;
+- aucune prospection n’est déclenchée par ce workflow.
+
+**Dépendances** : F-002, F-003, F-004.
+
+**Surface** : `/w/[workspaceSlug]/strategy/product-reading`.
+
+**Spécification** :
+[`F-009-PRODUCT-READING-ICP.md`](features/F-009-PRODUCT-READING-ICP.md).
+
 ### F-010 — Offres et versions publiées (`P0`)
 
 **Valeur** : formaliser ce qui est vendu et ce qui peut être affirmé.

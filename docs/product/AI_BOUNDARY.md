@@ -10,6 +10,7 @@ feedback nécessaires, mais aucun use case P0 ne dépend d’une génération.
 
 | Besoin futur | Fonctionnement initial | Évolution IA |
 |---|---|---|
+| lecture produit | résultats réalistes simulés et revue complète | extraction sourcée |
 | score prospect | règles et pondérations de l’ICP | score assisté et explication |
 | personnalisation | variables contrôlées + rédaction humaine | brouillon sourcé |
 | qualification réponse | statut choisi par l’opérateur | classification proposée |
@@ -21,6 +22,8 @@ feedback nécessaires, mais aucun use case P0 ne dépend d’une génération.
 
 - `AIModelProvider` : exécuter une demande structurée sans exposer un SDK au
   domaine ;
+- `ProductUnderstandingService` : proposer des findings sourcés sans publier
+  l’offre ou l’ICP ;
 - `KnowledgeRetriever` : retrouver des éléments sourcés indépendamment du
   moteur d’indexation ;
 - `ProspectScoringPolicy` : retourner score, critères, faits et données
@@ -47,14 +50,15 @@ réécriture des workflows.
 ## Garde-fous permanents
 
 1. un modèle ne déclenche jamais directement un envoi ;
-2. les exclusions, suppressions et permissions restent déterministes ;
-3. un score IA ne rend pas éligible un contact interdit ;
-4. tout texte généré référence les faits et claims utilisés ;
-5. une sortie sans preuve suffisante est bloquée ou escaladée ;
-6. prix, engagement, sécurité, juridique et négociation sensible exigent une
+2. une lecture produit ne publie jamais automatiquement une offre ou un ICP ;
+3. les exclusions, suppressions et permissions restent déterministes ;
+4. un score IA ne rend pas éligible un contact interdit ;
+5. tout texte généré référence les faits et claims utilisés ;
+6. une sortie sans preuve suffisante est bloquée ou escaladée ;
+7. prix, engagement, sécurité, juridique et négociation sensible exigent une
    validation humaine ;
-7. une recommandation ne modifie jamais une campagne active ;
-8. chaque exécution conserve fournisseur, modèle, prompt, coût, latence et
+8. une recommandation ne modifie jamais une campagne active ;
+9. chaque exécution conserve fournisseur, modèle, prompt, coût, latence et
    décision humaine.
 
 ## Gate de démarrage de la phase IA
