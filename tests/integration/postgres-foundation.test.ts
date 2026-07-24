@@ -8,12 +8,17 @@ import type { ResearchAgentExecutor } from "@outbound/application/gtm/product-re
 import { CryptoIdGenerator, SystemClock } from "@outbound/application/shared/ports";
 import type { AgentExecutionResult, AgentStageInput } from "@outbound/contracts/product-research";
 import type { ResearchStage } from "@outbound/domain/gtm/product-research";
+import { createBetterAuthRuntime } from "@outbound/infrastructure/auth/better-auth-runtime";
 import { createDatabase } from "@outbound/infrastructure/database/client";
 import { PostgresProductResearchRepository } from "@outbound/infrastructure/gtm/postgres-product-research-repository";
 import { PostgresJobQueue } from "@outbound/infrastructure/jobs/postgres-job-queue";
-import { marketEvidence, workspaces } from "@outbound/infrastructure/database/schema";
+import {
+  marketEvidence,
+  workspaces,
+} from "@outbound/infrastructure/database/schema";
 import { Sha256ContentHasher } from "@outbound/infrastructure/shared/sha256-content-hasher";
 import { createProductResearchHttpHandler } from "@outbound/interface/http/product-research-handler";
+import { bootstrapOwner } from "../../scripts/bootstrap-owner";
 import { validOutputFor } from "../fixtures/research-agent-fixtures";
 
 const databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
@@ -238,6 +243,148 @@ databaseDescribe("PostgreSQL F-009 foundation", () => {
       { stage: "competitor_analysis", status: "invalidated" },
     ]);
   });
+
+  test("authenticates a real session and resolves its workspace membership", async () => {
+    const email = `integration-${crypto.randomUUID()}@example.com`;
+    const closedAuth = createBetterAuthRuntime(database.db, {
+      baseUrl: "http://localhost",
+      secret: "integration-secret-with-at-least-32-characters",
+      trustedOrigins: ["http://localhost"],
+    });
+    const forbiddenSignUp = await closedAuth.handle(
+      new Request("http://localhost/api/auth/sign-up/email", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: "http://localhost",
+        },
+        body: JSON.stringify({
+          name: "Uninvited User",
+          email,
+          password: "integration-password-123",
+        }),
+      }),
+    );
+    expect(forbiddenSignUp.status).toBe(400);
+    expect((await forbiddenSignUp.json()) as { code: string }).toMatchObject({
+      code: "EMAIL_PASSWORD_SIGN_UP_DISABLED",
+    });
+
+    const bootstrap = await bootstrapOwner(database.db, {
+      baseUrl: "http://localhost",
+      secret: "integration-secret-with-at-least-32-characters",
+      email,
+      name: "Integration Operator",
+      password: "integration-password-123",
+      workspaceSlug: `workspace-a-${workspaceA}`,
+      workspaceName: "Workspace A",
+    });
+    expect(bootstrap.workspaceId).toBe(workspaceA);
+    expect(
+      await bootstrapOwner(database.db, {
+        baseUrl: "http://localhost",
+        secret: "integration-secret-with-at-least-32-characters",
+        email,
+        name: "Integration Operator",
+        password: "integration-password-123",
+        workspaceSlug: `workspace-a-${workspaceA}`,
+        workspaceName: "Workspace A",
+      }),
+    ).toEqual(bootstrap);
+
+    const signIn = await closedAuth.handle(
+      new Request("http://localhost/api/auth/sign-in/email", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: "http://localhost",
+        },
+        body: JSON.stringify({
+          email,
+          password: "integration-password-123",
+        }),
+      }),
+    );
+    expect(signIn.status).toBe(200);
+    const cookie = responseCookies(signIn);
+    expect(cookie).toContain("session_token");
+
+    const handle = createProductResearchHttpHandler({
+      application: new ProductResearchApplication(repository, repository, ids, clock),
+      contextResolver: closedAuth.contextResolver,
+    });
+    const createResponse = await handle(
+      new Request("http://localhost/api/v1/product-research-runs", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          cookie,
+          "x-workspace-slug": `workspace-a-${workspaceA}`,
+        },
+        body: JSON.stringify({
+          productUrl: "https://example.com",
+          productName: "Authenticated HTTP Integration",
+          description: "",
+          geography: "France",
+          languages: ["fr"],
+          salesMotion: "saas",
+          knownCompetitors: [],
+          internalDocumentIds: [],
+          depth: "standard",
+        }),
+      }),
+    );
+    expect(createResponse.status).toBe(201);
+    const created = (await createResponse.json()) as { id: string };
+
+    const missingWorkspace = await handle(
+      new Request(`http://localhost/api/v1/product-research-runs/${created.id}`, {
+        headers: { cookie },
+      }),
+    );
+    expect(missingWorkspace.status).toBe(400);
+    expect((await missingWorkspace.json()) as { code: string }).toMatchObject({
+      code: "WORKSPACE_CONTEXT_REQUIRED",
+    });
+
+    await database.client`
+      update workspace_members
+      set status = 'disabled'
+      where workspace_id = ${workspaceA} and user_id = ${bootstrap.userId}
+    `;
+    const disabledMembership = await handle(
+      new Request(`http://localhost/api/v1/product-research-runs/${created.id}`, {
+        headers: {
+          cookie,
+          "x-workspace-slug": `workspace-a-${workspaceA}`,
+        },
+      }),
+    );
+    expect(disabledMembership.status).toBe(403);
+    expect((await disabledMembership.json()) as { code: string }).toMatchObject({
+      code: "WORKSPACE_FORBIDDEN",
+    });
+
+    const signOut = await closedAuth.handle(
+      new Request("http://localhost/api/auth/sign-out", {
+        method: "POST",
+        headers: {
+          cookie,
+          origin: "http://localhost",
+        },
+      }),
+    );
+    expect(signOut.status).toBe(200);
+    const revokedResponse = await handle(
+      new Request(`http://localhost/api/v1/product-research-runs/${created.id}`, {
+        headers: {
+          cookie,
+          "x-workspace-slug": `workspace-a-${workspaceA}`,
+        },
+      }),
+    );
+    expect(revokedResponse.status).toBe(401);
+  });
 });
 
 class IntegrationFixtureAgents implements ResearchAgentExecutor {
@@ -254,4 +401,11 @@ class IntegrationFixtureAgents implements ResearchAgentExecutor {
       },
     };
   }
+}
+
+function responseCookies(response: Response): string {
+  return response.headers
+    .getSetCookie()
+    .map((cookie) => cookie.split(";", 1)[0])
+    .join("; ");
 }

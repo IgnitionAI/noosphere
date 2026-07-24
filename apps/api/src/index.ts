@@ -1,22 +1,21 @@
-import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
-import type { RequestContextResolver } from "@outbound/interface/http/request-context";
 import { ProductResearchApplication } from "@outbound/application/gtm/product-research-application";
 import { CryptoIdGenerator, SystemClock } from "@outbound/application/shared/ports";
+import { createBetterAuthRuntime } from "@outbound/infrastructure/auth/better-auth-runtime";
 import { createDatabase } from "@outbound/infrastructure/database/client";
 import { PostgresProductResearchRepository } from "@outbound/infrastructure/gtm/postgres-product-research-repository";
 import { createProductResearchHttpHandler } from "@outbound/interface/http/product-research-handler";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
-const contextModulePath = requiredEnvironment("REQUEST_CONTEXT_ADAPTER_MODULE");
-const contextModule = (await import(adapterModuleSpecifier(contextModulePath))) as {
-  createRequestContextResolver?: () => RequestContextResolver | Promise<RequestContextResolver>;
-};
-if (typeof contextModule.createRequestContextResolver !== "function") {
-  throw new Error("REQUEST_CONTEXT_ADAPTER_MODULE must export createRequestContextResolver()");
-}
-
 const database = createDatabase(databaseUrl);
+const auth = createBetterAuthRuntime(database.db, {
+  baseUrl: requiredEnvironment("BETTER_AUTH_URL"),
+  secret: requiredSecretEnvironment("BETTER_AUTH_SECRET"),
+  trustedOrigins: commaSeparatedEnvironment(
+    "BETTER_AUTH_TRUSTED_ORIGINS",
+    requiredEnvironment("BETTER_AUTH_URL"),
+  ),
+  allowSignUp: process.env.BETTER_AUTH_ALLOW_SIGN_UP === "true",
+});
 const repository = new PostgresProductResearchRepository(database.db);
 const application = new ProductResearchApplication(
   repository,
@@ -26,7 +25,7 @@ const application = new ProductResearchApplication(
 );
 const productResearch = createProductResearchHttpHandler({
   application,
-  contextResolver: await contextModule.createRequestContextResolver(),
+  contextResolver: auth.contextResolver,
 });
 const port = positiveIntegerEnvironment("PORT", 3000);
 const server = Bun.serve({
@@ -34,6 +33,7 @@ const server = Bun.serve({
   maxRequestBodySize: 1_048_576,
   async fetch(request) {
     const pathname = new URL(request.url).pathname;
+    if (pathname.startsWith("/api/auth/")) return auth.handle(request);
     if (pathname === "/health/live") return Response.json({ status: "ok" });
     if (pathname === "/health/ready") {
       try {
@@ -78,10 +78,17 @@ function requiredEnvironment(name: string): string {
   return value;
 }
 
-function adapterModuleSpecifier(value: string): string {
-  return value.startsWith(".") || value.startsWith("/")
-    ? pathToFileURL(resolve(value)).href
-    : value;
+function requiredSecretEnvironment(name: string): string {
+  const value = requiredEnvironment(name);
+  if (value.length < 32) throw new Error(`${name} must contain at least 32 characters`);
+  return value;
+}
+
+function commaSeparatedEnvironment(name: string, fallback: string): string[] {
+  return (process.env[name] ?? fallback)
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
 }
 
 function positiveIntegerEnvironment(name: string, fallback: number): number {

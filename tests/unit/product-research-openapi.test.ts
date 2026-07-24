@@ -24,3 +24,32 @@ test("the OpenAPI contract declares every F-009 HTTP route", () => {
   );
   expect(document.paths["/api/v1/product-research-runs"]?.post).toBeDefined();
 });
+
+test("every F-009 operation requires authenticated workspace route context", () => {
+  const document = JSON.parse(
+    readFileSync(
+      resolve(import.meta.dir, "../../packages/contracts/openapi/product-research-v1.json"),
+      "utf8",
+    ),
+  ) as {
+    security: Array<Record<string, unknown>>;
+    paths: Record<
+      string,
+      {
+        parameters?: Array<{ $ref?: string }>;
+        get?: { parameters?: Array<{ $ref?: string }> };
+        post?: { parameters?: Array<{ $ref?: string }> };
+      }
+    >;
+  };
+
+  expect(document.security).toEqual([{ sessionCookie: [] }]);
+  for (const path of Object.values(document.paths)) {
+    const references = [
+      ...(path.parameters ?? []),
+      ...(path.get?.parameters ?? []),
+      ...(path.post?.parameters ?? []),
+    ].map((parameter) => parameter.$ref);
+    expect(references).toContain("#/components/parameters/WorkspaceSlug");
+  }
+});

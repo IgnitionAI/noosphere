@@ -46,6 +46,15 @@ PostgreSQL, brancher les adaptateurs, lancer l’API et le worker. Le contrat
 machine des sept routes est
 [`product-research-v1.json`](packages/contracts/openapi/product-research-v1.json).
 
+L’API monte Better Auth sous `/api/auth/*`. Les appels métier doivent envoyer
+le slug de la route dans `x-workspace-slug` ; le serveur vérifie ensuite la
+session et le membership PostgreSQL. Voir `.env.example` pour les variables
+`BETTER_AUTH_*`.
+
+Après `bun run db:migrate`, le premier compte et son workspace peuvent être
+créés avec `bun run bootstrap:owner`. La procédure et les variables requises
+sont détaillées dans le runbook F-009.
+
 ## Documents
 
 - [Préparation produit et catalogue des features](docs/product/README.md)
@@ -67,5 +76,6 @@ machine des sept routes est
 ## Statut
 
 Architecture V1, prototype frontend, socle backend et routes HTTP F-009 validés
-le 24 juillet 2026. L’adaptateur Better Auth, l’application Next.js et
-l’adaptateur de modèles IA restent à implémenter.
+le 24 juillet 2026. Better Auth et la résolution sécurisée du workspace sont
+branchés côté API. L’application Next.js et l’adaptateur de modèles IA restent
+à implémenter.

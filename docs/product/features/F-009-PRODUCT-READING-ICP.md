@@ -103,10 +103,10 @@ Chaque étape écrit un checkpoint durable. Une reprise ne recommence pas les
 - serveur Bun : `apps/api/src/index.ts` ;
 - contrat OpenAPI : `packages/contracts/openapi/product-research-v1.json`.
 
-Le transport dérive toujours le workspace et le rôle du contexte authentifié.
-L’adaptateur de session et l’adaptateur de modèle sont injectés aux composition
-roots : Better Auth et le fournisseur IA restent donc remplaçables sans
-coupler le domaine.
+Le transport dérive toujours le workspace et le rôle d’une session Better Auth
+et d’un membership actif. Le slug vient de la route via `x-workspace-slug` et
+n’est jamais accepté dans le payload. L’adaptateur de modèle reste injecté au
+composition root sans coupler le domaine.
 
 ## Hors périmètre
 

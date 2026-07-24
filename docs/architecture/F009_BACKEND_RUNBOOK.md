@@ -39,23 +39,45 @@ Les schémas de référence vivent dans
 l’étape avec `AGENT_OUTPUT_INVALID`. Aucun payload métier n’est écrit dans les
 logs du worker.
 
-## Contrat de l’adaptateur d’authentification
+## Authentification et contexte workspace
 
-Le module défini par `REQUEST_CONTEXT_ADAPTER_MODULE` exporte :
+L’API monte Better Auth sous `/api/auth/*`. Configurer :
 
-```ts
-export async function createRequestContextResolver(): Promise<RequestContextResolver>
+- `BETTER_AUTH_URL` avec l’origine publique de l’application ;
+- `BETTER_AUTH_SECRET` avec au moins 32 caractères aléatoires ;
+- `BETTER_AUTH_TRUSTED_ORIGINS` avec les origines autorisées, séparées par une
+  virgule ;
+- `BETTER_AUTH_ALLOW_SIGN_UP=false` hors bootstrap contrôlé.
+
+Better Auth possède les tables `auth_users`, `auth_sessions`, `auth_accounts`
+et `auth_verifications`. Le domaine possède `workspaces` et
+`workspace_members`, conformément à l’ADR-008.
+
+Chaque appel métier transmet le slug issu de la route Next.js dans
+`x-workspace-slug`. Le resolver valide la session en base, puis cherche un
+membership actif vers un workspace actif. Le slug n’accorde donc jamais un
+accès à lui seul :
+
+- session absente ou révoquée : `401 AUTHENTICATION_REQUIRED` ;
+- header absent ou mal formé : `400 WORKSPACE_CONTEXT_REQUIRED` ;
+- membership absent ou désactivé : `403 WORKSPACE_FORBIDDEN`.
+
+Le payload HTTP ne peut jamais choisir son workspace.
+
+### Bootstrap du premier owner
+
+Après la migration, renseigner temporairement les variables
+`BOOTSTRAP_OWNER_*` et `BOOTSTRAP_WORKSPACE_*`, puis exécuter :
+
+```bash
+bun run bootstrap:owner
 ```
 
-Le resolver reçoit la requête Web standard et retourne `userId`,
-`workspaceId` et `role`. Les identifiants doivent être des UUID et le rôle doit
-être `viewer`, `operator`, `reviewer`, `admin` ou `owner`. Une session absente
-doit lever `RequestAuthenticationError`.
-
-Le module d’exemple déclaré dans `.env.example` est un point de branchement,
-pas un adaptateur factice livré en production. L’intégration Next.js/Better
-Auth devra construire ce contexte depuis la session et l’appartenance au
-workspace. Le payload HTTP ne peut jamais choisir son workspace.
+La commande crée le compte Better Auth si nécessaire, crée le workspace si
+nécessaire et rend ce membre `owner`. Elle est idempotente, ne journalise ni le
+mot de passe ni le cookie et refuse un workspace suspendu ou supprimé.
+Retirer ensuite `BOOTSTRAP_OWNER_PASSWORD` de l’environnement du processus.
+L’inscription HTTP reste désactivée avec `BETTER_AUTH_ALLOW_SIGN_UP=false`.
 
 ## Démarrer l’API
 

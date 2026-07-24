@@ -32,6 +32,10 @@ routes, expiration et révocation.
 **Dépendances** : Better Auth, PostgreSQL.  
 **Surface** : `/login`, shell applicatif.
 
+**État backend** : tables et runtime Better Auth, révocation de session,
+inscription fermée par défaut et bootstrap owner implémentés. La page login et
+la redirection vers le dernier workspace restent dans la tranche Next.js.
+
 ### F-002 — Workspaces, membres et rôles (`P0`)
 
 **Valeur** : isoler plusieurs organisations et répartir les responsabilités.
@@ -51,6 +55,10 @@ routes, expiration et révocation.
 
 **Dépendances** : F-001.  
 **Surface** : `/onboarding`, `/w/[workspaceSlug]/settings`.
+
+**État backend** : workspaces, memberships, rôles, désactivation et résolution
+du slug de route implémentés pour F-009. Invitations, administration des
+membres, audit des rôles et protection du dernier owner restent à livrer.
 
 ### F-003 — Audit, jobs et outbox (`P0`)
 

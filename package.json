@@ -14,10 +14,12 @@
     "test:integration": "bun test tests/integration",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "bun packages/infrastructure/src/database/migrate.ts",
+    "bootstrap:owner": "bun scripts/bootstrap-owner.ts",
     "api": "bun apps/api/src/index.ts",
     "worker": "bun apps/worker/src/index.ts"
   },
   "dependencies": {
+    "better-auth": "^1.6.25",
     "drizzle-orm": "^0.45.2",
     "postgres": "^3.4.9",
     "zod": "^4.4.3"

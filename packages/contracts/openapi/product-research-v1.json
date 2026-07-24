@@ -23,6 +23,11 @@
       "post": {
         "operationId": "createProductResearchRun",
         "summary": "Create a product research draft",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceSlug"
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -60,6 +65,9 @@
       "parameters": [
         {
           "$ref": "#/components/parameters/RunId"
+        },
+        {
+          "$ref": "#/components/parameters/WorkspaceSlug"
         }
       ],
       "get": {
@@ -75,6 +83,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
           },
           "401": {
             "$ref": "#/components/responses/AuthenticationRequired"
@@ -92,6 +103,9 @@
       "parameters": [
         {
           "$ref": "#/components/parameters/RunId"
+        },
+        {
+          "$ref": "#/components/parameters/WorkspaceSlug"
         }
       ],
       "get": {
@@ -146,6 +160,9 @@
       "parameters": [
         {
           "$ref": "#/components/parameters/RunId"
+        },
+        {
+          "$ref": "#/components/parameters/WorkspaceSlug"
         }
       ],
       "post": {
@@ -154,6 +171,9 @@
         "responses": {
           "202": {
             "$ref": "#/components/responses/ActionAccepted"
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
           },
           "401": {
             "$ref": "#/components/responses/AuthenticationRequired"
@@ -174,6 +194,9 @@
       "parameters": [
         {
           "$ref": "#/components/parameters/RunId"
+        },
+        {
+          "$ref": "#/components/parameters/WorkspaceSlug"
         }
       ],
       "post": {
@@ -182,6 +205,9 @@
         "responses": {
           "202": {
             "$ref": "#/components/responses/ActionAccepted"
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
           },
           "401": {
             "$ref": "#/components/responses/AuthenticationRequired"
@@ -202,6 +228,9 @@
       "parameters": [
         {
           "$ref": "#/components/parameters/RunId"
+        },
+        {
+          "$ref": "#/components/parameters/WorkspaceSlug"
         }
       ],
       "post": {
@@ -210,6 +239,9 @@
         "responses": {
           "202": {
             "$ref": "#/components/responses/ActionAccepted"
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
           },
           "401": {
             "$ref": "#/components/responses/AuthenticationRequired"
@@ -230,6 +262,9 @@
       "parameters": [
         {
           "$ref": "#/components/parameters/RunId"
+        },
+        {
+          "$ref": "#/components/parameters/WorkspaceSlug"
         }
       ],
       "post": {
@@ -273,10 +308,21 @@
       "sessionCookie": {
         "type": "apiKey",
         "in": "cookie",
-        "name": "ignition_session"
+        "name": "better-auth.session_token"
       }
     },
     "parameters": {
+      "WorkspaceSlug": {
+        "name": "x-workspace-slug",
+        "in": "header",
+        "required": true,
+        "description": "Workspace selected by the route. Membership is validated server-side.",
+        "schema": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "maxLength": 120
+        }
+      },
       "RunId": {
         "name": "runId",
         "in": "path",

@@ -18,6 +18,8 @@
 
 ```mermaid
 erDiagram
+    AUTH_USER ||--o{ AUTH_SESSION : opens
+    AUTH_USER ||--o{ AUTH_ACCOUNT : authenticates_with
     AUTH_USER ||--o{ WORKSPACE_MEMBER : joins
     WORKSPACE ||--o{ WORKSPACE_MEMBER : owns
     WORKSPACE ||--o{ WORKSPACE_INVITATION : issues
@@ -36,7 +38,22 @@ erDiagram
         uuid id PK
         citext email UK
         string name
+        boolean email_verified
         timestamptz created_at
+        timestamptz updated_at
+    }
+    AUTH_SESSION {
+        uuid id PK
+        uuid user_id FK
+        string token UK
+        timestamptz expires_at
+    }
+    AUTH_ACCOUNT {
+        uuid id PK
+        uuid user_id FK
+        string provider_id
+        string account_id
+        string password
     }
     WORKSPACE {
         uuid id PK
@@ -53,6 +70,7 @@ erDiagram
         string role
         string status
         timestamptz joined_at
+        timestamptz last_selected_at
     }
     WORKSPACE_INVITATION {
         uuid id PK
@@ -151,8 +169,10 @@ Contraintes principales :
 - `UNIQUE (offer_id, version)`, `UNIQUE (icp_id, version)` ;
 - versions publiées interdites en `UPDATE` et `DELETE` ;
 - `UNIQUE (workspace_id, lower(name))` pour les conteneurs actifs ;
-- Better Auth peut posséder ses tables techniques ; `AUTH_USER` représente ici
-  la projection d’identité référencée par le domaine.
+- Better Auth possède `AUTH_USER`, `AUTH_SESSION`, `AUTH_ACCOUNT` et
+  `AUTH_VERIFICATION` ; le domaine ne les modifie pas hors bootstrap contrôlé ;
+- le domaine possède `WORKSPACE` et `WORKSPACE_MEMBER` et vérifie le membership
+  actif à chaque résolution du slug de route.
 
 ## 3. Prospect Intelligence
 

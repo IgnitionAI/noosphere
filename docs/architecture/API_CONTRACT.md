@@ -9,6 +9,8 @@
 - erreurs au format Problem Details ;
 - `Idempotency-Key` obligatoire pour les actions pouvant provoquer un envoi ;
 - `workspace_id` dérivé de la session et du contexte de route, jamais du payload ;
+- `x-workspace-slug` transporte le slug de la route et ne vaut accès qu’après
+  validation du membership actif côté serveur ;
 - actions métier explicites plutôt que modifications arbitraires de statut.
 
 ## 2. Ressources principales
@@ -78,6 +80,7 @@
 | `PROVIDER_RATE_LIMITED` | 503 | exécution différée |
 | `IDEMPOTENCY_CONFLICT` | 409 | même clé avec un payload différent |
 | `AUTHENTICATION_REQUIRED` | 401 | session absente ou contexte invalide |
+| `WORKSPACE_CONTEXT_REQUIRED` | 400 | slug de workspace absent ou mal formé |
 | `PRODUCT_RESEARCH_RUN_NOT_FOUND` | 404 | mission absente du workspace courant |
 | `PRODUCT_RESEARCH_INVALID_STATE` | 409 | transition de mission interdite |
 | `INVALID_REQUEST` | 400 | corps, identifiant, curseur ou limite invalide |

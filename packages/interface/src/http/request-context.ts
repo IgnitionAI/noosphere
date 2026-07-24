@@ -16,3 +16,17 @@ export class RequestAuthenticationError extends Error {
     this.name = "RequestAuthenticationError";
   }
 }
+
+export class WorkspaceContextRequiredError extends Error {
+  constructor(message = "A workspace route context is required") {
+    super(message);
+    this.name = "WorkspaceContextRequiredError";
+  }
+}
+
+export class WorkspaceAccessDeniedError extends Error {
+  constructor(message = "The selected workspace is not accessible") {
+    super(message);
+    this.name = "WorkspaceAccessDeniedError";
+  }
+}

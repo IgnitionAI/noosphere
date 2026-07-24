@@ -6,7 +6,11 @@ import {
 import type { ProductResearchApplication } from "@outbound/application/gtm/product-research-application";
 import { ProductResearchNotFoundError } from "@outbound/application/gtm/product-research-application";
 import type { RequestContextResolver } from "@outbound/interface/http/request-context";
-import { RequestAuthenticationError } from "@outbound/interface/http/request-context";
+import {
+  RequestAuthenticationError,
+  WorkspaceAccessDeniedError,
+  WorkspaceContextRequiredError,
+} from "@outbound/interface/http/request-context";
 import {
   ProductResearchInvariantError,
   researchStages,
@@ -210,6 +214,12 @@ export function createProductResearchHttpHandler(dependencies: ProductResearchHt
       if (error instanceof RequestAuthenticationError) {
         return problem(401, "AUTHENTICATION_REQUIRED", error.message);
       }
+      if (error instanceof WorkspaceContextRequiredError) {
+        return problem(400, "WORKSPACE_CONTEXT_REQUIRED", error.message);
+      }
+      if (error instanceof WorkspaceAccessDeniedError) {
+        return problem(403, "WORKSPACE_FORBIDDEN", error.message);
+      }
       if (error instanceof ProductResearchNotFoundError) {
         return problem(404, "PRODUCT_RESEARCH_RUN_NOT_FOUND", error.message);
       }
@@ -244,7 +254,13 @@ async function resolveContext(resolver: RequestContextResolver, request: Request
   try {
     return requestContextSchema.parse(await resolver.resolve(request));
   } catch (error) {
-    if (error instanceof RequestAuthenticationError) throw error;
+    if (
+      error instanceof RequestAuthenticationError ||
+      error instanceof WorkspaceContextRequiredError ||
+      error instanceof WorkspaceAccessDeniedError
+    ) {
+      throw error;
+    }
     throw new RequestAuthenticationError("The authenticated request context is invalid");
   }
 }
