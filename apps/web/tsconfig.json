@@ -1,0 +1,25 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "jsx": "preserve",
+    "incremental": true,
+    "plugins": [{ "name": "next" }],
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./*"],
+      "@outbound/domain/*": ["../../packages/domain/src/*"],
+      "@outbound/application/*": ["../../packages/application/src/*"],
+      "@outbound/contracts/*": ["../../packages/contracts/src/*"],
+      "@outbound/infrastructure/*": ["../../packages/infrastructure/src/*"],
+      "@outbound/interface/*": ["../../packages/interface/src/*"]
+    }
+  },
+  "include": [
+    "next-env.d.ts",
+    ".next/types/**/*.ts",
+    ".next/dev/types/**/*.ts",
+    "**/*.ts",
+    "**/*.tsx"
+  ],
+  "exclude": ["node_modules"]
+}

@@ -10,12 +10,15 @@ import {
 import {
   AuthenticatedWorkspaceContextResolver,
   type AuthenticatedSessionReader,
+  type WorkspaceMembershipDirectory,
 } from "@outbound/interface/http/authenticated-workspace-context";
 import { PostgresWorkspaceMembershipReader } from "@outbound/infrastructure/auth/postgres-workspace-membership-reader";
 import type { RequestContextResolver } from "@outbound/interface/http/request-context";
 
 export interface BetterAuthRuntime {
   readonly contextResolver: RequestContextResolver;
+  readonly sessions: AuthenticatedSessionReader;
+  readonly memberships: WorkspaceMembershipDirectory;
   handle(request: Request): Promise<Response>;
 }
 
@@ -62,13 +65,13 @@ export function createBetterAuthRuntime(
       return session ? { userId: session.user.id } : null;
     },
   };
-  const contextResolver = new AuthenticatedWorkspaceContextResolver(
-    sessions,
-    new PostgresWorkspaceMembershipReader(db),
-  );
+  const memberships = new PostgresWorkspaceMembershipReader(db);
+  const contextResolver = new AuthenticatedWorkspaceContextResolver(sessions, memberships);
 
   return {
     contextResolver,
+    sessions,
+    memberships,
     handle(request) {
       return auth.handler(request);
     },

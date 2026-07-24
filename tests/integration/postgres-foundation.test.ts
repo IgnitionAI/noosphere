@@ -18,6 +18,7 @@ import {
 } from "@outbound/infrastructure/database/schema";
 import { Sha256ContentHasher } from "@outbound/infrastructure/shared/sha256-content-hasher";
 import { createProductResearchHttpHandler } from "@outbound/interface/http/product-research-handler";
+import { createWorkspaceHttpHandler } from "@outbound/interface/http/workspace-handler";
 import { bootstrapOwner } from "../../scripts/bootstrap-owner";
 import { validOutputFor } from "../fixtures/research-agent-fixtures";
 
@@ -54,10 +55,11 @@ databaseDescribe("PostgreSQL F-009 foundation", () => {
 
   test("leases a job to exactly one concurrent worker and deduplicates enqueue", async () => {
     const now = new Date();
+    const jobType = `integration.queue.${crypto.randomUUID()}`;
     const job = {
       id: ids.generate(),
       workspaceId: workspaceA,
-      type: "research.stage.execute",
+      type: jobType,
       payload: { test: true },
       idempotencyKey: `queue-contract-${crypto.randomUUID()}`,
       correlationId: "integration-queue",
@@ -308,6 +310,25 @@ databaseDescribe("PostgreSQL F-009 foundation", () => {
     expect(signIn.status).toBe(200);
     const cookie = responseCookies(signIn);
     expect(cookie).toContain("session_token");
+
+    const workspaceResponse = await createWorkspaceHttpHandler({
+      sessions: closedAuth.sessions,
+      memberships: closedAuth.memberships,
+    })(
+      new Request("http://localhost/api/v1/workspaces", {
+        headers: { cookie },
+      }),
+    );
+    expect(workspaceResponse.status).toBe(200);
+    expect(await workspaceResponse.json()).toMatchObject({
+      data: [
+        {
+          id: workspaceA,
+          slug: `workspace-a-${workspaceA}`,
+          role: "owner",
+        },
+      ],
+    });
 
     const handle = createProductResearchHttpHandler({
       application: new ProductResearchApplication(repository, repository, ids, clock),

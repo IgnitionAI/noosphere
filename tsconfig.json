@@ -26,5 +26,5 @@
     "tests/**/*.ts",
     "drizzle.config.ts"
   ],
-  "exclude": ["node_modules", "prototype"]
+  "exclude": ["node_modules", "prototype", "apps/web"]
 }

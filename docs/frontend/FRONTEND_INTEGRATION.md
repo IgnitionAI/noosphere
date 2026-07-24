@@ -8,12 +8,12 @@ Il contient 26 écrans HTML, un shell partagé, des données réalistes et une
 bibliothèque de composants. Le HTML sert à valider le produit et la hiérarchie
 visuelle. Il ne doit pas être copié tel quel dans la production.
 
-## Pages et futures routes Next.js
+## Pages et routes Next.js
 
 | Prototype | Route | Feature |
 |---|---|---|
-| `login.html` | `/login` | auth |
-| `onboarding.html` | `/onboarding` | workspace/gtm |
+| `login.html` | `/login` | auth — livré |
+| `onboarding.html` | `/onboarding` | workspace/gtm — état vide livré |
 | `dashboard.html` | `/w/[workspaceSlug]` | dashboard |
 | `approvals.html` | `/w/[workspaceSlug]/approvals` | approvals |
 | `prospects.html` | `/w/[workspaceSlug]/prospects` | prospect intelligence |
@@ -21,8 +21,8 @@ visuelle. Il ne doit pas être copié tel quel dans la production.
 | `prospect-detail.html` | `/w/[workspaceSlug]/prospects/[contactId]` | contact |
 | `companies.html` | `/w/[workspaceSlug]/companies` | companies |
 | `company-detail.html` | `/w/[workspaceSlug]/companies/[companyId]` | company |
-| `product-reading.html` | `/w/[workspaceSlug]/strategy/product-reading` | research brief |
-| `research-progress.html` | `/w/[workspaceSlug]/research/[runId]` | deep research progress |
+| `product-reading.html` | `/w/[workspaceSlug]/strategy/product-reading` | research brief — livré |
+| `research-progress.html` | `/w/[workspaceSlug]/research/[runId]` | deep research progress — livré |
 | `icp-builder.html` | `/w/[workspaceSlug]/research/[runId]/report` | sourced ICP report |
 | `offers.html` | `/w/[workspaceSlug]/offers` | offer versions |
 | `icps.html` | `/w/[workspaceSlug]/icps` | ICP versions |
@@ -56,31 +56,24 @@ visuelle. Il ne doit pas être copié tel quel dans la production.
 | `.score-ring` | `ProspectScore` métier |
 | sidebar/topbar | `AppShell` |
 
-## Découpage recommandé
+## Découpage en production
 
 ```text
 apps/web/
   app/
-    (auth)/
+    api/auth/[...all]/
+    login/
+    onboarding/
     w/[workspaceSlug]/
-  features/
-    workspace/
-    gtm/
-    prospects/
-    campaigns/
-    outreach/
-    inbox/
-    pipeline/
-    knowledge/
-    analytics/
   components/
-    ui/            # shadcn, sans logique métier
-    layout/        # AppShell, Sidebar, Topbar
-    data-display/  # Score, Identity, Status
+    app-shell.tsx
+  lib/
+    api.ts
 ```
 
-Les composants `ui/` ne connaissent ni les prospects, ni les campagnes. Les
-composants feature assemblent les primitives et portent le vocabulaire métier.
+Cette première tranche garde les composants au plus près de F-009. Les futures
+features devront extraire les primitives partagées seulement lorsqu’un deuxième
+usage réel apparaît.
 
 ## États à implémenter pour chaque page
 
@@ -102,18 +95,29 @@ composants feature assemblent les primitives et portent le vocabulaire métier.
 4. Garder les tableaux, drawers, formulaires et inbox en Client Components
    ciblés.
 5. Dériver le workspace de la route et de la session, jamais d’un champ libre.
-6. Reproduire d’abord le prototype à données statiques, puis brancher les cas
-   d’usage.
-7. Capturer des tests visuels à 375, 768, 1024 et 1440 px.
+6. Brancher les pages sur les cas d’usage dès leur première tranche verticale.
+7. Capturer des tests visuels aux breakpoints touchés par la tranche.
 
 ## Ordre de construction
 
-1. tokens et primitives ;
-2. `AppShell` et RBAC de navigation ;
-3. Prospects + fiche prospect ;
-4. campagne builder + validation ;
-5. inbox + approbation de réponse ;
-6. pipeline ;
-7. knowledge et analytics ;
-8. intégrations, settings, onboarding et auth ;
-9. AI Studio uniquement au démarrage de la phase IA.
+1. ~~tokens, primitives, auth et `AppShell`~~ ;
+2. ~~brief produit et suivi F-009~~ ;
+3. rapport ICP sourcé F-009 ;
+4. Prospects + fiche prospect ;
+5. campagne builder + validation ;
+6. inbox + approbation de réponse ;
+7. pipeline ;
+8. knowledge et analytics ;
+9. intégrations et settings ;
+10. AI Studio uniquement au démarrage de la phase IA.
+
+## Contrat d’exécution
+
+- `OUTBOUND_API_URL` est une URL serveur privée, jamais une variable
+  `NEXT_PUBLIC_*`.
+- `/api/auth/*` est relayé en same-origin vers l’API Bun.
+- `GET /api/v1/workspaces` fournit les seuls workspaces actifs de la session.
+- Chaque appel F-009 ajoute ensuite `x-workspace-slug`, validé à nouveau côté
+  API.
+- `bun run build:web` produit le bundle standalone et y copie les assets
+  statiques nécessaires au lancement sur VPS.

@@ -6,27 +6,40 @@
   "packageManager": "bun@1.3.4",
   "scripts": {
     "prototype": "bunx serve prototype -l 4173",
-    "check": "bun run check:prototype && bun run check:types && bun run check:architecture && bun test tests/unit tests/http && bun run check:build",
+    "check": "bun run check:prototype && bun run check:types && bun run check:architecture && bun test tests/unit tests/http && bun run check:build && bun run check:web",
     "check:prototype": "bun scripts/verify-prototype.ts",
-    "check:types": "tsc --noEmit",
+    "check:types": "tsc --noEmit && tsc -p apps/web/tsconfig.json --noEmit",
     "check:architecture": "bun scripts/verify-architecture.ts",
     "check:build": "bun build apps/api/src/index.ts apps/worker/src/index.ts --target bun --outdir dist/backend",
+    "check:web": "bun run build:web",
+    "build:web": "next build apps/web && bun scripts/prepare-web-standalone.ts",
     "test:integration": "bun test tests/integration",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "bun packages/infrastructure/src/database/migrate.ts",
     "bootstrap:owner": "bun scripts/bootstrap-owner.ts",
     "api": "bun apps/api/src/index.ts",
-    "worker": "bun apps/worker/src/index.ts"
+    "worker": "bun apps/worker/src/index.ts",
+    "web": "next dev apps/web --port 3000",
+    "web:start": "bun apps/web/.next/standalone/apps/web/server.js"
   },
   "dependencies": {
     "better-auth": "^1.6.25",
     "drizzle-orm": "^0.45.2",
+    "lucide-react": "^1.26.0",
+    "next": "^16.2.11",
     "postgres": "^3.4.9",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
     "@types/bun": "^1.3.14",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
     "drizzle-kit": "^0.31.10",
+    "postcss": "^8.5.23",
+    "tailwindcss": "^4.3.3",
     "typescript": "5.9.3"
   }
 }

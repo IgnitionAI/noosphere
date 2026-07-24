@@ -17,7 +17,7 @@
 
 | Méthode | Route | Usage | Rôle minimal |
 |---|---|---|---|
-| GET | `/workspaces` | lister les workspaces accessibles | viewer |
+| GET | `/workspaces` | lister les workspaces actifs de la session | utilisateur |
 | POST | `/workspaces` | créer un workspace | utilisateur |
 | POST | `/workspaces/:id/invitations` | inviter un membre | admin |
 | PATCH | `/workspaces/:id/members/:userId` | changer un rôle | owner |

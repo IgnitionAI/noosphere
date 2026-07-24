@@ -22,6 +22,18 @@ export interface WorkspaceMembershipReader {
   }): Promise<{ readonly workspaceId: string; readonly role: WorkspaceRole } | null>;
 }
 
+export interface WorkspaceMembershipSummary {
+  readonly workspaceId: string;
+  readonly slug: string;
+  readonly name: string;
+  readonly role: WorkspaceRole;
+  readonly lastSelectedAt: Date | null;
+}
+
+export interface WorkspaceMembershipDirectory {
+  listActiveMemberships(userId: string): Promise<readonly WorkspaceMembershipSummary[]>;
+}
+
 export class AuthenticatedWorkspaceContextResolver implements RequestContextResolver {
   constructor(
     private readonly sessions: AuthenticatedSessionReader,

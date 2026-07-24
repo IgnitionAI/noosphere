@@ -5,9 +5,9 @@ pour IgnitionAI, avec une architecture permettant une évolution ultérieure ver
 un produit SaaS multi-workspace.
 
 Ce dépôt contient les spécifications d’architecture, un prototype frontend
-HTML/Tailwind navigable et le premier socle backend Bun/PostgreSQL de la mission
-de recherche ICP F-009. L’application Next.js et l’adaptateur de modèles IA ne
-sont pas encore implémentés.
+HTML/Tailwind navigable et la première tranche verticale Bun/PostgreSQL/Next.js
+de la mission de recherche ICP F-009. L’adaptateur de modèles IA reste à
+implémenter.
 
 ![Vue d’ensemble du prototype](prototype/screenshots/dashboard-desktop.png)
 
@@ -27,7 +27,34 @@ bun run check
 ```
 
 Le contrôle couvre aussi les types, les dépendances d’architecture et les tests
-unitaires du domaine, de la file de jobs et de l’orchestrateur.
+unitaires du domaine, de la file de jobs, de l’orchestrateur et le build
+standalone Next.js.
+
+## Application web
+
+Après avoir renseigné `.env`, migré la base et créé le compte propriétaire :
+
+```bash
+bun run db:migrate
+bun run bootstrap:owner
+bun run api
+bun run web
+```
+
+L’API écoute par défaut sur `127.0.0.1:3001` et Next.js sur
+`127.0.0.1:3000`. L’authentification passe par le proxy same-origin
+`/api/auth/*`, puis les pages serveur résolvent uniquement les workspaces actifs
+de la session.
+
+Pour produire et lancer le bundle VPS :
+
+```bash
+bun run build:web
+HOSTNAME=0.0.0.0 PORT=3000 bun run web:start
+```
+
+Le workflow livré couvre `/login`, la sélection automatique du workspace, le
+brief produit F-009 et le suivi de mission avec pause/reprise.
 
 ## Backend F-009
 
@@ -75,7 +102,7 @@ sont détaillées dans le runbook F-009.
 
 ## Statut
 
-Architecture V1, prototype frontend, socle backend et routes HTTP F-009 validés
-le 24 juillet 2026. Better Auth et la résolution sécurisée du workspace sont
-branchés côté API. L’application Next.js et l’adaptateur de modèles IA restent
-à implémenter.
+Architecture V1, prototype frontend et première tranche F-009 validés le
+24 juillet 2026. Better Auth, la résolution sécurisée du workspace, le brief
+produit et le suivi de mission sont branchés. L’adaptateur de modèles IA et la
+génération du rapport ICP restent à implémenter.

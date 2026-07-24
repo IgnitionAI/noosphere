@@ -1,0 +1,34 @@
+import { redirect } from "next/navigation";
+import { LoginForm } from "./login-form";
+import { getSession } from "@/lib/api";
+
+export const metadata = { title: "Connexion" };
+export const dynamic = "force-dynamic";
+
+export default async function LoginPage() {
+  if (await getSession()) redirect("/");
+  return (
+    <main className="grid min-h-screen place-items-center bg-canvas p-5">
+      <section className="w-full max-w-[430px]">
+        <div className="mb-8 flex justify-center">
+          <div className="grid h-12 w-12 place-items-center rounded-xl bg-navy font-black text-signal">
+            IO
+          </div>
+        </div>
+        <div className="panel p-7 sm:p-8">
+          <div className="badge badge-signal mx-auto w-fit">Espace privé IgnitionAI</div>
+          <h1 className="mt-5 text-center text-2xl font-semibold tracking-tight">
+            Se connecter à Ignition Outbound
+          </h1>
+          <p className="mt-2 text-center text-sm leading-6 text-muted">
+            Retrouvez vos études ICP, prospects et campagnes dans un espace isolé.
+          </p>
+          <LoginForm />
+          <p className="mt-6 text-center text-[11px] leading-5 text-muted">
+            Accès réservé aux membres actifs d’un workspace.
+          </p>
+        </div>
+      </section>
+    </main>
+  );
+}

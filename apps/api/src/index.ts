@@ -4,6 +4,7 @@ import { createBetterAuthRuntime } from "@outbound/infrastructure/auth/better-au
 import { createDatabase } from "@outbound/infrastructure/database/client";
 import { PostgresProductResearchRepository } from "@outbound/infrastructure/gtm/postgres-product-research-repository";
 import { createProductResearchHttpHandler } from "@outbound/interface/http/product-research-handler";
+import { createWorkspaceHttpHandler } from "@outbound/interface/http/workspace-handler";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
@@ -27,6 +28,10 @@ const productResearch = createProductResearchHttpHandler({
   application,
   contextResolver: auth.contextResolver,
 });
+const workspace = createWorkspaceHttpHandler({
+  sessions: auth.sessions,
+  memberships: auth.memberships,
+});
 const port = positiveIntegerEnvironment("PORT", 3000);
 const server = Bun.serve({
   port,
@@ -34,6 +39,7 @@ const server = Bun.serve({
   async fetch(request) {
     const pathname = new URL(request.url).pathname;
     if (pathname.startsWith("/api/auth/")) return auth.handle(request);
+    if (pathname === "/api/v1/workspaces") return workspace(request);
     if (pathname === "/health/live") return Response.json({ status: "ok" });
     if (pathname === "/health/ready") {
       try {
