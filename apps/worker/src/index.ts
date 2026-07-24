@@ -1,3 +1,5 @@
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import type { ResearchAgentExecutor } from "@outbound/application/gtm/product-research-ports";
 import { ResearchOrchestrator } from "@outbound/application/gtm/research-orchestrator";
 import {
@@ -12,7 +14,7 @@ import { ResearchWorker } from "./research-worker";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const adapterModulePath = requiredEnvironment("RESEARCH_AGENT_ADAPTER_MODULE");
-const adapterModule = (await import(adapterModulePath)) as {
+const adapterModule = (await import(adapterModuleSpecifier(adapterModulePath))) as {
   createResearchAgentExecutor?: () => ResearchAgentExecutor | Promise<ResearchAgentExecutor>;
 };
 if (typeof adapterModule.createResearchAgentExecutor !== "function") {
@@ -58,6 +60,12 @@ function requiredEnvironment(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`${name} is required`);
   return value;
+}
+
+function adapterModuleSpecifier(value: string): string {
+  return value.startsWith(".") || value.startsWith("/")
+    ? pathToFileURL(resolve(value)).href
+    : value;
 }
 
 function positiveIntegerEnvironment(name: string, fallback: number): number {

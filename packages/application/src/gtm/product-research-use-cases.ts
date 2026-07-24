@@ -1,6 +1,8 @@
 import {
   ProductResearchRun,
+  researchStages,
   type ProductResearchBrief,
+  type ResearchStage,
 } from "@outbound/domain/gtm/product-research";
 import type { ProductResearchRepository } from "@outbound/application/gtm/product-research-ports";
 import type { NewJob } from "@outbound/application/jobs/job-queue";
@@ -106,6 +108,55 @@ export class ResumeProductResearchRun {
       }
       : null;
     await this.repository.commitRunTransition(run, job, run.pullEvents());
+    return run;
+  }
+}
+
+export class RequestMoreProductResearch {
+  constructor(
+    private readonly repository: ProductResearchRepository,
+    private readonly ids: IdGenerator,
+    private readonly clock: Clock,
+  ) {}
+
+  async execute(input: {
+    workspaceId: string;
+    runId: string;
+    fromStage: ResearchStage;
+    reason: string;
+    correlationId: string;
+  }): Promise<ProductResearchRun> {
+    const run = await this.repository.findById(input.workspaceId, input.runId);
+    if (!run) throw new Error("PRODUCT_RESEARCH_RUN_NOT_FOUND");
+    const checkpoints = await this.repository.listCompletedCheckpoints(input.workspaceId, input.runId);
+    const fromIndex = researchStages.indexOf(input.fromStage);
+    const preservedHumanStages = checkpoints
+      .filter(
+        (checkpoint) =>
+          checkpoint.review === "human_reviewed" &&
+          researchStages.indexOf(checkpoint.stage) >= fromIndex,
+      )
+      .map((checkpoint) => checkpoint.stage);
+    run.requestMore(input.fromStage, preservedHumanStages, input.reason, this.clock.now());
+    const stage = run.nextStage();
+    if (!stage) throw new Error("PRODUCT_RESEARCH_NO_STAGE_TO_RESEARCH");
+    const job: NewJob = {
+      id: this.ids.generate(),
+      workspaceId: input.workspaceId,
+      type: "research.stage.execute",
+      payload: { workspaceId: input.workspaceId, runId: input.runId, stage },
+      idempotencyKey: `${input.runId}:${stage}:research-more:${run.snapshot.version}`,
+      correlationId: input.correlationId,
+      maxAttempts: 5,
+      availableAt: this.clock.now(),
+    };
+    await this.repository.commitResearchMore({
+      run,
+      fromStage: input.fromStage,
+      reason: input.reason,
+      job,
+      events: run.pullEvents(),
+    });
     return run;
   }
 }

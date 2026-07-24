@@ -2,11 +2,19 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { CreateProductResearchRun, StartProductResearchRun } from "@outbound/application/gtm/product-research-use-cases";
+import { ProductResearchApplication } from "@outbound/application/gtm/product-research-application";
+import { ResearchOrchestrator } from "@outbound/application/gtm/research-orchestrator";
+import type { ResearchAgentExecutor } from "@outbound/application/gtm/product-research-ports";
 import { CryptoIdGenerator, SystemClock } from "@outbound/application/shared/ports";
+import type { AgentExecutionResult, AgentStageInput } from "@outbound/contracts/product-research";
+import type { ResearchStage } from "@outbound/domain/gtm/product-research";
 import { createDatabase } from "@outbound/infrastructure/database/client";
 import { PostgresProductResearchRepository } from "@outbound/infrastructure/gtm/postgres-product-research-repository";
 import { PostgresJobQueue } from "@outbound/infrastructure/jobs/postgres-job-queue";
-import { workspaces } from "@outbound/infrastructure/database/schema";
+import { marketEvidence, workspaces } from "@outbound/infrastructure/database/schema";
+import { Sha256ContentHasher } from "@outbound/infrastructure/shared/sha256-content-hasher";
+import { createProductResearchHttpHandler } from "@outbound/interface/http/product-research-handler";
+import { validOutputFor } from "../fixtures/research-agent-fixtures";
 
 const databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
 const databaseDescribe = databaseUrl ? describe : describe.skip;
@@ -117,4 +125,133 @@ databaseDescribe("PostgreSQL F-009 foundation", () => {
     }
     expect(crossWorkspaceInsertRejected).toBe(true);
   });
+
+  test("serves the HTTP workflow and invalidates checkpoints transactionally", async () => {
+    const application = new ProductResearchApplication(repository, repository, ids, clock);
+    const handle = createProductResearchHttpHandler({
+      application,
+      contextResolver: {
+        async resolve() {
+          return { userId: crypto.randomUUID(), workspaceId: workspaceA, role: "operator" };
+        },
+      },
+    });
+    const createResponse = await handle(
+      new Request("http://localhost/api/v1/product-research-runs", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          productUrl: "https://example.com",
+          productName: "HTTP Integration",
+          description: "",
+          geography: "France",
+          languages: ["fr"],
+          salesMotion: "saas",
+          knownCompetitors: [],
+          internalDocumentIds: [],
+          depth: "standard",
+        }),
+      }),
+    );
+    const created = (await createResponse.json()) as { id: string };
+    expect(createResponse.status).toBe(201);
+    expect(
+      (
+        await handle(
+          new Request(
+            `http://localhost/api/v1/product-research-runs/${created.id}/actions/start`,
+            { method: "POST" },
+          ),
+        )
+      ).status,
+    ).toBe(202);
+
+    const orchestrator = new ResearchOrchestrator(
+      repository,
+      queue,
+      new IntegrationFixtureAgents(),
+      ids,
+      clock,
+      new Sha256ContentHasher(),
+    );
+    let processedStages = 0;
+    while (processedStages < 3) {
+      const leased = await queue.lease({
+        workerId: "integration-http-worker",
+        types: ["research.stage.execute"],
+        limit: 1,
+        leaseMs: 30_000,
+        now: clock.now(),
+      });
+      const job = leased[0]!;
+      const payload = job.payload as { runId?: string };
+      if (payload.runId !== created.id) {
+        await queue.acknowledge(job.id, job.lockedBy, clock.now());
+        continue;
+      }
+      await orchestrator.process(job);
+      processedStages += 1;
+    }
+    await database.db.insert(marketEvidence).values({
+      id: ids.generate(),
+      workspaceId: workspaceA,
+      runId: created.id,
+      sourceType: "public_web",
+      url: "https://example.com/evidence",
+      title: "Integration evidence",
+      excerpt: "A persisted source excerpt.",
+      contentHash: crypto.randomUUID().replaceAll("-", ""),
+      observedAt: clock.now(),
+    });
+
+    const evidenceResponse = await handle(
+      new Request(
+        `http://localhost/api/v1/product-research-runs/${created.id}/evidence?limit=1`,
+      ),
+    );
+    expect(evidenceResponse.status).toBe(200);
+    expect(((await evidenceResponse.json()) as { data: unknown[] }).data).toHaveLength(1);
+
+    const researchMore = await handle(
+      new Request(
+        `http://localhost/api/v1/product-research-runs/${created.id}/actions/research-more`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            fromStage: "competitor_discovery",
+            reason: "Integration test requests more research",
+          }),
+        },
+      ),
+    );
+    expect(researchMore.status).toBe(202);
+    const checkpoints = await database.client<{ stage: string; status: string }[]>`
+      select stage::text, status::text
+      from research_stage_runs
+      where workspace_id = ${workspaceA} and run_id = ${created.id}
+      order by started_at
+    `;
+    expect(checkpoints.map(({ stage, status }) => ({ stage, status }))).toEqual([
+      { stage: "product_analysis", status: "completed" },
+      { stage: "competitor_discovery", status: "invalidated" },
+      { stage: "competitor_analysis", status: "invalidated" },
+    ]);
+  });
 });
+
+class IntegrationFixtureAgents implements ResearchAgentExecutor {
+  async execute(stage: ResearchStage, _input: AgentStageInput): Promise<AgentExecutionResult> {
+    return {
+      output: validOutputFor(stage),
+      metadata: {
+        provider: "fixture",
+        model: "integration-v1",
+        promptVersion: "integration-v1",
+        parameters: {},
+        cost: 0,
+        latencyMs: 1,
+      },
+    };
+  }
+}

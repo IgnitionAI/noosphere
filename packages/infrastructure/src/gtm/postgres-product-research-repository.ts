@@ -1,6 +1,7 @@
-import { and, desc, eq, ne } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, ne, or } from "drizzle-orm";
 import {
   ProductResearchRun,
+  researchStages,
   type ProductResearchBrief,
   type ProductResearchEvent,
   type ProductResearchRunSnapshot,
@@ -10,12 +11,16 @@ import {
 import type { NewJob } from "@outbound/application/jobs/job-queue";
 import type {
   ProductResearchRepository,
+  ProductResearchViewRepository,
+  MarketEvidenceView,
+  ResearchStageRunView,
   ResearchAIRun,
 } from "@outbound/application/gtm/product-research-ports";
 import type { Database } from "@outbound/infrastructure/database/client";
 import {
   aiRuns,
   jobs,
+  marketEvidence,
   outboxEvents,
   productResearchRuns,
   researchStageRuns,
@@ -23,7 +28,9 @@ import {
 
 type DbExecutor = Pick<Database, "insert" | "update">;
 
-export class PostgresProductResearchRepository implements ProductResearchRepository {
+export class PostgresProductResearchRepository
+  implements ProductResearchRepository, ProductResearchViewRepository
+{
   constructor(private readonly db: Database) {}
 
   async insert(run: ProductResearchRun): Promise<void> {
@@ -151,6 +158,100 @@ export class PostgresProductResearchRepository implements ProductResearchReposit
       if (updated.length !== 1) throw new Error("CHECKPOINT_HUMAN_REVIEW_LOCKED");
       await insertEvents(tx, events);
     });
+  }
+
+  async commitResearchMore(input: {
+    run: ProductResearchRun;
+    fromStage: ResearchStage;
+    reason: string;
+    job: NewJob;
+    events: readonly ProductResearchEvent[];
+  }): Promise<void> {
+    const stagesToInvalidate = researchStages.slice(researchStages.indexOf(input.fromStage));
+    await this.db.transaction(async (tx) => {
+      await tx
+        .update(researchStageRuns)
+        .set({ status: "invalidated" })
+        .where(
+          and(
+            eq(researchStageRuns.workspaceId, input.run.snapshot.workspaceId),
+            eq(researchStageRuns.runId, input.run.snapshot.id),
+            eq(researchStageRuns.status, "completed"),
+            eq(researchStageRuns.review, "machine"),
+            inArray(researchStageRuns.stage, stagesToInvalidate),
+          ),
+        );
+      await updateRun(tx, input.run);
+      await insertJob(tx, input.job);
+      await insertEvents(tx, input.events);
+    });
+  }
+
+  async listEvidence(input: {
+    workspaceId: string;
+    runId: string;
+    after: { createdAt: Date; id: string } | null;
+    limit: number;
+  }): Promise<readonly MarketEvidenceView[]> {
+    const afterCondition = input.after
+      ? or(
+          gt(marketEvidence.createdAt, input.after.createdAt),
+          and(
+            eq(marketEvidence.createdAt, input.after.createdAt),
+            gt(marketEvidence.id, input.after.id),
+          ),
+        )
+      : undefined;
+    const rows = await this.db
+      .select()
+      .from(marketEvidence)
+      .where(
+        and(
+          eq(marketEvidence.workspaceId, input.workspaceId),
+          eq(marketEvidence.runId, input.runId),
+          afterCondition,
+        ),
+      )
+      .orderBy(asc(marketEvidence.createdAt), asc(marketEvidence.id))
+      .limit(input.limit);
+    return rows.map((row) => ({
+      id: row.id,
+      workspaceId: row.workspaceId,
+      runId: row.runId,
+      sourceType: row.sourceType as MarketEvidenceView["sourceType"],
+      url: row.url,
+      title: row.title,
+      excerpt: row.excerpt,
+      contentHash: row.contentHash,
+      observedAt: row.observedAt,
+      createdAt: row.createdAt,
+    }));
+  }
+
+  async listStageRuns(
+    workspaceId: string,
+    runId: string,
+  ): Promise<readonly ResearchStageRunView[]> {
+    const rows = await this.db
+      .select()
+      .from(researchStageRuns)
+      .where(
+        and(
+          eq(researchStageRuns.workspaceId, workspaceId),
+          eq(researchStageRuns.runId, runId),
+        ),
+      )
+      .orderBy(asc(researchStageRuns.startedAt), asc(researchStageRuns.attempt));
+    return rows.map((row) => ({
+      id: row.id,
+      stage: row.stage,
+      attempt: row.attempt,
+      status: row.status,
+      review: row.review,
+      errorCode: row.errorCode,
+      startedAt: row.startedAt,
+      completedAt: row.completedAt,
+    }));
   }
 }
 

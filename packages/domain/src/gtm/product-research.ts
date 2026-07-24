@@ -59,6 +59,13 @@ export type ProductResearchEvent =
     }
   | { readonly type: "ProductResearchReadyForReview"; readonly runId: string; readonly workspaceId: string }
   | {
+      readonly type: "ProductResearchMoreRequested";
+      readonly runId: string;
+      readonly workspaceId: string;
+      readonly fromStage: ResearchStage;
+      readonly reason: string;
+    }
+  | {
       readonly type: "ResearchStageFailed";
       readonly runId: string;
       readonly workspaceId: string;
@@ -224,6 +231,36 @@ export class ProductResearchRun {
     });
   }
 
+  requestMore(
+    fromStage: ResearchStage,
+    preservedHumanStages: readonly ResearchStage[],
+    reason: string,
+    now: Date,
+  ): void {
+    const fromIndex = researchStages.indexOf(fromStage);
+    const wasReached =
+      this.#snapshot.completedStages.includes(fromStage) || this.#snapshot.activeStage === fromStage;
+    if (!wasReached) {
+      throw new ProductResearchInvariantError(`Stage ${fromStage} has not been reached`);
+    }
+    const completedStages = this.#snapshot.completedStages.filter(
+      (stage) => researchStages.indexOf(stage) < fromIndex || preservedHumanStages.includes(stage),
+    );
+    this.#update({
+      completedStages,
+      activeStage: null,
+      status: "queued",
+      updatedAt: now,
+    });
+    this.#events.push({
+      type: "ProductResearchMoreRequested",
+      runId: this.#snapshot.id,
+      workspaceId: this.#snapshot.workspaceId,
+      fromStage,
+      reason,
+    });
+  }
+
   pullEvents(): readonly ProductResearchEvent[] {
     return this.#events.splice(0);
   }
@@ -237,7 +274,7 @@ export class ProductResearchRun {
   }
 }
 
-export type ResearchCheckpointStatus = "running" | "completed" | "failed";
+export type ResearchCheckpointStatus = "running" | "completed" | "failed" | "invalidated";
 export type ResearchCheckpointReview = "machine" | "human_reviewed";
 
 export interface ResearchCheckpoint {

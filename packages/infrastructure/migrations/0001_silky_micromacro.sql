@@ -1,0 +1,1 @@
+ALTER TYPE "public"."research_stage_status" ADD VALUE 'invalidated';

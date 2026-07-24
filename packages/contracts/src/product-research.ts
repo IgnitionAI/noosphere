@@ -21,6 +21,7 @@ export const productResearchBriefSchema = z
     internalDocumentIds: z.array(z.string().uuid()).max(100),
     depth: z.enum(["quick", "standard", "deep"]),
   })
+  .strict()
   .refine((brief) => Boolean(brief.productUrl || brief.description), {
     message: "A product URL or description is required",
     path: ["productUrl"],

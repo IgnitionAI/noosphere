@@ -19,7 +19,8 @@ bun run prototype
 
 Puis ouvrir [http://localhost:4173](http://localhost:4173).
 
-Vérifier l’intégrité des pages et liens :
+Vérifier l’intégrité des pages, des types, de l’architecture, des routes et des
+builds Bun :
 
 ```bash
 bun run check
@@ -36,10 +37,14 @@ Le socle est organisé selon le monolithe modulaire :
 - `packages/contracts` : contrats Zod des rôles d’agents ;
 - `packages/application` : cas d’usage, ports et orchestrateur ;
 - `packages/infrastructure` : Drizzle, PostgreSQL, queue et adapters de test ;
+- `packages/interface` : transport HTTP Web standard et contrôle des rôles ;
+- `apps/api` : serveur Bun et composition root HTTP ;
 - `apps/worker` : consommateur Bun à lease.
 
 Voir le [runbook F-009](docs/architecture/F009_BACKEND_RUNBOOK.md) pour migrer
-PostgreSQL, brancher l’adaptateur d’agents et lancer le worker.
+PostgreSQL, brancher les adaptateurs, lancer l’API et le worker. Le contrat
+machine des sept routes est
+[`product-research-v1.json`](packages/contracts/openapi/product-research-v1.json).
 
 ## Documents
 
@@ -61,5 +66,6 @@ PostgreSQL, brancher l’adaptateur d’agents et lancer le worker.
 
 ## Statut
 
-Architecture V1, prototype frontend et socle backend F-009 validés le 24
-juillet 2026. Les routes HTTP et l’application Next.js restent à implémenter.
+Architecture V1, prototype frontend, socle backend et routes HTTP F-009 validés
+le 24 juillet 2026. L’adaptateur Better Auth, l’application Next.js et
+l’adaptateur de modèles IA restent à implémenter.

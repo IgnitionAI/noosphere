@@ -46,6 +46,13 @@
 | GET | `/analytics/pipeline` | pipeline et revenu | viewer |
 | GET/POST | `/connected-accounts` | comptes expéditeurs | admin |
 | POST | `/connected-accounts/:id/actions/check` | vérifier la santé | admin |
+| POST | `/product-research-runs` | créer une mission de recherche ICP | operator |
+| POST | `/product-research-runs/:id/actions/start` | lancer la mission | operator |
+| GET | `/product-research-runs/:id` | lire état, étapes et tentatives | viewer |
+| GET | `/product-research-runs/:id/evidence` | paginer les preuves | viewer |
+| POST | `/product-research-runs/:id/actions/pause` | suspendre la mission | operator |
+| POST | `/product-research-runs/:id/actions/resume` | reprendre la mission | operator |
+| POST | `/product-research-runs/:id/actions/research-more` | reprendre depuis une étape | operator |
 
 ## 3. Endpoints fournisseurs
 
@@ -70,6 +77,12 @@
 | `CHANNEL_UNAVAILABLE` | 422 | aucun canal/fallback valide |
 | `PROVIDER_RATE_LIMITED` | 503 | exécution différée |
 | `IDEMPOTENCY_CONFLICT` | 409 | même clé avec un payload différent |
+| `AUTHENTICATION_REQUIRED` | 401 | session absente ou contexte invalide |
+| `PRODUCT_RESEARCH_RUN_NOT_FOUND` | 404 | mission absente du workspace courant |
+| `PRODUCT_RESEARCH_INVALID_STATE` | 409 | transition de mission interdite |
+| `INVALID_REQUEST` | 400 | corps, identifiant, curseur ou limite invalide |
 
-Les DTO détaillés seront décrits dans l’OpenAPI avant implémentation de chaque
-vertical slice.
+Le contrat détaillé F-009 est versionné dans
+`packages/contracts/openapi/product-research-v1.json`. Le rôle et le
+`workspace_id` proviennent exclusivement de l’adaptateur de contexte
+authentifié ; aucun endpoint n’accepte un workspace dans son payload.

@@ -1,0 +1,413 @@
+import { describe, expect, test } from "bun:test";
+import { ProductResearchApplication } from "@outbound/application/gtm/product-research-application";
+import { ResearchOrchestrator } from "@outbound/application/gtm/research-orchestrator";
+import type { ResearchAgentExecutor } from "@outbound/application/gtm/product-research-ports";
+import { CryptoIdGenerator, SystemClock } from "@outbound/application/shared/ports";
+import type { AgentExecutionResult, AgentStageInput } from "@outbound/contracts/product-research";
+import type { ResearchStage } from "@outbound/domain/gtm/product-research";
+import { createProductResearchHttpHandler } from "@outbound/interface/http/product-research-handler";
+import { RequestAuthenticationError } from "@outbound/interface/http/request-context";
+import { InMemoryResearchBackend } from "@outbound/infrastructure/testing/in-memory-research-backend";
+import { Sha256ContentHasher } from "@outbound/infrastructure/shared/sha256-content-hasher";
+import { validOutputFor } from "../fixtures/research-agent-fixtures";
+
+describe("F-009 HTTP routes", () => {
+  test("an operator creates a draft in the workspace derived from the request context", async () => {
+    const { backend, workspaceId, handle } = createHarness();
+    const response = await createRun(handle);
+
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as {
+      id: string;
+      status: string;
+      links: { self: string; start: string };
+    };
+    expect(body.status).toBe("draft");
+    expect(body.links.self).toBe(`/api/v1/product-research-runs/${body.id}`);
+    expect((await backend.findById(workspaceId, body.id))?.snapshot.workspaceId).toBe(workspaceId);
+  });
+
+  test("an operator starts a run and a viewer reads its progress", async () => {
+    const harness = createHarness();
+    const created = (await (await createRun(harness.handle)).json()) as { id: string };
+
+    const started = await harness.handle(
+      new Request(`http://localhost/api/v1/product-research-runs/${created.id}/actions/start`, {
+        method: "POST",
+        headers: { "x-correlation-id": "http-start-test" },
+      }),
+    );
+    expect(started.status).toBe(202);
+
+    harness.context.role = "viewer";
+    const response = await harness.handle(
+      new Request(`http://localhost/api/v1/product-research-runs/${created.id}`),
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      id: string;
+      status: string;
+      activeStage: string | null;
+      brief: { productName: string; geography: string; depth: string };
+      stages: Array<{ stage: string; status: string }>;
+    };
+    expect(body).toMatchObject({
+      id: created.id,
+      status: "queued",
+      activeStage: null,
+      brief: {
+        productName: "Example",
+        geography: "France",
+        depth: "standard",
+      },
+    });
+    expect(body.stages[0]).toMatchObject({
+      stage: "product_analysis",
+      status: "queued",
+      attempts: 0,
+      lastErrorCode: null,
+    });
+  });
+
+  test("pause and resume actions are idempotent", async () => {
+    const harness = createHarness();
+    const created = (await (await createRun(harness.handle)).json()) as { id: string };
+    await action(harness.handle, created.id, "start");
+
+    expect((await action(harness.handle, created.id, "pause")).status).toBe(202);
+    expect((await action(harness.handle, created.id, "pause")).status).toBe(202);
+    expect((await action(harness.handle, created.id, "resume")).status).toBe(202);
+    expect((await action(harness.handle, created.id, "resume")).status).toBe(202);
+
+    const response = await harness.handle(
+      new Request(`http://localhost/api/v1/product-research-runs/${created.id}`),
+    );
+    expect((await response.json()) as { status: string }).toMatchObject({ status: "queued" });
+  });
+
+  test("a viewer cannot create or mutate a research run", async () => {
+    const harness = createHarness();
+    harness.context.role = "viewer";
+
+    const response = await createRun(harness.handle);
+    expect(response.status).toBe(403);
+    expect(response.headers.get("content-type")).toContain("application/problem+json");
+    expect((await response.json()) as { code: string }).toMatchObject({
+      code: "WORKSPACE_FORBIDDEN",
+    });
+  });
+
+  test("an unauthenticated request receives Problem Details", async () => {
+    const backend = new InMemoryResearchBackend();
+    const handle = createProductResearchHttpHandler({
+      application: new ProductResearchApplication(
+        backend,
+        backend,
+        new CryptoIdGenerator(),
+        new SystemClock(),
+      ),
+      contextResolver: {
+        async resolve() {
+          throw new RequestAuthenticationError();
+        },
+      },
+    });
+
+    const response = await createRun(handle);
+    expect(response.status).toBe(401);
+    expect((await response.json()) as { code: string }).toMatchObject({
+      code: "AUTHENTICATION_REQUIRED",
+    });
+  });
+
+  test("an invalid adapter context is rejected before reaching the application", async () => {
+    const backend = new InMemoryResearchBackend();
+    const handle = createProductResearchHttpHandler({
+      application: new ProductResearchApplication(
+        backend,
+        backend,
+        new CryptoIdGenerator(),
+        new SystemClock(),
+      ),
+      contextResolver: {
+        async resolve() {
+          return {
+            userId: "invalid",
+            workspaceId: "invalid",
+            role: "owner",
+          } as never;
+        },
+      },
+    });
+
+    expect((await createRun(handle)).status).toBe(401);
+    expect(backend.inspectRuns()).toHaveLength(0);
+  });
+
+  test("an invalid state transition returns a stable conflict", async () => {
+    const harness = createHarness();
+    const created = (await (await createRun(harness.handle)).json()) as { id: string };
+
+    const response = await action(harness.handle, created.id, "pause");
+    expect(response.status).toBe(409);
+    expect((await response.json()) as { code: string }).toMatchObject({
+      code: "PRODUCT_RESEARCH_INVALID_STATE",
+    });
+  });
+
+  test("a known route rejects unsupported HTTP methods", async () => {
+    const harness = createHarness();
+    const response = await harness.handle(
+      new Request("http://localhost/api/v1/product-research-runs", { method: "PUT" }),
+    );
+
+    expect(response.status).toBe(405);
+    expect(response.headers.get("allow")).toBe("POST");
+  });
+
+  test("a run from another workspace is indistinguishable from a missing run", async () => {
+    const harness = createHarness();
+    const created = (await (await createRun(harness.handle)).json()) as { id: string };
+    harness.context.workspaceId = crypto.randomUUID();
+
+    const response = await harness.handle(
+      new Request(`http://localhost/api/v1/product-research-runs/${created.id}`),
+    );
+    expect(response.status).toBe(404);
+    expect((await response.json()) as { code: string }).toMatchObject({
+      code: "PRODUCT_RESEARCH_RUN_NOT_FOUND",
+    });
+  });
+
+  test("the create route rejects a workspace supplied by the client", async () => {
+    const harness = createHarness();
+    const response = await harness.handle(
+      new Request("http://localhost/api/v1/product-research-runs", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          productUrl: "https://example.com",
+          productName: "Example",
+          description: "",
+          geography: "France",
+          languages: ["fr"],
+          salesMotion: "saas",
+          knownCompetitors: [],
+          internalDocumentIds: [],
+          depth: "standard",
+          workspaceId: crypto.randomUUID(),
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect((await response.json()) as { code: string }).toMatchObject({ code: "INVALID_REQUEST" });
+  });
+
+  test("evidence is workspace-scoped and paginated by cursor", async () => {
+    const harness = createHarness();
+    const created = (await (await createRun(harness.handle)).json()) as { id: string };
+    for (const index of [1, 2, 3]) {
+      harness.backend.seedEvidence({
+        id: crypto.randomUUID(),
+        workspaceId: harness.workspaceId,
+        runId: created.id,
+        sourceType: "public_web",
+        url: `https://example.com/source-${index}`,
+        title: `Source ${index}`,
+        excerpt: `Evidence ${index}`,
+        contentHash: `hash-${index}`,
+        observedAt: new Date(`2026-07-2${index}T10:00:00.000Z`),
+        createdAt: new Date(`2026-07-2${index}T10:00:00.000Z`),
+      });
+    }
+    harness.context.role = "viewer";
+
+    const first = await harness.handle(
+      new Request(
+        `http://localhost/api/v1/product-research-runs/${created.id}/evidence?limit=2`,
+      ),
+    );
+    expect(first.status).toBe(200);
+    const firstBody = (await first.json()) as {
+      data: Array<{ title: string }>;
+      nextCursor: string | null;
+    };
+    expect(firstBody.data.map((item) => item.title)).toEqual(["Source 1", "Source 2"]);
+    expect(firstBody.nextCursor).not.toBeNull();
+
+    const second = await harness.handle(
+      new Request(
+        `http://localhost/api/v1/product-research-runs/${created.id}/evidence?limit=2&cursor=${firstBody.nextCursor}`,
+      ),
+    );
+    const secondBody = (await second.json()) as {
+      data: Array<{ title: string }>;
+      nextCursor: string | null;
+    };
+    expect(secondBody.data.map((item) => item.title)).toEqual(["Source 3"]);
+    expect(secondBody.nextCursor).toBeNull();
+  });
+
+  test("research-more invalidates machine checkpoints from the requested stage", async () => {
+    const harness = createHarness();
+    const created = (await (await createRun(harness.handle)).json()) as { id: string };
+    await action(harness.handle, created.id, "start");
+    for (let index = 0; index < 3; index += 1) {
+      const leased = await harness.backend.lease({
+        workerId: "http-test-worker",
+        types: ["research.stage.execute"],
+        limit: 1,
+        leaseMs: 30_000,
+        now: harness.clock.now(),
+      });
+      await harness.orchestrator.process(leased[0]!);
+    }
+
+    const response = await harness.handle(
+      new Request(
+        `http://localhost/api/v1/product-research-runs/${created.id}/actions/research-more`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            fromStage: "competitor_discovery",
+            reason: "Comparer deux nouveaux concurrents détectés",
+          }),
+        },
+      ),
+    );
+
+    expect(response.status).toBe(202);
+    const body = (await response.json()) as { status: string; completedStages: string[] };
+    expect(body.status).toBe("queued");
+    expect(body.completedStages).toEqual(["product_analysis"]);
+    expect(
+      harness.backend
+        .inspectCheckpoints()
+        .filter((checkpoint) => checkpoint.stage !== "product_analysis")
+        .map((checkpoint) => checkpoint.status),
+    ).toEqual(["invalidated", "invalidated"]);
+  });
+
+  test("research-more preserves a human-reviewed checkpoint", async () => {
+    const harness = createHarness();
+    const created = (await (await createRun(harness.handle)).json()) as { id: string };
+    await action(harness.handle, created.id, "start");
+    for (let index = 0; index < 3; index += 1) {
+      const leased = await harness.backend.lease({
+        workerId: "http-test-worker",
+        types: ["research.stage.execute"],
+        limit: 1,
+        leaseMs: 30_000,
+        now: harness.clock.now(),
+      });
+      await harness.orchestrator.process(leased[0]!);
+    }
+    harness.backend.markCheckpointHumanReviewed(created.id, "competitor_discovery");
+
+    const response = await harness.handle(
+      new Request(
+        `http://localhost/api/v1/product-research-runs/${created.id}/actions/research-more`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            fromStage: "competitor_discovery",
+            reason: "Revoir uniquement les analyses postérieures",
+          }),
+        },
+      ),
+    );
+    const body = (await response.json()) as { completedStages: string[] };
+    expect(body.completedStages).toEqual(["product_analysis", "competitor_discovery"]);
+    expect(
+      harness.backend
+        .inspectCheckpoints()
+        .find((checkpoint) => checkpoint.stage === "competitor_discovery"),
+    ).toMatchObject({ status: "completed", review: "human_reviewed" });
+  });
+});
+
+function createHarness() {
+  const backend = new InMemoryResearchBackend();
+  const workspaceId = crypto.randomUUID();
+  const context = {
+    userId: crypto.randomUUID(),
+    workspaceId,
+    role: "operator" as "viewer" | "operator" | "reviewer" | "admin" | "owner",
+  };
+  const application = new ProductResearchApplication(
+    backend,
+    backend,
+    new CryptoIdGenerator(),
+    new SystemClock(),
+  );
+  const handle = createProductResearchHttpHandler({
+    application,
+    contextResolver: {
+      async resolve() {
+        return context;
+      },
+    },
+  });
+  const clock = new SystemClock();
+  const orchestrator = new ResearchOrchestrator(
+    backend,
+    backend,
+    new FixtureAgents(),
+    new CryptoIdGenerator(),
+    clock,
+    new Sha256ContentHasher(),
+  );
+  return { backend, workspaceId, context, handle, clock, orchestrator };
+}
+
+function createRun(handle: (request: Request) => Promise<Response>): Promise<Response> {
+  return handle(
+    new Request("http://localhost/api/v1/product-research-runs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        productUrl: "https://example.com",
+        productName: "Example",
+        description: "",
+        geography: "France",
+        languages: ["fr"],
+        salesMotion: "saas",
+        knownCompetitors: [],
+        internalDocumentIds: [],
+        depth: "standard",
+      }),
+    }),
+  );
+}
+
+function action(
+  handle: (request: Request) => Promise<Response>,
+  runId: string,
+  name: string,
+): Promise<Response> {
+  return handle(
+    new Request(`http://localhost/api/v1/product-research-runs/${runId}/actions/${name}`, {
+      method: "POST",
+      headers: { "x-correlation-id": `http-${name}-test` },
+    }),
+  );
+}
+
+class FixtureAgents implements ResearchAgentExecutor {
+  async execute(stage: ResearchStage, _input: AgentStageInput): Promise<AgentExecutionResult> {
+    return {
+      output: validOutputFor(stage),
+      metadata: {
+        provider: "fixture",
+        model: "fixture-v1",
+        promptVersion: "http-test-v1",
+        parameters: {},
+        cost: 0,
+        latencyMs: 1,
+      },
+    };
+  }
+}

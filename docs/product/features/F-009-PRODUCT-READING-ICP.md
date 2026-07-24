@@ -61,7 +61,7 @@ Chaque étape écrit un checkpoint durable. Une reprise ne recommence pas les
 - `ResearchFinding` : affirmation, confiance et preuves ;
 - `ICPProposal` : proposition produite par la mission.
 
-## API à spécifier
+## API implémentée
 
 | Méthode | Route | Usage |
 |---|---|---|
@@ -97,10 +97,16 @@ Chaque étape écrit un checkpoint durable. Une reprise ne recommence pas les
 - migration Drizzle : `packages/infrastructure/migrations/` ;
 - queue PostgreSQL : `packages/infrastructure/src/jobs/postgres-job-queue.ts` ;
 - worker Bun : `apps/worker/src/` ;
-- exploitation : `docs/architecture/F009_BACKEND_RUNBOOK.md`.
+- exploitation : `docs/architecture/F009_BACKEND_RUNBOOK.md` ;
+- façade applicative : `packages/application/src/gtm/product-research-application.ts` ;
+- transport HTTP : `packages/interface/src/http/product-research-handler.ts` ;
+- serveur Bun : `apps/api/src/index.ts` ;
+- contrat OpenAPI : `packages/contracts/openapi/product-research-v1.json`.
 
-Les routes HTTP restent à implémenter. L’adaptateur de modèle est injecté au
-composition root et n’appartient pas à ce socle.
+Le transport dérive toujours le workspace et le rôle du contexte authentifié.
+L’adaptateur de session et l’adaptateur de modèle sont injectés aux composition
+roots : Better Auth et le fournisseur IA restent donc remplaçables sans
+coupler le domaine.
 
 ## Hors périmètre
 

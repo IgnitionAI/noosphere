@@ -38,6 +38,50 @@ export interface ProductResearchRepository {
     checkpoint: ResearchCheckpoint,
     events: readonly ProductResearchEvent[],
   ): Promise<void>;
+  commitResearchMore(input: {
+    run: ProductResearchRun;
+    fromStage: ResearchStage;
+    reason: string;
+    job: NewJob;
+    events: readonly ProductResearchEvent[];
+  }): Promise<void>;
+}
+
+export interface ProductResearchViewRepository {
+  listStageRuns(
+    workspaceId: string,
+    runId: string,
+  ): Promise<readonly ResearchStageRunView[]>;
+  listEvidence(input: {
+    workspaceId: string;
+    runId: string;
+    after: { createdAt: Date; id: string } | null;
+    limit: number;
+  }): Promise<readonly MarketEvidenceView[]>;
+}
+
+export interface ResearchStageRunView {
+  readonly id: string;
+  readonly stage: ResearchStage;
+  readonly attempt: number;
+  readonly status: ResearchCheckpoint["status"];
+  readonly review: ResearchCheckpoint["review"];
+  readonly errorCode: string | null;
+  readonly startedAt: Date;
+  readonly completedAt: Date | null;
+}
+
+export interface MarketEvidenceView {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly runId: string;
+  readonly sourceType: "public_web" | "internal_document";
+  readonly url: string | null;
+  readonly title: string;
+  readonly excerpt: string;
+  readonly contentHash: string;
+  readonly observedAt: Date;
+  readonly createdAt: Date;
 }
 
 export interface ResearchAgentExecutor {

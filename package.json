@@ -6,13 +6,15 @@
   "packageManager": "bun@1.3.4",
   "scripts": {
     "prototype": "bunx serve prototype -l 4173",
-    "check": "bun run check:prototype && bun run check:types && bun run check:architecture && bun test tests/unit",
+    "check": "bun run check:prototype && bun run check:types && bun run check:architecture && bun test tests/unit tests/http && bun run check:build",
     "check:prototype": "bun scripts/verify-prototype.ts",
     "check:types": "tsc --noEmit",
     "check:architecture": "bun scripts/verify-architecture.ts",
+    "check:build": "bun build apps/api/src/index.ts apps/worker/src/index.ts --target bun --outdir dist/backend",
     "test:integration": "bun test tests/integration",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "bun packages/infrastructure/src/database/migrate.ts",
+    "api": "bun apps/api/src/index.ts",
     "worker": "bun apps/worker/src/index.ts"
   },
   "dependencies": {

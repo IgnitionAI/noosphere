@@ -33,7 +33,12 @@ export const researchStageEnum = pgEnum("research_stage", [
   "icp_synthesis",
   "evidence_review",
 ]);
-export const researchStageStatusEnum = pgEnum("research_stage_status", ["running", "completed", "failed"]);
+export const researchStageStatusEnum = pgEnum("research_stage_status", [
+  "running",
+  "completed",
+  "failed",
+  "invalidated",
+]);
 export const researchCheckpointReviewEnum = pgEnum("research_checkpoint_review", [
   "machine",
   "human_reviewed",

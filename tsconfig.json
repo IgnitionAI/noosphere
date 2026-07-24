@@ -15,7 +15,8 @@
       "@outbound/domain/*": ["./packages/domain/src/*"],
       "@outbound/application/*": ["./packages/application/src/*"],
       "@outbound/contracts/*": ["./packages/contracts/src/*"],
-      "@outbound/infrastructure/*": ["./packages/infrastructure/src/*"]
+      "@outbound/infrastructure/*": ["./packages/infrastructure/src/*"],
+      "@outbound/interface/*": ["./packages/interface/src/*"]
     }
   },
   "include": [

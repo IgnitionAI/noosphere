@@ -1,5 +1,6 @@
 import {
   ProductResearchRun,
+  researchStages,
   type ProductResearchEvent,
   type ProductResearchRunSnapshot,
   type ResearchCheckpoint,
@@ -14,6 +15,9 @@ import type {
 } from "@outbound/application/jobs/job-queue";
 import type {
   ProductResearchRepository,
+  ProductResearchViewRepository,
+  MarketEvidenceView,
+  ResearchStageRunView,
   ResearchAIRun,
 } from "@outbound/application/gtm/product-research-ports";
 
@@ -27,13 +31,16 @@ type StoredJob = Omit<NewJob, "availableAt"> & {
   lastErrorCode: string | null;
 };
 
-export class InMemoryResearchBackend implements ProductResearchRepository, JobQueue {
+export class InMemoryResearchBackend
+  implements ProductResearchRepository, ProductResearchViewRepository, JobQueue
+{
   readonly #runs = new Map<string, ProductResearchRunSnapshot>();
   readonly #checkpoints = new Map<string, ResearchCheckpoint>();
   readonly #jobs = new Map<string, StoredJob>();
   readonly #jobKeys = new Map<string, string>();
   readonly outbox: ProductResearchEvent[] = [];
   readonly aiRuns: ResearchAIRun[] = [];
+  readonly #evidence: MarketEvidenceView[] = [];
 
   async insert(run: ProductResearchRun): Promise<void> {
     const key = runKey(run.snapshot.workspaceId, run.snapshot.id);
@@ -126,6 +133,30 @@ export class InMemoryResearchBackend implements ProductResearchRepository, JobQu
     this.outbox.push(...events.map(clone));
   }
 
+  async commitResearchMore(input: {
+    run: ProductResearchRun;
+    fromStage: ResearchStage;
+    reason: string;
+    job: NewJob;
+    events: readonly ProductResearchEvent[];
+  }): Promise<void> {
+    const fromIndex = researchStages.indexOf(input.fromStage);
+    for (const [id, checkpoint] of this.#checkpoints) {
+      if (
+        checkpoint.workspaceId === input.run.snapshot.workspaceId &&
+        checkpoint.runId === input.run.snapshot.id &&
+        checkpoint.review === "machine" &&
+        checkpoint.status === "completed" &&
+        researchStages.indexOf(checkpoint.stage) >= fromIndex
+      ) {
+        this.#checkpoints.set(id, { ...checkpoint, status: "invalidated" });
+      }
+    }
+    this.#saveRun(input.run);
+    await this.enqueue(input.job);
+    this.outbox.push(...input.events.map(clone));
+  }
+
   async enqueue(job: NewJob): Promise<{ inserted: boolean }> {
     const uniqueKey = `${job.workspaceId}:${job.type}:${job.idempotencyKey}`;
     if (this.#jobKeys.has(uniqueKey)) return { inserted: false };
@@ -190,8 +221,73 @@ export class InMemoryResearchBackend implements ProductResearchRepository, JobQu
     return [...this.#jobs.values()].map(clone);
   }
 
+  inspectRuns(): readonly ProductResearchRunSnapshot[] {
+    return [...this.#runs.values()].map(clone);
+  }
+
   inspectCheckpoints(): readonly ResearchCheckpoint[] {
     return [...this.#checkpoints.values()].map(clone);
+  }
+
+  seedEvidence(evidence: MarketEvidenceView): void {
+    this.#evidence.push(clone(evidence));
+  }
+
+  markCheckpointHumanReviewed(runId: string, stage: ResearchStage): void {
+    const entry = [...this.#checkpoints.entries()].find(
+      ([, checkpoint]) =>
+        checkpoint.runId === runId &&
+        checkpoint.stage === stage &&
+        checkpoint.status === "completed",
+    );
+    if (!entry) throw new Error("CHECKPOINT_NOT_FOUND");
+    this.#checkpoints.set(entry[0], { ...entry[1], review: "human_reviewed" });
+  }
+
+  async listEvidence(input: {
+    workspaceId: string;
+    runId: string;
+    after: { createdAt: Date; id: string } | null;
+    limit: number;
+  }): Promise<readonly MarketEvidenceView[]> {
+    return this.#evidence
+      .filter(
+        (evidence) =>
+          evidence.workspaceId === input.workspaceId &&
+          evidence.runId === input.runId &&
+          (!input.after ||
+            evidence.createdAt > input.after.createdAt ||
+            (evidence.createdAt.getTime() === input.after.createdAt.getTime() &&
+              evidence.id > input.after.id)),
+      )
+      .sort(
+        (left, right) =>
+          left.createdAt.getTime() - right.createdAt.getTime() || left.id.localeCompare(right.id),
+      )
+      .slice(0, input.limit)
+      .map(clone);
+  }
+
+  async listStageRuns(
+    workspaceId: string,
+    runId: string,
+  ): Promise<readonly ResearchStageRunView[]> {
+    return [...this.#checkpoints.values()]
+      .filter(
+        (checkpoint) =>
+          checkpoint.workspaceId === workspaceId && checkpoint.runId === runId,
+      )
+      .sort((left, right) => left.startedAt.getTime() - right.startedAt.getTime())
+      .map((checkpoint) => ({
+        id: checkpoint.id,
+        stage: checkpoint.stage,
+        attempt: checkpoint.attempt,
+        status: checkpoint.status,
+        review: checkpoint.review,
+        errorCode: checkpoint.errorCode,
+        startedAt: checkpoint.startedAt,
+        completedAt: checkpoint.completedAt,
+      }));
   }
 
   #saveRun(run: ProductResearchRun): void {
