@@ -26,6 +26,9 @@ bun run check
 
 ## Documents
 
+- [Préparation produit et catalogue des features](docs/product/README.md)
+- [Plan de livraison des features](docs/product/DELIVERY_PLAN.md)
+- [Frontière IA](docs/product/AI_BOUNDARY.md)
 - [Spécification d’architecture](docs/architecture/ARCHITECTURE.md)
 - [Modèle de domaine](docs/architecture/DOMAIN.md)
 - [Modèle de données et ERD](docs/architecture/DATA_MODEL.md)
@@ -40,6 +43,6 @@ bun run check
 
 ## Statut
 
-Architecture V1 et prototype frontend validés le 24 juillet 2026. Les versions
-précises des dépendances applicatives seront figées au démarrage de
-l’implémentation Next.js.
+Architecture V1, prototype frontend et backlog fonctionnel validés le 24
+juillet 2026. Les versions précises des dépendances applicatives seront figées
+au démarrage de l’implémentation Next.js.

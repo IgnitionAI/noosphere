@@ -1,5 +1,9 @@
 # Roadmap d’implémentation
 
+Le découpage exécutable, les identifiants de features et leurs quality gates
+sont définis dans [`docs/product/DELIVERY_PLAN.md`](../product/DELIVERY_PLAN.md).
+Le présent document conserve la vue d’architecture générale.
+
 ## Principe
 
 Construire des vertical slices utilisables, pas toutes les tables puis toute
@@ -31,7 +35,7 @@ l’UI. Chaque phase se termine par un parcours démontrable et instrumenté.
 
 - connected accounts email via Unipile ;
 - séquences versionnées ;
-- génération IA avec preuves ;
+- templates contrôlés et rédaction humaine ;
 - approbation en une fois ;
 - scheduler, limites, retries et idempotence ;
 - inbox email et suspension sur réponse.
@@ -50,22 +54,29 @@ l’UI. Chaque phase se termine par un parcours démontrable et instrumenté.
 
 ## Phase 4 — Qualification et pipeline
 
-- classification de réponses ;
-- brouillons IA obligatoirement approuvés ;
+- qualification humaine de réponses ;
+- brouillons humains obligatoirement approuvés ;
 - calendrier et rendez-vous ;
 - opportunités, historique, revenu et motifs de perte ;
 - analytics par ICP, rôle, signal, canal et variante.
 
 **Sortie** : mesurer jusqu’au rendez-vous et au revenu.
 
-## Phase 5 — WhatsApp et apprentissage
+## Phase 5 — WhatsApp et pilotage
 
 - WhatsApp comme canal de continuité autorisé ;
-- recommandations de campagne fondées sur les résultats ;
-- évaluations IA et feedback ;
+- comparaison des résultats sur des métriques déterministes ;
+- collecte structurée du feedback humain.
+
+## Phase 6 — IA supervisée
+
+- scoring en mode shadow ;
+- génération de premiers contacts soumise à approbation ;
+- classification et brouillons de réponse soumis à approbation ;
+- évaluations IA, feedback, coûts et latence ;
 - éventuelle recherche hybride pgvector/ParadeDB après benchmark.
 
-## Phase 6 — Productisation SaaS
+## Phase 7 — Productisation SaaS
 
 - onboarding self-service ;
 - quotas et plans ;

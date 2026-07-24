@@ -111,5 +111,6 @@ composants feature assemblent les primitives et portent le vocabulaire métier.
 4. campagne builder + validation ;
 5. inbox + approbation de réponse ;
 6. pipeline ;
-7. knowledge, AI Studio et analytics ;
-8. intégrations, settings, onboarding et auth.
+7. knowledge et analytics ;
+8. intégrations, settings, onboarding et auth ;
+9. AI Studio uniquement au démarrage de la phase IA.
