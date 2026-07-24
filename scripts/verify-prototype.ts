@@ -52,6 +52,7 @@ for (const file of files) {
   const content = readFileSync(file, "utf8");
   for (const match of content.matchAll(referencePattern)) {
     const reference = match[1];
+    if (!reference) continue;
     if (/^(https?:|mailto:|tel:)/.test(reference) || reference.includes("${")) continue;
     const base = dirname(file) === join(prototype, "assets") ? prototype : dirname(file);
     const target = join(base, reference);

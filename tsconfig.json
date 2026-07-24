@@ -1,0 +1,29 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "Preserve",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "types": ["bun"],
+    "paths": {
+      "@outbound/domain/*": ["./packages/domain/src/*"],
+      "@outbound/application/*": ["./packages/application/src/*"],
+      "@outbound/contracts/*": ["./packages/contracts/src/*"],
+      "@outbound/infrastructure/*": ["./packages/infrastructure/src/*"]
+    }
+  },
+  "include": [
+    "apps/**/*.ts",
+    "packages/**/*.ts",
+    "scripts/**/*.ts",
+    "tests/**/*.ts",
+    "drizzle.config.ts"
+  ],
+  "exclude": ["node_modules", "prototype"]
+}

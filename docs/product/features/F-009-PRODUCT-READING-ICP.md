@@ -89,6 +89,19 @@ Chaque étape écrit un checkpoint durable. Une reprise ne recommence pas les
 - [Brief de mission](../../../prototype/product-reading.html)
 - [Progression de la recherche](../../../prototype/research-progress.html)
 
+## Socle backend implémenté
+
+- agrégat et transitions : `packages/domain/src/gtm/product-research.ts` ;
+- contrats des agents : `packages/contracts/src/product-research.ts` ;
+- orchestration : `packages/application/src/gtm/research-orchestrator.ts` ;
+- migration Drizzle : `packages/infrastructure/migrations/` ;
+- queue PostgreSQL : `packages/infrastructure/src/jobs/postgres-job-queue.ts` ;
+- worker Bun : `apps/worker/src/` ;
+- exploitation : `docs/architecture/F009_BACKEND_RUNBOOK.md`.
+
+Les routes HTTP restent à implémenter. L’adaptateur de modèle est injecté au
+composition root et n’appartient pas à ce socle.
+
 ## Hors périmètre
 
 - sourcing d’entreprises et de contacts ;

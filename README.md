@@ -4,9 +4,10 @@ Ignition Outbound est une application interne de prospection multicanale conçue
 pour IgnitionAI, avec une architecture permettant une évolution ultérieure vers
 un produit SaaS multi-workspace.
 
-Ce dépôt contient les spécifications d’architecture et un prototype frontend
-HTML/Tailwind navigable. Le backend et l’application Next.js ne sont pas encore
-implémentés.
+Ce dépôt contient les spécifications d’architecture, un prototype frontend
+HTML/Tailwind navigable et le premier socle backend Bun/PostgreSQL de la mission
+de recherche ICP F-009. L’application Next.js et l’adaptateur de modèles IA ne
+sont pas encore implémentés.
 
 ![Vue d’ensemble du prototype](prototype/screenshots/dashboard-desktop.png)
 
@@ -24,6 +25,22 @@ Vérifier l’intégrité des pages et liens :
 bun run check
 ```
 
+Le contrôle couvre aussi les types, les dépendances d’architecture et les tests
+unitaires du domaine, de la file de jobs et de l’orchestrateur.
+
+## Backend F-009
+
+Le socle est organisé selon le monolithe modulaire :
+
+- `packages/domain` : agrégat et invariants de recherche ;
+- `packages/contracts` : contrats Zod des rôles d’agents ;
+- `packages/application` : cas d’usage, ports et orchestrateur ;
+- `packages/infrastructure` : Drizzle, PostgreSQL, queue et adapters de test ;
+- `apps/worker` : consommateur Bun à lease.
+
+Voir le [runbook F-009](docs/architecture/F009_BACKEND_RUNBOOK.md) pour migrer
+PostgreSQL, brancher l’adaptateur d’agents et lancer le worker.
+
 ## Documents
 
 - [Préparation produit et catalogue des features](docs/product/README.md)
@@ -38,11 +55,11 @@ bun run check
 - [Checklist Guardian](docs/architecture/GUARDIAN_CHECKLIST.md)
 - [Roadmap d’implémentation](docs/architecture/ROADMAP.md)
 - [Guide d’intégration frontend](docs/frontend/FRONTEND_INTEGRATION.md)
+- [Runbook backend F-009](docs/architecture/F009_BACKEND_RUNBOOK.md)
 - [Architecture Decision Records](docs/architecture/adr/)
 - [Prototype frontend](prototype/dashboard.html)
 
 ## Statut
 
-Architecture V1, prototype frontend et backlog fonctionnel validés le 24
-juillet 2026. Les versions précises des dépendances applicatives seront figées
-au démarrage de l’implémentation Next.js.
+Architecture V1, prototype frontend et socle backend F-009 validés le 24
+juillet 2026. Les routes HTTP et l’application Next.js restent à implémenter.

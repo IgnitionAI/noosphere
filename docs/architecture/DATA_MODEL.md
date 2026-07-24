@@ -652,7 +652,24 @@ Contraintes et index :
 - outbox indexée sur `(published_at, available_at)` ;
 - messages entrants persistés avant toute classification IA.
 
-## 6. Vues et projections
+## 6. Recherche produit F-009
+
+La première migration implémente :
+
+- `product_research_runs` pour le brief, l’état et l’étape active ;
+- `research_stage_runs` pour les checkpoints, tentatives et verrous humains ;
+- `market_evidence`, `competitor_candidates`, `research_findings` et
+  `icp_proposals` pour le livrable sourcé ;
+- `ai_runs` pour le fournisseur, modèle, prompt, coût et latence ;
+- `jobs` pour les leases PostgreSQL, retries et dead letters ;
+- `outbox_events` pour les événements enregistrés avec la transition.
+
+Les FK composites `(workspace_id, id)` empêchent une relation de recherche de
+pointer vers un autre workspace. Le résultat complet d’une étape reste dans son
+checkpoint ; les tables de livrable sont les projections révisables utilisées
+par le rapport.
+
+## 7. Vues et projections
 
 Les écrans de recherche et analytics utilisent des vues SQL ou vues
 matérialisées, jamais des agrégats transactionnels dénormalisés prématurément :
