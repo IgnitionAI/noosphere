@@ -7,6 +7,11 @@ import { createProductResearchHttpHandler } from "@outbound/interface/http/produ
 import { createWorkspaceHttpHandler } from "@outbound/interface/http/workspace-handler";
 import { createResearchDocumentHttpHandler } from "@outbound/interface/http/research-document-handler";
 import { createCrmHttpHandler } from "@outbound/interface/http/crm-handler";
+import { createDiscoveryHttpHandler } from "@outbound/interface/http/discovery-handler";
+import {
+  ProviderUnavailableError,
+  UnipileProspectSource,
+} from "@outbound/infrastructure/crm/unipile-prospect-source";
 import { PostgresJobQueue } from "@outbound/infrastructure/jobs/postgres-job-queue";
 import { ResearchDocumentService } from "@outbound/infrastructure/documents/research-document-service";
 import { WorkspaceAiSettingsApplication } from "@outbound/application/workspaces/workspace-ai-settings";
@@ -66,6 +71,31 @@ const crm = createCrmHttpHandler({
   database: database.db,
   contextResolver: auth.contextResolver,
 });
+const unipileDsn = process.env.UNIPILE_DSN ?? "";
+const unipileApiKey = process.env.UNIPILE_API_KEY ?? "";
+const discovery = createDiscoveryHttpHandler({
+  database: database.db,
+  contextResolver: auth.contextResolver,
+  prospectSource: () => {
+    if (!unipileDsn || !unipileApiKey) {
+      return {
+        async searchPeople() {
+          throw new ProviderUnavailableError(
+            "Unipile is not configured (UNIPILE_DSN, UNIPILE_API_KEY)",
+            null,
+          );
+        },
+      };
+    }
+    return new UnipileProspectSource({
+      dsn: unipileDsn,
+      apiKey: unipileApiKey,
+      ...(process.env.UNIPILE_LINKEDIN_ACCOUNT_ID
+        ? { accountId: process.env.UNIPILE_LINKEDIN_ACCOUNT_ID }
+        : {}),
+    });
+  },
+});
 const port = positiveIntegerEnvironment("PORT", 3000);
 const server = Bun.serve({
   port,
@@ -78,6 +108,9 @@ const server = Bun.serve({
     if (pathname.startsWith("/api/v1/research-documents")) return documents(request);
     if (pathname.startsWith("/api/v1/companies") || pathname.startsWith("/api/v1/contacts")) {
       return crm(request);
+    }
+    if (pathname.startsWith("/api/v1/icp-versions") || pathname.startsWith("/api/v1/discovery-runs")) {
+      return discovery(request);
     }
     if (pathname === "/health/live") return Response.json({ status: "ok" });
     if (pathname === "/health/ready") {

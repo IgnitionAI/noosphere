@@ -470,6 +470,97 @@ export async function suppressContact(
   });
 }
 
+export interface PublishedIcpVersion {
+  readonly id: string;
+  readonly runId: string;
+  readonly proposalId: string;
+  readonly version: number;
+  readonly name: string;
+  readonly confidence: number;
+  readonly unknowns: readonly unknown[];
+  readonly publishedAt: string;
+}
+
+export interface DiscoveryRun {
+  readonly id: string;
+  readonly icpVersionId: string;
+  readonly provider: string;
+  readonly filters: { keywords?: string; category?: string; limit?: number };
+  readonly status: "running" | "completed" | "failed";
+  readonly errorCode: string | null;
+  readonly errorMessage: string | null;
+  readonly candidateCount: number;
+  readonly createdAt: string;
+  readonly completedAt: string | null;
+}
+
+export interface DiscoveryCandidate {
+  readonly id: string;
+  readonly fullName: string;
+  readonly headline: string | null;
+  readonly linkedinUrl: string | null;
+  readonly location: string | null;
+  readonly companyName: string | null;
+  readonly icpFit: { matches: string[]; gaps: string[] };
+  readonly importedContactId: string | null;
+}
+
+export async function listIcpVersions(
+  workspaceSlug: string,
+): Promise<{ data: PublishedIcpVersion[] }> {
+  return crmFetch(workspaceSlug, "/api/v1/icp-versions");
+}
+
+export async function launchDiscoveryRun(
+  workspaceSlug: string,
+  versionId: string,
+  limit: number,
+): Promise<DiscoveryRun> {
+  return crmFetch(workspaceSlug, `/api/v1/icp-versions/${versionId}/discovery-runs`, {
+    method: "POST",
+    body: { limit },
+  });
+}
+
+export async function listDiscoveryRuns(
+  workspaceSlug: string,
+  icpVersionId?: string,
+): Promise<{ data: DiscoveryRun[] }> {
+  return crmFetch(
+    workspaceSlug,
+    `/api/v1/discovery-runs${icpVersionId ? `?icpVersionId=${icpVersionId}` : ""}`,
+  );
+}
+
+export async function getDiscoveryRun(
+  workspaceSlug: string,
+  runId: string,
+): Promise<DiscoveryRun & { candidates: DiscoveryCandidate[] }> {
+  return crmFetch(workspaceSlug, `/api/v1/discovery-runs/${runId}`);
+}
+
+export async function retryDiscoveryRun(
+  workspaceSlug: string,
+  runId: string,
+): Promise<DiscoveryRun> {
+  return crmFetch(workspaceSlug, `/api/v1/discovery-runs/${runId}/actions/retry`, {
+    method: "POST",
+    body: {},
+  });
+}
+
+export async function importDiscoveryCandidate(
+  workspaceSlug: string,
+  runId: string,
+  candidateId: string,
+): Promise<{ id: string }> {
+  return crmFetch(
+    workspaceSlug,
+    `/api/v1/discovery-runs/${runId}/candidates/${candidateId}/actions/import`,
+    { method: "POST", body: {} },
+  );
+}
+
 export function outboundApiUrl(pathname: string): URL {
   return new URL(pathname, process.env.OUTBOUND_API_URL ?? "http://127.0.0.1:3001");
 }

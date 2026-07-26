@@ -30,7 +30,12 @@ export default async function ProspectsPage({
             Une identité canonique par personne, suivie malgré ses changements d’employeur.
           </p>
         </div>
-        <span className="badge">{contacts.data.length} contacts</span>
+        <div className="flex items-center gap-2">
+          <Link className="button button-signal" href={`/w/${workspaceSlug}/prospects/discover`}>
+            Découvrir via ICP publié
+          </Link>
+          <span className="badge">{contacts.data.length} contacts</span>
+        </div>
       </header>
 
       <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">

@@ -756,6 +756,71 @@ export const contactSuppressions = pgTable(
   ],
 );
 
+export const discoveryRunStatusEnum = pgEnum("discovery_run_status", [
+  "running",
+  "completed",
+  "failed",
+]);
+
+export const prospectDiscoveryRuns = pgTable(
+  "prospect_discovery_runs",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    icpVersionId: uuid("icp_version_id")
+      .notNull()
+      .references(() => icpVersions.id, { onDelete: "cascade" }),
+    provider: varchar("provider", { length: 80 }).notNull().default("unipile"),
+    filters: jsonb("filters").notNull(),
+    status: discoveryRunStatusEnum("status").notNull().default("running"),
+    errorCode: varchar("error_code", { length: 120 }),
+    errorMessage: text("error_message"),
+    candidateCount: integer("candidate_count").notNull().default(0),
+    createdBy: uuid("created_by").references(() => authUsers.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.workspaceId],
+      foreignColumns: [workspaces.id],
+      name: "prospect_discovery_runs_workspace_fk",
+    }).onDelete("cascade"),
+    index("prospect_discovery_runs_version_idx").on(table.workspaceId, table.icpVersionId),
+  ],
+);
+
+export const prospectDiscoveryCandidates = pgTable(
+  "prospect_discovery_candidates",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    runId: uuid("run_id")
+      .notNull()
+      .references(() => prospectDiscoveryRuns.id, { onDelete: "cascade" }),
+    fullName: varchar("full_name", { length: 300 }).notNull(),
+    headline: text("headline"),
+    linkedinUrl: varchar("linkedin_url", { length: 600 }),
+    linkedinNormalized: varchar("linkedin_normalized", { length: 600 }),
+    location: varchar("location", { length: 300 }),
+    companyName: varchar("company_name", { length: 300 }),
+    providerData: jsonb("provider_data").notNull().default({}),
+    icpFit: jsonb("icp_fit").notNull().default({ matches: [], gaps: [] }),
+    importedContactId: uuid("imported_contact_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.workspaceId],
+      foreignColumns: [workspaces.id],
+      name: "prospect_discovery_candidates_workspace_fk",
+    }).onDelete("cascade"),
+    uniqueIndex("prospect_discovery_candidates_run_linkedin_uq")
+      .on(table.workspaceId, table.runId, table.linkedinNormalized)
+      .where(sql`${table.linkedinNormalized} is not null`),
+  ],
+);
+
 export const jobs = pgTable(
   "jobs",
   {
