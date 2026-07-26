@@ -6,6 +6,7 @@ import { PostgresProductResearchRepository } from "@outbound/infrastructure/gtm/
 import { createProductResearchHttpHandler } from "@outbound/interface/http/product-research-handler";
 import { createWorkspaceHttpHandler } from "@outbound/interface/http/workspace-handler";
 import { createResearchDocumentHttpHandler } from "@outbound/interface/http/research-document-handler";
+import { createCrmHttpHandler } from "@outbound/interface/http/crm-handler";
 import { PostgresJobQueue } from "@outbound/infrastructure/jobs/postgres-job-queue";
 import { ResearchDocumentService } from "@outbound/infrastructure/documents/research-document-service";
 import { WorkspaceAiSettingsApplication } from "@outbound/application/workspaces/workspace-ai-settings";
@@ -61,6 +62,10 @@ const documents = createResearchDocumentHttpHandler({
   service: documentService,
   contextResolver: auth.contextResolver,
 });
+const crm = createCrmHttpHandler({
+  database: database.db,
+  contextResolver: auth.contextResolver,
+});
 const port = positiveIntegerEnvironment("PORT", 3000);
 const server = Bun.serve({
   port,
@@ -71,6 +76,9 @@ const server = Bun.serve({
     if (pathname === "/api/v1/workspaces") return workspace(request);
     if (pathname === "/api/v1/workspace-ai-settings") return workspaceAiSettings(request);
     if (pathname.startsWith("/api/v1/research-documents")) return documents(request);
+    if (pathname.startsWith("/api/v1/companies") || pathname.startsWith("/api/v1/contacts")) {
+      return crm(request);
+    }
     if (pathname === "/health/live") return Response.json({ status: "ok" });
     if (pathname === "/health/ready") {
       try {

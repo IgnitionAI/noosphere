@@ -565,6 +565,197 @@ export const icpVersions = pgTable(
   ],
 );
 
+export const crmSourceEnum = pgEnum("crm_source", [
+  "manual",
+  "csv",
+  "icp_research",
+  "provider",
+]);
+
+export const contactIdentityTypeEnum = pgEnum("contact_identity_type", [
+  "email",
+  "linkedin",
+  "phone",
+  "whatsapp",
+]);
+
+export const contactVerificationEnum = pgEnum("contact_verification_status", [
+  "unknown",
+  "verified",
+  "invalid",
+]);
+
+export const contactStatusEnum = pgEnum("contact_status", [
+  "active",
+  "suppressed",
+]);
+
+export const suppressionChannelEnum = pgEnum("suppression_channel", [
+  "global",
+  "email",
+  "linkedin",
+  "whatsapp",
+]);
+
+export const companies = pgTable(
+  "companies",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    name: varchar("name", { length: 300 }).notNull(),
+    normalizedDomain: varchar("normalized_domain", { length: 300 }),
+    sector: varchar("sector", { length: 200 }),
+    employeeCountMin: integer("employee_count_min"),
+    employeeCountMax: integer("employee_count_max"),
+    location: varchar("location", { length: 300 }),
+    linkedinUrl: varchar("linkedin_url", { length: 600 }),
+    externalIds: jsonb("external_ids").notNull().default({}),
+    source: crmSourceEnum("source").notNull().default("manual"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.workspaceId],
+      foreignColumns: [workspaces.id],
+      name: "companies_workspace_fk",
+    }).onDelete("cascade"),
+    uniqueIndex("companies_workspace_domain_uq")
+      .on(table.workspaceId, table.normalizedDomain)
+      .where(sql`${table.normalizedDomain} is not null`),
+    unique("companies_workspace_id_uq").on(table.workspaceId, table.id),
+    index("companies_workspace_name_idx").on(table.workspaceId, table.name),
+  ],
+);
+
+export const companyFieldProvenance = pgTable(
+  "company_field_provenance",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull(),
+    companyId: uuid("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    field: varchar("field", { length: 120 }).notNull(),
+    source: varchar("source", { length: 200 }).notNull(),
+    confidence: numeric("confidence", { precision: 5, scale: 4 }),
+    observedAt: timestamp("observed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("company_field_provenance_company_idx").on(table.workspaceId, table.companyId),
+  ],
+);
+
+export const contacts = pgTable(
+  "contacts",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    firstName: varchar("first_name", { length: 200 }).notNull(),
+    lastName: varchar("last_name", { length: 200 }).notNull(),
+    photoUrl: varchar("photo_url", { length: 600 }),
+    preferredChannel: varchar("preferred_channel", { length: 40 }),
+    status: contactStatusEnum("status").notNull().default("active"),
+    source: crmSourceEnum("source").notNull().default("manual"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.workspaceId],
+      foreignColumns: [workspaces.id],
+      name: "contacts_workspace_fk",
+    }).onDelete("cascade"),
+    unique("contacts_workspace_id_uq").on(table.workspaceId, table.id),
+    index("contacts_workspace_name_idx").on(table.workspaceId, table.lastName, table.firstName),
+  ],
+);
+
+export const contactIdentities = pgTable(
+  "contact_identities",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    contactId: uuid("contact_id").notNull(),
+    type: contactIdentityTypeEnum("type").notNull(),
+    value: varchar("value", { length: 600 }).notNull(),
+    normalizedValue: varchar("normalized_value", { length: 600 }).notNull(),
+    verificationStatus: contactVerificationEnum("verification_status")
+      .notNull()
+      .default("unknown"),
+    source: crmSourceEnum("source").notNull().default("manual"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.workspaceId, table.contactId],
+      foreignColumns: [contacts.workspaceId, contacts.id],
+      name: "contact_identities_contact_fk",
+    }).onDelete("cascade"),
+    uniqueIndex("contact_identities_value_uq").on(
+      table.workspaceId,
+      table.type,
+      table.normalizedValue,
+    ),
+  ],
+);
+
+export const contactEmployments = pgTable(
+  "contact_employments",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    contactId: uuid("contact_id").notNull(),
+    companyId: uuid("company_id").notNull(),
+    title: varchar("title", { length: 300 }).notNull(),
+    startedOn: varchar("started_on", { length: 10 }),
+    endedOn: varchar("ended_on", { length: 10 }),
+    isCurrent: boolean("is_current").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.workspaceId, table.contactId],
+      foreignColumns: [contacts.workspaceId, contacts.id],
+      name: "contact_employments_contact_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.workspaceId, table.companyId],
+      foreignColumns: [companies.workspaceId, companies.id],
+      name: "contact_employments_company_fk",
+    }).onDelete("cascade"),
+    uniqueIndex("contact_employments_current_uq")
+      .on(table.workspaceId, table.contactId)
+      .where(sql`${table.isCurrent}`),
+  ],
+);
+
+export const contactSuppressions = pgTable(
+  "contact_suppressions",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    contactId: uuid("contact_id"),
+    channel: suppressionChannelEnum("channel").notNull(),
+    identityType: contactIdentityTypeEnum("identity_type"),
+    normalizedValue: varchar("normalized_value", { length: 600 }),
+    reason: text("reason"),
+    createdBy: uuid("created_by").references(() => authUsers.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.workspaceId],
+      foreignColumns: [workspaces.id],
+      name: "contact_suppressions_workspace_fk",
+    }).onDelete("cascade"),
+    uniqueIndex("contact_suppressions_fingerprint_uq")
+      .on(table.workspaceId, table.identityType, table.normalizedValue)
+      .where(sql`${table.normalizedValue} is not null`),
+  ],
+);
+
 export const jobs = pgTable(
   "jobs",
   {

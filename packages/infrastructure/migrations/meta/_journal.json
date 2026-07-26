@@ -57,6 +57,13 @@
       "when": 1785095243883,
       "tag": "0007_smart_banshee",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1785097826720,
+      "tag": "0008_volatile_the_professor",
+      "breakpoints": true
     }
   ]
 }

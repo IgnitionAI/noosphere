@@ -23,8 +23,6 @@ import type { Session, Workspace } from "@/lib/api";
 
 const futureNavigation = [
   ["Vue d’ensemble", LayoutDashboard],
-  ["Prospects", Users],
-  ["Entreprises", Building2],
   ["Campagnes", Send],
   ["Inbox", Inbox],
   ["Analytics", BarChart3],
@@ -45,6 +43,10 @@ export function AppShell({
   const [open, setOpen] = useState(false);
   const productReadingHref = `/w/${workspace.slug}/strategy/product-reading`;
   const aiSettingsHref = `/w/${workspace.slug}/settings/ai`;
+  const crmNavigation = [
+    [`/w/${workspace.slug}/prospects`, "Prospects", Users],
+    [`/w/${workspace.slug}/companies`, "Entreprises", Building2],
+  ] as const;
   const initials = session.user.name
     .split(/\s+/)
     .map((part) => part[0])
@@ -127,6 +129,22 @@ export function AppShell({
             Prospection
           </div>
           <div className="space-y-1">
+            {crmNavigation.map(([href, label, Icon]) => (
+              <Link
+                aria-current={pathname.startsWith(href) ? "page" : undefined}
+                className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium ${
+                  pathname.startsWith(href)
+                    ? "bg-white/10 text-white"
+                    : "text-slate-300 hover:bg-white/5 hover:text-white"
+                }`}
+                href={href}
+                key={label}
+                onClick={() => setOpen(false)}
+              >
+                <Icon size={17} />
+                {label}
+              </Link>
+            ))}
             {futureNavigation.map(([label, Icon]) => (
               <span
                 aria-disabled="true"

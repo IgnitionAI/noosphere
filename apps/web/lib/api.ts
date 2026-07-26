@@ -313,6 +313,163 @@ export async function researchMore(
   if (!response.ok) await throwApiError(response);
 }
 
+export interface Company {
+  readonly id: string;
+  readonly name: string;
+  readonly normalizedDomain: string | null;
+  readonly sector: string | null;
+  readonly employeeCountMin: number | null;
+  readonly employeeCountMax: number | null;
+  readonly location: string | null;
+  readonly linkedinUrl: string | null;
+  readonly source: string;
+  readonly createdAt: string;
+}
+
+export interface ContactSummary {
+  readonly id: string;
+  readonly firstName: string;
+  readonly lastName: string;
+  readonly status: "active" | "suppressed";
+  readonly createdAt: string;
+  readonly currentEmployment: {
+    readonly companyId: string;
+    readonly companyName: string;
+    readonly title: string;
+  } | null;
+}
+
+export interface ContactDetail {
+  readonly id: string;
+  readonly firstName: string;
+  readonly lastName: string;
+  readonly status: "active" | "suppressed";
+  readonly identities: readonly {
+    readonly id: string;
+    readonly type: string;
+    readonly value: string;
+    readonly verificationStatus: "unknown" | "verified" | "invalid";
+    readonly source: string;
+  }[];
+  readonly employments: readonly {
+    readonly id: string;
+    readonly companyId: string;
+    readonly companyName: string;
+    readonly title: string;
+    readonly startedOn: string | null;
+    readonly endedOn: string | null;
+    readonly isCurrent: boolean;
+  }[];
+}
+
+async function crmFetch<T>(
+  workspaceSlug: string,
+  pathname: string,
+  options: { method?: string; body?: unknown } = {},
+): Promise<T> {
+  const response = await apiFetch(pathname, {
+    method: options.method ?? "GET",
+    workspaceSlug,
+    ...(options.body !== undefined ? { body: JSON.stringify(options.body) } : {}),
+  });
+  if (!response.ok) await throwApiError(response);
+  if (response.status === 204) return undefined as T;
+  return (await response.json()) as T;
+}
+
+export async function listCompanies(
+  workspaceSlug: string,
+  search?: string,
+): Promise<{ data: Company[]; nextCursor: string | null }> {
+  return crmFetch(
+    workspaceSlug,
+    `/api/v1/companies${search ? `?search=${encodeURIComponent(search)}&limit=50` : "?limit=50"}`,
+  );
+}
+
+export async function createCompany(
+  workspaceSlug: string,
+  input: {
+    name: string;
+    domain?: string;
+    sector?: string;
+    location?: string;
+    employeeCountMin?: number;
+    employeeCountMax?: number;
+  },
+): Promise<Company> {
+  return crmFetch(workspaceSlug, "/api/v1/companies", { method: "POST", body: input });
+}
+
+export async function getCompany(
+  workspaceSlug: string,
+  companyId: string,
+): Promise<Company & { contacts: { id: string; firstName: string; lastName: string; title: string | null; isCurrent: boolean; status: string }[] }> {
+  return crmFetch(workspaceSlug, `/api/v1/companies/${companyId}`);
+}
+
+export async function listContacts(
+  workspaceSlug: string,
+  search?: string,
+): Promise<{ data: ContactSummary[]; nextCursor: string | null }> {
+  return crmFetch(
+    workspaceSlug,
+    `/api/v1/contacts${search ? `?search=${encodeURIComponent(search)}&limit=50` : "?limit=50"}`,
+  );
+}
+
+export async function createContact(
+  workspaceSlug: string,
+  input: {
+    firstName: string;
+    lastName: string;
+    identities?: { type: string; value: string }[];
+    employment?: { companyId: string; title: string };
+  },
+): Promise<{ id: string }> {
+  return crmFetch(workspaceSlug, "/api/v1/contacts", { method: "POST", body: input });
+}
+
+export async function getContact(
+  workspaceSlug: string,
+  contactId: string,
+): Promise<ContactDetail> {
+  return crmFetch(workspaceSlug, `/api/v1/contacts/${contactId}`);
+}
+
+export async function addContactIdentity(
+  workspaceSlug: string,
+  contactId: string,
+  input: { type: string; value: string },
+): Promise<void> {
+  return crmFetch(workspaceSlug, `/api/v1/contacts/${contactId}/identities`, {
+    method: "POST",
+    body: input,
+  });
+}
+
+export async function addContactEmployment(
+  workspaceSlug: string,
+  contactId: string,
+  input: { companyId: string; title: string },
+): Promise<void> {
+  return crmFetch(workspaceSlug, `/api/v1/contacts/${contactId}/employments`, {
+    method: "POST",
+    body: input,
+  });
+}
+
+export async function suppressContact(
+  workspaceSlug: string,
+  contactId: string,
+  reason: string,
+): Promise<void> {
+  return crmFetch(workspaceSlug, `/api/v1/contacts/${contactId}/actions/suppress`, {
+    method: "POST",
+    body: { channel: "global", reason },
+  });
+}
+
 export function outboundApiUrl(pathname: string): URL {
   return new URL(pathname, process.env.OUTBOUND_API_URL ?? "http://127.0.0.1:3001");
 }
