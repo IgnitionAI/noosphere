@@ -25,8 +25,8 @@ export class ProductResearchApplication {
   constructor(
     private readonly repository: ProductResearchRepository,
     private readonly views: ProductResearchViewRepository,
-    ids: IdGenerator,
-    clock: Clock,
+    private readonly ids: IdGenerator,
+    private readonly clock: Clock,
   ) {
     this.#create = new CreateProductResearchRun(repository, ids, clock);
     this.#start = new StartProductResearchRun(repository, ids, clock);
@@ -125,6 +125,64 @@ export class ProductResearchApplication {
     await this.repository.reviewIcpProposal({
       ...input,
       reviewedAt: new Date(),
+    });
+  }
+
+  async reviewFinding(input: {
+    workspaceId: string;
+    runId: string;
+    findingId: string;
+    userId: string;
+    decision: "confirmed" | "corrected" | "rejected";
+    statement?: string | null;
+    confidence?: number | null;
+    reason?: string | null;
+  }) {
+    await this.get({ workspaceId: input.workspaceId, runId: input.runId });
+    return this.repository.reviewFinding({
+      ...input,
+      statement: input.statement ?? null,
+      confidence: input.confidence ?? null,
+      reason: input.reason ?? null,
+      reviewedAt: this.clock.now(),
+    });
+  }
+
+  async correctIcpProposal(input: {
+    workspaceId: string;
+    runId: string;
+    proposalId: string;
+    fields: {
+      name?: string;
+      criteria?: unknown;
+      buyingCommittee?: unknown;
+      problems?: unknown;
+      signals?: unknown;
+      exclusions?: unknown;
+      unknowns?: unknown;
+    };
+  }) {
+    await this.get({ workspaceId: input.workspaceId, runId: input.runId });
+    return this.repository.correctIcpProposal({
+      ...input,
+      updatedAt: this.clock.now(),
+    });
+  }
+
+  async publishIcpVersion(input: {
+    workspaceId: string;
+    runId: string;
+    proposalId: string;
+    userId: string;
+  }) {
+    const run = await this.get({ workspaceId: input.workspaceId, runId: input.runId });
+    if (run.status !== "ready_for_review") {
+      throw new Error("PRODUCT_RESEARCH_NOT_READY_FOR_REVIEW");
+    }
+    return this.repository.publishIcpVersion({
+      id: this.ids.generate(),
+      ...input,
+      publishedAt: this.clock.now(),
     });
   }
 }

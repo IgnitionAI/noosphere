@@ -71,6 +71,14 @@ export type ProductResearchEvent =
       readonly workspaceId: string;
       readonly stage: ResearchStage;
       readonly reason: string;
+    }
+  | {
+      readonly type: "ICPVersionPublished";
+      readonly runId: string;
+      readonly workspaceId: string;
+      readonly versionId: string;
+      readonly proposalId: string;
+      readonly version: number;
     };
 
 export class ProductResearchInvariantError extends Error {

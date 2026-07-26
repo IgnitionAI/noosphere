@@ -454,6 +454,9 @@ export const researchFindings = pgTable(
     confidence: numeric("confidence", { precision: 5, scale: 4 }).notNull(),
     hypothesis: boolean("hypothesis").notNull(),
     reviewStatus: varchar("review_status", { length: 40 }).notNull().default("unreviewed"),
+    reviewReason: text("review_reason"),
+    reviewedBy: uuid("reviewed_by").references(() => authUsers.id),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
     humanEdited: boolean("human_edited").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -525,6 +528,40 @@ export const icpProposals = pgTable(
       name: "icp_proposals_workspace_run_fk",
     }).onDelete("cascade"),
     uniqueIndex("icp_proposals_rank_uq").on(table.workspaceId, table.runId, table.rank),
+  ],
+);
+
+export const icpVersions = pgTable(
+  "icp_versions",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    runId: uuid("run_id").notNull(),
+    proposalId: uuid("proposal_id").notNull(),
+    version: integer("version").notNull(),
+    name: varchar("name", { length: 500 }).notNull(),
+    confidence: numeric("confidence", { precision: 5, scale: 4 }).notNull(),
+    criteria: jsonb("criteria").notNull(),
+    buyingCommittee: jsonb("buying_committee").notNull(),
+    problems: jsonb("problems").notNull(),
+    signals: jsonb("signals").notNull(),
+    exclusions: jsonb("exclusions").notNull(),
+    unknowns: jsonb("unknowns").notNull(),
+    unresolvedContradictions: jsonb("unresolved_contradictions").notNull(),
+    blockedFindings: jsonb("blocked_findings").notNull(),
+    publishedBy: uuid("published_by").references(() => authUsers.id),
+    publishedAt: timestamp("published_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.workspaceId, table.runId],
+      foreignColumns: [productResearchRuns.workspaceId, productResearchRuns.id],
+      name: "icp_versions_workspace_run_fk",
+    }).onDelete("cascade"),
+    uniqueIndex("icp_versions_proposal_uq").on(table.workspaceId, table.proposalId),
+    uniqueIndex("icp_versions_workspace_version_uq").on(table.workspaceId, table.version),
+    index("icp_versions_workspace_idx").on(table.workspaceId, table.publishedAt),
   ],
 );
 

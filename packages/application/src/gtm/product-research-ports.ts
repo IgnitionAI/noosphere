@@ -55,6 +55,40 @@ export interface ProductResearchRepository {
     reason: string | null;
     reviewedAt: Date;
   }): Promise<void>;
+  reviewFinding(input: {
+    workspaceId: string;
+    runId: string;
+    findingId: string;
+    userId: string;
+    decision: "confirmed" | "corrected" | "rejected";
+    statement: string | null;
+    confidence: number | null;
+    reason: string | null;
+    reviewedAt: Date;
+  }): Promise<unknown>;
+  correctIcpProposal(input: {
+    workspaceId: string;
+    runId: string;
+    proposalId: string;
+    fields: {
+      name?: string;
+      criteria?: unknown;
+      buyingCommittee?: unknown;
+      problems?: unknown;
+      signals?: unknown;
+      exclusions?: unknown;
+      unknowns?: unknown;
+    };
+    updatedAt: Date;
+  }): Promise<unknown>;
+  publishIcpVersion(input: {
+    id: string;
+    workspaceId: string;
+    runId: string;
+    proposalId: string;
+    userId: string;
+    publishedAt: Date;
+  }): Promise<unknown>;
 }
 
 export interface ProductResearchViewRepository {
@@ -77,6 +111,7 @@ export interface ProductResearchReportView {
   readonly competitors: readonly Readonly<Record<string, unknown>>[];
   readonly findings: readonly Readonly<Record<string, unknown>>[];
   readonly proposals: readonly Readonly<Record<string, unknown>>[];
+  readonly versions: readonly Readonly<Record<string, unknown>>[];
 }
 
 export interface ResearchStageRunView {

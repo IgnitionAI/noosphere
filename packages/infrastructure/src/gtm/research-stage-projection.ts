@@ -69,6 +69,19 @@ export async function projectResearchStage(input: {
   if (input.stage === "icp_synthesis") {
     const synthesis = output as Extract<AgentStageOutput, { proposals: unknown }>;
     for (const proposal of synthesis.proposals) {
+      const existing = await input.executor
+        .select({ id: icpProposals.id, humanEdited: icpProposals.humanEdited })
+        .from(icpProposals)
+        .where(
+          and(
+            eq(icpProposals.workspaceId, input.workspaceId),
+            eq(icpProposals.runId, input.runId),
+            eq(icpProposals.rank, proposal.rank),
+          ),
+        )
+        .limit(1);
+      // A human correction is never overwritten by a machine re-run.
+      if (existing[0]?.humanEdited) continue;
       await input.executor
         .insert(icpProposals)
         .values({
@@ -117,6 +130,7 @@ export async function projectResearchStage(input: {
             eq(researchFindings.workspaceId, input.workspaceId),
             eq(researchFindings.runId, input.runId),
             eq(researchFindings.findingPath, item.findingPath),
+            eq(researchFindings.humanEdited, false),
           ),
         );
     }
@@ -234,6 +248,20 @@ async function upsertFinding(input: {
   claim: Claim;
   evidenceMap: ReadonlyMap<string, string>;
 }): Promise<void> {
+  const existing = await input.executor
+    .select({ id: researchFindings.id, humanEdited: researchFindings.humanEdited })
+    .from(researchFindings)
+    .where(
+      and(
+        eq(researchFindings.workspaceId, input.workspaceId),
+        eq(researchFindings.runId, input.runId),
+        eq(researchFindings.findingPath, input.path),
+      ),
+    )
+    .limit(1);
+  // A human-corrected finding keeps its statement, confidence, review status
+  // and evidence links across machine re-runs.
+  if (existing[0]?.humanEdited) return;
   const rows = await input.executor
     .insert(researchFindings)
     .values({

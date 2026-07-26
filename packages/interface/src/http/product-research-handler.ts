@@ -20,6 +20,8 @@ const runPath = /^\/api\/v1\/product-research-runs\/([^/]+)$/;
 const actionPath = /^\/api\/v1\/product-research-runs\/([^/]+)\/actions\/([^/]+)$/;
 const evidencePath = /^\/api\/v1\/product-research-runs\/([^/]+)\/evidence$/;
 const reportPath = /^\/api\/v1\/product-research-runs\/([^/]+)\/report$/;
+const findingPathPattern = /^\/api\/v1\/product-research-runs\/([^/]+)\/findings\/([^/]+)$/;
+const proposalPathPattern = /^\/api\/v1\/product-research-runs\/([^/]+)\/icp-proposals\/([^/]+)$/;
 const uuidSchema = z.string().uuid();
 const requestContextSchema = z.object({
   userId: uuidSchema,
@@ -38,6 +40,33 @@ const proposalReviewSchema = z
     reason: z.string().trim().min(3).max(2_000).nullable().default(null),
   })
   .strict();
+const publishIcpSchema = z
+  .object({
+    proposalId: z.string().uuid(),
+  })
+  .strict();
+const findingReviewSchema = z
+  .object({
+    decision: z.enum(["confirmed", "corrected", "rejected"]),
+    statement: z.string().trim().min(1).max(5_000).optional(),
+    confidence: z.number().min(0).max(1).optional(),
+    reason: z.string().trim().min(3).max(2_000).nullable().default(null),
+  })
+  .strict();
+const proposalCorrectionSchema = z
+  .object({
+    name: z.string().trim().min(1).max(500).optional(),
+    criteria: z.unknown().optional(),
+    buyingCommittee: z.unknown().optional(),
+    problems: z.unknown().optional(),
+    signals: z.unknown().optional(),
+    exclusions: z.unknown().optional(),
+    unknowns: z.unknown().optional(),
+  })
+  .strict()
+  .refine((value) => Object.values(value).some((field) => field !== undefined), {
+    message: "At least one field must be corrected",
+  });
 
 export interface ProductResearchHttpDependencies {
   readonly application: ProductResearchApplication;
@@ -146,6 +175,62 @@ export function createProductResearchHttpHandler(dependencies: ProductResearchHt
         });
         return new Response(null, { status: 204 });
       }
+      if (request.method === "POST" && actionMatch?.[2] === "publish-icp") {
+        const context = await resolveContext(dependencies.contextResolver, request);
+        requireAdmin(context.role);
+        const runId = uuidSchema.parse(actionMatch[1]);
+        const body = publishIcpSchema.parse(await request.json());
+        const version = (await dependencies.application.publishIcpVersion({
+          workspaceId: context.workspaceId,
+          runId,
+          proposalId: body.proposalId,
+          userId: context.userId,
+        })) as Record<string, unknown>;
+        return json(version, 201);
+      }
+      const findingMatch = findingPathPattern.exec(url.pathname);
+      if (request.method === "PATCH" && findingMatch) {
+        const context = await resolveContext(dependencies.contextResolver, request);
+        requireOperator(context.role);
+        const runId = uuidSchema.parse(findingMatch[1]);
+        const findingId = uuidSchema.parse(findingMatch[2]);
+        const body = findingReviewSchema.parse(await request.json());
+        if (body.decision === "corrected" && !body.statement) {
+          return problem(
+            400,
+            "INVALID_REQUEST",
+            "A corrected finding requires a replacement statement",
+          );
+        }
+        const finding = await dependencies.application.reviewFinding({
+          workspaceId: context.workspaceId,
+          runId,
+          findingId,
+          userId: context.userId,
+          decision: body.decision,
+          ...(body.statement !== undefined ? { statement: body.statement } : {}),
+          ...(body.confidence !== undefined ? { confidence: body.confidence } : {}),
+          reason: body.reason,
+        });
+        return json(finding);
+      }
+      const proposalMatch = proposalPathPattern.exec(url.pathname);
+      if (request.method === "PATCH" && proposalMatch) {
+        const context = await resolveContext(dependencies.contextResolver, request);
+        requireOperator(context.role);
+        const runId = uuidSchema.parse(proposalMatch[1]);
+        const proposalId = uuidSchema.parse(proposalMatch[2]);
+        const body = proposalCorrectionSchema.parse(await request.json());
+        const proposal = await dependencies.application.correctIcpProposal({
+          workspaceId: context.workspaceId,
+          runId,
+          proposalId,
+          fields: Object.fromEntries(
+            Object.entries(body).filter(([, value]) => value !== undefined),
+          ),
+        });
+        return json(proposal);
+      }
       const runMatch = runPath.exec(url.pathname);
       if (request.method === "GET" && runMatch) {
         const context = await resolveContext(dependencies.contextResolver, request);
@@ -250,9 +335,11 @@ export function createProductResearchHttpHandler(dependencies: ProductResearchHt
           competitors: report.competitors,
           findings: report.findings,
           proposals: report.proposals,
+          versions: report.versions,
           links: {
             approve: `/api/v1/product-research-runs/${runId}/actions/approve-icp`,
             reject: `/api/v1/product-research-runs/${runId}/actions/reject-icp`,
+            publish: `/api/v1/product-research-runs/${runId}/actions/publish-icp`,
           },
         });
       }
@@ -290,6 +377,15 @@ export function createProductResearchHttpHandler(dependencies: ProductResearchHt
       if (message === "ICP_PROPOSAL_NOT_FOUND") {
         return problem(404, message, "ICP proposal not found in this workspace run");
       }
+      if (message === "RESEARCH_FINDING_NOT_FOUND") {
+        return problem(404, message, "Research finding not found in this workspace run");
+      }
+      if (message === "ICP_PROPOSAL_NOT_APPROVED") {
+        return problem(409, message, "Only an approved ICP proposal can be published");
+      }
+      if (message === "ICP_VERSION_ALREADY_PUBLISHED") {
+        return problem(409, message, "This ICP proposal is already published as an immutable version");
+      }
       return problem(500, "INTERNAL_ERROR", "An unexpected error occurred");
     }
   };
@@ -312,6 +408,12 @@ function requireViewer(role: string): void {
 function requireReviewer(role: string): void {
   if (!["reviewer", "admin", "owner"].includes(role)) {
     throw new WorkspacePermissionError("Reviewer access is required");
+  }
+}
+
+function requireAdmin(role: string): void {
+  if (!["admin", "owner"].includes(role)) {
+    throw new WorkspacePermissionError("Admin access is required to publish an ICP version");
   }
 }
 
@@ -398,6 +500,7 @@ function problem(
 function allowedMethods(pathname: string): string | null {
   if (pathname === "/api/v1/product-research-runs") return "POST";
   if (runPath.test(pathname) || evidencePath.test(pathname) || reportPath.test(pathname)) return "GET";
+  if (findingPathPattern.test(pathname) || proposalPathPattern.test(pathname)) return "PATCH";
   if (actionPath.test(pathname)) return "POST";
   return null;
 }

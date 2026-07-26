@@ -186,6 +186,48 @@ export class InMemoryResearchBackend
     this.proposalReviews.push(clone(input));
   }
 
+  readonly findingReviews: unknown[] = [];
+  readonly proposalCorrections: unknown[] = [];
+  readonly publishedVersions: unknown[] = [];
+
+  async reviewFinding(input: {
+    workspaceId: string;
+    runId: string;
+    findingId: string;
+    userId: string;
+    decision: "confirmed" | "corrected" | "rejected";
+    statement: string | null;
+    confidence: number | null;
+    reason: string | null;
+    reviewedAt: Date;
+  }): Promise<unknown> {
+    this.findingReviews.push(clone(input));
+    return clone(input);
+  }
+
+  async correctIcpProposal(input: {
+    workspaceId: string;
+    runId: string;
+    proposalId: string;
+    fields: Record<string, unknown>;
+    updatedAt: Date;
+  }): Promise<unknown> {
+    this.proposalCorrections.push(clone(input));
+    return clone(input);
+  }
+
+  async publishIcpVersion(input: {
+    id: string;
+    workspaceId: string;
+    runId: string;
+    proposalId: string;
+    userId: string;
+    publishedAt: Date;
+  }): Promise<unknown> {
+    this.publishedVersions.push(clone(input));
+    return clone(input);
+  }
+
   async enqueue(job: NewJob): Promise<{ inserted: boolean }> {
     const uniqueKey = `${job.workspaceId}:${job.type}:${job.idempotencyKey}`;
     if (this.#jobKeys.has(uniqueKey)) return { inserted: false };
@@ -331,6 +373,7 @@ export class InMemoryResearchBackend
       }),
       competitors: [],
       findings: [],
+      versions: [],
       proposals: [],
     };
   }

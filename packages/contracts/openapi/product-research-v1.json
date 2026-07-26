@@ -483,6 +483,148 @@
         }
       }
     },
+    "/api/v1/product-research-runs/{runId}/actions/publish-icp": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RunId"
+        },
+        {
+          "$ref": "#/components/parameters/WorkspaceSlug"
+        }
+      ],
+      "post": {
+        "operationId": "publishIcpVersion",
+        "summary": "Publish an approved ICP proposal as an immutable version (admin or owner only)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IcpPublishRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Immutable ICP version published",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IcpVersion"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/WorkspaceForbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/RunNotFound"
+          },
+          "409": {
+            "description": "The proposal is not approved or is already published"
+          }
+        }
+      }
+    },
+    "/api/v1/product-research-runs/{runId}/findings/{findingId}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RunId"
+        },
+        {
+          "$ref": "#/components/parameters/WorkspaceSlug"
+        },
+        {
+          "name": "findingId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "patch": {
+        "operationId": "reviewFinding",
+        "summary": "Confirm, correct or reject one research finding; human corrections survive retries",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FindingReviewRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Finding reviewed"
+          },
+          "400": {
+            "description": "Invalid review payload"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/WorkspaceForbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/RunNotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/product-research-runs/{runId}/icp-proposals/{proposalId}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RunId"
+        },
+        {
+          "$ref": "#/components/parameters/WorkspaceSlug"
+        },
+        {
+          "$ref": "#/components/parameters/ProposalId"
+        }
+      ],
+      "patch": {
+        "operationId": "correctIcpProposal",
+        "summary": "Correct the fields of one ICP proposal; human corrections survive retries",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IcpProposalCorrectionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "ICP proposal corrected"
+          },
+          "400": {
+            "description": "Invalid correction payload"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/WorkspaceForbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/RunNotFound"
+          }
+        }
+      }
+    },
     "/api/v1/research-documents": {
       "parameters": [
         {
@@ -647,6 +789,15 @@
       },
       "RunId": {
         "name": "runId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "ProposalId": {
+        "name": "proposalId",
         "in": "path",
         "required": true,
         "schema": {
@@ -1102,6 +1253,101 @@
             ],
             "minLength": 3,
             "maxLength": 2000
+          }
+        }
+      },
+      "IcpPublishRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "proposalId"
+        ],
+        "properties": {
+          "proposalId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "FindingReviewRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "decision"
+        ],
+        "properties": {
+          "decision": {
+            "type": "string",
+            "enum": [
+              "confirmed",
+              "corrected",
+              "rejected"
+            ]
+          },
+          "statement": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 5000
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 3,
+            "maxLength": 2000
+          }
+        }
+      },
+      "IcpProposalCorrectionRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "criteria": {},
+          "buyingCommittee": {},
+          "problems": {},
+          "signals": {},
+          "exclusions": {},
+          "unknowns": {}
+        }
+      },
+      "IcpVersion": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "runId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "proposalId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "version": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "unknowns": {},
+          "unresolvedContradictions": {},
+          "blockedFindings": {},
+          "publishedAt": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },

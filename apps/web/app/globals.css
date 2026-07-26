@@ -161,6 +161,12 @@ select:focus-visible {
   color: #92400e;
 }
 
+.badge-danger {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
 .page-title {
   font-size: clamp(25px, 3vw, 32px);
   font-weight: 680;

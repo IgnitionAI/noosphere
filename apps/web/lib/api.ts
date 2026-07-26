@@ -89,6 +89,19 @@ export interface ResearchReport {
   readonly competitors: readonly Record<string, unknown>[];
   readonly findings: readonly Record<string, unknown>[];
   readonly proposals: readonly Record<string, unknown>[];
+  readonly versions: readonly Record<string, unknown>[];
+}
+
+export interface IcpVersionView {
+  readonly id: string;
+  readonly runId: string;
+  readonly proposalId: string;
+  readonly version: number;
+  readonly name: string;
+  readonly unknowns: readonly unknown[];
+  readonly unresolvedContradictions: readonly unknown[];
+  readonly blockedFindings: readonly { findingId: string; statement: string; reason: string | null }[];
+  readonly publishedAt: string;
 }
 
 export class OutboundApiError extends Error {
@@ -239,6 +252,63 @@ export async function reviewIcpProposal(
       workspaceSlug,
       body: JSON.stringify({ proposalId, reason }),
     },
+  );
+  if (!response.ok) await throwApiError(response);
+}
+
+export async function reviewFinding(
+  workspaceSlug: string,
+  runId: string,
+  findingId: string,
+  input: {
+    decision: "confirmed" | "corrected" | "rejected";
+    statement?: string;
+    confidence?: number;
+    reason?: string | null;
+  },
+): Promise<void> {
+  const response = await apiFetch(
+    `/api/v1/product-research-runs/${runId}/findings/${findingId}`,
+    { method: "PATCH", workspaceSlug, body: JSON.stringify(input) },
+  );
+  if (!response.ok) await throwApiError(response);
+}
+
+export async function correctIcpProposal(
+  workspaceSlug: string,
+  runId: string,
+  proposalId: string,
+  fields: Readonly<Record<string, unknown>>,
+): Promise<void> {
+  const response = await apiFetch(
+    `/api/v1/product-research-runs/${runId}/icp-proposals/${proposalId}`,
+    { method: "PATCH", workspaceSlug, body: JSON.stringify(fields) },
+  );
+  if (!response.ok) await throwApiError(response);
+}
+
+export async function publishIcpVersion(
+  workspaceSlug: string,
+  runId: string,
+  proposalId: string,
+): Promise<IcpVersionView> {
+  const response = await apiFetch(
+    `/api/v1/product-research-runs/${runId}/actions/publish-icp`,
+    { method: "POST", workspaceSlug, body: JSON.stringify({ proposalId }) },
+  );
+  if (!response.ok) await throwApiError(response);
+  return (await response.json()) as IcpVersionView;
+}
+
+export async function researchMore(
+  workspaceSlug: string,
+  runId: string,
+  fromStage: string,
+  reason: string,
+): Promise<void> {
+  const response = await apiFetch(
+    `/api/v1/product-research-runs/${runId}/actions/research-more`,
+    { method: "POST", workspaceSlug, body: JSON.stringify({ fromStage, reason }) },
   );
   if (!response.ok) await throwApiError(response);
 }

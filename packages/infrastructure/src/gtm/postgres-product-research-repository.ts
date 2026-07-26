@@ -21,12 +21,14 @@ import {
   aiRuns,
   competitorCandidates,
   icpProposals,
+  icpVersions,
   jobs,
   marketEvidence,
   outboxEvents,
   productResearchRunDocuments,
   productResearchRuns,
   researchDocuments,
+  researchFindingEvidence,
   researchFindings,
   researchStageRuns,
 } from "@outbound/infrastructure/database/schema";
@@ -296,6 +298,198 @@ export class PostgresProductResearchRepository
     });
   }
 
+  async reviewFinding(input: {
+    workspaceId: string;
+    runId: string;
+    findingId: string;
+    userId: string;
+    decision: "confirmed" | "corrected" | "rejected";
+    statement: string | null;
+    confidence: number | null;
+    reason: string | null;
+    reviewedAt: Date;
+  }) {
+    const rows = await this.db
+      .update(researchFindings)
+      .set({
+        reviewStatus: input.decision,
+        reviewReason: input.reason,
+        reviewedBy: input.userId,
+        reviewedAt: input.reviewedAt,
+        humanEdited: true,
+        updatedAt: input.reviewedAt,
+        ...(input.statement !== null ? { statement: input.statement } : {}),
+        ...(input.confidence !== null ? { confidence: String(input.confidence) } : {}),
+      })
+      .where(
+        and(
+          eq(researchFindings.workspaceId, input.workspaceId),
+          eq(researchFindings.runId, input.runId),
+          eq(researchFindings.id, input.findingId),
+        ),
+      )
+      .returning();
+    if (rows.length !== 1) throw new Error("RESEARCH_FINDING_NOT_FOUND");
+    return rows[0]!;
+  }
+
+  async correctIcpProposal(input: {
+    workspaceId: string;
+    runId: string;
+    proposalId: string;
+    fields: {
+      name?: string;
+      criteria?: unknown;
+      buyingCommittee?: unknown;
+      problems?: unknown;
+      signals?: unknown;
+      exclusions?: unknown;
+      unknowns?: unknown;
+    };
+    updatedAt: Date;
+  }) {
+    const rows = await this.db
+      .update(icpProposals)
+      .set({
+        ...(input.fields.name !== undefined ? { name: input.fields.name } : {}),
+        ...(input.fields.criteria !== undefined ? { criteria: input.fields.criteria } : {}),
+        ...(input.fields.buyingCommittee !== undefined
+          ? { buyingCommittee: input.fields.buyingCommittee }
+          : {}),
+        ...(input.fields.problems !== undefined ? { problems: input.fields.problems } : {}),
+        ...(input.fields.signals !== undefined ? { signals: input.fields.signals } : {}),
+        ...(input.fields.exclusions !== undefined
+          ? { exclusions: input.fields.exclusions }
+          : {}),
+        ...(input.fields.unknowns !== undefined ? { unknowns: input.fields.unknowns } : {}),
+        humanEdited: true,
+        updatedAt: input.updatedAt,
+      })
+      .where(
+        and(
+          eq(icpProposals.workspaceId, input.workspaceId),
+          eq(icpProposals.runId, input.runId),
+          eq(icpProposals.id, input.proposalId),
+        ),
+      )
+      .returning();
+    if (rows.length !== 1) throw new Error("ICP_PROPOSAL_NOT_FOUND");
+    return rows[0]!;
+  }
+
+  async publishIcpVersion(input: {
+    id: string;
+    workspaceId: string;
+    runId: string;
+    proposalId: string;
+    userId: string;
+    publishedAt: Date;
+  }) {
+    return this.db.transaction(async (tx) => {
+      const proposals = await tx
+        .select()
+        .from(icpProposals)
+        .where(
+          and(
+            eq(icpProposals.workspaceId, input.workspaceId),
+            eq(icpProposals.runId, input.runId),
+            eq(icpProposals.id, input.proposalId),
+          ),
+        )
+        .limit(1);
+      const proposal = proposals[0];
+      if (!proposal) throw new Error("ICP_PROPOSAL_NOT_FOUND");
+      if (proposal.reviewStatus !== "approved") {
+        throw new Error("ICP_PROPOSAL_NOT_APPROVED");
+      }
+      const reviewCheckpoints = await tx
+        .select({ output: researchStageRuns.output })
+        .from(researchStageRuns)
+        .where(
+          and(
+            eq(researchStageRuns.workspaceId, input.workspaceId),
+            eq(researchStageRuns.runId, input.runId),
+            eq(researchStageRuns.stage, "evidence_review"),
+            eq(researchStageRuns.status, "completed"),
+          ),
+        )
+        .orderBy(desc(researchStageRuns.startedAt))
+        .limit(1);
+      const reviewOutput = reviewCheckpoints[0]?.output;
+      const unresolvedContradictions =
+        reviewOutput &&
+        typeof reviewOutput === "object" &&
+        "unresolvedContradictions" in reviewOutput &&
+        Array.isArray(reviewOutput.unresolvedContradictions)
+          ? reviewOutput.unresolvedContradictions
+          : [];
+      // An unresolved contradiction blocks the finding from the published ICP.
+      const blocked = await tx
+        .select({
+          findingId: researchFindings.id,
+          statement: researchFindings.statement,
+          reason: researchFindings.reviewReason,
+        })
+        .from(researchFindings)
+        .where(
+          and(
+            eq(researchFindings.workspaceId, input.workspaceId),
+            eq(researchFindings.runId, input.runId),
+            eq(researchFindings.reviewStatus, "rejected"),
+          ),
+        );
+      const current = await tx
+        .select({ version: icpVersions.version })
+        .from(icpVersions)
+        .where(eq(icpVersions.workspaceId, input.workspaceId))
+        .orderBy(desc(icpVersions.version))
+        .limit(1);
+      const version = (current[0]?.version ?? 0) + 1;
+      let inserted;
+      try {
+        inserted = await tx
+          .insert(icpVersions)
+          .values({
+            id: input.id,
+            workspaceId: input.workspaceId,
+            runId: input.runId,
+            proposalId: input.proposalId,
+            version,
+            name: proposal.name,
+            confidence: proposal.confidence,
+            criteria: proposal.criteria,
+            buyingCommittee: proposal.buyingCommittee,
+            problems: proposal.problems,
+            signals: proposal.signals,
+            exclusions: proposal.exclusions,
+            unknowns: proposal.unknowns,
+            unresolvedContradictions,
+            blockedFindings: blocked,
+            publishedBy: input.userId,
+            publishedAt: input.publishedAt,
+          })
+          .returning();
+      } catch (error) {
+        if (isUniqueViolation(error)) {
+          throw new Error("ICP_VERSION_ALREADY_PUBLISHED");
+        }
+        throw error;
+      }
+      if (inserted.length !== 1) throw new Error("ICP_VERSION_PUBLISH_FAILED");
+      await insertEvents(tx, [
+        {
+          type: "ICPVersionPublished",
+          runId: input.runId,
+          workspaceId: input.workspaceId,
+          versionId: input.id,
+          proposalId: input.proposalId,
+          version,
+        },
+      ]);
+      return inserted[0]!;
+    });
+  }
+
   async listEvidence(input: {
     workspaceId: string;
     runId: string;
@@ -364,7 +558,7 @@ export class PostgresProductResearchRepository
   }
 
   async getReport(workspaceId: string, runId: string) {
-    const [stages, evidence, competitors, findings, proposals] = await Promise.all([
+    const [stages, evidence, competitors, findings, proposals, versions] = await Promise.all([
       this.db
         .select({ stage: researchStageRuns.stage, output: researchStageRuns.output })
         .from(researchStageRuns)
@@ -400,13 +594,37 @@ export class PostgresProductResearchRepository
         .from(icpProposals)
         .where(and(eq(icpProposals.workspaceId, workspaceId), eq(icpProposals.runId, runId)))
         .orderBy(asc(icpProposals.rank)),
+      this.db
+        .select()
+        .from(icpVersions)
+        .where(and(eq(icpVersions.workspaceId, workspaceId), eq(icpVersions.runId, runId)))
+        .orderBy(asc(icpVersions.publishedAt)),
     ]);
+    const findingEvidenceLinks = findings.length
+      ? await this.db
+          .select({
+            findingId: researchFindingEvidence.findingId,
+            evidenceId: researchFindingEvidence.evidenceId,
+          })
+          .from(researchFindingEvidence)
+          .where(eq(researchFindingEvidence.workspaceId, workspaceId))
+      : [];
+    const evidenceByFinding = new Map<string, string[]>();
+    for (const link of findingEvidenceLinks) {
+      const list = evidenceByFinding.get(link.findingId) ?? [];
+      list.push(link.evidenceId);
+      evidenceByFinding.set(link.findingId, list);
+    }
     return {
       stageOutputs: Object.fromEntries(stages.map((stage) => [stage.stage, stage.output])),
       evidence,
       competitors,
-      findings,
+      findings: findings.map((finding) => ({
+        ...finding,
+        evidenceIds: evidenceByFinding.get(finding.id) ?? [],
+      })),
       proposals,
+      versions,
     };
   }
 }
@@ -555,4 +773,13 @@ async function insertEvents(executor: DbExecutor, events: readonly ProductResear
       payload: event,
     })),
   );
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < 4 && current && typeof current === "object"; depth += 1) {
+    if ("code" in current && (current as { code?: unknown }).code === "23505") return true;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return false;
 }
