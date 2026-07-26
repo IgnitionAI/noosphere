@@ -6,8 +6,8 @@ un produit SaaS multi-workspace.
 
 Ce dépôt contient les spécifications d’architecture, un prototype frontend
 HTML/Tailwind navigable et la première tranche verticale Bun/PostgreSQL/Next.js
-de la mission de recherche ICP F-009. L’adaptateur de modèles IA reste à
-implémenter.
+de la mission de recherche ICP F-009, son moteur LangChain et son crawler
+Python autonome.
 
 ![Vue d’ensemble du prototype](prototype/screenshots/dashboard-desktop.png)
 
@@ -54,7 +54,8 @@ HOSTNAME=0.0.0.0 PORT=3000 bun run web:start
 ```
 
 Le workflow livré couvre `/login`, la sélection automatique du workspace, le
-brief produit F-009 et le suivi de mission avec pause/reprise.
+brief produit et ses documents, le suivi de mission, le rapport sourcé et
+l’approbation humaine d’un ICP.
 
 ## Backend F-009
 
@@ -68,9 +69,9 @@ Le socle est organisé selon le monolithe modulaire :
 - `apps/api` : serveur Bun et composition root HTTP ;
 - `apps/worker` : consommateur Bun à lease.
 
-Voir le [runbook F-009](docs/architecture/F009_BACKEND_RUNBOOK.md) pour migrer
-PostgreSQL, brancher les adaptateurs, lancer l’API et le worker. Le contrat
-machine des sept routes est
+Voir le [runbook F-009](docs/architecture/F009_BACKEND_RUNBOOK.md) pour lancer
+ParadeDB, MinIO, Docling et le crawler, migrer la base, puis démarrer l’API et
+le worker. Le contrat machine des routes est
 [`product-research-v1.json`](packages/contracts/openapi/product-research-v1.json).
 
 L’API monte Better Auth sous `/api/auth/*`. Les appels métier doivent envoyer
@@ -102,7 +103,8 @@ sont détaillées dans le runbook F-009.
 
 ## Statut
 
-Architecture V1, prototype frontend et première tranche F-009 validés le
-24 juillet 2026. Better Auth, la résolution sécurisée du workspace, le brief
-produit et le suivi de mission sont branchés. L’adaptateur de modèles IA et la
-génération du rapport ICP restent à implémenter.
+Architecture V1, prototype frontend et moteur F-009 intégrés le 25 juillet
+2026. Le moteur utilise les agents LangChain avec Kimi Code par défaut,
+OpenAI pour les embeddings documentaires, le crawler
+SearXNG/Crawl4AI, Docling, ParadeDB et un rapport dont la publication d’ICP
+reste soumise à une décision humaine explicite.

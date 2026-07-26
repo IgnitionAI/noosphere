@@ -102,7 +102,7 @@ usage réel apparaît.
 
 1. ~~tokens, primitives, auth et `AppShell`~~ ;
 2. ~~brief produit et suivi F-009~~ ;
-3. rapport ICP sourcé F-009 ;
+3. ~~rapport ICP sourcé F-009~~ ;
 4. Prospects + fiche prospect ;
 5. campagne builder + validation ;
 6. inbox + approbation de réponse ;

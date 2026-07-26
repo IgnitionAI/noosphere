@@ -19,6 +19,7 @@ import {
 const runPath = /^\/api\/v1\/product-research-runs\/([^/]+)$/;
 const actionPath = /^\/api\/v1\/product-research-runs\/([^/]+)\/actions\/([^/]+)$/;
 const evidencePath = /^\/api\/v1\/product-research-runs\/([^/]+)\/evidence$/;
+const reportPath = /^\/api\/v1\/product-research-runs\/([^/]+)\/report$/;
 const uuidSchema = z.string().uuid();
 const requestContextSchema = z.object({
   userId: uuidSchema,
@@ -29,6 +30,12 @@ const researchMoreSchema = z
   .object({
     fromStage: researchStageSchema,
     reason: z.string().trim().min(10).max(1_000),
+  })
+  .strict();
+const proposalReviewSchema = z
+  .object({
+    proposalId: z.string().uuid(),
+    reason: z.string().trim().min(3).max(2_000).nullable().default(null),
   })
   .strict();
 
@@ -120,6 +127,25 @@ export function createProductResearchHttpHandler(dependencies: ProductResearchHt
           202,
         );
       }
+      if (
+        request.method === "POST" &&
+        actionMatch &&
+        ["approve-icp", "reject-icp"].includes(actionMatch[2] ?? "")
+      ) {
+        const context = await resolveContext(dependencies.contextResolver, request);
+        requireReviewer(context.role);
+        const runId = uuidSchema.parse(actionMatch[1]);
+        const body = proposalReviewSchema.parse(await request.json());
+        await dependencies.application.reviewIcpProposal({
+          workspaceId: context.workspaceId,
+          runId,
+          proposalId: body.proposalId,
+          userId: context.userId,
+          decision: actionMatch[2] === "approve-icp" ? "approved" : "rejected",
+          reason: body.reason,
+        });
+        return new Response(null, { status: 204 });
+      }
       const runMatch = runPath.exec(url.pathname);
       if (request.method === "GET" && runMatch) {
         const context = await resolveContext(dependencies.contextResolver, request);
@@ -199,6 +225,37 @@ export function createProductResearchHttpHandler(dependencies: ProductResearchHt
           nextCursor: hasMore && last ? encodeEvidenceCursor(last.createdAt, last.id) : null,
         });
       }
+      const reportMatch = reportPath.exec(url.pathname);
+      if (request.method === "GET" && reportMatch) {
+        const context = await resolveContext(dependencies.contextResolver, request);
+        requireViewer(context.role);
+        const runId = uuidSchema.parse(reportMatch[1]);
+        const report = await dependencies.application.getReport({
+          workspaceId: context.workspaceId,
+          runId,
+        });
+        return json({
+          run: {
+            id: report.run.id,
+            status: report.run.status,
+            brief: report.run.brief,
+            completedStages: report.run.completedStages,
+          },
+          stageOutputs: report.stageOutputs,
+          evidence: report.evidence.map((item) => ({
+            ...item,
+            observedAt: item.observedAt.toISOString(),
+            createdAt: item.createdAt.toISOString(),
+          })),
+          competitors: report.competitors,
+          findings: report.findings,
+          proposals: report.proposals,
+          links: {
+            approve: `/api/v1/product-research-runs/${runId}/actions/approve-icp`,
+            reject: `/api/v1/product-research-runs/${runId}/actions/reject-icp`,
+          },
+        });
+      }
       const allowed = allowedMethods(url.pathname);
       if (allowed) return methodNotAllowed(allowed);
       return problem(404, "ROUTE_NOT_FOUND", "Route not found");
@@ -226,6 +283,13 @@ export function createProductResearchHttpHandler(dependencies: ProductResearchHt
       if (error instanceof ProductResearchInvariantError) {
         return problem(409, "PRODUCT_RESEARCH_INVALID_STATE", error.message);
       }
+      const message = error instanceof Error ? error.message : "";
+      if (message === "PRODUCT_RESEARCH_NOT_READY_FOR_REVIEW") {
+        return problem(409, message, "The evidence audit must complete before human review");
+      }
+      if (message === "ICP_PROPOSAL_NOT_FOUND") {
+        return problem(404, message, "ICP proposal not found in this workspace run");
+      }
       return problem(500, "INTERNAL_ERROR", "An unexpected error occurred");
     }
   };
@@ -242,6 +306,12 @@ function requireOperator(role: string): void {
 function requireViewer(role: string): void {
   if (!["viewer", "operator", "reviewer", "admin", "owner"].includes(role)) {
     throw new WorkspacePermissionError("Workspace access is required");
+  }
+}
+
+function requireReviewer(role: string): void {
+  if (!["reviewer", "admin", "owner"].includes(role)) {
+    throw new WorkspacePermissionError("Reviewer access is required");
   }
 }
 
@@ -327,7 +397,7 @@ function problem(
 
 function allowedMethods(pathname: string): string | null {
   if (pathname === "/api/v1/product-research-runs") return "POST";
-  if (runPath.test(pathname) || evidencePath.test(pathname)) return "GET";
+  if (runPath.test(pathname) || evidencePath.test(pathname) || reportPath.test(pathname)) return "GET";
   if (actionPath.test(pathname)) return "POST";
   return null;
 }

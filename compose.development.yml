@@ -1,0 +1,21 @@
+services:
+  database:
+    ports:
+      - "127.0.0.1:${DEV_POSTGRES_PORT:-55432}:5432"
+
+  minio:
+    ports:
+      - "127.0.0.1:${DEV_MINIO_PORT:-59000}:9000"
+      - "127.0.0.1:${DEV_MINIO_CONSOLE_PORT:-59001}:9001"
+
+  searxng:
+    ports:
+      - "127.0.0.1:${DEV_SEARXNG_PORT:-58080}:8080"
+
+  crawler:
+    ports:
+      - "127.0.0.1:${DEV_CRAWLER_PORT:-58000}:8000"
+
+  docling:
+    ports:
+      - "127.0.0.1:${DEV_DOCLING_PORT:-55001}:5001"

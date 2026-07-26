@@ -1,0 +1,112 @@
+name: ignition-outbound
+
+services:
+  database:
+    image: ${PARADEDB_IMAGE:-paradedb/paradedb:v0.23.5}
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ignition_outbound}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - paradedb-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-ignition_outbound}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    networks: [outbound-private]
+
+  minio:
+    image: ${MINIO_IMAGE:-minio/minio:latest}
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:?S3_ACCESS_KEY_ID is required}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY:?S3_SECRET_ACCESS_KEY is required}
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    networks: [outbound-private]
+
+  minio-init:
+    image: ${MINIO_MC_IMAGE:-minio/mc:latest}
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >
+        mc alias set local http://minio:9000 "$$S3_ACCESS_KEY_ID" "$$S3_SECRET_ACCESS_KEY"
+        && mc mb --ignore-existing "local/$$S3_BUCKET"
+    environment:
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?S3_ACCESS_KEY_ID is required}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?S3_SECRET_ACCESS_KEY is required}
+      S3_BUCKET: ${S3_BUCKET:-ignition-outbound}
+    networks: [outbound-private]
+
+  searxng:
+    image: ${SEARXNG_IMAGE:-searxng/searxng:latest}
+    environment:
+      SEARXNG_BASE_URL: http://searxng:8080/
+      SEARXNG_SECRET: ${SEARXNG_SECRET:?SEARXNG_SECRET is required}
+    volumes:
+      - ./apps/searxng/settings.yml:/etc/searxng/settings.yml:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/', timeout=3)"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    networks: [outbound-private]
+
+  crawler:
+    build:
+      context: ./apps/crawler
+    depends_on:
+      searxng:
+        condition: service_healthy
+    environment:
+      ENVIRONMENT: production
+      CRAWLER_API_KEY: ${CRAWLER_API_KEY:?CRAWLER_API_KEY is required}
+      SEARXNG_URL: http://searxng:8080
+      SEARCH_FALLBACK_ENABLED: ${SEARCH_FALLBACK_ENABLED:-true}
+      ALLOW_PRIVATE_NETWORKS: "false"
+      MAX_CONCURRENT_CRAWLS: 4
+      MAX_CONCURRENT_PER_DOMAIN: 2
+      MAX_CRAWL_LIMIT: 300
+      RESPECT_ROBOTS_TXT: "true"
+    shm_size: 2gb
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    networks: [outbound-private]
+
+  docling:
+    image: ${DOCLING_IMAGE:-ghcr.io/docling-project/docling-serve-cpu:v1.21.0}
+    environment:
+      DOCLING_SERVE_API_KEY: ${DOCLING_API_KEY:?DOCLING_API_KEY is required}
+      DOCLING_SERVE_ENABLE_UI: "0"
+      DOCLING_SERVE_ENG_KIND: local
+      DOCLING_SERVE_ENG_LOC_NUM_WORKERS: 1
+      DOCLING_DEVICE: cpu
+    volumes:
+      - docling-cache:/opt/app-root/src/.cache
+    restart: unless-stopped
+    networks: [outbound-private]
+
+volumes:
+  paradedb-data:
+  minio-data:
+  docling-cache:
+
+networks:
+  outbound-private:
+    driver: bridge

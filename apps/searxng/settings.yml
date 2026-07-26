@@ -1,0 +1,19 @@
+use_default_settings: true
+
+general:
+  debug: false
+  instance_name: "Ignition Outbound Search"
+
+search:
+  safe_search: 1
+  formats:
+    - html
+    - json
+
+server:
+  limiter: false
+  image_proxy: false
+  secret_key: "overridden-by-SEARXNG_SECRET"
+
+ui:
+  static_use_hash: true

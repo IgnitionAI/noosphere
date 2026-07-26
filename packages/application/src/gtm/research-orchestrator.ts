@@ -21,6 +21,7 @@ import type { Clock, ContentHasher, IdGenerator } from "@outbound/application/sh
 export type ResearchJobResult =
   | { readonly outcome: "completed"; readonly stage: ResearchStage; readonly nextStage: ResearchStage | null }
   | { readonly outcome: "already_completed"; readonly stage: ResearchStage }
+  | { readonly outcome: "superseded"; readonly stage: ResearchStage }
   | { readonly outcome: "paused"; readonly stage: ResearchStage }
   | { readonly outcome: "retry_scheduled"; readonly stage: ResearchStage }
   | { readonly outcome: "failed"; readonly stage: ResearchStage };
@@ -36,6 +37,19 @@ export class ResearchOrchestrator {
   ) {}
 
   async process(job: LeasedJob): Promise<ResearchJobResult> {
+    const result = await this.#process(job);
+    console.info(
+      JSON.stringify({
+        event: "research_stage_job_processed",
+        jobId: job.id,
+        stage: result.stage,
+        outcome: result.outcome,
+      }),
+    );
+    return result;
+  }
+
+  async #process(job: LeasedJob): Promise<ResearchJobResult> {
     const payload = researchStageJobPayloadSchema.parse(job.payload);
     const run = await this.repository.findById(payload.workspaceId, payload.runId);
     if (!run) {
@@ -52,6 +66,15 @@ export class ResearchOrchestrator {
       await this.#ensureNextJob(run, payload.stage, job.correlationId);
       await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
       return { outcome: "already_completed", stage: payload.stage };
+    }
+
+    // Jobs enqueued before a research-more invalidation are stale: the run now
+    // expects an earlier stage. Acknowledge them instead of crashing the worker.
+    const expectedStage =
+      researchStages.find((stage) => !run.snapshot.completedStages.includes(stage)) ?? null;
+    if (payload.stage !== expectedStage) {
+      await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
+      return { outcome: "superseded", stage: payload.stage };
     }
 
     if (run.snapshot.status === "paused") {
@@ -77,12 +100,17 @@ export class ResearchOrchestrator {
     });
     const now = this.clock.now();
     run.beginStage(payload.stage, now);
+    const attempt = await this.repository.nextStageAttempt(
+      payload.workspaceId,
+      payload.runId,
+      payload.stage,
+    );
     let checkpoint: ResearchCheckpoint = {
       id: this.ids.generate(),
       workspaceId: payload.workspaceId,
       runId: payload.runId,
       stage: payload.stage,
-      attempt: job.attempts,
+      attempt,
       status: "running",
       review: "machine",
       inputHash: await this.hasher.hash(input),
@@ -98,6 +126,7 @@ export class ResearchOrchestrator {
       const rawExecution = await this.agents.execute(payload.stage, input);
       const execution = parseAgentExecutionResult(payload.stage, rawExecution);
       const output = execution.output;
+      assertResolvableEvidenceReferences(output, previousOutputs);
       checkpoint = {
         ...checkpoint,
         status: "completed",
@@ -189,5 +218,52 @@ export class ResearchOrchestrator {
       maxAttempts: 5,
       availableAt: this.clock.now(),
     };
+  }
+}
+
+function assertResolvableEvidenceReferences(
+  output: unknown,
+  previousOutputs: Readonly<Record<string, unknown>>,
+): void {
+  const available = new Set<string>();
+  const referenced = new Set<string>();
+  for (const value of [...Object.values(previousOutputs), output]) {
+    walk(value, (key, candidate) => {
+      if (key === "evidence" && Array.isArray(candidate)) {
+        for (const item of candidate) {
+          if (item && typeof item === "object" && "evidenceId" in item) {
+            const id = item.evidenceId;
+            if (typeof id === "string") available.add(id);
+          }
+        }
+      }
+      if (key === "evidenceIds" && Array.isArray(candidate)) {
+        for (const id of candidate) {
+          if (typeof id === "string") referenced.add(id);
+        }
+      }
+    });
+  }
+  const unresolved = [...referenced].filter((id) => !available.has(id));
+  if (unresolved.length) {
+    throw new TerminalAgentError(
+      "UNRESOLVED_EVIDENCE_REFERENCE",
+      `Agent output references unknown evidence keys: ${unresolved.join(", ")}`,
+    );
+  }
+}
+
+function walk(
+  value: unknown,
+  visitor: (key: string, value: unknown) => void,
+): void {
+  if (Array.isArray(value)) {
+    for (const item of value) walk(item, visitor);
+    return;
+  }
+  if (!value || typeof value !== "object") return;
+  for (const [key, child] of Object.entries(value)) {
+    visitor(key, child);
+    walk(child, visitor);
   }
 }

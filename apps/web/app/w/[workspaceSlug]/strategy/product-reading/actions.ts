@@ -3,7 +3,10 @@
 import { productResearchBriefSchema } from "@outbound/contracts/product-research";
 import { redirect } from "next/navigation";
 import {
+  completeDocumentUpload,
+  createDocumentUploadIntent,
   createResearchRun,
+  listResearchDocuments,
   OutboundApiError,
   researchAction,
 } from "@/lib/api";
@@ -31,7 +34,10 @@ export async function createResearchMission(
       .getAll("knownCompetitors")
       .map((competitor) => String(competitor).trim())
       .filter(Boolean),
-    internalDocumentIds: [],
+    internalDocumentIds: formData
+      .getAll("internalDocumentIds")
+      .map((documentId) => String(documentId))
+      .filter(Boolean),
     depth: formData.get("depth"),
   });
   if (!parsed.success) {
@@ -54,4 +60,28 @@ export async function createResearchMission(
     };
   }
   redirect(`/w/${workspaceSlug}/research/${runId}`);
+}
+
+export async function prepareDocumentUpload(
+  workspaceSlug: string,
+  input: {
+    filename: string;
+    contentType: string;
+    sizeBytes: number;
+    checksumSha256: string;
+  },
+) {
+  return createDocumentUploadIntent(workspaceSlug, input);
+}
+
+export async function confirmDocumentUpload(
+  workspaceSlug: string,
+  documentId: string,
+) {
+  return completeDocumentUpload(workspaceSlug, documentId);
+}
+
+export async function getDocumentStatus(workspaceSlug: string, documentId: string) {
+  const documents = await listResearchDocuments(workspaceSlug);
+  return documents.find((document) => document.id === documentId) ?? null;
 }

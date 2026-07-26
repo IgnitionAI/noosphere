@@ -105,8 +105,8 @@ Chaque étape écrit un checkpoint durable. Une reprise ne recommence pas les
 
 Le transport dérive toujours le workspace et le rôle d’une session Better Auth
 et d’un membership actif. Le slug vient de la route via `x-workspace-slug` et
-n’est jamais accepté dans le payload. L’adaptateur de modèle reste injecté au
-composition root sans coupler le domaine.
+n’est jamais accepté dans le payload. L’exécuteur LangChain reste instancié au
+composition root du worker sans coupler le domaine.
 
 ## Hors périmètre
 

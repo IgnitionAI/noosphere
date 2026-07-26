@@ -1,6 +1,3 @@
-import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
-import type { ResearchAgentExecutor } from "@outbound/application/gtm/product-research-ports";
 import { ResearchOrchestrator } from "@outbound/application/gtm/research-orchestrator";
 import {
   CryptoIdGenerator,
@@ -10,26 +7,45 @@ import { createDatabase } from "@outbound/infrastructure/database/client";
 import { PostgresProductResearchRepository } from "@outbound/infrastructure/gtm/postgres-product-research-repository";
 import { PostgresJobQueue } from "@outbound/infrastructure/jobs/postgres-job-queue";
 import { Sha256ContentHasher } from "@outbound/infrastructure/shared/sha256-content-hasher";
+import { createLangChainResearchAgentExecutorFromEnvironment } from "@outbound/infrastructure/ai/langchain-research-agent-executor";
 import { ResearchWorker } from "./research-worker";
+import {
+  ParadeDbInternalDocumentSearch,
+  ResearchDocumentService,
+} from "@outbound/infrastructure/documents/research-document-service";
+import { PostgresResearchToolRunRecorder } from "@outbound/infrastructure/ai/postgres-tool-run-recorder";
+import { PostgresWorkspaceAiSettingsRepository } from "@outbound/infrastructure/workspaces/postgres-workspace-ai-settings-repository";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
-const adapterModulePath = requiredEnvironment("RESEARCH_AGENT_ADAPTER_MODULE");
-const adapterModule = (await import(adapterModuleSpecifier(adapterModulePath))) as {
-  createResearchAgentExecutor?: () => ResearchAgentExecutor | Promise<ResearchAgentExecutor>;
-};
-if (typeof adapterModule.createResearchAgentExecutor !== "function") {
-  throw new Error("RESEARCH_AGENT_ADAPTER_MODULE must export createResearchAgentExecutor()");
-}
-
 const database = createDatabase(databaseUrl);
 const queue = new PostgresJobQueue(database.client);
 const repository = new PostgresProductResearchRepository(database.db);
 const clock = new SystemClock();
+const ids = new CryptoIdGenerator();
+const documentOptions = documentServiceOptionsFromEnvironment();
+const documentService = new ResearchDocumentService(
+  database.db,
+  queue,
+  ids,
+  clock,
+  documentOptions,
+);
+const documentSearch = new ParadeDbInternalDocumentSearch(
+  database.client,
+  documentOptions.openAIApiKey,
+  documentOptions.embeddingModel,
+);
+const toolRunRecorder = new PostgresResearchToolRunRecorder(database.db);
+const workspaceAiSettings = new PostgresWorkspaceAiSettingsRepository(database.db);
 const orchestrator = new ResearchOrchestrator(
   repository,
   queue,
-  await adapterModule.createResearchAgentExecutor(),
-  new CryptoIdGenerator(),
+  createLangChainResearchAgentExecutorFromEnvironment(
+    documentSearch,
+    toolRunRecorder,
+    workspaceAiSettings,
+  ),
+  ids,
   clock,
   new Sha256ContentHasher(),
 );
@@ -38,7 +54,7 @@ const worker = new ResearchWorker(queue, orchestrator, clock, {
   leaseMs: positiveIntegerEnvironment("JOB_LEASE_MS", 60_000),
   batchSize: positiveIntegerEnvironment("JOB_BATCH_SIZE", 4),
   pollIntervalMs: positiveIntegerEnvironment("JOB_POLL_INTERVAL_MS", 1_000),
-});
+}, documentService);
 
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
   process.once(signal, () => {
@@ -62,16 +78,24 @@ function requiredEnvironment(name: string): string {
   return value;
 }
 
-function adapterModuleSpecifier(value: string): string {
-  return value.startsWith(".") || value.startsWith("/")
-    ? pathToFileURL(resolve(value)).href
-    : value;
-}
-
 function positiveIntegerEnvironment(name: string, fallback: number): number {
   const raw = process.env[name];
   if (!raw) return fallback;
   const value = Number(raw);
   if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${name} must be a positive integer`);
   return value;
+}
+
+function documentServiceOptionsFromEnvironment() {
+  return {
+    bucket: requiredEnvironment("S3_BUCKET"),
+    endpoint: requiredEnvironment("S3_ENDPOINT"),
+    region: process.env.S3_REGION ?? "us-east-1",
+    accessKeyId: requiredEnvironment("S3_ACCESS_KEY_ID"),
+    secretAccessKey: requiredEnvironment("S3_SECRET_ACCESS_KEY"),
+    doclingUrl: requiredEnvironment("DOCLING_SERVICE_URL"),
+    ...(process.env.DOCLING_API_KEY ? { doclingApiKey: process.env.DOCLING_API_KEY } : {}),
+    openAIApiKey: requiredEnvironment("OPENAI_API_KEY"),
+    embeddingModel: requiredEnvironment("OPENAI_EMBEDDING_MODEL"),
+  };
 }

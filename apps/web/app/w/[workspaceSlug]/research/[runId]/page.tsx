@@ -230,9 +230,15 @@ export default async function ResearchProgressPage({
                 Publication et prospection resteront soumises à une validation humaine.
               </p>
             </div>
-            <button className="button button-signal cursor-not-allowed" disabled type="button">
-              Ouvrir le rapport
-            </button>
+            {run.status === "ready_for_review" ? (
+              <Link className="button button-signal" href={`/w/${workspaceSlug}/research/${runId}/report`}>
+                Ouvrir le rapport
+              </Link>
+            ) : (
+              <button className="button button-signal cursor-not-allowed" disabled type="button">
+                Ouvrir le rapport
+              </button>
+            )}
           </div>
         </div>
       </div>

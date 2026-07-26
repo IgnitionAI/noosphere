@@ -5,6 +5,13 @@ import { createDatabase } from "@outbound/infrastructure/database/client";
 import { PostgresProductResearchRepository } from "@outbound/infrastructure/gtm/postgres-product-research-repository";
 import { createProductResearchHttpHandler } from "@outbound/interface/http/product-research-handler";
 import { createWorkspaceHttpHandler } from "@outbound/interface/http/workspace-handler";
+import { createResearchDocumentHttpHandler } from "@outbound/interface/http/research-document-handler";
+import { PostgresJobQueue } from "@outbound/infrastructure/jobs/postgres-job-queue";
+import { ResearchDocumentService } from "@outbound/infrastructure/documents/research-document-service";
+import { WorkspaceAiSettingsApplication } from "@outbound/application/workspaces/workspace-ai-settings";
+import { PostgresWorkspaceAiSettingsRepository } from "@outbound/infrastructure/workspaces/postgres-workspace-ai-settings-repository";
+import { createWorkspaceAiSettingsHttpHandler } from "@outbound/interface/http/workspace-ai-settings-handler";
+import { resolveResearchModelPolicyFromEnvironment } from "@outbound/infrastructure/ai/langchain-research-agent-executor";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
@@ -18,11 +25,21 @@ const auth = createBetterAuthRuntime(database.db, {
   allowSignUp: process.env.BETTER_AUTH_ALLOW_SIGN_UP === "true",
 });
 const repository = new PostgresProductResearchRepository(database.db);
+const queue = new PostgresJobQueue(database.client);
+const clock = new SystemClock();
+const ids = new CryptoIdGenerator();
+const documentService = new ResearchDocumentService(
+  database.db,
+  queue,
+  ids,
+  clock,
+  documentServiceOptionsFromEnvironment(),
+);
 const application = new ProductResearchApplication(
   repository,
   repository,
-  new CryptoIdGenerator(),
-  new SystemClock(),
+  ids,
+  clock,
 );
 const productResearch = createProductResearchHttpHandler({
   application,
@@ -32,6 +49,18 @@ const workspace = createWorkspaceHttpHandler({
   sessions: auth.sessions,
   memberships: auth.memberships,
 });
+const workspaceAiSettingsRepository = new PostgresWorkspaceAiSettingsRepository(database.db);
+const workspaceAiSettings = createWorkspaceAiSettingsHttpHandler({
+  application: new WorkspaceAiSettingsApplication(
+    workspaceAiSettingsRepository,
+    resolveResearchModelPolicyFromEnvironment(process.env),
+  ),
+  contextResolver: auth.contextResolver,
+});
+const documents = createResearchDocumentHttpHandler({
+  service: documentService,
+  contextResolver: auth.contextResolver,
+});
 const port = positiveIntegerEnvironment("PORT", 3000);
 const server = Bun.serve({
   port,
@@ -40,6 +69,8 @@ const server = Bun.serve({
     const pathname = new URL(request.url).pathname;
     if (pathname.startsWith("/api/auth/")) return auth.handle(request);
     if (pathname === "/api/v1/workspaces") return workspace(request);
+    if (pathname === "/api/v1/workspace-ai-settings") return workspaceAiSettings(request);
+    if (pathname.startsWith("/api/v1/research-documents")) return documents(request);
     if (pathname === "/health/live") return Response.json({ status: "ok" });
     if (pathname === "/health/ready") {
       try {
@@ -103,4 +134,16 @@ function positiveIntegerEnvironment(name: string, fallback: number): number {
   const value = Number(raw);
   if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${name} must be a positive integer`);
   return value;
+}
+
+function documentServiceOptionsFromEnvironment() {
+  return {
+    bucket: requiredEnvironment("S3_BUCKET"),
+    endpoint: requiredEnvironment("S3_ENDPOINT"),
+    region: process.env.S3_REGION ?? "us-east-1",
+    accessKeyId: requiredEnvironment("S3_ACCESS_KEY_ID"),
+    secretAccessKey: requiredEnvironment("S3_SECRET_ACCESS_KEY"),
+    doclingUrl: requiredEnvironment("DOCLING_SERVICE_URL"),
+    ...(process.env.DOCLING_API_KEY ? { doclingApiKey: process.env.DOCLING_API_KEY } : {}),
+  };
 }

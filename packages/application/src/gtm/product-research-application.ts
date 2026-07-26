@@ -103,6 +103,30 @@ export class ProductResearchApplication {
       rethrowNotFound(error, input.runId);
     }
   }
+
+  async getReport(input: { workspaceId: string; runId: string }) {
+    const run = await this.get(input);
+    const report = await this.views.getReport(input.workspaceId, input.runId);
+    return { run, ...report };
+  }
+
+  async reviewIcpProposal(input: {
+    workspaceId: string;
+    runId: string;
+    proposalId: string;
+    userId: string;
+    decision: "approved" | "rejected";
+    reason: string | null;
+  }): Promise<void> {
+    const run = await this.get({ workspaceId: input.workspaceId, runId: input.runId });
+    if (run.status !== "ready_for_review") {
+      throw new Error("PRODUCT_RESEARCH_NOT_READY_FOR_REVIEW");
+    }
+    await this.repository.reviewIcpProposal({
+      ...input,
+      reviewedAt: new Date(),
+    });
+  }
 }
 
 export class ProductResearchNotFoundError extends Error {

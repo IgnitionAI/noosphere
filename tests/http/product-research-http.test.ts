@@ -327,6 +327,59 @@ describe("F-009 HTTP routes", () => {
         .find((checkpoint) => checkpoint.stage === "competitor_discovery"),
     ).toMatchObject({ status: "completed", review: "human_reviewed" });
   });
+
+  test("the completed pipeline exposes a report and requires a reviewer for ICP approval", async () => {
+    const harness = createHarness();
+    const created = (await (await createRun(harness.handle)).json()) as { id: string };
+    await action(harness.handle, created.id, "start");
+    for (let index = 0; index < 6; index += 1) {
+      const leased = await harness.backend.lease({
+        workerId: "http-report-worker",
+        types: ["research.stage.execute"],
+        limit: 1,
+        leaseMs: 30_000,
+        now: harness.clock.now(),
+      });
+      expect(leased).toHaveLength(1);
+      await harness.orchestrator.process(leased[0]!);
+    }
+
+    harness.context.role = "viewer";
+    const report = await harness.handle(
+      new Request(`http://localhost/api/v1/product-research-runs/${created.id}/report`),
+    );
+    expect(report.status).toBe(200);
+    expect((await report.json()) as { run: { status: string } }).toMatchObject({
+      run: { status: "ready_for_review" },
+    });
+
+    const proposalId = crypto.randomUUID();
+    const forbidden = await harness.handle(
+      new Request(
+        `http://localhost/api/v1/product-research-runs/${created.id}/actions/approve-icp`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ proposalId, reason: "ICP validé" }),
+        },
+      ),
+    );
+    expect(forbidden.status).toBe(403);
+
+    harness.context.role = "reviewer";
+    const approved = await harness.handle(
+      new Request(
+        `http://localhost/api/v1/product-research-runs/${created.id}/actions/approve-icp`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ proposalId, reason: "ICP validé" }),
+        },
+      ),
+    );
+    expect(approved.status).toBe(204);
+    expect(harness.backend.proposalReviews).toHaveLength(1);
+  });
 });
 
 function createHarness() {

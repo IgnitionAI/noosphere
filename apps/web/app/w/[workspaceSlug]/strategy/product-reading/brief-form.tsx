@@ -6,7 +6,6 @@ import {
   Plus,
   Radar,
   ShieldCheck,
-  UploadCloud,
   X,
 } from "lucide-react";
 import { useActionState, useState } from "react";
@@ -14,6 +13,7 @@ import {
   createResearchMission,
   type CreateMissionState,
 } from "./actions";
+import { DocumentUpload } from "./document-upload";
 
 const depths = [
   {
@@ -220,20 +220,10 @@ export function BriefForm({ workspaceSlug }: { workspaceSlug: string }) {
           <section className="panel">
             <div className="panel-header">
               <h2 className="font-semibold">4. Documents internes</h2>
-              <span className="badge">Prochaine tranche</span>
+              <span className="badge">Facultatif</span>
             </div>
             <div className="panel-body">
-              <button
-                className="flex w-full cursor-not-allowed items-center justify-center gap-3 rounded-lg border border-dashed border-line bg-canvas p-7 text-sm font-semibold text-muted"
-                disabled
-                type="button"
-              >
-                <UploadCloud size={20} />
-                Ajouter un pitch, une brochure ou une étude existante
-              </button>
-              <p className="mt-2 text-xs text-muted">
-                Le stockage documentaire sera branché sans mélanger preuve publique et source interne.
-              </p>
+              <DocumentUpload workspaceSlug={workspaceSlug} />
             </div>
           </section>
 

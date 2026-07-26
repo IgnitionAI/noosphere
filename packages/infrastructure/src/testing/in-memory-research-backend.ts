@@ -41,6 +41,7 @@ export class InMemoryResearchBackend
   readonly outbox: ProductResearchEvent[] = [];
   readonly aiRuns: ResearchAIRun[] = [];
   readonly #evidence: MarketEvidenceView[] = [];
+  readonly proposalReviews: Record<string, unknown>[] = [];
 
   async insert(run: ProductResearchRun): Promise<void> {
     const key = runKey(run.snapshot.workspaceId, run.snapshot.id);
@@ -83,6 +84,22 @@ export class InMemoryResearchBackend
       )
       .sort((left, right) => left.startedAt.getTime() - right.startedAt.getTime())
       .map(clone);
+  }
+
+  async nextStageAttempt(
+    workspaceId: string,
+    runId: string,
+    stage: ResearchStage,
+  ): Promise<number> {
+    const attempts = [...this.#checkpoints.values()]
+      .filter(
+        (checkpoint) =>
+          checkpoint.workspaceId === workspaceId &&
+          checkpoint.runId === runId &&
+          checkpoint.stage === stage,
+      )
+      .map((checkpoint) => checkpoint.attempt);
+    return Math.max(0, ...attempts) + 1;
   }
 
   async commitRunTransition(
@@ -155,6 +172,18 @@ export class InMemoryResearchBackend
     this.#saveRun(input.run);
     await this.enqueue(input.job);
     this.outbox.push(...input.events.map(clone));
+  }
+
+  async reviewIcpProposal(input: {
+    workspaceId: string;
+    runId: string;
+    proposalId: string;
+    userId: string;
+    decision: "approved" | "rejected";
+    reason: string | null;
+    reviewedAt: Date;
+  }): Promise<void> {
+    this.proposalReviews.push(clone(input));
   }
 
   async enqueue(job: NewJob): Promise<{ inserted: boolean }> {
@@ -288,6 +317,22 @@ export class InMemoryResearchBackend
         startedAt: checkpoint.startedAt,
         completedAt: checkpoint.completedAt,
       }));
+  }
+
+  async getReport(workspaceId: string, runId: string) {
+    const checkpoints = await this.listCompletedCheckpoints(workspaceId, runId);
+    return {
+      stageOutputs: Object.fromEntries(checkpoints.map((item) => [item.stage, item.output])),
+      evidence: await this.listEvidence({
+        workspaceId,
+        runId,
+        after: null,
+        limit: Number.MAX_SAFE_INTEGER,
+      }),
+      competitors: [],
+      findings: [],
+      proposals: [],
+    };
   }
 
   #saveRun(run: ProductResearchRun): void {

@@ -16,6 +16,7 @@ export interface ProductResearchRepository {
     stage: ResearchStage,
   ): Promise<ResearchCheckpoint | null>;
   listCompletedCheckpoints(workspaceId: string, runId: string): Promise<readonly ResearchCheckpoint[]>;
+  nextStageAttempt(workspaceId: string, runId: string, stage: ResearchStage): Promise<number>;
   commitRunTransition(
     run: ProductResearchRun,
     job: NewJob | null,
@@ -45,6 +46,15 @@ export interface ProductResearchRepository {
     job: NewJob;
     events: readonly ProductResearchEvent[];
   }): Promise<void>;
+  reviewIcpProposal(input: {
+    workspaceId: string;
+    runId: string;
+    proposalId: string;
+    userId: string;
+    decision: "approved" | "rejected";
+    reason: string | null;
+    reviewedAt: Date;
+  }): Promise<void>;
 }
 
 export interface ProductResearchViewRepository {
@@ -58,6 +68,15 @@ export interface ProductResearchViewRepository {
     after: { createdAt: Date; id: string } | null;
     limit: number;
   }): Promise<readonly MarketEvidenceView[]>;
+  getReport(workspaceId: string, runId: string): Promise<ProductResearchReportView>;
+}
+
+export interface ProductResearchReportView {
+  readonly stageOutputs: Readonly<Record<string, unknown>>;
+  readonly evidence: readonly MarketEvidenceView[];
+  readonly competitors: readonly Readonly<Record<string, unknown>>[];
+  readonly findings: readonly Readonly<Record<string, unknown>>[];
+  readonly proposals: readonly Readonly<Record<string, unknown>>[];
 }
 
 export interface ResearchStageRunView {

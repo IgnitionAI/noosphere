@@ -19,12 +19,18 @@ import type {
 import type { Database } from "@outbound/infrastructure/database/client";
 import {
   aiRuns,
+  competitorCandidates,
+  icpProposals,
   jobs,
   marketEvidence,
   outboxEvents,
+  productResearchRunDocuments,
   productResearchRuns,
+  researchDocuments,
+  researchFindings,
   researchStageRuns,
 } from "@outbound/infrastructure/database/schema";
+import { projectResearchStage } from "@outbound/infrastructure/gtm/research-stage-projection";
 
 type DbExecutor = Pick<Database, "insert" | "update">;
 
@@ -34,7 +40,34 @@ export class PostgresProductResearchRepository
   constructor(private readonly db: Database) {}
 
   async insert(run: ProductResearchRun): Promise<void> {
-    await this.db.insert(productResearchRuns).values(toRunRow(run));
+    await this.db.transaction(async (tx) => {
+      const documentIds = run.snapshot.brief.internalDocumentIds;
+      if (documentIds.length) {
+        const ready = await tx
+          .select({ id: researchDocuments.id })
+          .from(researchDocuments)
+          .where(
+            and(
+              eq(researchDocuments.workspaceId, run.snapshot.workspaceId),
+              eq(researchDocuments.status, "ready"),
+              inArray(researchDocuments.id, documentIds),
+            ),
+          );
+        if (ready.length !== new Set(documentIds).size) {
+          throw new Error("RESEARCH_DOCUMENT_NOT_READY");
+        }
+      }
+      await tx.insert(productResearchRuns).values(toRunRow(run));
+      if (documentIds.length) {
+        await tx.insert(productResearchRunDocuments).values(
+          documentIds.map((documentId) => ({
+            workspaceId: run.snapshot.workspaceId,
+            runId: run.snapshot.id,
+            documentId,
+          })),
+        );
+      }
+    });
   }
 
   async findById(workspaceId: string, runId: string): Promise<ProductResearchRun | null> {
@@ -86,6 +119,26 @@ export class PostgresProductResearchRepository
     return rows.map(toCheckpoint);
   }
 
+  async nextStageAttempt(
+    workspaceId: string,
+    runId: string,
+    stage: ResearchStage,
+  ): Promise<number> {
+    const rows = await this.db
+      .select({ attempt: researchStageRuns.attempt })
+      .from(researchStageRuns)
+      .where(
+        and(
+          eq(researchStageRuns.workspaceId, workspaceId),
+          eq(researchStageRuns.runId, runId),
+          eq(researchStageRuns.stage, stage),
+        ),
+      )
+      .orderBy(desc(researchStageRuns.attempt))
+      .limit(1);
+    return (rows[0]?.attempt ?? 0) + 1;
+  }
+
   async commitRunTransition(
     run: ProductResearchRun,
     job: NewJob | null,
@@ -132,6 +185,13 @@ export class PostgresProductResearchRepository
         .returning({ id: researchStageRuns.id });
       if (updated.length !== 1) throw new Error("CHECKPOINT_HUMAN_REVIEW_LOCKED");
       await tx.insert(aiRuns).values(toAIRunRow(input.aiRun));
+      await projectResearchStage({
+        executor: tx,
+        workspaceId: input.checkpoint.workspaceId,
+        runId: input.checkpoint.runId,
+        stage: input.checkpoint.stage,
+        output: input.checkpoint.output,
+      });
       if (input.nextJob) await insertJob(tx, input.nextJob);
       await insertEvents(tx, input.events);
     });
@@ -184,6 +244,55 @@ export class PostgresProductResearchRepository
       await updateRun(tx, input.run);
       await insertJob(tx, input.job);
       await insertEvents(tx, input.events);
+    });
+  }
+
+  async reviewIcpProposal(input: {
+    workspaceId: string;
+    runId: string;
+    proposalId: string;
+    userId: string;
+    decision: "approved" | "rejected";
+    reason: string | null;
+    reviewedAt: Date;
+  }): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      if (input.decision === "approved") {
+        await tx
+          .update(icpProposals)
+          .set({
+            reviewStatus: "rejected",
+            reviewReason: "Another proposal was approved",
+            reviewedBy: input.userId,
+            reviewedAt: input.reviewedAt,
+            updatedAt: input.reviewedAt,
+          })
+          .where(
+            and(
+              eq(icpProposals.workspaceId, input.workspaceId),
+              eq(icpProposals.runId, input.runId),
+              ne(icpProposals.id, input.proposalId),
+            ),
+          );
+      }
+      const rows = await tx
+        .update(icpProposals)
+        .set({
+          reviewStatus: input.decision,
+          reviewReason: input.reason,
+          reviewedBy: input.userId,
+          reviewedAt: input.reviewedAt,
+          updatedAt: input.reviewedAt,
+        })
+        .where(
+          and(
+            eq(icpProposals.workspaceId, input.workspaceId),
+            eq(icpProposals.runId, input.runId),
+            eq(icpProposals.id, input.proposalId),
+          ),
+        )
+        .returning({ id: icpProposals.id });
+      if (rows.length !== 1) throw new Error("ICP_PROPOSAL_NOT_FOUND");
     });
   }
 
@@ -252,6 +361,53 @@ export class PostgresProductResearchRepository
       startedAt: row.startedAt,
       completedAt: row.completedAt,
     }));
+  }
+
+  async getReport(workspaceId: string, runId: string) {
+    const [stages, evidence, competitors, findings, proposals] = await Promise.all([
+      this.db
+        .select({ stage: researchStageRuns.stage, output: researchStageRuns.output })
+        .from(researchStageRuns)
+        .where(
+          and(
+            eq(researchStageRuns.workspaceId, workspaceId),
+            eq(researchStageRuns.runId, runId),
+            eq(researchStageRuns.status, "completed"),
+          ),
+        )
+        .orderBy(asc(researchStageRuns.startedAt)),
+      this.listEvidence({ workspaceId, runId, after: null, limit: 1_000 }),
+      this.db
+        .select()
+        .from(competitorCandidates)
+        .where(
+          and(
+            eq(competitorCandidates.workspaceId, workspaceId),
+            eq(competitorCandidates.runId, runId),
+          ),
+        ),
+      this.db
+        .select()
+        .from(researchFindings)
+        .where(
+          and(
+            eq(researchFindings.workspaceId, workspaceId),
+            eq(researchFindings.runId, runId),
+          ),
+        ),
+      this.db
+        .select()
+        .from(icpProposals)
+        .where(and(eq(icpProposals.workspaceId, workspaceId), eq(icpProposals.runId, runId)))
+        .orderBy(asc(icpProposals.rank)),
+    ]);
+    return {
+      stageOutputs: Object.fromEntries(stages.map((stage) => [stage.stage, stage.output])),
+      evidence,
+      competitors,
+      findings,
+      proposals,
+    };
   }
 }
 

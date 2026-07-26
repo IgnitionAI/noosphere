@@ -15,6 +15,7 @@ import {
   uniqueIndex,
   uuid,
   varchar,
+  vector,
 } from "drizzle-orm/pg-core";
 
 export const productResearchStatusEnum = pgEnum("product_research_status", [
@@ -61,6 +62,14 @@ export const workspaceRoleEnum = pgEnum("workspace_role", [
   "reviewer",
   "admin",
   "owner",
+]);
+export const researchDocumentStatusEnum = pgEnum("research_document_status", [
+  "uploading",
+  "uploaded",
+  "processing",
+  "ready",
+  "failed",
+  "deleted",
 ]);
 
 export const authUsers = pgTable(
@@ -165,6 +174,19 @@ export const workspaceMembers = pgTable(
   ],
 );
 
+export const workspaceAiSettings = pgTable("workspace_ai_settings", {
+  workspaceId: uuid("workspace_id")
+    .primaryKey()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  researchModels: jsonb("research_models").notNull(),
+  synthesisModels: jsonb("synthesis_models").notNull(),
+  updatedBy: uuid("updated_by")
+    .notNull()
+    .references(() => authUsers.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const productResearchRuns = pgTable(
   "product_research_runs",
   {
@@ -258,6 +280,115 @@ export const aiRuns = pgTable(
       name: "ai_runs_workspace_stage_run_fk",
     }).onDelete("cascade"),
     index("ai_runs_workspace_research_idx").on(table.workspaceId, table.productResearchRunId),
+  ],
+);
+
+export const aiToolRuns = pgTable(
+  "ai_tool_runs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id),
+    productResearchRunId: uuid("product_research_run_id"),
+    researchStageRunId: uuid("research_stage_run_id"),
+    correlationId: varchar("correlation_id", { length: 200 }).notNull(),
+    toolName: varchar("tool_name", { length: 120 }).notNull(),
+    status: varchar("status", { length: 40 }).notNull(),
+    input: jsonb("input").notNull().default(sql`'{}'::jsonb`),
+    outputMetadata: jsonb("output_metadata").notNull().default(sql`'{}'::jsonb`),
+    latencyMs: integer("latency_ms").notNull(),
+    errorCode: varchar("error_code", { length: 120 }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("ai_tool_runs_workspace_run_idx").on(table.workspaceId, table.productResearchRunId),
+    index("ai_tool_runs_stage_idx").on(table.workspaceId, table.researchStageRunId),
+  ],
+);
+
+export const researchDocuments = pgTable(
+  "research_documents",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id),
+    filename: varchar("filename", { length: 500 }).notNull(),
+    contentType: varchar("content_type", { length: 200 }).notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    checksumSha256: varchar("checksum_sha256", { length: 64 }).notNull(),
+    objectKey: text("object_key").notNull(),
+    status: researchDocumentStatusEnum("status").notNull().default("uploading"),
+    extractedMarkdown: text("extracted_markdown"),
+    failureCode: varchar("failure_code", { length: 120 }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex("research_documents_workspace_checksum_uq").on(
+      table.workspaceId,
+      table.checksumSha256,
+    ),
+    unique("research_documents_workspace_id_uq").on(table.workspaceId, table.id),
+    index("research_documents_workspace_status_idx").on(table.workspaceId, table.status),
+  ],
+);
+
+export const researchDocumentChunks = pgTable(
+  "research_document_chunks",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    documentId: uuid("document_id").notNull(),
+    ordinal: integer("ordinal").notNull(),
+    content: text("content").notNull(),
+    contentHash: varchar("content_hash", { length: 64 }).notNull(),
+    tokenCount: integer("token_count").notNull(),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+    embedding: vector("embedding", { dimensions: 1536 }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.workspaceId, table.documentId],
+      foreignColumns: [researchDocuments.workspaceId, researchDocuments.id],
+      name: "research_document_chunks_workspace_document_fk",
+    }).onDelete("cascade"),
+    uniqueIndex("research_document_chunks_ordinal_uq").on(
+      table.workspaceId,
+      table.documentId,
+      table.ordinal,
+    ),
+    unique("research_document_chunks_workspace_id_uq").on(table.workspaceId, table.id),
+    index("research_document_chunks_workspace_document_idx").on(
+      table.workspaceId,
+      table.documentId,
+    ),
+    index("research_document_chunks_embedding_hnsw_idx").using(
+      "hnsw",
+      table.embedding.op("vector_cosine_ops"),
+    ),
+  ],
+);
+
+export const productResearchRunDocuments = pgTable(
+  "product_research_run_documents",
+  {
+    workspaceId: uuid("workspace_id").notNull(),
+    runId: uuid("run_id").notNull(),
+    documentId: uuid("document_id").notNull(),
+    attachedAt: timestamp("attached_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.workspaceId, table.runId, table.documentId] }),
+    foreignKey({
+      columns: [table.workspaceId, table.runId],
+      foreignColumns: [productResearchRuns.workspaceId, productResearchRuns.id],
+      name: "product_research_run_documents_workspace_run_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.workspaceId, table.documentId],
+      foreignColumns: [researchDocuments.workspaceId, researchDocuments.id],
+      name: "product_research_run_documents_workspace_document_fk",
+    }).onDelete("restrict"),
   ],
 );
 
@@ -380,6 +511,10 @@ export const icpProposals = pgTable(
     exclusions: jsonb("exclusions").notNull(),
     unknowns: jsonb("unknowns").notNull(),
     humanEdited: boolean("human_edited").notNull().default(false),
+    reviewStatus: varchar("review_status", { length: 40 }).notNull().default("pending"),
+    reviewReason: text("review_reason"),
+    reviewedBy: uuid("reviewed_by").references(() => authUsers.id),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

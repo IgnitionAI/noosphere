@@ -244,6 +244,43 @@ databaseDescribe("PostgreSQL F-009 foundation", () => {
       { stage: "competitor_discovery", status: "invalidated" },
       { stage: "competitor_analysis", status: "invalidated" },
     ]);
+
+    // Re-executing an invalidated stage must allocate a fresh attempt number
+    // instead of colliding with the invalidated checkpoint row. Stale jobs
+    // from before the invalidation are acknowledged without crashing.
+    let reexecuted = false;
+    for (let guard = 0; guard < 10 && !reexecuted; guard += 1) {
+      const leased = await queue.lease({
+        workerId: "integration-http-worker",
+        types: ["research.stage.execute"],
+        limit: 1,
+        leaseMs: 30_000,
+        now: clock.now(),
+      });
+      const job = leased[0];
+      if (!job) break;
+      const payload = job.payload as { runId?: string; stage?: string };
+      if (payload.runId !== created.id) {
+        await queue.acknowledge(job.id, job.lockedBy, clock.now());
+        continue;
+      }
+      const outcome = await orchestrator.process(job);
+      reexecuted =
+        payload.stage === "competitor_discovery" && outcome.outcome === "completed";
+    }
+    expect(reexecuted).toBe(true);
+    const discoveryAttempts = await database.client<
+      { attempt: number; status: string }[]
+    >`
+      select attempt, status::text
+      from research_stage_runs
+      where workspace_id = ${workspaceA} and run_id = ${created.id} and stage = 'competitor_discovery'
+      order by attempt
+    `;
+    expect(discoveryAttempts.map(({ attempt, status }) => ({ attempt, status }))).toEqual([
+      { attempt: 1, status: "invalidated" },
+      { attempt: 2, status: "completed" },
+    ]);
   });
 
   test("authenticates a real session and resolves its workspace membership", async () => {

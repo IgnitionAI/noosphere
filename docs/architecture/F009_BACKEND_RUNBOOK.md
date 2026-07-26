@@ -3,9 +3,31 @@
 ## Périmètre
 
 Ce runbook couvre le socle de la mission de recherche produit : migrations,
-API HTTP, checkpoints, jobs PostgreSQL, orchestration et branchement des
-adaptateurs de contexte authentifié et d’agents. Il ne fournit ni
-l’implémentation Better Auth, ni un fournisseur de modèles.
+API HTTP, checkpoints, jobs PostgreSQL, orchestration, documents et agents
+LangChain avec Kimi Code.
+
+## Démarrer l’infrastructure privée
+
+Le bootstrap de développement génère automatiquement les identifiants locaux
+PostgreSQL, MinIO, SearXNG, crawler, Docling et Better Auth, démarre les
+conteneurs et applique les migrations :
+
+```bash
+bun run dev:setup
+```
+
+Le fichier `.env` est ignoré par Git et les secrets existants ne sont jamais
+écrasés. Seules les clés externes Kimi Code et OpenAI doivent être ajoutées
+pour exécuter réellement les modèles et les embeddings.
+
+En développement, `compose.development.yml` publie les services uniquement sur
+`127.0.0.1`. En production, cet override n’est pas chargé : aucun port de
+ParadeDB, MinIO, SearXNG, Docling ou du crawler n’est publié sur l’hôte.
+
+La découverte web ne dépend d’aucune API de recherche payante : SearXNG est
+auto-hébergé et DuckDuckGo sert uniquement de fallback. Le crawler ne génère
+donc aucun coût à la requête ; seuls le VPS et, séparément, les modèles OpenAI
+ou Kimi ont un coût d’exploitation.
 
 ## Préparer PostgreSQL
 
@@ -19,15 +41,10 @@ La migration initiale est additive. En production, une correction de schéma
 se fait par une nouvelle migration forward-only. La suppression des tables
 F-009 n’est permise que sur une base locale jetable.
 
-## Contrat de l’adaptateur d’agents
+## Exécuteur d’agents
 
-Le module défini par `RESEARCH_AGENT_ADAPTER_MODULE` exporte :
-
-```ts
-export async function createResearchAgentExecutor(): Promise<ResearchAgentExecutor>
-```
-
-L’exécuteur reçoit un `ResearchStage`, un input validé et retourne :
+Le worker instancie directement `LangChainResearchAgentExecutor`. L’exécuteur
+reçoit un `ResearchStage`, un input validé et retourne :
 
 - une sortie conforme au contrat de l’étape ;
 - fournisseur, modèle et version de prompt ;
@@ -35,9 +52,46 @@ L’exécuteur reçoit un `ResearchStage`, un input validé et retourne :
 - coût éventuel et latence.
 
 Les schémas de référence vivent dans
-`packages/contracts/src/product-research.ts`. Une sortie invalide termine
-l’étape avec `AGENT_OUTPUT_INVALID`. Aucun payload métier n’est écrit dans les
-logs du worker.
+`packages/contracts/src/product-research.ts`. Les quatre étapes de recherche et
+d’audit utilisent `createDeepAgent`; les deux synthèses utilisent
+`createAgent` et une sortie Zod. Une sortie invalide ou une référence de preuve
+inconnue termine l’étape. Aucun payload métier n’est écrit dans les logs du
+worker.
+
+`AI_PROVIDER=kimi-code` est la configuration par défaut. Elle utilise
+`ChatOpenAI` comme client OpenAI-compatible avec :
+
+- `KIMI_CODE_API_KEY` ;
+- `KIMI_CODE_BASE_URL=https://api.kimi.com/coding/v1` ;
+- `KIMI_RESEARCH_MODELS=kimi-for-coding,k3,kimi-for-coding-highspeed` ;
+- `KIMI_SYNTHESIS_MODELS=kimi-for-coding,kimi-for-coding-highspeed,k3`.
+
+Le client force l’API Chat Completions (`useResponsesApi: false`), n’envoie
+pas de température à Kimi et force le function-calling pour toutes les sorties
+Zod. `AI_PROVIDER=openai` reste disponible avec `OPENAI_RESEARCH_MODEL` et
+`OPENAI_SYNTHESIS_MODEL`.
+
+Les listes Kimi sont ordonnées : le premier modèle est le choix principal.
+Si l’API répond explicitement que ce modèle est absent, non autorisé ou
+indisponible pour l’abonnement, l’exécuteur tente le suivant. Il ne masque pas
+les erreurs de quota, de schéma ou d’outil. Le modèle réellement utilisé et le
+nombre de fallbacks sont enregistrés dans l’`ai_run`.
+
+Les valeurs d’environnement constituent la politique globale de repli. Un
+`admin` ou `owner` peut la surcharger par workspace depuis
+`/w/{workspaceSlug}/settings/ai`. L’API correspondante est
+`GET/PUT /api/v1/workspace-ai-settings`. Elle stocke uniquement les IDs de
+modèles ordonnés dans `workspace_ai_settings` ; la clé Kimi reste exclusivement
+dans l’environnement du worker. Le worker relit la politique du workspace au
+début de chaque étape, donc une modification n’altère pas une invocation déjà
+en cours.
+
+`OPENAI_API_KEY` reste requis indépendamment pour les embeddings documentaires
+en V1. Il n’est pas utilisé par l’agent lorsque `AI_PROVIDER=kimi-code`.
+
+Les seuls outils exposés aux agents sont `searchWeb`, `readWebPage`,
+`discoverWebsite`, `readWebsitePages`, `searchInternalDocuments` et
+`readInternalDocument`.
 
 ## Authentification et contexte workspace
 
@@ -91,7 +145,7 @@ L’API écoute `PORT` (3000 par défaut), limite les corps à 1 Mio et expose :
 
 - `GET /health/live` pour le processus ;
 - `GET /health/ready` pour la disponibilité PostgreSQL ;
-- les sept routes `/api/v1/product-research-runs`.
+- les routes de runs, preuves, rapport, validation ICP et documents.
 
 Le handler utilise uniquement les standards Web `Request`/`Response`. Il peut
 donc aussi être monté dans un Route Handler Next.js sans modifier les cas

@@ -44,6 +44,7 @@ export function AppShell({
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const productReadingHref = `/w/${workspace.slug}/strategy/product-reading`;
+  const aiSettingsHref = `/w/${workspace.slug}/settings/ai`;
   const initials = session.user.name
     .split(/\s+/)
     .map((part) => part[0])
@@ -137,6 +138,26 @@ export function AppShell({
               </span>
             ))}
           </div>
+          {["admin", "owner"].includes(workspace.role) ? (
+            <>
+              <div className="mb-2 mt-6 px-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                Workspace
+              </div>
+              <Link
+                aria-current={pathname.startsWith(aiSettingsHref) ? "page" : undefined}
+                className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium ${
+                  pathname.startsWith(aiSettingsHref)
+                    ? "bg-white/10 text-white"
+                    : "text-slate-300 hover:bg-white/5 hover:text-white"
+                }`}
+                href={aiSettingsHref}
+                onClick={() => setOpen(false)}
+              >
+                <Settings size={17} />
+                Modèles IA
+              </Link>
+            </>
+          ) : null}
         </nav>
 
         <div className="mt-8 rounded-lg border border-white/10 bg-white/[0.04] p-3">
