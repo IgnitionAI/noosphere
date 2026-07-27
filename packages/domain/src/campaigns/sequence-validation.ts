@@ -1,0 +1,150 @@
+export type SequenceStepKind =
+  | "linkedin_invite"
+  | "linkedin_message"
+  | "email"
+  | "whatsapp"
+  | "manual_task";
+
+export interface SequenceStepInput {
+  readonly position: number;
+  readonly kind: SequenceStepKind;
+  readonly delayDays: number;
+  readonly windowStart: string | null;
+  readonly windowEnd: string | null;
+  readonly subject: string | null;
+  readonly body: string;
+  readonly fallbackKind: SequenceStepKind | null;
+}
+
+export interface SequenceValidationError {
+  readonly code: string;
+  readonly position: number;
+  readonly message: string;
+}
+
+export const CHANNEL_LIMITS: Record<Exclude<SequenceStepKind, "manual_task">, number> = {
+  linkedin_invite: 300,
+  linkedin_message: 2_000,
+  whatsapp: 1_000,
+  email: 5_000,
+};
+
+export const EMAIL_SUBJECT_LIMIT = 200;
+
+export const ALLOWED_TEMPLATE_VARIABLES = new Set([
+  "firstName",
+  "lastName",
+  "companyName",
+  "title",
+  "icpName",
+  "senderName",
+]);
+
+const CHANNEL_KINDS = new Set<SequenceStepKind>([
+  "linkedin_invite",
+  "linkedin_message",
+  "email",
+  "whatsapp",
+]);
+
+const VARIABLE_PATTERN = /\{\{\s*([a-zA-Z]+)\s*\}\}/g;
+const WINDOW_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+export function validateSequenceSteps(
+  steps: readonly SequenceStepInput[],
+): readonly SequenceValidationError[] {
+  const errors: SequenceValidationError[] = [];
+  const seenPositions = new Set<number>();
+  for (const step of steps) {
+    if (seenPositions.has(step.position)) {
+      errors.push({
+        code: "DUPLICATE_STEP_POSITION",
+        position: step.position,
+        message: `Position ${step.position} is used by two steps`,
+      });
+    }
+    seenPositions.add(step.position);
+    if (!Number.isInteger(step.delayDays) || step.delayDays < 0) {
+      errors.push({
+        code: "INVALID_STEP_DELAY",
+        position: step.position,
+        message: "Delay must be a non-negative integer number of days",
+      });
+    }
+    if (!step.body.trim()) {
+      errors.push({
+        code: "STEP_BODY_REQUIRED",
+        position: step.position,
+        message:
+          step.kind === "manual_task"
+            ? "A manual task requires an instruction"
+            : "A channel step requires a body template",
+      });
+    }
+    for (const match of step.body.matchAll(VARIABLE_PATTERN)) {
+      if (!ALLOWED_TEMPLATE_VARIABLES.has(match[1]!)) {
+        errors.push({
+          code: "UNKNOWN_TEMPLATE_VARIABLE",
+          position: step.position,
+          message: `Unknown template variable {{${match[1]}}}`,
+        });
+      }
+    }
+    if (step.kind === "email") {
+      if (!step.subject?.trim()) {
+        errors.push({
+          code: "EMAIL_SUBJECT_REQUIRED",
+          position: step.position,
+          message: "An email step requires a subject",
+        });
+      } else if (step.subject.length > EMAIL_SUBJECT_LIMIT) {
+        errors.push({
+          code: "EMAIL_SUBJECT_TOO_LONG",
+          position: step.position,
+          message: `Email subject exceeds ${EMAIL_SUBJECT_LIMIT} characters`,
+        });
+      }
+    }
+    if (step.kind !== "manual_task") {
+      const limit = CHANNEL_LIMITS[step.kind];
+      if (step.body.length > limit) {
+        errors.push({
+          code: "STEP_BODY_TOO_LONG",
+          position: step.position,
+          message: `${step.kind} body exceeds ${limit} characters`,
+        });
+      }
+    }
+    if (step.fallbackKind) {
+      if (!CHANNEL_KINDS.has(step.fallbackKind) || step.kind === "manual_task") {
+        errors.push({
+          code: "FALLBACK_NOT_ALLOWED",
+          position: step.position,
+          message: "A fallback is only allowed from one channel step to another channel",
+        });
+      } else if (step.fallbackKind === step.kind) {
+        errors.push({
+          code: "FALLBACK_SAME_AS_CHANNEL",
+          position: step.position,
+          message: "A fallback cannot reuse the step channel (double send risk)",
+        });
+      }
+    }
+    if (step.windowStart || step.windowEnd) {
+      const startValid = step.windowStart !== null && WINDOW_PATTERN.test(step.windowStart);
+      const endValid = step.windowEnd !== null && WINDOW_PATTERN.test(step.windowEnd);
+      if (
+        !startValid ||
+        !endValid ||
+        (startValid && endValid && step.windowStart! >= step.windowEnd!)
+      ) {
+        errors.push({
+          code: "INVALID_SENDING_WINDOW",
+          position: step.position,
+          message: "Sending window must be HH:MM–HH:MM with start before end",
+        });
+      }
+    }
+  }
+  return errors;
+}

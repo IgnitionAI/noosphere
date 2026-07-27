@@ -561,6 +561,80 @@ export async function importDiscoveryCandidate(
   );
 }
 
+export interface SequenceSummary {
+  readonly id: string;
+  readonly name: string;
+  readonly description: string | null;
+  readonly status: "draft" | "published" | "archived";
+  readonly updatedAt: string;
+}
+
+export interface SequenceStep {
+  readonly position: number;
+  readonly kind: "linkedin_invite" | "linkedin_message" | "email" | "whatsapp" | "manual_task";
+  readonly delayDays: number;
+  readonly windowStart: string | null;
+  readonly windowEnd: string | null;
+  readonly subject: string | null;
+  readonly body: string;
+  readonly fallbackKind: string | null;
+}
+
+export interface SequenceVersion {
+  readonly id: string;
+  readonly version: number;
+  readonly steps: readonly SequenceStep[];
+  readonly publishedAt: string;
+}
+
+export async function listSequences(
+  workspaceSlug: string,
+): Promise<{ data: SequenceSummary[] }> {
+  return crmFetch(workspaceSlug, "/api/v1/sequences");
+}
+
+export async function createSequence(
+  workspaceSlug: string,
+  input: { name: string; description?: string },
+): Promise<SequenceSummary> {
+  return crmFetch(workspaceSlug, "/api/v1/sequences", { method: "POST", body: input });
+}
+
+export async function getSequence(
+  workspaceSlug: string,
+  sequenceId: string,
+): Promise<SequenceSummary & { steps: SequenceStep[] }> {
+  return crmFetch(workspaceSlug, `/api/v1/sequences/${sequenceId}`);
+}
+
+export async function replaceSequenceSteps(
+  workspaceSlug: string,
+  sequenceId: string,
+  steps: readonly Omit<SequenceStep, "id">[],
+): Promise<void> {
+  return crmFetch(workspaceSlug, `/api/v1/sequences/${sequenceId}/steps`, {
+    method: "PUT",
+    body: { steps },
+  });
+}
+
+export async function listSequenceVersions(
+  workspaceSlug: string,
+  sequenceId: string,
+): Promise<{ data: SequenceVersion[] }> {
+  return crmFetch(workspaceSlug, `/api/v1/sequences/${sequenceId}/versions`);
+}
+
+export async function publishSequenceVersion(
+  workspaceSlug: string,
+  sequenceId: string,
+): Promise<SequenceVersion> {
+  return crmFetch(workspaceSlug, `/api/v1/sequences/${sequenceId}/actions/publish`, {
+    method: "POST",
+    body: {},
+  });
+}
+
 export function outboundApiUrl(pathname: string): URL {
   return new URL(pathname, process.env.OUTBOUND_API_URL ?? "http://127.0.0.1:3001");
 }

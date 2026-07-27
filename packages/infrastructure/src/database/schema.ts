@@ -821,6 +821,99 @@ export const prospectDiscoveryCandidates = pgTable(
   ],
 );
 
+export const sequenceStatusEnum = pgEnum("sequence_status", [
+  "draft",
+  "published",
+  "archived",
+]);
+
+export const sequenceStepKindEnum = pgEnum("sequence_step_kind", [
+  "linkedin_invite",
+  "linkedin_message",
+  "email",
+  "whatsapp",
+  "manual_task",
+]);
+
+export const sequences = pgTable(
+  "sequences",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    name: varchar("name", { length: 300 }).notNull(),
+    description: text("description"),
+    status: sequenceStatusEnum("status").notNull().default("draft"),
+    createdBy: uuid("created_by").references(() => authUsers.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.workspaceId],
+      foreignColumns: [workspaces.id],
+      name: "sequences_workspace_fk",
+    }).onDelete("cascade"),
+    unique("sequences_workspace_id_uq").on(table.workspaceId, table.id),
+    index("sequences_workspace_name_idx").on(table.workspaceId, table.name),
+  ],
+);
+
+export const sequenceSteps = pgTable(
+  "sequence_steps",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    sequenceId: uuid("sequence_id")
+      .notNull()
+      .references(() => sequences.id, { onDelete: "cascade" }),
+    position: integer("position").notNull(),
+    kind: sequenceStepKindEnum("kind").notNull(),
+    delayDays: integer("delay_days").notNull().default(0),
+    windowStart: varchar("window_start", { length: 5 }),
+    windowEnd: varchar("window_end", { length: 5 }),
+    subject: varchar("subject", { length: 300 }),
+    body: text("body").notNull(),
+    fallbackKind: sequenceStepKindEnum("fallback_kind"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.workspaceId],
+      foreignColumns: [workspaces.id],
+      name: "sequence_steps_workspace_fk",
+    }).onDelete("cascade"),
+    uniqueIndex("sequence_steps_position_uq").on(table.workspaceId, table.sequenceId, table.position),
+  ],
+);
+
+export const sequenceVersions = pgTable(
+  "sequence_versions",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    sequenceId: uuid("sequence_id")
+      .notNull()
+      .references(() => sequences.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    steps: jsonb("steps").notNull(),
+    publishedBy: uuid("published_by").references(() => authUsers.id),
+    publishedAt: timestamp("published_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.workspaceId],
+      foreignColumns: [workspaces.id],
+      name: "sequence_versions_workspace_fk",
+    }).onDelete("cascade"),
+    uniqueIndex("sequence_versions_sequence_version_uq").on(
+      table.workspaceId,
+      table.sequenceId,
+      table.version,
+    ),
+  ],
+);
+
 export const jobs = pgTable(
   "jobs",
   {

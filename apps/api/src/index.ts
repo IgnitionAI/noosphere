@@ -8,6 +8,7 @@ import { createWorkspaceHttpHandler } from "@outbound/interface/http/workspace-h
 import { createResearchDocumentHttpHandler } from "@outbound/interface/http/research-document-handler";
 import { createCrmHttpHandler } from "@outbound/interface/http/crm-handler";
 import { createDiscoveryHttpHandler } from "@outbound/interface/http/discovery-handler";
+import { createSequenceHttpHandler } from "@outbound/interface/http/sequence-handler";
 import {
   ProviderUnavailableError,
   UnipileProspectSource,
@@ -96,6 +97,10 @@ const discovery = createDiscoveryHttpHandler({
     });
   },
 });
+const sequenceHandler = createSequenceHttpHandler({
+  database: database.db,
+  contextResolver: auth.contextResolver,
+});
 const port = positiveIntegerEnvironment("PORT", 3000);
 const server = Bun.serve({
   port,
@@ -111,6 +116,9 @@ const server = Bun.serve({
     }
     if (pathname.startsWith("/api/v1/icp-versions") || pathname.startsWith("/api/v1/discovery-runs")) {
       return discovery(request);
+    }
+    if (pathname.startsWith("/api/v1/sequences")) {
+      return sequenceHandler(request);
     }
     if (pathname === "/health/live") return Response.json({ status: "ok" });
     if (pathname === "/health/ready") {

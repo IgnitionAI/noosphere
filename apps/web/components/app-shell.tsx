@@ -23,7 +23,6 @@ import type { Session, Workspace } from "@/lib/api";
 
 const futureNavigation = [
   ["Vue d’ensemble", LayoutDashboard],
-  ["Campagnes", Send],
   ["Inbox", Inbox],
   ["Analytics", BarChart3],
 ] as const;
@@ -46,6 +45,7 @@ export function AppShell({
   const crmNavigation = [
     [`/w/${workspace.slug}/prospects`, "Prospects", Users],
     [`/w/${workspace.slug}/companies`, "Entreprises", Building2],
+    [`/w/${workspace.slug}/sequences`, "Séquences", Send],
   ] as const;
   const initials = session.user.name
     .split(/\s+/)
