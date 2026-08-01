@@ -131,6 +131,23 @@ export class InMemoryResearchBackend
     events: readonly ProductResearchEvent[],
   ): Promise<void> {
     this.#saveRun(run);
+    for (const [id, previous] of this.#checkpoints) {
+      if (
+        previous.workspaceId === checkpoint.workspaceId &&
+        previous.runId === checkpoint.runId &&
+        previous.stage === checkpoint.stage &&
+        previous.status === "running" &&
+        previous.review === "machine" &&
+        id !== checkpoint.id
+      ) {
+        this.#checkpoints.set(id, {
+          ...previous,
+          status: "failed",
+          errorCode: "SUPERSEDED_BY_RETRY",
+          completedAt: checkpoint.startedAt,
+        });
+      }
+    }
     if (!this.#checkpoints.has(checkpoint.id)) this.#checkpoints.set(checkpoint.id, clone(checkpoint));
     this.outbox.push(...events.map(clone));
   }

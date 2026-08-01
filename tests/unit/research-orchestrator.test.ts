@@ -51,6 +51,20 @@ class FakeAgents implements ResearchAgentExecutor {
   }
 }
 
+class FailFirstCompletionBackend extends InMemoryResearchBackend {
+  #failFirstCompletion = true;
+
+  override async commitStageCompleted(
+    input: Parameters<InMemoryResearchBackend["commitStageCompleted"]>[0],
+  ): Promise<void> {
+    if (this.#failFirstCompletion) {
+      this.#failFirstCompletion = false;
+      throw new Error("SIMULATED_COMMIT_FAILURE");
+    }
+    await super.commitStageCompleted(input);
+  }
+}
+
 const brief = {
   productUrl: "https://example.com",
   productName: "Example",
@@ -164,6 +178,65 @@ describe("ResearchOrchestrator", () => {
     });
     expect((await orchestrator.process(secondLease[0]!)).outcome).toBe("completed");
     expect(backend.inspectCheckpoints().map((item) => item.attempt)).toEqual([1, 2]);
+  });
+
+  test("a retry supersedes a stale running checkpoint from an interrupted completion", async () => {
+    const backend = new FailFirstCompletionBackend();
+    const ids = new CryptoIdGenerator();
+    const clock = new MutableClock(new Date("2026-07-24T10:00:00.000Z"));
+    const agents = new FakeAgents();
+    const orchestrator = new ResearchOrchestrator(
+      backend,
+      backend,
+      agents,
+      ids,
+      clock,
+      new Sha256ContentHasher(),
+    );
+    const workspaceId = crypto.randomUUID();
+    const run = await new CreateProductResearchRun(backend, ids, clock).execute({ workspaceId, brief });
+    await new StartProductResearchRun(backend, ids, clock).execute({
+      workspaceId,
+      runId: run.snapshot.id,
+      correlationId: "corr-interrupted",
+    });
+    const [firstLease] = await backend.lease({
+      workerId: "worker-a",
+      types: ["research.stage.execute"],
+      limit: 1,
+      leaseMs: 30_000,
+      now: clock.now(),
+    });
+    await expect(orchestrator.process(firstLease!)).rejects.toThrow(
+      "Stage product_analysis is not active",
+    );
+    await backend.retry({
+      jobId: firstLease!.id,
+      workerId: firstLease!.lockedBy,
+      availableAt: clock.now(),
+      errorCode: "WORKER_UNHANDLED_ERROR",
+      errorMessage: "SIMULATED_COMMIT_FAILURE",
+    });
+
+    clock.advance(1);
+    const [retryLease] = await backend.lease({
+      workerId: "worker-a",
+      types: ["research.stage.execute"],
+      limit: 1,
+      leaseMs: 30_000,
+      now: clock.now(),
+    });
+    expect((await orchestrator.process(retryLease!)).outcome).toBe("completed");
+    expect(
+      backend.inspectCheckpoints().map(({ attempt, status, errorCode }) => ({
+        attempt,
+        status,
+        errorCode,
+      })),
+    ).toEqual([
+      { attempt: 1, status: "failed", errorCode: "SUPERSEDED_BY_RETRY" },
+      { attempt: 2, status: "completed", errorCode: null },
+    ]);
   });
 
   test("repository scope prevents cross-workspace reads", async () => {

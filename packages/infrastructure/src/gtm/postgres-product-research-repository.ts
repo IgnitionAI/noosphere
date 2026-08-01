@@ -174,6 +174,23 @@ export class PostgresProductResearchRepository
   ): Promise<void> {
     await this.db.transaction(async (tx) => {
       await updateRun(tx, run);
+      await tx
+        .update(researchStageRuns)
+        .set({
+          status: "failed",
+          errorCode: "SUPERSEDED_BY_RETRY",
+          completedAt: checkpoint.startedAt,
+        })
+        .where(
+          and(
+            eq(researchStageRuns.workspaceId, checkpoint.workspaceId),
+            eq(researchStageRuns.runId, checkpoint.runId),
+            eq(researchStageRuns.stage, checkpoint.stage),
+            eq(researchStageRuns.status, "running"),
+            eq(researchStageRuns.review, "machine"),
+            ne(researchStageRuns.id, checkpoint.id),
+          ),
+        );
       await tx.insert(researchStageRuns).values(toCheckpointRow(checkpoint)).onConflictDoNothing();
       await insertEvents(tx, events);
     });
