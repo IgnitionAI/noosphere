@@ -81,9 +81,16 @@ prompt ; OpenAI utilise le function-calling Zod. `AI_PROVIDER=openai` reste disp
 
 Les listes Kimi sont ordonnées : le premier modèle est le choix principal.
 Si l’API répond explicitement que ce modèle est absent, non autorisé ou
-indisponible pour l’abonnement, l’exécuteur tente le suivant. Il ne masque pas
-les erreurs de quota, de schéma ou d’outil. Le modèle réellement utilisé et le
-nombre de fallbacks sont enregistrés dans l’`ai_run`.
+indisponible pour l’abonnement, ou que son quota est épuisé, l’exécuteur tente
+le suivant. Si tous les modèles partagent le quota épuisé, l’étape termine avec
+le code stable `MODEL_PROVIDER_QUOTA_EXHAUSTED`. Le modèle réellement utilisé
+et le nombre de fallbacks sont enregistrés dans l’`ai_run`.
+
+Kimi peut terminer une boucle Deep Agent sur un message d’outil ou du texte
+libre. L’exécuteur réserve une courte grâce après le budget de collecte et
+lance, si nécessaire, une synthèse sans outil qui reconstruit uniquement la
+sortie JSON à partir du transcript déjà collecté. Cette récupération ne peut
+ni ajouter une source ni inventer un fait.
 
 Les valeurs d’environnement constituent la politique globale de repli. Un
 `admin` ou `owner` peut la surcharger par workspace depuis
@@ -186,6 +193,11 @@ pools PostgreSQL.
 - après `max_attempts`, le job passe en `dead_lettered` ;
 - un checkpoint `completed` court-circuite toute relivraison ;
 - un checkpoint `human_reviewed` ne peut pas être remplacé ;
+- un worker renouvelle périodiquement son lease pendant une étape longue ;
+- après un échec terminal, `POST .../actions/resume` réenfile uniquement la
+  première étape incomplète et conserve tous les checkpoints terminés ;
+- une révision `research-more` ajoute la version de l’agrégat à la clé du job,
+  afin que les étapes suivantes ne soient pas bloquées par leurs anciens jobs ;
 - la transition, l’`AIRun`, l’outbox et le prochain job partagent une
   transaction.
 
@@ -204,9 +216,11 @@ order by started_at;
 ```
 
 Ne jamais remettre un job en `pending` à la main sans vérifier le checkpoint
-associé. La reprise normale consiste à corriger la cause puis à réenfiler une
-action avec la même clé d’idempotence ou une action explicite de recherche
-complémentaire.
+associé. Après un quota Kimi épuisé ou un autre échec terminal, corriger la
+cause puis appeler `POST /api/v1/product-research-runs/:id/actions/resume`.
+L’interface de progression expose cette action sous « Réessayer l’étape ».
+Utiliser `research-more` uniquement pour invalider volontairement des résultats
+déjà produits et relancer une partie de l’étude avec un objectif modifié.
 
 ## Vérification
 

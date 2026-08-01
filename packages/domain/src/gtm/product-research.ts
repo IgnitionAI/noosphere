@@ -183,10 +183,13 @@ export class ProductResearchRun {
 
   resume(now: Date): void {
     if (this.#snapshot.status === "queued" || this.#snapshot.status === "running") return;
-    if (this.#snapshot.status !== "paused") {
+    if (this.#snapshot.status === "failed") {
+      this.#update({ status: "queued", activeStage: null, updatedAt: now });
+    } else if (this.#snapshot.status === "paused") {
+      this.#update({ status: this.#snapshot.activeStage ? "running" : "queued", updatedAt: now });
+    } else {
       throw new ProductResearchInvariantError(`Cannot resume a run in status ${this.#snapshot.status}`);
     }
-    this.#update({ status: this.#snapshot.activeStage ? "running" : "queued", updatedAt: now });
     this.#events.push({
       type: "ProductResearchResumed",
       runId: this.#snapshot.id,

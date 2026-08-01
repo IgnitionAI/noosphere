@@ -8,6 +8,7 @@ import {
 } from "@outbound/application/gtm/product-research-use-cases";
 import {
   RetryableAgentError,
+  TerminalAgentError,
   type ResearchAgentExecutor,
 } from "@outbound/application/gtm/product-research-ports";
 import { CryptoIdGenerator, type Clock } from "@outbound/application/shared/ports";
@@ -30,12 +31,16 @@ class MutableClock implements Clock {
 class FakeAgents implements ResearchAgentExecutor {
   readonly calls = new Map<ResearchStage, number>();
   retryOnce: ResearchStage | null = null;
+  failOnce: ResearchStage | null = null;
 
   async execute(stage: ResearchStage, _input: AgentStageInput): Promise<AgentExecutionResult> {
     const calls = (this.calls.get(stage) ?? 0) + 1;
     this.calls.set(stage, calls);
     if (this.retryOnce === stage && calls === 1) {
       throw new RetryableAgentError("PROVIDER_RATE_LIMITED", "try later");
+    }
+    if (this.failOnce === stage && calls === 1) {
+      throw new TerminalAgentError("MODEL_PROVIDER_QUOTA_EXHAUSTED", "quota exhausted");
     }
     return {
       output: validOutputFor(stage),
@@ -180,6 +185,60 @@ describe("ResearchOrchestrator", () => {
     });
     expect((await orchestrator.process(secondLease[0]!)).outcome).toBe("completed");
     expect(backend.inspectCheckpoints().map((item) => item.attempt)).toEqual([1, 2]);
+  });
+
+  test("resumes a terminally failed stage without recomputing completed work", async () => {
+    const backend = new InMemoryResearchBackend();
+    const ids = new CryptoIdGenerator();
+    const clock = new MutableClock(new Date("2026-07-24T10:00:00.000Z"));
+    const agents = new FakeAgents();
+    agents.failOnce = "product_analysis";
+    const workspaceId = crypto.randomUUID();
+    const run = await new CreateProductResearchRun(backend, ids, clock).execute({
+      workspaceId,
+      brief,
+    });
+    await new StartProductResearchRun(backend, ids, clock).execute({
+      workspaceId,
+      runId: run.snapshot.id,
+      correlationId: "corr-quota",
+    });
+    const orchestrator = new ResearchOrchestrator(
+      backend,
+      backend,
+      agents,
+      ids,
+      clock,
+      new Sha256ContentHasher(),
+    );
+    const [failedJob] = await backend.lease({
+      workerId: "worker-a",
+      types: ["research.stage.execute"],
+      limit: 1,
+      leaseMs: 30_000,
+      now: clock.now(),
+    });
+    expect((await orchestrator.process(failedJob!)).outcome).toBe("failed");
+
+    const resumed = await new ResumeProductResearchRun(backend, ids, clock).execute({
+      workspaceId,
+      runId: run.snapshot.id,
+      correlationId: "corr-quota-resume",
+    });
+    expect(resumed.snapshot).toMatchObject({ status: "queued", activeStage: null });
+    const [resumedJob] = await backend.lease({
+      workerId: "worker-a",
+      types: ["research.stage.execute"],
+      limit: 1,
+      leaseMs: 30_000,
+      now: clock.now(),
+    });
+    expect((await orchestrator.process(resumedJob!)).outcome).toBe("completed");
+    expect(agents.calls.get("product_analysis")).toBe(2);
+    expect(backend.inspectCheckpoints().map(({ attempt, status }) => ({ attempt, status }))).toEqual([
+      { attempt: 1, status: "failed" },
+      { attempt: 2, status: "completed" },
+    ]);
   });
 
   test("a retry supersedes a stale running checkpoint from an interrupted completion", async () => {

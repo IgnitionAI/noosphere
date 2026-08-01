@@ -31,6 +31,8 @@ const statusLabels: Record<string, string> = {
   running: "En cours",
   paused: "En pause",
   completed: "Terminé",
+  failed: "Échec",
+  invalidated: "À reprendre",
 };
 
 export const metadata = { title: "Progression de l’étude ICP" };
@@ -56,6 +58,14 @@ export default async function ResearchProgressPage({
       100,
   );
   const isActive = run.status === "queued" || run.status === "running";
+  const failedStage =
+    run.stages.find((stage) => stage.stage === run.activeStage) ??
+    [...run.stages].reverse().find((stage) => stage.lastErrorCode);
+  const quotaExhausted =
+    failedStage?.lastErrorCode === "MODEL_PROVIDER_QUOTA_EXHAUSTED";
+  const failedStageLabel = failedStage
+    ? stageLabels[failedStage.stage] ?? failedStage.stage
+    : "la dernière étape";
   const pause = pauseResearch.bind(null, workspaceSlug, runId);
   const resume = resumeResearch.bind(null, workspaceSlug, runId);
   const start = startResearch.bind(null, workspaceSlug, runId);
@@ -69,7 +79,9 @@ export default async function ResearchProgressPage({
             <span className="badge badge-signal capitalize">{run.status.replaceAll("_", " ")}</span>
             <span className="font-mono text-[10px] text-muted">{run.id.slice(0, 13)}</span>
           </div>
-          <h1 className="page-title">Étude ICP en cours</h1>
+          <h1 className="page-title">
+            {run.status === "failed" ? "Étude ICP interrompue" : "Étude ICP en cours"}
+          </h1>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-muted">
             Les résultats validés restent disponibles si une source ou une étape échoue.
           </p>
@@ -87,6 +99,13 @@ export default async function ResearchProgressPage({
               <button className="button button-primary" type="submit">
                 <Play size={16} />
                 Reprendre
+              </button>
+            </form>
+          ) : run.status === "failed" ? (
+            <form action={resume}>
+              <button className="button button-primary" type="submit">
+                <Play size={16} />
+                Réessayer l’étape
               </button>
             </form>
           ) : isActive ? (
@@ -175,15 +194,32 @@ export default async function ResearchProgressPage({
 
         <div className="space-y-4">
           {run.status === "failed" ? (
-            <section className="rounded-xl border border-red-200 bg-red-50 p-5 text-danger">
+            <section
+              className={`rounded-xl border p-5 ${
+                quotaExhausted
+                  ? "border-amber-200 bg-amber-50 text-warning"
+                  : "border-red-200 bg-red-50 text-danger"
+              }`}
+            >
               <div className="flex items-start gap-3">
                 <AlertTriangle className="mt-0.5 flex-none" size={19} />
                 <div>
-                  <h2 className="font-semibold">La recherche est interrompue</h2>
+                  <h2 className="font-semibold">
+                    {quotaExhausted ? "Quota Kimi épuisé" : "La recherche est interrompue"}
+                  </h2>
                   <p className="mt-1 text-xs leading-5">
-                    Les checkpoints terminés sont conservés. Consultez le dernier code d’erreur
-                    avant de reprendre.
+                    {quotaExhausted
+                      ? `Les ${completed} checkpoints terminés sont conservés. Renouvelez le quota Kimi, puis reprenez directement depuis « ${failedStageLabel} ».`
+                      : `Les checkpoints terminés sont conservés. Vous pouvez relancer directement depuis « ${failedStageLabel} ».`}
                   </p>
+                  {quotaExhausted ? (
+                    <Link
+                      className="mt-3 inline-flex text-xs font-semibold underline underline-offset-4"
+                      href={`/w/${workspaceSlug}/settings/ai`}
+                    >
+                      Vérifier les modèles du workspace
+                    </Link>
+                  ) : null}
                 </div>
               </div>
             </section>
@@ -277,6 +313,13 @@ function StageIcon({ status }: { status: string }) {
     return (
       <span className={`${className} text-warning`}>
         <Pause size={15} />
+      </span>
+    );
+  }
+  if (status === "failed") {
+    return (
+      <span className={`${className} text-danger`}>
+        <AlertTriangle size={15} />
       </span>
     );
   }

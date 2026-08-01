@@ -91,6 +91,30 @@ describe("ProductResearchRun", () => {
     expect(run.snapshot.activeStage).toBe("product_analysis");
   });
 
+  test("a failed run resumes from its first incomplete stage", () => {
+    const now = new Date("2026-07-24T10:00:00.000Z");
+    const run = ProductResearchRun.create({
+      id: crypto.randomUUID(),
+      workspaceId: crypto.randomUUID(),
+      brief,
+      now,
+    });
+    run.start(now);
+    run.beginStage("product_analysis", now);
+    run.failStage("product_analysis", "MODEL_PROVIDER_QUOTA_EXHAUSTED", now);
+
+    run.resume(now);
+
+    expect(run.snapshot).toMatchObject({
+      status: "queued",
+      activeStage: null,
+      completedStages: [],
+    });
+    expect(run.nextStage()).toBe("product_analysis");
+    run.beginStage("product_analysis", now);
+    expect(run.snapshot.activeStage).toBe("product_analysis");
+  });
+
   test("a human-reviewed checkpoint cannot be overwritten", () => {
     const checkpoint: ResearchCheckpoint = {
       id: crypto.randomUUID(),

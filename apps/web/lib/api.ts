@@ -54,7 +54,14 @@ export interface ResearchRun {
   readonly updatedAt: string;
   readonly stages: readonly {
     readonly stage: string;
-    readonly status: "pending" | "queued" | "running" | "paused" | "completed";
+    readonly status:
+      | "pending"
+      | "queued"
+      | "running"
+      | "paused"
+      | "completed"
+      | "failed"
+      | "invalidated";
     readonly attempts: number;
     readonly lastErrorCode: string | null;
     readonly startedAt: string | null;
