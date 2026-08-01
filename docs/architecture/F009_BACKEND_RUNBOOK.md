@@ -82,9 +82,16 @@ prompt ; OpenAI utilise le function-calling Zod. `AI_PROVIDER=openai` reste disp
 Les listes Kimi sont ordonnées : le premier modèle est le choix principal.
 Si l’API répond explicitement que ce modèle est absent, non autorisé ou
 indisponible pour l’abonnement, ou que son quota est épuisé, l’exécuteur tente
-le suivant. Si tous les modèles partagent le quota épuisé, l’étape termine avec
-le code stable `MODEL_PROVIDER_QUOTA_EXHAUSTED`. Le modèle réellement utilisé
-et le nombre de fallbacks sont enregistrés dans l’`ai_run`.
+le suivant. Si tous les modèles partagent le quota épuisé, les étapes de
+collecte terminent avec le code stable `MODEL_PROVIDER_QUOTA_EXHAUSTED`.
+`icp_synthesis` peut en revanche construire cinq propositions uniquement à
+partir du checkpoint `segment_synthesis`, sans ajouter de fait. Pour
+`evidence_review`, le fallback vérifie la résolution et l’indépendance des
+preuves, marque toutes les propositions comme hypothèses et retourne
+`needs_more_research` : la revue sémantique humaine reste obligatoire. Ces
+fallbacks sont enregistrés avec `provider=local-policy`, coût nul et une
+version explicite. Le modèle réellement utilisé et le nombre de fallbacks sont
+enregistrés dans l’`ai_run` lorsqu’un modèle répond.
 
 Kimi peut terminer une boucle Deep Agent sur un message d’outil ou du texte
 libre. L’exécuteur réserve une courte grâce après le budget de collecte et

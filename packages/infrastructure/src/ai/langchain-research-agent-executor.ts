@@ -16,7 +16,9 @@ import {
 } from "@outbound/application/gtm/product-research-ports";
 import type { ResearchStage } from "@outbound/domain/gtm/product-research";
 import {
+  auditIcpStructurally,
   finalizeIcpSynthesis,
+  synthesizeIcpFromSegments,
   validateBuyerLandscape,
 } from "@outbound/application/gtm/icp-prospectability-policy";
 import type { WorkspaceAiModelPolicyReader } from "@outbound/application/workspaces/workspace-ai-settings";
@@ -253,6 +255,23 @@ export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
         );
       }
       if (isProviderQuotaError(error)) {
+        const fallbackOutput = deterministicQuotaFallback(stage, input);
+        if (fallbackOutput !== null) {
+          return {
+            output: fallbackOutput,
+            metadata: {
+              provider: "local-policy",
+              model: "deterministic-quota-fallback-v1",
+              promptVersion: "icp-deterministic-quota-fallback-v1",
+              parameters: {
+                fallbackReason: "MODEL_PROVIDER_QUOTA_EXHAUSTED",
+                semanticEvidenceReviewRequired: stage === "evidence_review",
+              },
+              cost: 0,
+              latencyMs: Date.now() - startedAt,
+            },
+          };
+        }
         throw new TerminalAgentError(
           "MODEL_PROVIDER_QUOTA_EXHAUSTED",
           errorMessage(error),
@@ -415,6 +434,22 @@ Return exactly one JSON object and no commentary.${jsonOutputInstructions(schema
     );
     return readJsonFromFinalMessage(recoveryResult);
   }
+}
+
+export function deterministicQuotaFallback(
+  stage: ResearchStage,
+  input: AgentStageInput,
+): AgentExecutionResult["output"] | null {
+  if (stage === "icp_synthesis") {
+    return synthesizeIcpFromSegments({
+      brief: input.brief,
+      previousOutputs: input.previousOutputs,
+    });
+  }
+  if (stage === "evidence_review") {
+    return auditIcpStructurally({ previousOutputs: input.previousOutputs });
+  }
+  return null;
 }
 
 export function findUnresolvedEvidenceReferences(
@@ -694,12 +729,16 @@ export function isModelUnavailableError(error: unknown): boolean {
 }
 
 export function isProviderQuotaError(error: unknown): boolean {
-  const status =
+  const explicitStatus =
     typeof error === "object" && error !== null && "status" in error
       ? Number((error as { status: unknown }).status)
       : 0;
-  if (![402, 403, 429].includes(status)) return false;
   const message = errorMessage(error).toLowerCase();
+  const status =
+    [402, 403, 429].includes(explicitStatus)
+      ? explicitStatus
+      : Number(message.match(/(?:^|\s)(402|403|429)(?:\s|$)/)?.[1] ?? 0);
+  if (![402, 403, 429].includes(status)) return false;
   return [
     "usage limit",
     "quota",

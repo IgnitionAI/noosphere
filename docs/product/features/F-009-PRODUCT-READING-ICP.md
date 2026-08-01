@@ -61,6 +61,9 @@ Chaque étape écrit un checkpoint durable. Une reprise ne recommence pas les
     sont toujours classifiés séparément.
 12. Un ICP exige au moins deux preuves marché publiques provenant de domaines
     externes distincts et un plan de sourcing exploitable.
+13. Si le quota modèle expire après la collecte, la synthèse locale ne peut
+    réutiliser que les segments et preuves déjà validés ; l’audit local bloque
+    toute publication jusqu’à une revue sémantique humaine.
 
 ## Objets
 
@@ -98,6 +101,8 @@ Chaque étape écrit un checkpoint durable. Une reprise ne recommence pas les
 - quitter la page ne perd pas la mission et le front permet de reprendre son suivi ;
 - une source en échec ne masque pas les autres résultats ;
 - pause, reprise et retry sont idempotents ;
+- un run en échec reprend depuis sa première étape incomplète sans perdre ses
+  checkpoints et l’interface explique explicitement un quota Kimi épuisé ;
 - chaque finding affiche preuves ou statut d’hypothèse ;
 - le livrable contient au moins un ICP classé ;
 - le livrable contient au maximum cinq ICP prospectables avec secteurs,

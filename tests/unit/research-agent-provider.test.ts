@@ -298,6 +298,11 @@ describe("research agent model provider", () => {
     );
     expect(isProviderQuotaError(quota)).toBe(true);
     expect(isModelUnavailableError(quota)).toBe(true);
+    expect(
+      isProviderQuotaError(
+        new Error("403 You've reached your usage limit for this billing cycle"),
+      ),
+    ).toBe(true);
   });
 
   test("uses the workspace policy for deep and synthesis stages", () => {
