@@ -84,6 +84,55 @@
       }
     },
     "/api/v1/product-research-runs": {
+      "get": {
+        "operationId": "listProductResearchRuns",
+        "summary": "List recent product research runs for the workspace",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceSlug"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50,
+              "default": 10
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Recent workspace research runs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["data"],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ProductResearchRunSummary"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/WorkspaceForbidden"
+          }
+        }
+      },
       "post": {
         "operationId": "createProductResearchRun",
         "summary": "Create a product research draft",
@@ -1075,6 +1124,52 @@
             }
           }
         }
+      },
+      "ProductResearchRunSummary": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ResearchActionResponse"
+          },
+          {
+            "type": "object",
+            "required": [
+              "activeStage",
+              "brief",
+              "completedStages",
+              "createdAt",
+              "updatedAt"
+            ],
+            "properties": {
+              "activeStage": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/ResearchStage"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "brief": {
+                "$ref": "#/components/schemas/ProductResearchBrief"
+              },
+              "completedStages": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ResearchStage"
+                }
+              },
+              "createdAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "updatedAt": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
+        ]
       },
       "ProductResearchRun": {
         "allOf": [

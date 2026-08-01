@@ -55,6 +55,11 @@ export class ProductResearchApplication {
     return run.snapshot;
   }
 
+  async list(input: { workspaceId: string; limit: number }) {
+    const runs = await this.repository.listRecent(input.workspaceId, input.limit);
+    return runs.map((run) => run.snapshot);
+  }
+
   async getProgress(input: { workspaceId: string; runId: string }) {
     const run = await this.get(input);
     const stageRuns = await this.views.listStageRuns(input.workspaceId, input.runId);

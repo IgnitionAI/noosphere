@@ -82,6 +82,20 @@ export class PostgresProductResearchRepository
     return row ? ProductResearchRun.restore(toRunSnapshot(row)) : null;
   }
 
+  async listRecent(workspaceId: string, limit: number): Promise<readonly ProductResearchRun[]> {
+    const rows = await this.db
+      .select()
+      .from(productResearchRuns)
+      .where(eq(productResearchRuns.workspaceId, workspaceId))
+      .orderBy(
+        desc(productResearchRuns.updatedAt),
+        desc(productResearchRuns.createdAt),
+        desc(productResearchRuns.id),
+      )
+      .limit(limit);
+    return rows.map((row) => ProductResearchRun.restore(toRunSnapshot(row)));
+  }
+
   async findCompletedCheckpoint(
     workspaceId: string,
     runId: string,

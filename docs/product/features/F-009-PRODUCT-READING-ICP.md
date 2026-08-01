@@ -65,6 +65,7 @@ Chaque étape écrit un checkpoint durable. Une reprise ne recommence pas les
 
 | Méthode | Route | Usage |
 |---|---|---|
+| GET | `/api/v1/product-research-runs` | retrouver les missions récentes du workspace après navigation ou rechargement |
 | POST | `/api/v1/product-research-runs` | créer la mission |
 | POST | `/api/v1/product-research-runs/:id/actions/start` | lancer |
 | GET | `/api/v1/product-research-runs/:id` | état et progression |
@@ -78,6 +79,7 @@ Chaque étape écrit un checkpoint durable. Une reprise ne recommence pas les
 - le brief peut être lancé avec une URL et un marché ;
 - les concurrents connus restent facultatifs ;
 - la progression expose l’étape active et les résultats partiels ;
+- quitter la page ne perd pas la mission et le front permet de reprendre son suivi ;
 - une source en échec ne masque pas les autres résultats ;
 - pause, reprise et retry sont idempotents ;
 - chaque finding affiche preuves ou statut d’hypothèse ;

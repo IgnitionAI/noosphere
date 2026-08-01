@@ -10,6 +10,7 @@ import type { NewJob } from "@outbound/application/jobs/job-queue";
 export interface ProductResearchRepository {
   insert(run: ProductResearchRun): Promise<void>;
   findById(workspaceId: string, runId: string): Promise<ProductResearchRun | null>;
+  listRecent(workspaceId: string, limit: number): Promise<readonly ProductResearchRun[]>;
   findCompletedCheckpoint(
     workspaceId: string,
     runId: string,

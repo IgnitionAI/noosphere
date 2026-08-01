@@ -54,6 +54,19 @@ export class InMemoryResearchBackend
     return snapshot ? ProductResearchRun.restore(clone(snapshot)) : null;
   }
 
+  async listRecent(workspaceId: string, limit: number): Promise<readonly ProductResearchRun[]> {
+    return [...this.#runs.values()]
+      .filter((snapshot) => snapshot.workspaceId === workspaceId)
+      .sort(
+        (left, right) =>
+          right.updatedAt.getTime() - left.updatedAt.getTime() ||
+          right.createdAt.getTime() - left.createdAt.getTime() ||
+          right.id.localeCompare(left.id),
+      )
+      .slice(0, limit)
+      .map((snapshot) => ProductResearchRun.restore(clone(snapshot)));
+  }
+
   async findCompletedCheckpoint(
     workspaceId: string,
     runId: string,

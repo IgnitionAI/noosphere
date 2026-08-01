@@ -1,3 +1,6 @@
+import { ArrowRight, Clock3, FileSearch, PauseCircle } from "lucide-react";
+import Link from "next/link";
+import { listResearchRuns, type ResearchRunSummary } from "@/lib/api";
 import { BriefForm } from "./brief-form";
 
 export const metadata = { title: "Trouver mon ICP" };
@@ -8,6 +11,10 @@ export default async function ProductReadingPage({
   params: Promise<{ workspaceSlug: string }>;
 }) {
   const { workspaceSlug } = await params;
+  const runs = await listResearchRuns(workspaceSlug);
+  const recoverableRun = runs.find((run) =>
+    ["draft", "queued", "running", "paused", "ready_for_review"].includes(run.status),
+  );
   return (
     <>
       <div className="mb-5 flex flex-wrap items-center gap-2 text-xs font-semibold text-muted">
@@ -39,7 +46,59 @@ export default async function ProductReadingPage({
           marchés les plus crédibles avec leurs preuves.
         </p>
       </header>
+      {recoverableRun ? (
+        <RecoverableRun workspaceSlug={workspaceSlug} run={recoverableRun} />
+      ) : null}
       <BriefForm workspaceSlug={workspaceSlug} />
     </>
+  );
+}
+
+const runStatusLabels: Record<ResearchRunSummary["status"], string> = {
+  draft: "Brief enregistré",
+  queued: "En attente",
+  running: "Recherche en cours",
+  paused: "Recherche en pause",
+  ready_for_review: "Rapport prêt à relire",
+  failed: "Recherche interrompue",
+};
+
+function RecoverableRun({
+  workspaceSlug,
+  run,
+}: {
+  workspaceSlug: string;
+  run: ResearchRunSummary;
+}) {
+  const reportReady = run.status === "ready_for_review";
+  const href = reportReady
+    ? `/w/${workspaceSlug}/research/${run.id}/report`
+    : `/w/${workspaceSlug}/research/${run.id}`;
+  const StatusIcon = run.status === "paused" ? PauseCircle : reportReady ? FileSearch : Clock3;
+
+  return (
+    <section className="mb-6 rounded-xl border border-signal bg-[#f6ffdf] p-4 sm:p-5">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 items-start gap-3">
+          <span className="grid h-10 w-10 flex-none place-items-center rounded-lg bg-signal text-signal-ink">
+            <StatusIcon size={19} />
+          </span>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <strong className="truncate">{run.brief.productName}</strong>
+              <span className="badge badge-signal">{runStatusLabels[run.status]}</span>
+            </div>
+            <p className="mt-1 text-xs leading-5 text-signal-ink/80">
+              Cette mission continue côté serveur. Vous pouvez quitter cette page et reprendre son
+              suivi à tout moment.
+            </p>
+          </div>
+        </div>
+        <Link className="button button-signal flex-none" href={href}>
+          {reportReady ? "Ouvrir le rapport" : "Reprendre le suivi"}
+          <ArrowRight size={16} />
+        </Link>
+      </div>
+    </section>
   );
 }

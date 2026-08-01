@@ -77,6 +77,33 @@ export function createProductResearchHttpHandler(dependencies: ProductResearchHt
   return async function handle(request: Request): Promise<Response> {
     try {
       const url = new URL(request.url);
+      if (request.method === "GET" && url.pathname === "/api/v1/product-research-runs") {
+        const context = await resolveContext(dependencies.contextResolver, request);
+        requireViewer(context.role);
+        const limit = z.coerce
+          .number()
+          .int()
+          .min(1)
+          .max(50)
+          .default(10)
+          .parse(url.searchParams.get("limit") ?? undefined);
+        const runs = await dependencies.application.list({
+          workspaceId: context.workspaceId,
+          limit,
+        });
+        return json({
+          data: runs.map((run) => ({
+            id: run.id,
+            status: run.status,
+            activeStage: run.activeStage,
+            brief: run.brief,
+            completedStages: run.completedStages,
+            createdAt: run.createdAt.toISOString(),
+            updatedAt: run.updatedAt.toISOString(),
+            links: { self: `/api/v1/product-research-runs/${run.id}` },
+          })),
+        });
+      }
       if (request.method === "POST" && url.pathname === "/api/v1/product-research-runs") {
         const context = await resolveContext(dependencies.contextResolver, request);
         requireOperator(context.role);
@@ -498,7 +525,7 @@ function problem(
 }
 
 function allowedMethods(pathname: string): string | null {
-  if (pathname === "/api/v1/product-research-runs") return "POST";
+  if (pathname === "/api/v1/product-research-runs") return "GET, POST";
   if (runPath.test(pathname) || evidencePath.test(pathname) || reportPath.test(pathname)) return "GET";
   if (findingPathPattern.test(pathname) || proposalPathPattern.test(pathname)) return "PATCH";
   if (actionPath.test(pathname)) return "POST";

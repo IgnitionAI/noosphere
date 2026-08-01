@@ -33,6 +33,7 @@ test("the OpenAPI contract declares every F-009 HTTP route", () => {
       "/api/v1/workspace-ai-settings",
     ].sort(),
   );
+  expect(document.paths["/api/v1/product-research-runs"]?.get).toBeDefined();
   expect(document.paths["/api/v1/product-research-runs"]?.post).toBeDefined();
 });
 

@@ -59,6 +59,16 @@ export interface ResearchRun {
   }[];
 }
 
+export interface ResearchRunSummary {
+  readonly id: string;
+  readonly status: ResearchRun["status"];
+  readonly activeStage: string | null;
+  readonly brief: ProductResearchBrief;
+  readonly completedStages: readonly string[];
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
 export interface ResearchDocument {
   readonly id: string;
   readonly filename: string;
@@ -171,6 +181,17 @@ export async function getResearchRun(
   });
   if (!response.ok) await throwApiError(response);
   return (await response.json()) as ResearchRun;
+}
+
+export async function listResearchRuns(
+  workspaceSlug: string,
+  limit = 10,
+): Promise<readonly ResearchRunSummary[]> {
+  const response = await apiFetch(`/api/v1/product-research-runs?limit=${limit}`, {
+    workspaceSlug,
+  });
+  if (!response.ok) await throwApiError(response);
+  return ((await response.json()) as { data: ResearchRunSummary[] }).data;
 }
 
 export async function researchAction(

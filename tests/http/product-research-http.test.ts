@@ -69,6 +69,31 @@ describe("F-009 HTTP routes", () => {
     });
   });
 
+  test("a viewer can recover the latest workspace run after leaving the progress page", async () => {
+    const harness = createHarness();
+    const older = (await (await createRun(harness.handle)).json()) as { id: string };
+    const active = (await (await createRun(harness.handle)).json()) as { id: string };
+    await action(harness.handle, active.id, "start");
+
+    harness.context.role = "viewer";
+    const response = await harness.handle(
+      new Request("http://localhost/api/v1/product-research-runs?limit=10"),
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      data: Array<{ id: string; status: string; brief: { productName: string } }>;
+    };
+    expect(body.data.map((run) => run.id)).toEqual(
+      expect.arrayContaining([active.id, older.id]),
+    );
+    expect(body.data.find((run) => run.id === active.id)).toMatchObject({
+      id: active.id,
+      status: "queued",
+      brief: { productName: "Example" },
+    });
+  });
+
   test("pause and resume actions are idempotent", async () => {
     const harness = createHarness();
     const created = (await (await createRun(harness.handle)).json()) as { id: string };
@@ -162,7 +187,7 @@ describe("F-009 HTTP routes", () => {
     );
 
     expect(response.status).toBe(405);
-    expect(response.headers.get("allow")).toBe("POST");
+    expect(response.headers.get("allow")).toBe("GET, POST");
   });
 
   test("a run from another workspace is indistinguishable from a missing run", async () => {
