@@ -262,7 +262,7 @@ async function executeSearch(
   }
 }
 
-function buildFilters(
+export function buildFilters(
   version: { criteria: unknown; buyingCommittee: unknown },
   limit: number,
 ): {
@@ -272,13 +272,18 @@ function buildFilters(
   limit: number;
 } {
   const criteria = objectRecord(version.criteria);
-  const sectors = stringArray(criteria.sectors);
+  const industries = [...stringArray(criteria.sectors), ...stringArray(criteria.industries)];
   const committee = stringArray(version.buyingCommittee);
-  const keywords = [...sectors.slice(0, 3), ...committee.slice(0, 1)].join(" ").trim();
+  // LinkedIn classic keyword search ANDs every term: long multi-word queries
+  // return nothing. Keep it to the first industry + the first committee role,
+  // cleaned of slashes and limited to two words each.
+  const industry = (industries[0] ?? "").split("/")[0]!.trim().split(/\s+/).slice(0, 2).join(" ");
+  const role = (committee[0] ?? "").split("/")[0]!.trim().split(/\s+/).slice(0, 2).join(" ");
+  const keywords = [industry, role].filter(Boolean).join(" ").trim();
   return { api: "classic", category: "people", keywords, limit };
 }
 
-function computeIcpFit(
+export function computeIcpFit(
   version: { criteria: unknown; buyingCommittee: unknown },
   candidate: ProspectSourceCandidate,
 ): { matches: string[]; gaps: string[] } {
@@ -294,22 +299,25 @@ function computeIcpFit(
     } else {
       gaps.push(
         candidate.location
-          ? `Géographie : ${candidate.location} hors ${geography}`
+          ? `Géographie à vérifier : ${candidate.location} (critère ${geography})`
           : "Géographie inconnue",
       );
     }
   }
-  const sectors = stringArray(criteria.sectors);
-  const matchedSectors = sectors.filter((sector) => haystack.includes(sector.toLowerCase()));
+  const industries = [...stringArray(criteria.sectors), ...stringArray(criteria.industries)];
+  const matchedSectors = industries.filter((sector) => haystack.includes(sector.toLowerCase()));
   if (matchedSectors.length) {
     matches.push(`Secteur : ${matchedSectors.join(", ")}`);
-  } else if (sectors.length) {
+  } else if (industries.length) {
     gaps.push("Secteur non confirmé par le profil");
   }
   const committee = stringArray(version.buyingCommittee);
-  const matchedRole = committee.find((role) => haystack.includes(role.toLowerCase()));
+  const matchedRole = committee.find((role) => {
+    const cleaned = role.split("/")[0]!.trim().toLowerCase();
+    return cleaned.length > 0 && haystack.includes(cleaned);
+  });
   if (matchedRole) {
-    matches.push(`Rôle : ${matchedRole}`);
+    matches.push(`Rôle : ${matchedRole.split("/")[0]!.trim()}`);
   } else if (committee.length) {
     gaps.push("Rôle non confirmé par le profil");
   }

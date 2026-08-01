@@ -84,22 +84,31 @@ export class UnipileProspectSource implements ProspectSource {
     const body = (await response.json().catch(() => null)) as {
       items?: {
         id?: string;
+        name?: string;
         full_name?: string;
         headline?: string;
         public_profile_url?: string;
+        profile_url?: string;
         location?: string;
         current_company?: string;
+        public_identifier?: string;
+        network_distance?: string;
       }[];
     } | null;
     return (body?.items ?? [])
-      .filter((item) => item.full_name)
+      .filter((item) => item.name ?? item.full_name)
       .map((item) => ({
-        fullName: item.full_name!,
+        fullName: (item.name ?? item.full_name)!,
         headline: item.headline ?? null,
-        linkedinUrl: item.public_profile_url ?? null,
+        linkedinUrl: item.public_profile_url ?? item.profile_url ?? null,
         location: item.location ?? null,
         companyName: item.current_company ?? null,
-        providerData: { providerId: item.id ?? null, accountId },
+        providerData: {
+          providerId: item.id ?? null,
+          accountId,
+          publicIdentifier: item.public_identifier ?? null,
+          networkDistance: item.network_distance ?? null,
+        },
       }));
   }
 

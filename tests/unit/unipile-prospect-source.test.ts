@@ -36,11 +36,13 @@ describe("UnipileProspectSource", () => {
           items: [
             {
               id: "li_1",
-              full_name: "Marion Delacroix",
+              name: "Marion Delacroix",
               headline: "Associée · Cabinet Delacroix",
-              public_profile_url: "https://www.linkedin.com/in/marion-delacroix/",
+              public_profile_url:
+                "https://www.linkedin.com/in/marion-delacroix?miniProfileUrn=urn%3Ali%3Aabc",
               location: "Paris, France",
-              current_company: "Cabinet Delacroix",
+              public_identifier: "marion-delacroix",
+              network_distance: "DISTANCE_2",
             },
           ],
         });
@@ -69,12 +71,15 @@ describe("UnipileProspectSource", () => {
       {
         fullName: "Marion Delacroix",
         headline: "Associée · Cabinet Delacroix",
-        linkedinUrl: "https://www.linkedin.com/in/marion-delacroix/",
+        linkedinUrl:
+          "https://www.linkedin.com/in/marion-delacroix?miniProfileUrn=urn%3Ali%3Aabc",
         location: "Paris, France",
-        companyName: "Cabinet Delacroix",
+        companyName: null,
         providerData: {
           providerId: "li_1",
           accountId: "acc_li_1",
+          publicIdentifier: "marion-delacroix",
+          networkDistance: "DISTANCE_2",
         },
       },
     ]);
