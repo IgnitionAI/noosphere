@@ -9,6 +9,7 @@ import {
   Search,
   ShieldCheck,
   TriangleAlert,
+  UsersRound,
   X,
 } from "lucide-react";
 import Link from "next/link";
@@ -58,6 +59,9 @@ export default async function ResearchReportPage({
   }
 
   const review = object(report.stageOutputs.evidence_review);
+  const buyerLandscape = object(report.stageOutputs.buyer_landscape_discovery);
+  const buyerSegments = array(buyerLandscape.buyerSegments).map(object);
+  const commercialReadiness = object(review.commercialReadiness);
   const proposals = report.proposals.map(object);
   const versions = (report.versions ?? []).map(object);
   const publishedProposalIds = new Set(versions.map((version) => text(version.proposalId)));
@@ -112,6 +116,7 @@ export default async function ResearchReportPage({
                 <option value="product_analysis">Depuis l’analyse produit</option>
                 <option value="competitor_discovery">Depuis la découverte concurrents</option>
                 <option value="competitor_analysis">Depuis l’analyse concurrents</option>
+                <option value="buyer_landscape_discovery">Depuis les acheteurs</option>
                 <option value="segment_synthesis">Depuis les segments</option>
                 <option value="icp_synthesis">Depuis les ICP</option>
                 <option value="evidence_review">Depuis l’audit des preuves</option>
@@ -139,6 +144,22 @@ export default async function ResearchReportPage({
               </h2>
             </div>
             <div className="panel-body">
+              {text(commercialReadiness.decision) ? (
+                <div
+                  className={`mb-4 rounded-lg border p-3 text-xs leading-5 ${
+                    text(commercialReadiness.decision) === "ready"
+                      ? "border-success/40 bg-emerald-50 text-success"
+                      : "border-warning/40 bg-amber-50 text-warning"
+                  }`}
+                >
+                  <strong>
+                    {text(commercialReadiness.decision) === "ready"
+                      ? "ICP prospectables"
+                      : "Recherche marché insuffisante"}
+                  </strong>
+                  <p className="mt-1">{text(commercialReadiness.rationale)}</p>
+                </div>
+              ) : null}
               <p className="max-w-prose text-sm leading-7">
                 {text(review.executiveSummary) ||
                   "La synthèse finale sera disponible après l’audit des preuves."}
@@ -188,6 +209,52 @@ export default async function ResearchReportPage({
             </div>
           </section>
 
+          {buyerSegments.length ? (
+            <section className="panel" id="acheteurs">
+              <div className="panel-header">
+                <div>
+                  <h2 className="flex items-center gap-2 font-semibold">
+                    <UsersRound size={16} className="text-brand-blue" />
+                    Paysage des acheteurs
+                  </h2>
+                  <p className="mt-1 text-xs text-muted">
+                    Utilisateurs finaux, partenaires et équipes capables de construire sont séparés.
+                  </p>
+                </div>
+                <span className="badge badge-signal">{buyerSegments.length} segments</span>
+              </div>
+              <div className="panel-body grid gap-3 lg:grid-cols-2">
+                {buyerSegments.map((segment, index) => {
+                  const buildVsBuy = object(segment.buildVsBuy);
+                  return (
+                    <article className="rounded-xl border border-line p-4" key={text(segment.name) || index}>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <strong>{text(segment.name)}</strong>
+                        <span className="badge">{buyerTypeLabel(text(segment.buyerType))}</span>
+                        <span className="badge">{Math.round(number(segment.confidence) * 100)} %</span>
+                      </div>
+                      <p className="mt-2 text-xs leading-5 text-muted">{text(segment.description)}</p>
+                      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                        <ListCard title="Secteurs" value={segment.industries} />
+                        <ListCard title="Workflows récurrents" value={segment.recurringWorkflows} />
+                        <ListCard title="Comité d’achat" value={segment.buyingCommittee} />
+                        <div className="rounded-lg border border-line p-3 text-xs">
+                          <div className="font-semibold">Build vs buy</div>
+                          <div className="mt-2 text-muted">
+                            Capacité à construire : {Math.round(number(buildVsBuy.buildAbility))}/100
+                          </div>
+                          <div className="mt-1 text-muted">
+                            Volonté d’acheter : {Math.round(number(buildVsBuy.willingnessToBuy))}/100
+                          </div>
+                        </div>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            </section>
+          ) : null}
+
           <section className="panel" id="icp">
             <div className="panel-header">
               <div>
@@ -211,12 +278,18 @@ export default async function ResearchReportPage({
                 const reject = rejectProposal.bind(null, workspaceSlug, runId, id);
                 const correct = correctProposal.bind(null, workspaceSlug, runId, id);
                 const publish = publishProposal.bind(null, workspaceSlug, runId, id);
+                const proposalCriteria = object(proposal.criteria);
+                const scorecard = object(proposalCriteria.scorecard);
                 return (
                   <article className="rounded-xl border border-line" key={id}>
                     <div className="flex flex-wrap items-center gap-2 border-b border-line p-5">
                       <span className="badge badge-signal">#{text(proposal.rank)}</span>
                       <h3 className="text-lg font-semibold">{text(proposal.name)}</h3>
                       <span className="badge">{Math.round(number(proposal.confidence) * 100)} %</span>
+                      <span className="badge">{buyerTypeLabel(text(proposalCriteria.buyerType))}</span>
+                      <span className="badge badge-signal">
+                        Score {Math.round(number(scorecard.total))}/100
+                      </span>
                       <ReviewBadge status={status} />
                       {proposal.humanEdited ? (
                         <span className="badge badge-signal">
@@ -233,6 +306,8 @@ export default async function ResearchReportPage({
                     </div>
                     <div className="grid gap-4 p-5 lg:grid-cols-2">
                       <CriteriaCard title="Critères entreprise" value={proposal.criteria} />
+                      <CriteriaCard title="Plan de sourcing" value={proposalCriteria.prospecting} />
+                      <CriteriaCard title="Score de prospectabilité" value={proposalCriteria.scorecard} />
                       <ListCard title="Comité d’achat" value={proposal.buyingCommittee} />
                       <ListCard title="Problèmes prioritaires" value={proposal.problems} />
                       <ListCard title="Signaux d’achat" value={proposal.signals} />
@@ -571,6 +646,17 @@ function object(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function array(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function buyerTypeLabel(value: string): string {
+  if (value === "end_customer") return "Client final";
+  if (value === "channel_partner") return "Partenaire";
+  if (value === "internal_builder") return "Équipe interne";
+  return "Acheteur à qualifier";
 }
 
 function objectEntries(value: unknown): [string, unknown][] {

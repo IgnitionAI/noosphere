@@ -94,6 +94,19 @@ export class PostgresJobQueue implements JobQueue {
     if (rows.length !== 1) throw new Error("JOB_LEASE_LOST");
   }
 
+  async renewLease(jobId: string, workerId: string, lockedUntil: Date): Promise<boolean> {
+    const rows = await this.sql`
+      update jobs
+      set locked_until = ${lockedUntil},
+          updated_at = now()
+      where id = ${jobId}
+        and status = 'running'
+        and locked_by = ${workerId}
+      returning id
+    `;
+    return rows.length === 1;
+  }
+
   async retry(request: RetryJobRequest): Promise<"scheduled" | "dead_lettered"> {
     const rows = await this.sql<{ status: "retry" | "dead_lettered" }[]>`
       update jobs

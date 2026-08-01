@@ -52,11 +52,19 @@ reçoit un `ResearchStage`, un input validé et retourne :
 - coût éventuel et latence.
 
 Les schémas de référence vivent dans
-`packages/contracts/src/product-research.ts`. Les quatre étapes de recherche et
+`packages/contracts/src/product-research.ts`. Les cinq étapes de recherche et
 d’audit utilisent `createDeepAgent`; les deux synthèses utilisent
 `createAgent` et une sortie Zod. Une sortie invalide ou une référence de preuve
 inconnue termine l’étape. Aucun payload métier n’est écrit dans les logs du
 worker.
+
+Le workflow V2 ajoute `buyer_landscape_discovery` avant les synthèses. Cette
+étape recherche les clients, verticales, workflows, corpus et comités d’achat
+des concurrents. Les sites du produit analysé ne sont autorisés que pour les
+preuves de capacité et de positionnement. `marketEvidenceIds` exige deux
+domaines publics externes distincts. La politique de prospectabilité filtre
+l’audience demandée, exclut les internal builders, calcule le score final et
+limite le rapport à cinq ICP.
 
 `AI_PROVIDER=kimi-code` est la configuration par défaut. Elle utilise
 `ChatOpenAI` comme client OpenAI-compatible avec :
@@ -66,9 +74,9 @@ worker.
 - `KIMI_RESEARCH_MODELS=kimi-for-coding,k3,kimi-for-coding-highspeed` ;
 - `KIMI_SYNTHESIS_MODELS=kimi-for-coding,kimi-for-coding-highspeed,k3`.
 
-Le client force l’API Chat Completions (`useResponsesApi: false`), n’envoie
-pas de température à Kimi et force le function-calling pour toutes les sorties
-Zod. `AI_PROVIDER=openai` reste disponible avec `OPENAI_RESEARCH_MODEL` et
+Le client force l’API Chat Completions (`useResponsesApi: false`) et n’envoie
+pas de température à Kimi. Kimi utilise une réponse JSON contrainte par le
+prompt ; OpenAI utilise le function-calling Zod. `AI_PROVIDER=openai` reste disponible avec `OPENAI_RESEARCH_MODEL` et
 `OPENAI_SYNTHESIS_MODEL`.
 
 Les listes Kimi sont ordonnées : le premier modèle est le choix principal.

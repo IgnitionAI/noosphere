@@ -49,6 +49,7 @@ export class ResearchWorker {
   }
 
   async #processSafely(job: LeasedJob): Promise<void> {
+    const stopHeartbeat = this.#startLeaseHeartbeat(job);
     try {
       if (job.type === "research.document.process" && this.documentProcessor) {
         await this.documentProcessor.process(job);
@@ -67,13 +68,57 @@ export class ResearchWorker {
           error: error instanceof Error ? error.message : String(error),
         }),
       );
-      await this.queue.retry({
-        jobId: job.id,
-        workerId: job.lockedBy,
-        availableAt: new Date(this.clock.now().getTime() + 30_000),
-        errorCode: "WORKER_UNHANDLED_ERROR",
-        errorMessage: error instanceof Error ? error.message : String(error),
-      });
+      try {
+        await this.queue.retry({
+          jobId: job.id,
+          workerId: job.lockedBy,
+          availableAt: new Date(this.clock.now().getTime() + 30_000),
+          errorCode: "WORKER_UNHANDLED_ERROR",
+          errorMessage: error instanceof Error ? error.message : String(error),
+        });
+      } catch (retryError) {
+        // Another worker may have reclaimed/finished the job after a lease
+        // race. Logging is sufficient: throwing here would contradict the
+        // worker's poison-job isolation and stop all unrelated research.
+        console.error(
+          JSON.stringify({
+            event: "research_worker_retry_error",
+            jobId: job.id,
+            error: retryError instanceof Error ? retryError.message : String(retryError),
+          }),
+        );
+      }
+    } finally {
+      stopHeartbeat();
     }
+  }
+
+  #startLeaseHeartbeat(job: LeasedJob): () => void {
+    const intervalMs = Math.max(50, Math.floor(this.options.leaseMs / 3));
+    let renewalInFlight = false;
+    const timer = setInterval(async () => {
+      if (renewalInFlight) return;
+      renewalInFlight = true;
+      try {
+        const renewed = await this.queue.renewLease(
+          job.id,
+          job.lockedBy,
+          new Date(this.clock.now().getTime() + this.options.leaseMs),
+        );
+        if (!renewed) clearInterval(timer);
+      } catch (error) {
+        console.error(
+          JSON.stringify({
+            event: "research_worker_lease_renewal_error",
+            jobId: job.id,
+            error: error instanceof Error ? error.message : String(error),
+          }),
+        );
+      } finally {
+        renewalInFlight = false;
+      }
+    }, intervalMs);
+    timer.unref();
+    return () => clearInterval(timer);
   }
 }

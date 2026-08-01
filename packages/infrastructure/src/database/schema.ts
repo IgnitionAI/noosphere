@@ -30,6 +30,7 @@ export const researchStageEnum = pgEnum("research_stage", [
   "product_analysis",
   "competitor_discovery",
   "competitor_analysis",
+  "buyer_landscape_discovery",
   "segment_synthesis",
   "icp_synthesis",
   "evidence_review",

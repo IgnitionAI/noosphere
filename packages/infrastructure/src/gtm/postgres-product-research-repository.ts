@@ -1,7 +1,6 @@
 import { and, asc, desc, eq, gt, inArray, ne, or } from "drizzle-orm";
 import {
   ProductResearchRun,
-  researchStages,
   type ProductResearchBrief,
   type ProductResearchEvent,
   type ProductResearchRunSnapshot,
@@ -260,7 +259,8 @@ export class PostgresProductResearchRepository
     job: NewJob;
     events: readonly ProductResearchEvent[];
   }): Promise<void> {
-    const stagesToInvalidate = researchStages.slice(researchStages.indexOf(input.fromStage));
+    const workflowStages = input.run.workflowStages();
+    const stagesToInvalidate = workflowStages.slice(workflowStages.indexOf(input.fromStage));
     await this.db.transaction(async (tx) => {
       await tx
         .update(researchStageRuns)

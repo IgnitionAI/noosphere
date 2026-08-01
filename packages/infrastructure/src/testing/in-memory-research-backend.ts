@@ -1,6 +1,5 @@
 import {
   ProductResearchRun,
-  researchStages,
   type ProductResearchEvent,
   type ProductResearchRunSnapshot,
   type ResearchCheckpoint,
@@ -187,14 +186,15 @@ export class InMemoryResearchBackend
     job: NewJob;
     events: readonly ProductResearchEvent[];
   }): Promise<void> {
-    const fromIndex = researchStages.indexOf(input.fromStage);
+    const workflowStages = input.run.workflowStages();
+    const fromIndex = workflowStages.indexOf(input.fromStage);
     for (const [id, checkpoint] of this.#checkpoints) {
       if (
         checkpoint.workspaceId === input.run.snapshot.workspaceId &&
         checkpoint.runId === input.run.snapshot.id &&
         checkpoint.review === "machine" &&
         checkpoint.status === "completed" &&
-        researchStages.indexOf(checkpoint.stage) >= fromIndex
+        workflowStages.indexOf(checkpoint.stage) >= fromIndex
       ) {
         this.#checkpoints.set(id, { ...checkpoint, status: "invalidated" });
       }
@@ -303,6 +303,13 @@ export class InMemoryResearchBackend
     job.completedAt = completedAt;
     job.lockedBy = null;
     job.lockedUntil = null;
+  }
+
+  async renewLease(jobId: string, workerId: string, lockedUntil: Date): Promise<boolean> {
+    const job = this.#jobs.get(jobId);
+    if (!job || job.status !== "running" || job.lockedBy !== workerId) return false;
+    job.lockedUntil = lockedUntil;
+    return true;
   }
 
   async retry(request: RetryJobRequest): Promise<"scheduled" | "dead_lettered"> {

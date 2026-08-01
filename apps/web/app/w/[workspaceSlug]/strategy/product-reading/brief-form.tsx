@@ -53,6 +53,9 @@ export function BriefForm({ workspaceSlug }: { workspaceSlug: string }) {
   const [depth, setDepth] = useState<"quick" | "standard" | "deep">("standard");
   const [geography, setGeography] = useState("France");
   const [languages, setLanguages] = useState("fr,en");
+  const [audienceGoal, setAudienceGoal] = useState<
+    "end_customers" | "channel_partners" | "both"
+  >("end_customers");
 
   function addCompetitor() {
     const value = competitorDraft.trim();
@@ -166,6 +169,39 @@ export function BriefForm({ workspaceSlug }: { workspaceSlug: string }) {
                   <option value="license">Licence</option>
                 </select>
               </label>
+              <label>
+                <span className="mb-2 block text-xs font-semibold text-slate-700">
+                  Acheteurs recherchés
+                </span>
+                <select
+                  className="control"
+                  name="audienceGoal"
+                  onChange={(event) =>
+                    setAudienceGoal(
+                      event.target.value as "end_customers" | "channel_partners" | "both",
+                    )
+                  }
+                  value={audienceGoal}
+                >
+                  <option value="end_customers">Clients finaux — recommandé</option>
+                  <option value="channel_partners">Partenaires et intégrateurs</option>
+                  <option value="both">Clients finaux + partenaires</option>
+                </select>
+              </label>
+              <label className="md:col-span-3">
+                <span className="mb-2 block text-xs font-semibold text-slate-700">
+                  Contraintes d’achat
+                </span>
+                <textarea
+                  className="control min-h-20 resize-y"
+                  maxLength={5_000}
+                  name="buyerConstraints"
+                  placeholder="Ex. privilégier les structures sans équipe IA interne, avec des documents propriétaires et un sponsor métier."
+                />
+                <span className="mt-2 block text-xs text-muted">
+                  Les équipes qui préfèrent construire en interne sont exclues automatiquement des ICP finaux.
+                </span>
+              </label>
             </div>
           </section>
 
@@ -274,6 +310,14 @@ export function BriefForm({ workspaceSlug }: { workspaceSlug: string }) {
                 {[
                   ["Marché", geography],
                   ["Sources", sourceLabels[languages] ?? languages],
+                  [
+                    "Acheteurs",
+                    audienceGoal === "end_customers"
+                      ? "Clients finaux"
+                      : audienceGoal === "channel_partners"
+                        ? "Partenaires"
+                        : "Clients + partenaires",
+                  ],
                   ["Concurrents fournis", String(competitors.length)],
                   ["Profondeur", depths.find((item) => item.value === depth)?.name ?? depth],
                 ].map(([key, value]) => (

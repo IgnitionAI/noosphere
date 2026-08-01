@@ -1,5 +1,4 @@
 import {
-  researchStages,
   type ProductResearchRun,
   type ResearchCheckpoint,
   type ResearchStage,
@@ -70,8 +69,7 @@ export class ResearchOrchestrator {
 
     // Jobs enqueued before a research-more invalidation are stale: the run now
     // expects an earlier stage. Acknowledge them instead of crashing the worker.
-    const expectedStage =
-      researchStages.find((stage) => !run.snapshot.completedStages.includes(stage)) ?? null;
+    const expectedStage = run.nextStage();
     if (payload.stage !== expectedStage) {
       await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
       return { outcome: "superseded", stage: payload.stage };
@@ -90,14 +88,6 @@ export class ResearchOrchestrator {
 
     const previous = await this.repository.listCompletedCheckpoints(payload.workspaceId, payload.runId);
     const previousOutputs = Object.fromEntries(previous.map((checkpoint) => [checkpoint.stage, checkpoint.output]));
-    const input = parseAgentInput(payload.stage, {
-      runId: payload.runId,
-      workspaceId: payload.workspaceId,
-      stage: payload.stage,
-      brief: run.snapshot.brief,
-      previousOutputs,
-      correlationId: job.correlationId,
-    });
     const now = this.clock.now();
     run.beginStage(payload.stage, now);
     const attempt = await this.repository.nextStageAttempt(
@@ -105,8 +95,18 @@ export class ResearchOrchestrator {
       payload.runId,
       payload.stage,
     );
+    const checkpointId = this.ids.generate();
+    const input = parseAgentInput(payload.stage, {
+      runId: payload.runId,
+      researchStageRunId: checkpointId,
+      workspaceId: payload.workspaceId,
+      stage: payload.stage,
+      brief: run.snapshot.brief,
+      previousOutputs,
+      correlationId: job.correlationId,
+    });
     let checkpoint: ResearchCheckpoint = {
-      id: this.ids.generate(),
+      id: checkpointId,
       workspaceId: payload.workspaceId,
       runId: payload.runId,
       stage: payload.stage,
@@ -188,6 +188,16 @@ export class ResearchOrchestrator {
       }
 
       const code = error instanceof TerminalAgentError ? error.code : "AGENT_OUTPUT_INVALID";
+      console.error(
+        JSON.stringify({
+          event: "research_stage_terminal_error",
+          workspaceId: payload.workspaceId,
+          runId: payload.runId,
+          stage: payload.stage,
+          code,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
       run.failStage(payload.stage, code, this.clock.now());
       await this.repository.commitStageFailed(
         run,
@@ -200,8 +210,9 @@ export class ResearchOrchestrator {
   }
 
   async #ensureNextJob(run: ProductResearchRun, completedStage: ResearchStage, correlationId: string): Promise<void> {
-    const completedIndex = researchStages.indexOf(completedStage);
-    const nextStage = researchStages[completedIndex + 1] ?? null;
+    const workflowStages = run.workflowStages();
+    const completedIndex = workflowStages.indexOf(completedStage);
+    const nextStage = workflowStages[completedIndex + 1] ?? null;
     if (nextStage && !run.snapshot.completedStages.includes(nextStage)) {
       await this.queue.enqueue(this.#newJob(run, nextStage, correlationId));
     }
@@ -213,7 +224,10 @@ export class ResearchOrchestrator {
       workspaceId: run.snapshot.workspaceId,
       type: "research.stage.execute",
       payload: { workspaceId: run.snapshot.workspaceId, runId: run.snapshot.id, stage },
-      idempotencyKey: `${run.snapshot.id}:${stage}`,
+      // A research-more revision may legitimately enqueue the same stage
+      // again after its previous job completed. The aggregate version keeps
+      // retries within one revision idempotent without blocking later ones.
+      idempotencyKey: `${run.snapshot.id}:${stage}:v${run.snapshot.version}`,
       correlationId,
       maxAttempts: 5,
       availableAt: this.clock.now(),
@@ -237,7 +251,10 @@ function assertResolvableEvidenceReferences(
           }
         }
       }
-      if (key === "evidenceIds" && Array.isArray(candidate)) {
+      if (
+        ["evidenceIds", "marketEvidenceIds", "productFitEvidenceIds"].includes(key) &&
+        Array.isArray(candidate)
+      ) {
         for (const id of candidate) {
           if (typeof id === "string") referenced.add(id);
         }

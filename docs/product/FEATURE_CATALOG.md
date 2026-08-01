@@ -104,7 +104,8 @@ rôle, états loading/empty/error/forbidden/provider-down et responsive.
 **Valeur** : analyser le produit et ses concurrents afin de proposer des ICP
 classés, sourcés et révisables.
 
-**Périmètre** : brief, deep research, concurrents directs/adjacents, segments,
+**Périmètre** : brief orienté clients finaux ou partenaires, deep research,
+concurrents directs/adjacents, paysage des acheteurs, segments prospectables,
 ICP proposés, checkpoints, preuves et audit des extrapolations.
 
 **Critères d’acceptation**
@@ -112,7 +113,9 @@ ICP proposés, checkpoints, preuves et audit des extrapolations.
 - la progression et les résultats partiels restent visibles ;
 - chaque finding cite une preuve ou reste une hypothèse ;
 - les retries ne recommencent pas les étapes validées ;
-- le livrable propose au moins un ICP classé ;
+- la landing produit ne peut pas prouver la demande marché ;
+- le livrable propose trois à cinq ICP classés avec score build-vs-buy et plan
+  de sourcing ;
 - aucune prospection n’est déclenchée par ce workflow.
 
 **Dépendances** : F-002, F-003, F-004.

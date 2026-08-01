@@ -1,6 +1,5 @@
 import {
   ProductResearchRun,
-  researchStages,
   type ProductResearchBrief,
   type ResearchStage,
 } from "@outbound/domain/gtm/product-research";
@@ -129,12 +128,13 @@ export class RequestMoreProductResearch {
     const run = await this.repository.findById(input.workspaceId, input.runId);
     if (!run) throw new Error("PRODUCT_RESEARCH_RUN_NOT_FOUND");
     const checkpoints = await this.repository.listCompletedCheckpoints(input.workspaceId, input.runId);
-    const fromIndex = researchStages.indexOf(input.fromStage);
+    const workflowStages = run.workflowStages();
+    const fromIndex = workflowStages.indexOf(input.fromStage);
     const preservedHumanStages = checkpoints
       .filter(
         (checkpoint) =>
           checkpoint.review === "human_reviewed" &&
-          researchStages.indexOf(checkpoint.stage) >= fromIndex,
+          workflowStages.indexOf(checkpoint.stage) >= fromIndex,
       )
       .map((checkpoint) => checkpoint.stage);
     run.requestMore(input.fromStage, preservedHumanStages, input.reason, this.clock.now());

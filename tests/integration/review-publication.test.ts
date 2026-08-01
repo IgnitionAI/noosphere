@@ -7,7 +7,7 @@ import { ProductResearchApplication } from "@outbound/application/gtm/product-re
 import { ResearchOrchestrator } from "@outbound/application/gtm/research-orchestrator";
 import type { ResearchAgentExecutor } from "@outbound/application/gtm/product-research-ports";
 import type { AgentExecutionResult, AgentStageInput } from "@outbound/contracts/product-research";
-import type { ResearchStage } from "@outbound/domain/gtm/product-research";
+import { researchStages, type ResearchStage } from "@outbound/domain/gtm/product-research";
 import { CryptoIdGenerator, SystemClock } from "@outbound/application/shared/ports";
 import { createDatabase } from "@outbound/infrastructure/database/client";
 import { PostgresProductResearchRepository } from "@outbound/infrastructure/gtm/postgres-product-research-repository";
@@ -193,7 +193,7 @@ databaseDescribe("F-011 human review and publication", () => {
       clock,
       new Sha256ContentHasher(),
     );
-    for (let stage = 0; stage < 6; stage += 1) {
+    for (let stage = 0; stage < researchStages.length; stage += 1) {
       const [job] = await queue.lease({
         workerId: "f011-worker",
         types: ["research.stage.execute"],

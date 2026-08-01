@@ -1,12 +1,90 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildChatModelFields,
+  dropUnevidencedCompetitorAnalyses,
   findUnresolvedEvidenceReferences,
   isModelUnavailableError,
+  isProviderQuotaError,
+  mandatoryBuyerExploration,
+  prioritizeCompetitorCandidates,
   readJsonFromFinalMessage,
   resolveResearchModelConfigurationFromEnvironment,
+  serializeRecoveryContext,
+  structuredOutputGraceMs,
   selectModelCandidates,
 } from "@outbound/infrastructure/ai/langchain-research-agent-executor";
+
+describe("competitor discovery hand-off", () => {
+  test("caps expensive analysis while preserving relation diversity", () => {
+    const candidates = (["direct", "adjacent", "alternative"] as const).flatMap(
+      (relation) =>
+        Array.from({ length: 8 }, (_, index) => ({
+          name: `${relation}-${index}`,
+          url: `https://example.com/${relation}/${index}`,
+          relation,
+          rationale: "Relevant competitor",
+          confidence: 1 - index / 10,
+          evidenceIds: ["S01"],
+        })),
+    );
+
+    const result = prioritizeCompetitorCandidates({
+      candidates,
+      evidence: [],
+    });
+
+    expect(result.candidates).toHaveLength(12);
+    expect(result.candidates.filter((candidate) => candidate.relation === "direct")).toHaveLength(6);
+    expect(result.candidates.filter((candidate) => candidate.relation === "adjacent")).toHaveLength(4);
+    expect(result.candidates.filter((candidate) => candidate.relation === "alternative")).toHaveLength(2);
+  });
+});
+
+describe("buyer exploration checklist", () => {
+  test("expands a legal product into independently testable organization types", () => {
+    const checklist = mandatoryBuyerExploration({
+      stage: "buyer_landscape_discovery",
+      workspaceId: crypto.randomUUID(),
+      runId: crypto.randomUUID(),
+      researchStageRunId: crypto.randomUUID(),
+      correlationId: "test",
+      brief: {
+        productUrl: "https://example.com",
+        productName: "Document AI",
+        description: "Assistant for legal and compliance documents",
+        geography: "France",
+        languages: ["fr"],
+        salesMotion: "hybrid",
+        knownCompetitors: [],
+        internalDocumentIds: [],
+        depth: "quick",
+        audienceGoal: "end_customers",
+        buyerConstraints: "",
+        researchVersion: 2,
+      },
+      previousOutputs: { product_analysis: { targetHints: ["Legal teams"] } },
+    });
+
+    expect(checklist.join(" ")).toContain("notarial offices");
+    expect(checklist.join(" ")).toContain("specialist legal publishers");
+    expect(checklist.join(" ")).toContain("SME compliance teams");
+  });
+});
+
+describe("competitor analysis evidence boundary", () => {
+  test("drops unsupported records instead of fabricating evidence or failing the whole stage", () => {
+    const result = dropUnevidencedCompetitorAnalyses({
+      competitors: [
+        { name: "Supported", evidenceIds: ["S01"] },
+        { name: "Unsupported", evidenceIds: [] },
+        { name: "Malformed" },
+      ],
+      evidence: [{ evidenceId: "S01" }],
+    }) as { competitors: Array<{ name: string }> };
+
+    expect(result.competitors.map((candidate) => candidate.name)).toEqual(["Supported"]);
+  });
+});
 
 describe("findUnresolvedEvidenceReferences", () => {
   test("accepts references declared in the output evidence array", () => {
@@ -31,6 +109,22 @@ describe("findUnresolvedEvidenceReferences", () => {
       findings: [{ evidenceIds: ["S01", "S99"] }],
     };
     expect(findUnresolvedEvidenceReferences(output, {})).toEqual(["S99"]);
+  });
+
+  test("checks market and product-fit evidence references", () => {
+    const output = {
+      buyerSegments: [
+        {
+          marketEvidenceIds: ["M01", "M99"],
+          productFitEvidenceIds: ["P01"],
+        },
+      ],
+    };
+    const previousOutputs = {
+      product_analysis: { evidence: [{ evidenceId: "P01" }] },
+      buyer_landscape_discovery: { evidence: [{ evidenceId: "M01" }] },
+    };
+    expect(findUnresolvedEvidenceReferences(output, previousOutputs)).toEqual(["M99"]);
   });
 });
 
@@ -72,6 +166,26 @@ describe("readJsonFromFinalMessage", () => {
     expect(() =>
       readJsonFromFinalMessage({ messages: [{ role: "assistant", content: "rien" }] }),
     ).toThrow("JSON");
+  });
+});
+
+describe("structured-output recovery context", () => {
+  test("keeps both ends of a long transcript within a hard context bound", () => {
+    const serialized = serializeRecoveryContext(
+      { first: "FIRST", middle: "x".repeat(10_000), last: "LAST" },
+      1_000,
+    );
+
+    expect(serialized.length).toBeLessThanOrEqual(1_000);
+    expect(serialized).toContain("FIRST");
+    expect(serialized).toContain("LAST");
+    expect(serialized).toContain("transcript middle truncated");
+  });
+
+  test("reserves bounded Kimi synthesis time without extending OpenAI runs", () => {
+    expect(structuredOutputGraceMs("kimi-code", 10 * 60_000)).toBe(150_000);
+    expect(structuredOutputGraceMs("kimi-code", 75 * 60_000)).toBe(300_000);
+    expect(structuredOutputGraceMs("openai", 10 * 60_000)).toBe(0);
   });
 });
 
@@ -178,6 +292,12 @@ describe("research agent model provider", () => {
         Object.assign(new Error("Rate limit exceeded"), { status: 429 }),
       ),
     ).toBe(false);
+    const quota = Object.assign(
+      new Error("You've reached your usage limit for this billing cycle"),
+      { status: 403 },
+    );
+    expect(isProviderQuotaError(quota)).toBe(true);
+    expect(isModelUnavailableError(quota)).toBe(true);
   });
 
   test("uses the workspace policy for deep and synthesis stages", () => {
@@ -191,6 +311,10 @@ describe("research agent model provider", () => {
     };
 
     expect(selectModelCandidates("competitor_analysis", defaults, workspace)).toEqual([
+      "k3",
+      "kimi-for-coding",
+    ]);
+    expect(selectModelCandidates("buyer_landscape_discovery", defaults, workspace)).toEqual([
       "k3",
       "kimi-for-coding",
     ]);

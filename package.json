@@ -26,6 +26,7 @@
     "bootstrap:owner": "bun scripts/bootstrap-owner.ts",
     "api": "bun apps/api/src/index.ts",
     "worker": "bun apps/worker/src/index.ts",
+    "evaluate:ignitionrag-icp": "bun scripts/evaluate-ignitionrag-icp-run.ts",
     "web": "next dev apps/web --port 3000",
     "web:start": "bun apps/web/.next/standalone/apps/web/server.js"
   },

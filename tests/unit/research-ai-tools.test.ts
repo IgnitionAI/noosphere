@@ -81,6 +81,53 @@ describe("research AI tools crawler resilience", () => {
 });
 
 describe("research AI tools", () => {
+  test("bounds page markdown before adding it to the model context", async () => {
+    const tools = createResearchTools({
+      crawler: {
+        async search() {
+          return [];
+        },
+        async readPages() {
+          return [
+            {
+              url: "https://example.com/long",
+              canonicalUrl: "https://example.com/long",
+              title: "Long page",
+              markdown: "x".repeat(25_000),
+              contentHash: "hash",
+              collectedAt: new Date().toISOString(),
+              metadata: {},
+            },
+          ];
+        },
+        async discover() {
+          return [];
+        },
+      },
+      documents: new UnavailableInternalDocumentSearch(),
+      budget: new ResearchBudget({
+        searches: 1,
+        pages: 10,
+        tokens: 100,
+        durationMs: 60_000,
+      }),
+      workspaceId: crypto.randomUUID(),
+      documentIds: [],
+      runId: crypto.randomUUID(),
+      correlationId: "test",
+      signal: new AbortController().signal,
+    });
+    const read = tools.find((item) => item.name === "readWebPage")!;
+
+    const output = JSON.parse(
+      (await read.invoke({ url: "https://example.com/long" })) as string,
+    );
+
+    expect(output.markdown).toHaveLength(20_000);
+    expect(output.markdownTruncated).toBe(true);
+    expect(output.markdownOriginalCharacters).toBe(25_000);
+  });
+
   test("enforces the web search budget before calling the crawler", async () => {
     let calls = 0;
     const crawler = {
@@ -157,6 +204,53 @@ describe("research AI tools", () => {
       "searchInternalDocuments",
       "readInternalDocument",
     ]);
+  });
+
+  test("attributes every tool call to the durable research stage attempt", async () => {
+    const recorded: Array<Record<string, unknown>> = [];
+    const researchStageRunId = crypto.randomUUID();
+    const tools = createResearchTools({
+      crawler: {
+        async search() {
+          return [];
+        },
+        async readPages() {
+          return [];
+        },
+        async discover() {
+          return [];
+        },
+      },
+      documents: new UnavailableInternalDocumentSearch(),
+      budget: new ResearchBudget({
+        searches: 1,
+        pages: 1,
+        tokens: 100,
+        durationMs: 60_000,
+      }),
+      workspaceId: crypto.randomUUID(),
+      documentIds: [],
+      runId: crypto.randomUUID(),
+      researchStageRunId,
+      correlationId: "test",
+      signal: new AbortController().signal,
+      recorder: {
+        async record(input) {
+          recorded.push(input);
+        },
+      },
+    });
+    await tools.find((item) => item.name === "searchWeb")!.invoke({
+      query: "buyer workflow",
+      limit: 1,
+    });
+
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]).toMatchObject({
+      researchStageRunId,
+      toolName: "searchWeb",
+      status: "completed",
+    });
   });
 
   test("a soft token budget records usage beyond the limit without throwing", () => {

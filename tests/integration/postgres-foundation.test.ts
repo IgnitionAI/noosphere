@@ -281,6 +281,40 @@ databaseDescribe("PostgreSQL F-009 foundation", () => {
       { attempt: 1, status: "invalidated" },
       { attempt: 2, status: "completed" },
     ]);
+
+    let continuedToNextStage = false;
+    for (let guard = 0; guard < 10 && !continuedToNextStage; guard += 1) {
+      const leased = await queue.lease({
+        workerId: "integration-http-worker",
+        types: ["research.stage.execute"],
+        limit: 1,
+        leaseMs: 30_000,
+        now: clock.now(),
+      });
+      const job = leased[0];
+      if (!job) break;
+      const payload = job.payload as { runId?: string; stage?: string };
+      if (payload.runId !== created.id) {
+        await queue.acknowledge(job.id, job.lockedBy, clock.now());
+        continue;
+      }
+      const outcome = await orchestrator.process(job);
+      continuedToNextStage =
+        payload.stage === "competitor_analysis" && outcome.outcome === "completed";
+    }
+    expect(continuedToNextStage).toBe(true);
+    const analysisAttempts = await database.client<
+      { attempt: number; status: string }[]
+    >`
+      select attempt, status::text
+      from research_stage_runs
+      where workspace_id = ${workspaceA} and run_id = ${created.id} and stage = 'competitor_analysis'
+      order by attempt
+    `;
+    expect(analysisAttempts.map(({ attempt, status }) => ({ attempt, status }))).toEqual([
+      { attempt: 1, status: "invalidated" },
+      { attempt: 2, status: "completed" },
+    ]);
   });
 
   test("authenticates a real session and resolves its workspace membership", async () => {

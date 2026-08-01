@@ -34,6 +34,7 @@ export interface RetryJobRequest {
 export interface JobQueue {
   enqueue(job: NewJob): Promise<{ inserted: boolean }>;
   lease(request: LeaseJobsRequest): Promise<readonly LeasedJob[]>;
+  renewLease(jobId: string, workerId: string, lockedUntil: Date): Promise<boolean>;
   acknowledge(jobId: string, workerId: string, completedAt: Date): Promise<void>;
   retry(request: RetryJobRequest): Promise<"scheduled" | "dead_lettered">;
 }

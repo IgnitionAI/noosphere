@@ -61,9 +61,11 @@ export class ProductResearchApplication {
   }
 
   async getProgress(input: { workspaceId: string; runId: string }) {
-    const run = await this.get(input);
+    const aggregate = await this.repository.findById(input.workspaceId, input.runId);
+    if (!aggregate) throw new ProductResearchNotFoundError(input.runId);
+    const run = aggregate.snapshot;
     const stageRuns = await this.views.listStageRuns(input.workspaceId, input.runId);
-    return { run, stageRuns };
+    return { run, stageRuns, workflowStages: aggregate.workflowStages() };
   }
 
   async pause(input: { workspaceId: string; runId: string }) {

@@ -991,6 +991,7 @@
           "product_analysis",
           "competitor_discovery",
           "competitor_analysis",
+          "buyer_landscape_discovery",
           "segment_synthesis",
           "icp_synthesis",
           "evidence_review"
@@ -1075,6 +1076,25 @@
               "standard",
               "deep"
             ]
+          },
+          "audienceGoal": {
+            "type": "string",
+            "enum": [
+              "end_customers",
+              "channel_partners",
+              "both"
+            ],
+            "default": "end_customers"
+          },
+          "buyerConstraints": {
+            "type": "string",
+            "maxLength": 5000,
+            "default": ""
+          },
+          "researchVersion": {
+            "type": "integer",
+            "enum": [1, 2],
+            "default": 2
           }
         }
       },

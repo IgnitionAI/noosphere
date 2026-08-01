@@ -28,6 +28,13 @@ describe("JobQueue contract", () => {
     });
     expect(first).toHaveLength(1);
     expect(
+      await queue.renewLease(
+        first[0]!.id,
+        first[0]!.lockedBy,
+        new Date(now.getTime() + 2_000),
+      ),
+    ).toBe(true);
+    expect(
       await queue.lease({
         workerId: "worker-b",
         types: [job.type],
@@ -42,7 +49,7 @@ describe("JobQueue contract", () => {
       types: [job.type],
       limit: 1,
       leaseMs: 1_000,
-      now: new Date(now.getTime() + 1_001),
+      now: new Date(now.getTime() + 2_001),
     });
     expect(recovered[0]?.attempts).toBe(2);
     expect(recovered[0]?.lockedBy).toBe("worker-b");

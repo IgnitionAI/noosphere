@@ -13,7 +13,6 @@ import {
 } from "@outbound/interface/http/request-context";
 import {
   ProductResearchInvariantError,
-  researchStages,
 } from "@outbound/domain/gtm/product-research";
 
 const runPath = /^\/api\/v1\/product-research-runs\/([^/]+)$/;
@@ -268,7 +267,9 @@ export function createProductResearchHttpHandler(dependencies: ProductResearchHt
           runId,
         });
         const run = progress.run;
-        const nextStage = researchStages.find((stage) => !run.completedStages.includes(stage)) ?? null;
+        const nextStage = progress.workflowStages.find(
+          (stage) => !run.completedStages.includes(stage),
+        ) ?? null;
         return json({
           id: run.id,
           status: run.status,
@@ -277,7 +278,7 @@ export function createProductResearchHttpHandler(dependencies: ProductResearchHt
           completedStages: run.completedStages,
           createdAt: run.createdAt.toISOString(),
           updatedAt: run.updatedAt.toISOString(),
-          stages: researchStages.map((stage) => {
+          stages: progress.workflowStages.map((stage) => {
             const attempts = progress.stageRuns.filter((stageRun) => stageRun.stage === stage);
             const latest = attempts.at(-1);
             return {

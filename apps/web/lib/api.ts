@@ -39,6 +39,9 @@ export interface ProductResearchBrief {
   readonly knownCompetitors: readonly string[];
   readonly internalDocumentIds: readonly string[];
   readonly depth: "quick" | "standard" | "deep";
+  readonly audienceGoal: "end_customers" | "channel_partners" | "both";
+  readonly buyerConstraints: string;
+  readonly researchVersion: 1 | 2;
 }
 
 export interface ResearchRun {

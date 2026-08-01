@@ -4,6 +4,7 @@ export const researchStageSchema = z.enum([
   "product_analysis",
   "competitor_discovery",
   "competitor_analysis",
+  "buyer_landscape_discovery",
   "segment_synthesis",
   "icp_synthesis",
   "evidence_review",
@@ -20,6 +21,11 @@ export const productResearchBriefSchema = z
     knownCompetitors: z.array(z.string().trim().min(1).max(300)).max(50),
     internalDocumentIds: z.array(z.string().uuid()).max(100),
     depth: z.enum(["quick", "standard", "deep"]),
+    audienceGoal: z
+      .enum(["end_customers", "channel_partners", "both"])
+      .default("end_customers"),
+    buyerConstraints: z.string().trim().max(5_000).default(""),
+    researchVersion: z.union([z.literal(1), z.literal(2)]).default(2),
   })
   .strict()
   .refine((brief) => Boolean(brief.productUrl || brief.description), {
@@ -59,6 +65,7 @@ const claimSchema = z
 
 const commonAgentInputSchema = z.object({
   runId: z.string().uuid(),
+  researchStageRunId: z.string().uuid(),
   workspaceId: z.string().uuid(),
   brief: productResearchBriefSchema,
   previousOutputs: z.record(z.string(), z.unknown()),
@@ -113,6 +120,55 @@ export const competitorAnalysisOutputSchema = z.object({
     .max(100),
 });
 
+const buyerTypeSchema = z.enum(["end_customer", "channel_partner", "internal_builder"]);
+
+const prospectingPlanSchema = z.object({
+  naceCodes: z.array(z.string().min(1).max(30)).max(30),
+  industries: z.array(z.string().min(1).max(300)).min(1).max(30),
+  companySizes: z.array(z.string().min(1).max(200)).min(1).max(20),
+  geographies: z.array(z.string().min(1).max(200)).min(1).max(20),
+  jobTitles: z.array(z.string().min(1).max(300)).min(1).max(30),
+  triggerSignals: z.array(z.string().min(1).max(1_000)).min(1).max(30),
+  exclusions: z.array(z.string().min(1).max(1_000)).min(1).max(30),
+  searchKeywords: z.array(z.string().min(1).max(500)).min(1).max(30),
+});
+
+const buildVsBuySchema = z.object({
+  buildAbility: z.number().min(0).max(100),
+  willingnessToBuy: z.number().min(0).max(100),
+  rationale: z.string().min(1).max(3_000),
+  evidenceIds: z.array(z.string().min(1).max(100)).min(1).max(30),
+});
+
+export const buyerLandscapeInputSchema = commonAgentInputSchema.extend({
+  stage: z.literal("buyer_landscape_discovery"),
+});
+export const buyerLandscapeOutputSchema = z.object({
+  buyerSegments: z
+    .array(
+      z.object({
+        name: z.string().min(1).max(500),
+        buyerType: buyerTypeSchema,
+        description: z.string().min(1).max(5_000),
+        industries: z.array(z.string().min(1).max(500)).min(1).max(30),
+        useCases: z.array(z.string().min(1).max(1_000)).min(1).max(30),
+        recurringWorkflows: z.array(z.string().min(1).max(1_000)).min(1).max(30),
+        corpusTypes: z.array(z.string().min(1).max(500)).min(1).max(30),
+        buyingCommittee: z.array(z.string().min(1).max(500)).min(1).max(30),
+        demandSignals: z.array(claimSchema).min(1).max(30),
+        buildVsBuy: buildVsBuySchema,
+        prospecting: prospectingPlanSchema,
+        confidence: z.number().min(0).max(1),
+        marketEvidenceIds: z.array(z.string().min(1).max(100)).min(2).max(50),
+        productFitEvidenceIds: z.array(z.string().min(1).max(100)).min(1).max(50),
+      }),
+    )
+    .min(1)
+    .max(20),
+  marketUnknowns: z.array(z.string().min(1).max(1_000)).max(50),
+  evidence: z.array(sourceReferenceSchema).max(500),
+});
+
 export const segmentSynthesisInputSchema = commonAgentInputSchema.extend({
   stage: z.literal("segment_synthesis"),
 });
@@ -121,9 +177,15 @@ export const segmentSynthesisOutputSchema = z.object({
     .array(
       z.object({
         name: z.string().min(1).max(500),
+        buyerType: buyerTypeSchema,
         description: z.string().min(1).max(5_000),
+        industries: z.array(z.string().min(1).max(500)).min(1).max(30),
+        recurringWorkflows: z.array(z.string().min(1).max(1_000)).min(1).max(30),
         problems: z.array(claimSchema).max(30),
         buyingSignals: z.array(claimSchema).max(30),
+        buildVsBuy: buildVsBuySchema,
+        prospecting: prospectingPlanSchema,
+        marketEvidenceIds: z.array(z.string().min(1).max(100)).min(2).max(50),
         confidence: z.number().min(0).max(1),
       }),
     )
@@ -139,19 +201,34 @@ export const icpSynthesisOutputSchema = z.object({
     .array(
       z.object({
         name: z.string().min(1).max(500),
+        buyerType: buyerTypeSchema,
         rank: z.number().int().positive(),
         confidence: z.number().min(0).max(1),
+        scorecard: z.object({
+          productFit: z.number().min(0).max(100),
+          painIntensity: z.number().min(0).max(100),
+          recurringNeed: z.number().min(0).max(100),
+          budgetFit: z.number().min(0).max(100),
+          urgency: z.number().min(0).max(100),
+          reachability: z.number().min(0).max(100),
+          buildAbility: z.number().min(0).max(100),
+          willingnessToBuy: z.number().min(0).max(100),
+          evidenceStrength: z.number().min(0).max(100),
+          total: z.number().min(0).max(100),
+        }),
         companyCriteria: z.record(z.string(), z.unknown()),
+        prospecting: prospectingPlanSchema,
         buyingCommittee: z.array(z.string().min(1).max(500)).max(30),
         problems: z.array(z.string().min(1).max(2_000)).max(50),
         signals: z.array(z.string().min(1).max(2_000)).max(50),
         exclusions: z.array(z.string().min(1).max(2_000)).max(50),
         unknowns: z.array(z.string().min(1).max(2_000)).max(50),
         evidenceIds: z.array(z.string()).min(1),
+        marketEvidenceIds: z.array(z.string()).min(2),
       }),
     )
     .min(1)
-    .max(10),
+    .max(5),
 });
 
 export const evidenceReviewInputSchema = commonAgentInputSchema.extend({
@@ -164,12 +241,18 @@ export const evidenceReviewOutputSchema = z.object({
         findingPath: z.string().min(1).max(500),
         decision: z.enum(["accepted", "reworded", "rejected", "hypothesis"]),
         rationale: z.string().min(1).max(3_000),
-        replacement: z.string().max(5_000).nullable(),
+        replacement: z.string().max(5_000).nullable().optional().default(null),
         evidenceIds: z.array(z.string()),
       }),
     )
     .max(500),
   unresolvedContradictions: z.array(z.string().min(1).max(3_000)).max(100),
+  commercialReadiness: z.object({
+    decision: z.enum(["ready", "needs_more_research"]),
+    rationale: z.string().min(1).max(5_000),
+    blockedProposalRanks: z.array(z.number().int().positive()).max(5),
+    missingEvidence: z.array(z.string().min(1).max(2_000)).max(50),
+  }),
   executiveSummary: z.string().min(1).max(15_000),
 });
 
@@ -189,6 +272,11 @@ export const agentContracts = {
     input: competitorAnalysisInputSchema,
     output: competitorAnalysisOutputSchema,
   },
+  buyer_landscape_discovery: {
+    role: "BuyerResearcher",
+    input: buyerLandscapeInputSchema,
+    output: buyerLandscapeOutputSchema,
+  },
   segment_synthesis: {
     role: "ICPStrategist",
     input: segmentSynthesisInputSchema,
@@ -207,6 +295,9 @@ export const agentContracts = {
 } as const;
 
 export type ResearchAgentRole = (typeof agentContracts)[keyof typeof agentContracts]["role"];
+export type CompetitorDiscoveryOutput = z.infer<typeof competitorDiscoveryOutputSchema>;
+export type BuyerLandscapeOutput = z.infer<typeof buyerLandscapeOutputSchema>;
+export type IcpSynthesisOutput = z.infer<typeof icpSynthesisOutputSchema>;
 export type AgentStageInput = z.infer<(typeof agentContracts)[keyof typeof agentContracts]["input"]>;
 export type AgentStageOutput = z.infer<(typeof agentContracts)[keyof typeof agentContracts]["output"]>;
 export const agentExecutionMetadataSchema = z.object({

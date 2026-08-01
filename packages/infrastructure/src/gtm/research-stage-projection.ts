@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, notInArray } from "drizzle-orm";
 import { parseAgentOutput, type AgentStageOutput } from "@outbound/contracts/product-research";
 import type { ResearchStage } from "@outbound/domain/gtm/product-research";
 import type { Database } from "@outbound/infrastructure/database/client";
@@ -68,6 +68,19 @@ export async function projectResearchStage(input: {
 
   if (input.stage === "icp_synthesis") {
     const synthesis = output as Extract<AgentStageOutput, { proposals: unknown }>;
+    await input.executor
+      .delete(icpProposals)
+      .where(
+        and(
+          eq(icpProposals.workspaceId, input.workspaceId),
+          eq(icpProposals.runId, input.runId),
+          eq(icpProposals.humanEdited, false),
+          notInArray(
+            icpProposals.rank,
+            synthesis.proposals.map((proposal) => proposal.rank),
+          ),
+        ),
+      );
     for (const proposal of synthesis.proposals) {
       const existing = await input.executor
         .select({ id: icpProposals.id, humanEdited: icpProposals.humanEdited })
@@ -91,7 +104,7 @@ export async function projectResearchStage(input: {
           name: proposal.name,
           rank: proposal.rank,
           confidence: String(proposal.confidence),
-          criteria: proposal.companyCriteria,
+          criteria: proposalCriteria(proposal),
           buyingCommittee: proposal.buyingCommittee,
           problems: proposal.problems,
           signals: proposal.signals,
@@ -103,7 +116,7 @@ export async function projectResearchStage(input: {
           set: {
             name: proposal.name,
             confidence: String(proposal.confidence),
-            criteria: proposal.companyCriteria,
+            criteria: proposalCriteria(proposal),
             buyingCommittee: proposal.buyingCommittee,
             problems: proposal.problems,
             signals: proposal.signals,
@@ -224,6 +237,14 @@ function extractFindings(
       })),
     );
   }
+  if (stage === "buyer_landscape_discovery" && "buyerSegments" in output) {
+    return output.buyerSegments.flatMap((segment, segmentIndex) =>
+      segment.demandSignals.map((claim, claimIndex) => ({
+        path: `buyer_landscape_discovery.buyerSegments.${segmentIndex}.demandSignals.${claimIndex}`,
+        claim,
+      })),
+    );
+  }
   if (stage === "segment_synthesis" && "segments" in output) {
     return output.segments.flatMap((segment, segmentIndex) => [
       ...segment.problems.map((claim, claimIndex) => ({
@@ -237,6 +258,24 @@ function extractFindings(
     ]);
   }
   return [];
+}
+
+function proposalCriteria(
+  proposal: Extract<AgentStageOutput, { proposals: unknown }>["proposals"][number],
+): Readonly<Record<string, unknown>> {
+  return {
+    ...proposal.companyCriteria,
+    buyerType: proposal.buyerType,
+    scorecard: proposal.scorecard,
+    prospecting: proposal.prospecting,
+    industries: proposal.prospecting.industries,
+    naceCodes: proposal.prospecting.naceCodes,
+    companySizes: proposal.prospecting.companySizes,
+    geography: proposal.prospecting.geographies[0] ?? null,
+    geographies: proposal.prospecting.geographies,
+    searchKeywords: proposal.prospecting.searchKeywords,
+    marketEvidenceIds: proposal.marketEvidenceIds,
+  };
 }
 
 async function upsertFinding(input: {

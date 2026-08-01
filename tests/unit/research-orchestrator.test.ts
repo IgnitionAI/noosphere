@@ -12,7 +12,7 @@ import {
 } from "@outbound/application/gtm/product-research-ports";
 import { CryptoIdGenerator, type Clock } from "@outbound/application/shared/ports";
 import type { AgentExecutionResult, AgentStageInput } from "@outbound/contracts/product-research";
-import type { ResearchStage } from "@outbound/domain/gtm/product-research";
+import { researchStages, type ResearchStage } from "@outbound/domain/gtm/product-research";
 import { Sha256ContentHasher } from "@outbound/infrastructure/shared/sha256-content-hasher";
 import { InMemoryResearchBackend } from "@outbound/infrastructure/testing/in-memory-research-backend";
 import { validOutputFor } from "../fixtures/research-agent-fixtures";
@@ -97,7 +97,7 @@ describe("ResearchOrchestrator", () => {
     const run = await create.execute({ workspaceId, brief });
     await start.execute({ workspaceId, runId: run.snapshot.id, correlationId: "corr-1" });
 
-    for (let index = 0; index < 6; index += 1) {
+    for (let index = 0; index < researchStages.length; index += 1) {
       const leased = await backend.lease({
         workerId: "worker-a",
         types: ["research.stage.execute"],
@@ -111,9 +111,11 @@ describe("ResearchOrchestrator", () => {
 
     const completed = await backend.findById(workspaceId, run.snapshot.id);
     expect(completed?.snapshot.status).toBe("ready_for_review");
-    expect(backend.inspectCheckpoints().filter((item) => item.status === "completed")).toHaveLength(6);
-    expect(backend.aiRuns).toHaveLength(6);
-    expect([...agents.calls.values()]).toEqual([1, 1, 1, 1, 1, 1]);
+    expect(backend.inspectCheckpoints().filter((item) => item.status === "completed")).toHaveLength(
+      researchStages.length,
+    );
+    expect(backend.aiRuns).toHaveLength(researchStages.length);
+    expect([...agents.calls.values()]).toEqual(researchStages.map(() => 1));
 
     await backend.enqueue({
       id: ids.generate(),

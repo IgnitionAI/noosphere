@@ -18,9 +18,36 @@ const brief: ProductResearchBrief = {
   knownCompetitors: [],
   internalDocumentIds: [],
   depth: "standard",
+  audienceGoal: "end_customers",
+  buyerConstraints: "Exclude organizations that prefer to build the product internally.",
+  researchVersion: 2,
 };
 
 describe("ProductResearchRun", () => {
+  test("the current workflow discovers buyer landscapes before synthesizing segments", () => {
+    expect(researchStages).toEqual([
+      "product_analysis",
+      "competitor_discovery",
+      "competitor_analysis",
+      "buyer_landscape_discovery",
+      "segment_synthesis",
+      "icp_synthesis",
+      "evidence_review",
+    ]);
+  });
+
+  test("legacy runs keep their original six-stage workflow", () => {
+    const now = new Date("2026-07-24T10:00:00.000Z");
+    const run = ProductResearchRun.create({
+      id: crypto.randomUUID(),
+      workspaceId: crypto.randomUUID(),
+      brief: { ...brief, researchVersion: 1 },
+      now,
+    });
+    expect(run.workflowStages()).not.toContain("buyer_landscape_discovery");
+    expect(run.workflowStages()).toHaveLength(6);
+  });
+
   test("enforces ordered, resumable stages and becomes ready only after evidence review", () => {
     const now = new Date("2026-07-24T10:00:00.000Z");
     const run = ProductResearchRun.create({

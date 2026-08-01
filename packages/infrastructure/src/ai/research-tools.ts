@@ -6,6 +6,7 @@ import { ResearchBudgetExceededError } from "./research-budget";
 import type { ResearchBudget } from "./research-budget";
 
 const MAX_CONSECUTIVE_CRAWLER_FAILURES = 5;
+const MAX_MARKDOWN_CHARACTERS_PER_TOOL_PAGE = 20_000;
 
 export interface InternalDocumentSearch {
   search(input: {
@@ -55,6 +56,7 @@ export interface ResearchToolRunRecorder {
   record(input: {
     workspaceId: string;
     runId: string;
+    researchStageRunId: string | null;
     correlationId: string;
     toolName: string;
     status: "completed" | "failed" | "budget_exhausted" | "crawler_error";
@@ -73,6 +75,7 @@ export function createResearchTools(input: {
   documentIds: readonly string[];
   correlationId: string;
   runId: string;
+  researchStageRunId?: string;
   signal: AbortSignal;
   recorder?: ResearchToolRunRecorder;
 }) {
@@ -107,7 +110,9 @@ export function createResearchTools(input: {
           correlationId: input.correlationId,
           signal: input.signal,
         });
-        return JSON.stringify(pages[0] ?? { error: "Page could not be read", url });
+        return JSON.stringify(
+          pages[0] ? compactPageForAgent(pages[0]) : { error: "Page could not be read", url },
+        );
       }),
     {
       name: "readWebPage",
@@ -144,13 +149,12 @@ export function createResearchTools(input: {
     async ({ urls }) =>
       executeTool(input, state, "readWebsitePages", { urls }, async () => {
         input.budget.consumePages(urls.length);
-        return JSON.stringify(
-          await input.crawler.readPages({
-            urls,
-            correlationId: input.correlationId,
-            signal: input.signal,
-          }),
-        );
+        const pages = await input.crawler.readPages({
+          urls,
+          correlationId: input.correlationId,
+          signal: input.signal,
+        });
+        return JSON.stringify(pages.map(compactPageForAgent));
       }),
     {
       name: "readWebsitePages",
@@ -209,6 +213,18 @@ export function createResearchTools(input: {
   ] as const;
 }
 
+function compactPageForAgent(page: CrawledPage): CrawledPage & {
+  readonly markdownTruncated: boolean;
+  readonly markdownOriginalCharacters: number;
+} {
+  return {
+    ...page,
+    markdown: page.markdown.slice(0, MAX_MARKDOWN_CHARACTERS_PER_TOOL_PAGE),
+    markdownTruncated: page.markdown.length > MAX_MARKDOWN_CHARACTERS_PER_TOOL_PAGE,
+    markdownOriginalCharacters: page.markdown.length,
+  };
+}
+
 async function executeTool(
   input: Parameters<typeof createResearchTools>[0],
   state: { consecutiveCrawlerFailures: number },
@@ -223,6 +239,7 @@ async function executeTool(
     await input.recorder?.record({
       workspaceId: input.workspaceId,
       runId: input.runId,
+      researchStageRunId: input.researchStageRunId ?? null,
       correlationId: input.correlationId,
       toolName,
       status: "completed",
@@ -242,6 +259,7 @@ async function executeTool(
         await input.recorder?.record({
           workspaceId: input.workspaceId,
           runId: input.runId,
+          researchStageRunId: input.researchStageRunId ?? null,
           correlationId: input.correlationId,
           toolName,
           status: "failed",
@@ -258,6 +276,7 @@ async function executeTool(
       await input.recorder?.record({
         workspaceId: input.workspaceId,
         runId: input.runId,
+        researchStageRunId: input.researchStageRunId ?? null,
         correlationId: input.correlationId,
         toolName,
         status: "crawler_error",
@@ -278,6 +297,7 @@ async function executeTool(
       await input.recorder?.record({
         workspaceId: input.workspaceId,
         runId: input.runId,
+        researchStageRunId: input.researchStageRunId ?? null,
         correlationId: input.correlationId,
         toolName,
         status: "budget_exhausted",
@@ -296,6 +316,7 @@ async function executeTool(
     await input.recorder?.record({
       workspaceId: input.workspaceId,
       runId: input.runId,
+      researchStageRunId: input.researchStageRunId ?? null,
       correlationId: input.correlationId,
       toolName,
       status: "failed",

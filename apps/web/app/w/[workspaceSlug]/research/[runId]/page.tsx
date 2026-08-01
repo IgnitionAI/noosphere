@@ -19,6 +19,7 @@ const stageLabels: Record<string, string> = {
   product_analysis: "Comprendre le produit",
   competitor_discovery: "Découvrir les concurrents",
   competitor_analysis: "Analyser le positionnement",
+  buyer_landscape_discovery: "Découvrir les acheteurs réels",
   segment_synthesis: "Identifier les segments",
   icp_synthesis: "Synthétiser les ICP",
   evidence_review: "Auditer les preuves",

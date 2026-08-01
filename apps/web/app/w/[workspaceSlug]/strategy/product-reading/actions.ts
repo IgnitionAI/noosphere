@@ -39,6 +39,9 @@ export async function createResearchMission(
       .map((documentId) => String(documentId))
       .filter(Boolean),
     depth: formData.get("depth"),
+    audienceGoal: formData.get("audienceGoal"),
+    buyerConstraints: String(formData.get("buyerConstraints") ?? "").trim(),
+    researchVersion: 2,
   });
   if (!parsed.success) {
     return {

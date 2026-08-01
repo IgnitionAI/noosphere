@@ -2,10 +2,15 @@ export const researchStages = [
   "product_analysis",
   "competitor_discovery",
   "competitor_analysis",
+  "buyer_landscape_discovery",
   "segment_synthesis",
   "icp_synthesis",
   "evidence_review",
 ] as const;
+
+export const legacyResearchStages = researchStages.filter(
+  (stage) => stage !== "buyer_landscape_discovery",
+);
 
 export type ResearchStage = (typeof researchStages)[number];
 export type ProductResearchStatus =
@@ -27,6 +32,15 @@ export interface ProductResearchBrief {
   readonly knownCompetitors: readonly string[];
   readonly internalDocumentIds: readonly string[];
   readonly depth: ResearchDepth;
+  readonly audienceGoal?: "end_customers" | "channel_partners" | "both";
+  readonly buyerConstraints?: string;
+  readonly researchVersion?: 1 | 2;
+}
+
+export function researchStagesForBrief(
+  brief: ProductResearchBrief,
+): readonly ResearchStage[] {
+  return brief.researchVersion === 1 ? legacyResearchStages : researchStages;
 }
 
 export interface ProductResearchRunSnapshot {
@@ -132,7 +146,13 @@ export class ProductResearchRun {
   }
 
   nextStage(): ResearchStage | null {
-    return researchStages.find((stage) => !this.#snapshot.completedStages.includes(stage)) ?? null;
+    return this.workflowStages().find(
+      (stage) => !this.#snapshot.completedStages.includes(stage),
+    ) ?? null;
+  }
+
+  workflowStages(): readonly ResearchStage[] {
+    return researchStagesForBrief(this.#snapshot.brief);
   }
 
   start(now: Date): void {
@@ -203,7 +223,7 @@ export class ProductResearchRun {
     }
 
     const completedStages = [...this.#snapshot.completedStages, stage];
-    const ready = completedStages.length === researchStages.length;
+    const ready = completedStages.length === this.workflowStages().length;
     this.#update({
       completedStages,
       activeStage: null,
@@ -245,14 +265,20 @@ export class ProductResearchRun {
     reason: string,
     now: Date,
   ): void {
-    const fromIndex = researchStages.indexOf(fromStage);
+    const workflowStages = this.workflowStages();
+    const fromIndex = workflowStages.indexOf(fromStage);
+    if (fromIndex < 0) {
+      throw new ProductResearchInvariantError(
+        `Stage ${fromStage} does not belong to research workflow v${this.#snapshot.brief.researchVersion ?? 2}`,
+      );
+    }
     const wasReached =
       this.#snapshot.completedStages.includes(fromStage) || this.#snapshot.activeStage === fromStage;
     if (!wasReached) {
       throw new ProductResearchInvariantError(`Stage ${fromStage} has not been reached`);
     }
     const completedStages = this.#snapshot.completedStages.filter(
-      (stage) => researchStages.indexOf(stage) < fromIndex || preservedHumanStages.includes(stage),
+      (stage) => workflowStages.indexOf(stage) < fromIndex || preservedHumanStages.includes(stage),
     );
     this.#update({
       completedStages,

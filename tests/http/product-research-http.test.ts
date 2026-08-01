@@ -4,7 +4,7 @@ import { ResearchOrchestrator } from "@outbound/application/gtm/research-orchest
 import type { ResearchAgentExecutor } from "@outbound/application/gtm/product-research-ports";
 import { CryptoIdGenerator, SystemClock } from "@outbound/application/shared/ports";
 import type { AgentExecutionResult, AgentStageInput } from "@outbound/contracts/product-research";
-import type { ResearchStage } from "@outbound/domain/gtm/product-research";
+import { researchStages, type ResearchStage } from "@outbound/domain/gtm/product-research";
 import { createProductResearchHttpHandler } from "@outbound/interface/http/product-research-handler";
 import { RequestAuthenticationError } from "@outbound/interface/http/request-context";
 import { InMemoryResearchBackend } from "@outbound/infrastructure/testing/in-memory-research-backend";
@@ -357,7 +357,7 @@ describe("F-009 HTTP routes", () => {
     const harness = createHarness();
     const created = (await (await createRun(harness.handle)).json()) as { id: string };
     await action(harness.handle, created.id, "start");
-    for (let index = 0; index < 6; index += 1) {
+    for (let index = 0; index < researchStages.length; index += 1) {
       const leased = await harness.backend.lease({
         workerId: "http-report-worker",
         types: ["research.stage.execute"],

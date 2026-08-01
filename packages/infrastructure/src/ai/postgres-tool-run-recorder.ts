@@ -9,7 +9,7 @@ export class PostgresResearchToolRunRecorder implements ResearchToolRunRecorder 
     await this.db.insert(aiToolRuns).values({
       workspaceId: input.workspaceId,
       productResearchRunId: input.runId,
-      researchStageRunId: null,
+      researchStageRunId: input.researchStageRunId,
       correlationId: input.correlationId,
       toolName: input.toolName,
       status: input.status,

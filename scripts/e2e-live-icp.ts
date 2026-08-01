@@ -36,16 +36,20 @@ const created = await fetch(`${apiUrl}/api/v1/product-research-runs`, {
   method: "POST",
   headers,
   body: JSON.stringify({
-    productUrl: "https://ignitionai.fr",
+    productUrl: "https://ignitionrag.com/",
     productName: "IgnitionRAG",
     description:
-      "Plateforme RAG souveraine pour cabinets et équipes juridiques: agents IA, recherche documentaire sécurisée, déploiement auto-hébergé.",
+      "Plateforme de recherche et d'assistants IA sur les documents privés d'une organisation, avec gouvernance, sécurité et déploiement maîtrisé.",
     geography: "France",
     languages: ["fr", "en"],
-    salesMotion: "saas",
+    salesMotion: "hybrid",
     knownCompetitors: [],
     internalDocumentIds: [],
-    depth: "quick",
+    depth: process.env.ICP_E2E_DEPTH ?? "quick",
+    audienceGoal: "end_customers",
+    buyerConstraints:
+      "Prioriser les organisations avec des corpus propriétaires, des recherches documentaires récurrentes et sans équipe IA interne. Exclure ESN, agences, intégrateurs, revendeurs et équipes qui veulent construire elles-mêmes.",
+    researchVersion: 2,
   }),
 });
 if (created.status !== 201 && created.status !== 200) {
@@ -61,7 +65,7 @@ const started = await fetch(
 if (!started.ok) throw new Error(`start failed: ${started.status}`);
 console.info(JSON.stringify({ event: "run_started" }));
 
-const deadline = Date.now() + 12 * 60 * 1000;
+const deadline = Date.now() + 45 * 60 * 1000;
 let last = "";
 while (Date.now() < deadline) {
   const response = await fetch(

@@ -22,8 +22,8 @@ visuelle. Il ne doit pas être copié tel quel dans la production.
 | `companies.html` | `/w/[workspaceSlug]/companies` | companies |
 | `company-detail.html` | `/w/[workspaceSlug]/companies/[companyId]` | company |
 | `product-reading.html` | `/w/[workspaceSlug]/strategy/product-reading` | research brief — livré |
-| `research-progress.html` | `/w/[workspaceSlug]/research/[runId]` | deep research progress — livré |
-| `icp-builder.html` | `/w/[workspaceSlug]/research/[runId]/report` | sourced ICP report |
+| `research-progress.html` | `/w/[workspaceSlug]/research/[runId]` | deep research progress + buyer landscape — livré |
+| `icp-builder.html` | `/w/[workspaceSlug]/research/[runId]/report` | sourced, prospectable ICP report — livré |
 | `offers.html` | `/w/[workspaceSlug]/offers` | offer versions |
 | `icps.html` | `/w/[workspaceSlug]/icps` | ICP versions |
 | `campaigns.html` | `/w/[workspaceSlug]/campaigns` | campaigns |
