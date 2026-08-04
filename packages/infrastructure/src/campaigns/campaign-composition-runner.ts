@@ -67,7 +67,7 @@ export class CampaignCompositionJobProcessor {
         await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
         return;
       }
-      const account = await this.readiness.resolveHealthyAccount(campaign.channel);
+      const account = await this.readiness.resolveHealthyAccount(payload.workspaceId, campaign.channel);
       const templateSteps = prepareAutomatedSequenceSteps(
         await this.#templateSteps(payload, campaign.sequenceId),
       );

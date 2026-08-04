@@ -8,6 +8,7 @@ import {
   Inbox,
   Megaphone,
   Menu,
+  MessageCircle,
   Kanban,
   Search,
   Settings,
@@ -40,6 +41,7 @@ export function AppShell({
   const pipelineHref = `/w/${workspace.slug}/pipeline`;
   const aiSettingsHref = `/w/${workspace.slug}/settings/ai`;
   const calendarSettingsHref = `/w/${workspace.slug}/settings/calendar`;
+  const channelSettingsHref = `/w/${workspace.slug}/settings/channels`;
   const initials = session.user.name
     .split(/\s+/)
     .map((part) => part[0])
@@ -180,6 +182,19 @@ export function AppShell({
               <div className="mb-2 mt-6 px-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">
                 Workspace
               </div>
+              <Link
+                aria-current={pathname.startsWith(channelSettingsHref) ? "page" : undefined}
+                className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium ${
+                  pathname.startsWith(channelSettingsHref)
+                    ? "bg-white/10 text-white"
+                    : "text-slate-300 hover:bg-white/5 hover:text-white"
+                }`}
+                href={channelSettingsHref}
+                onClick={() => setOpen(false)}
+              >
+                <MessageCircle size={17} />
+                Canaux
+              </Link>
               <Link
                 aria-current={pathname.startsWith(calendarSettingsHref) ? "page" : undefined}
                 className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium ${

@@ -29,9 +29,9 @@ export class ProspectDiscoveryRunner {
 
   constructor(
     database: Database,
-    private readonly prospectSource: () => ProspectSource,
+    private readonly prospectSource: (workspaceId: string) => ProspectSource,
     private readonly prospectEnricher?: () => ProspectEnricher | null,
-    private readonly companyProspectSource?: () => CompanyProspectSource | null,
+    private readonly companyProspectSource?: (workspaceId: string) => CompanyProspectSource | null,
   ) {
     this.#repository = new PostgresDiscoveryRepository(database);
   }
@@ -49,7 +49,7 @@ export class ProspectDiscoveryRunner {
       });
     }
     try {
-      const source = this.prospectSource();
+      const source = this.prospectSource(input.workspaceId);
       const searched = await source.searchPeople(input.filters);
       const found = "channel" in input.filters && input.filters.channel === "linkedin" && source.enrichLinkedinProfile
         ? await mapWithConcurrency(searched, 3, (candidate) => source.enrichLinkedinProfile!(candidate))
@@ -159,7 +159,7 @@ export class ProspectDiscoveryRunner {
     version: { criteria: unknown; buyingCommittee: unknown };
     filters: Extract<AutonomousSourcingFilters, { channel: "email" | "whatsapp" }>;
   }) {
-    const source = this.companyProspectSource?.();
+    const source = this.companyProspectSource?.(input.workspaceId);
     if (!source) throw new ProviderUnavailableError("Company prospect sourcing is not configured");
     const found = await source.searchCompanies({
       ...input.filters,

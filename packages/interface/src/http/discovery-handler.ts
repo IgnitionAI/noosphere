@@ -50,7 +50,7 @@ const candidateImportPath =
 export interface DiscoveryHttpDependencies {
   readonly contextResolver: RequestContextResolver;
   readonly database: Database;
-  readonly prospectSource: () => ProspectSource;
+  readonly prospectSource: (workspaceId: string) => ProspectSource;
   readonly prospectEnricher?: () => ProspectEnricher | null;
   readonly jobQueue?: JobQueue;
 }

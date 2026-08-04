@@ -717,6 +717,28 @@ export const prospectingChannelEnum = pgEnum("prospecting_channel", [
   "whatsapp",
 ]);
 
+export const workspaceChannelAccounts = pgTable(
+  "workspace_channel_accounts",
+  {
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    channel: prospectingChannelEnum("channel").notNull(),
+    provider: varchar("provider", { length: 40 }).notNull().default("unipile"),
+    providerAccountId: text("provider_account_id").notNull(),
+    displayName: varchar("display_name", { length: 320 }).notNull(),
+    selectedBy: uuid("selected_by")
+      .notNull()
+      .references(() => authUsers.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.workspaceId, table.channel] }),
+    index("workspace_channel_accounts_provider_idx").on(table.provider, table.providerAccountId),
+  ],
+);
+
 export const companies = pgTable(
   "companies",
   {

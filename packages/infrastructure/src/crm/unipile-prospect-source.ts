@@ -62,6 +62,7 @@ export class UnipileProspectSource implements ProspectSource {
   readonly #fetch: typeof fetch;
   #linkedinAccountId: string | null = null;
   #whatsappAccountId: string | null = null;
+  readonly #resolveWhatsappAccountId: (() => Promise<string | null>) | null;
   #accounts: readonly UnipileAccount[] | null = null;
 
   constructor(options: {
@@ -70,12 +71,14 @@ export class UnipileProspectSource implements ProspectSource {
     fetchImpl?: typeof fetch;
     accountId?: string;
     whatsappAccountId?: string;
+    resolveWhatsappAccountId?: () => Promise<string | null>;
   }) {
     this.#dsn = options.dsn.replace(/\/+$/, "");
     this.#apiKey = options.apiKey;
     this.#fetch = options.fetchImpl ?? fetch;
     this.#linkedinAccountId = options.accountId ?? null;
     this.#whatsappAccountId = options.whatsappAccountId ?? null;
+    this.#resolveWhatsappAccountId = options.resolveWhatsappAccountId ?? null;
   }
 
   async searchPeople(filters: ProspectSearchFilters): Promise<readonly ProspectSourceCandidate[]> {
@@ -317,6 +320,13 @@ export class UnipileProspectSource implements ProspectSource {
   }
 
   async #resolveHealthyWhatsappAccountId(): Promise<string | null> {
+    const selected = await this.#resolveWhatsappAccountId?.();
+    if (selected) {
+      const account = (await this.#accountsList()).find(
+        (item) => item.id === selected && healthyAccount(item, "WHATSAPP"),
+      );
+      return account?.id ?? null;
+    }
     if (this.#whatsappAccountId) return this.#whatsappAccountId;
     const account = (await this.#accountsList()).find(
       (item) => healthyAccount(item, "WHATSAPP"),

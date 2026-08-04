@@ -49,7 +49,7 @@ export interface CampaignContentGenerator {
 }
 
 export interface CampaignChannelReadiness {
-  resolveHealthyAccount(channel: ProspectingChannel): Promise<{
+  resolveHealthyAccount(workspaceId: string, channel: ProspectingChannel): Promise<{
     readonly provider: "unipile";
     readonly accountId: string;
   }>;

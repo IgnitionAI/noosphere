@@ -30,6 +30,8 @@ import { createCalendarWebhookHttpHandler } from "@outbound/interface/http/calen
 import { PostgresOpportunityRepository } from "@outbound/infrastructure/pipeline/postgres-opportunity-repository";
 import { createOpportunityHttpHandler } from "@outbound/interface/http/opportunity-handler";
 import { LangChainConversationDraftImprover } from "@outbound/infrastructure/campaigns/langchain-conversation-draft-improver";
+import { PostgresUnipileChannelConnections } from "@outbound/infrastructure/channels/postgres-unipile-channel-connections";
+import { createChannelConnectionHttpHandler } from "@outbound/interface/http/channel-connection-handler";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
@@ -85,6 +87,13 @@ const crm = createCrmHttpHandler({
 });
 const unipileDsn = process.env.UNIPILE_DSN ?? "";
 const unipileApiKey = process.env.UNIPILE_API_KEY ?? "";
+const unipileChannelConnections = unipileDsn && unipileApiKey
+  ? new PostgresUnipileChannelConnections(database.db, { dsn: unipileDsn, apiKey: unipileApiKey })
+  : null;
+const channelConnection = createChannelConnectionHttpHandler({
+  connections: unipileChannelConnections,
+  contextResolver: auth.contextResolver,
+});
 const discoveryCrawler =
   process.env.CRAWLER_SERVICE_URL && process.env.CRAWLER_API_KEY
     ? new CrawlerClient({
@@ -97,7 +106,7 @@ const discovery = createDiscoveryHttpHandler({
   database: database.db,
   contextResolver: auth.contextResolver,
   jobQueue: queue,
-  prospectSource: () => {
+  prospectSource: (workspaceId) => {
     if (!unipileDsn || !unipileApiKey) {
       return {
         async searchPeople() {
@@ -116,6 +125,9 @@ const discovery = createDiscoveryHttpHandler({
         : {}),
       ...(process.env.UNIPILE_WHATSAPP_ACCOUNT_ID
         ? { whatsappAccountId: process.env.UNIPILE_WHATSAPP_ACCOUNT_ID }
+        : {}),
+      ...(unipileChannelConnections
+        ? { resolveWhatsappAccountId: () => unipileChannelConnections.selectedAccountId(workspaceId, "whatsapp") }
         : {}),
     });
   },
@@ -166,6 +178,7 @@ const server = Bun.serve({
     if (pathname === "/api/v1/webhooks/unipile") return unipileWebhook(request);
     if (pathname.startsWith("/api/v1/webhooks/calendar/")) return calendarWebhook(request);
     if (pathname === "/api/v1/calendar-connection") return calendarConnection(request);
+    if (pathname.startsWith("/api/v1/channel-connections/")) return channelConnection(request);
     if (pathname.startsWith("/api/v1/opportunities")) return opportunityHandler(request);
     if (pathname === "/api/v1/workspaces") return workspace(request);
     if (pathname === "/api/v1/workspace-ai-settings") return workspaceAiSettings(request);

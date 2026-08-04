@@ -225,6 +225,36 @@ export async function disconnectCalendar(
   return crmFetch(workspaceSlug, "/api/v1/calendar-connection", { method: "DELETE" });
 }
 
+export interface WhatsAppChannelConnection {
+  readonly channel: "whatsapp";
+  readonly connected: boolean;
+  readonly selectedAccountId: string | null;
+  readonly selectedDisplayName: string | null;
+  readonly accounts: readonly {
+    readonly id: string;
+    readonly name: string;
+    readonly channel: "whatsapp";
+    readonly healthy: boolean;
+    readonly selected: boolean;
+  }[];
+}
+
+export async function getWhatsAppChannelConnection(
+  workspaceSlug: string,
+): Promise<WhatsAppChannelConnection> {
+  return crmFetch(workspaceSlug, "/api/v1/channel-connections/whatsapp");
+}
+
+export async function selectWhatsAppChannelAccount(
+  workspaceSlug: string,
+  providerAccountId: string,
+): Promise<void> {
+  await crmFetch(workspaceSlug, "/api/v1/channel-connections/whatsapp", {
+    method: "PUT",
+    body: { providerAccountId },
+  });
+}
+
 export interface PipelineOpportunity {
   readonly id: string;
   readonly contactId: string;

@@ -25,7 +25,7 @@ const EXCLUDED_EMAIL_LOCAL_PARTS = new Set([
 export class RoutedChannelObservationSource implements ChannelObservationSource {
   constructor(
     private readonly crawler: CrawlerClient,
-    private readonly prospectSource: () => ProspectSource,
+    private readonly prospectSource: (workspaceId: string) => ProspectSource,
   ) {}
 
   async observe(input: Parameters<ChannelObservationSource["observe"]>[0]): Promise<ChannelObservation> {
@@ -41,7 +41,7 @@ export class RoutedChannelObservationSource implements ChannelObservationSource 
     strategy: ChannelStrategy;
     version: { readonly criteria: unknown; readonly buyingCommittee: unknown };
   }): Promise<ChannelObservation> {
-    const source = this.prospectSource();
+    const source = this.prospectSource(input.workspaceId);
     const queries = buildLinkedinSearchQueries(input.strategy, input.version);
     const limitPerQuery = Math.min(
       10,
@@ -120,7 +120,7 @@ export class RoutedChannelObservationSource implements ChannelObservationSource 
     const phones = unique(pages.flatMap((page) => page.markdown.match(PHONE_PATTERN) ?? []));
     const verifiedWhatsapp: string[] = [];
     if (input.channel === "whatsapp" && phones.length) {
-      const source = this.prospectSource();
+      const source = this.prospectSource(input.workspaceId);
       if (source.verifyWhatsappNumber) {
         for (const phone of phones.slice(0, 5)) {
           try {

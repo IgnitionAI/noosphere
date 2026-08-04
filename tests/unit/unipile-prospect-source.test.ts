@@ -282,6 +282,22 @@ describe("UnipileProspectSource", () => {
     expect(await source.resolveHealthyAccount("email")).toBe("acc_mail_1");
   });
 
+  test("prefers the workspace-selected WhatsApp account over a global fallback", async () => {
+    const source = new UnipileProspectSource({
+      dsn: "https://api37.unipile.com:16796",
+      apiKey: "secret-key",
+      whatsappAccountId: "acc_wa_global",
+      resolveWhatsappAccountId: async () => "acc_wa_workspace",
+      fetchImpl: fakeFetch(() => Response.json({
+        items: [
+          { id: "acc_wa_global", type: "WHATSAPP", sources: [{ status: "OK" }] },
+          { id: "acc_wa_workspace", type: "WHATSAPP", sources: [{ status: "OK" }] },
+        ],
+      })),
+    });
+    expect(await source.resolveHealthyAccount("whatsapp")).toBe("acc_wa_workspace");
+  });
+
   test("fails recoverably when no healthy LinkedIn account exists", async () => {
     const source = new UnipileProspectSource({
       dsn: "https://api37.unipile.com:16796",

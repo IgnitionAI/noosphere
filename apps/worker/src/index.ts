@@ -50,9 +50,16 @@ import { CampaignHealthReconciler } from "@outbound/infrastructure/campaigns/cam
 import { UnipileWebhookIngestor } from "@outbound/infrastructure/campaigns/unipile-webhook-ingestor";
 import { UnipileChatSynchronizer } from "@outbound/infrastructure/campaigns/unipile-chat-synchronizer";
 import { PostgresCalendarIntegration } from "@outbound/infrastructure/calendar/postgres-calendar-integration";
+import { PostgresUnipileChannelConnections } from "@outbound/infrastructure/channels/postgres-unipile-channel-connections";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
+const unipileChannelConnections = process.env.UNIPILE_DSN && process.env.UNIPILE_API_KEY
+  ? new PostgresUnipileChannelConnections(database.db, {
+      dsn: process.env.UNIPILE_DSN,
+      apiKey: process.env.UNIPILE_API_KEY,
+    })
+  : null;
 const queue = new PostgresJobQueue(database.client);
 const repository = new PostgresProductResearchRepository(database.db);
 const clock = new SystemClock();
@@ -93,7 +100,10 @@ const discoveryRunner = new ProspectDiscoveryRunner(
   database.db,
   createProspectSource,
   () => new CrawlerProspectEnricher(discoveryCrawler),
-  () => new CrawlerCompanyProspectSource(discoveryCrawler, createProspectSource),
+  (workspaceId) => new CrawlerCompanyProspectSource(
+    discoveryCrawler,
+    () => createProspectSource(workspaceId),
+  ),
 );
 const discoveryProcessor = new ProspectDiscoveryJobProcessor(
   database.db,
@@ -245,7 +255,7 @@ function positiveIntegerEnvironment(name: string, fallback: number): number {
   return value;
 }
 
-function createProspectSource(): ProspectSource {
+function createProspectSource(workspaceId?: string): ProspectSource {
   if (!process.env.UNIPILE_DSN || !process.env.UNIPILE_API_KEY) {
     return {
       async searchPeople() {
@@ -264,6 +274,9 @@ function createProspectSource(): ProspectSource {
       : {}),
     ...(process.env.UNIPILE_WHATSAPP_ACCOUNT_ID
       ? { whatsappAccountId: process.env.UNIPILE_WHATSAPP_ACCOUNT_ID }
+      : {}),
+    ...(workspaceId && unipileChannelConnections
+      ? { resolveWhatsappAccountId: () => unipileChannelConnections.selectedAccountId(workspaceId, "whatsapp") }
       : {}),
   });
 }

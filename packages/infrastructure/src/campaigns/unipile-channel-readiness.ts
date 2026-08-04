@@ -3,12 +3,13 @@ import type { ProspectSource } from "@outbound/infrastructure/crm/unipile-prospe
 import { ProviderUnavailableError } from "@outbound/infrastructure/crm/unipile-prospect-source";
 
 export class UnipileCampaignChannelReadiness implements CampaignChannelReadiness {
-  constructor(private readonly source: () => ProspectSource) {}
+  constructor(private readonly source: (workspaceId: string) => ProspectSource) {}
 
   async resolveHealthyAccount(
-    channel: Parameters<CampaignChannelReadiness["resolveHealthyAccount"]>[0],
+    workspaceId: string,
+    channel: Parameters<CampaignChannelReadiness["resolveHealthyAccount"]>[1],
   ) {
-    const source = this.source();
+    const source = this.source(workspaceId);
     if (!source.resolveHealthyAccount) {
       throw new ProviderUnavailableError("Unipile account readiness is not configured");
     }

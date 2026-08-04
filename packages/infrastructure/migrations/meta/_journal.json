@@ -267,6 +267,13 @@
       "when": 1786399200000,
       "tag": "0037_linkedin_inbox_unread",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1786485600000,
+      "tag": "0038_lean_stingray",
+      "breakpoints": true
     }
   ]
 }
