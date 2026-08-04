@@ -4,6 +4,7 @@ import {
   UnipileChannelConnectionError,
 } from "@outbound/infrastructure/channels/postgres-unipile-channel-connections";
 import type { RequestContextResolver } from "@outbound/interface/http/request-context";
+import type { PostgresChannelCapabilityReassessment } from "@outbound/infrastructure/campaigns/channel-capability-reassessment";
 import {
   RequestAuthenticationError,
   WorkspaceAccessDeniedError,
@@ -19,6 +20,7 @@ export function createChannelConnectionHttpHandler(input: {
     "list" | "selectedAccount" | "select"
   > | null;
   readonly contextResolver: RequestContextResolver;
+  readonly reassessment?: Pick<PostgresChannelCapabilityReassessment, "schedule">;
 }) {
   return async function handle(request: Request): Promise<Response> {
     try {
@@ -50,6 +52,12 @@ export function createChannelConnectionHttpHandler(input: {
           channel: "whatsapp",
           providerAccountId: body.providerAccountId,
           selectedBy: context.userId,
+          now: new Date(),
+        });
+        await input.reassessment?.schedule({
+          workspaceId: context.workspaceId,
+          channel: "whatsapp",
+          capabilityKey: selected.id,
           now: new Date(),
         });
         return Response.json(selected);

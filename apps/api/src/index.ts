@@ -32,6 +32,7 @@ import { createOpportunityHttpHandler } from "@outbound/interface/http/opportuni
 import { LangChainConversationDraftImprover } from "@outbound/infrastructure/campaigns/langchain-conversation-draft-improver";
 import { PostgresUnipileChannelConnections } from "@outbound/infrastructure/channels/postgres-unipile-channel-connections";
 import { createChannelConnectionHttpHandler } from "@outbound/interface/http/channel-connection-handler";
+import { PostgresChannelCapabilityReassessment } from "@outbound/infrastructure/campaigns/channel-capability-reassessment";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
@@ -93,6 +94,7 @@ const unipileChannelConnections = unipileDsn && unipileApiKey
 const channelConnection = createChannelConnectionHttpHandler({
   connections: unipileChannelConnections,
   contextResolver: auth.contextResolver,
+  reassessment: new PostgresChannelCapabilityReassessment(database.db),
 });
 const discoveryCrawler =
   process.env.CRAWLER_SERVICE_URL && process.env.CRAWLER_API_KEY

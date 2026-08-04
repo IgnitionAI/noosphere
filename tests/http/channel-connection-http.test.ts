@@ -30,6 +30,7 @@ describe("WhatsApp channel connection HTTP route", () => {
 
   test("lets an owner select a healthy WhatsApp account for the workspace", async () => {
     let selectedForWorkspace = "";
+    let reassessed = false;
     const connections = fixtureConnections({
       async select(input: {
         workspaceId: string;
@@ -45,10 +46,18 @@ describe("WhatsApp channel connection HTTP route", () => {
     const handler = createChannelConnectionHttpHandler({
       contextResolver: context("owner"),
       connections,
+      reassessment: {
+        async schedule(input) {
+          expect(input).toMatchObject({ workspaceId, channel: "whatsapp", capabilityKey: accountId });
+          reassessed = true;
+          return 1;
+        },
+      },
     });
     const response = await handler(request("PUT", { providerAccountId: accountId }));
     expect(response.status).toBe(200);
     expect(selectedForWorkspace).toBe(accountId);
+    expect(reassessed).toBe(true);
   });
 
   test("rejects non-admin selection and a missing server connector", async () => {

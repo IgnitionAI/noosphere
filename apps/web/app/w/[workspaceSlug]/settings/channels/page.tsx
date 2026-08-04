@@ -72,9 +72,9 @@ export default async function ChannelSettingsPage({
         </div>
 
         <div className="mt-5 flex items-center justify-between gap-4 border-t border-line pt-4">
-          <p className="flex items-start gap-2 text-xs leading-5 text-muted"><ShieldCheck className="mt-0.5 shrink-0" size={14} /> La clé Unipile reste côté serveur. Le navigateur ne reçoit que les comptes sélectionnables.</p>
+          <p className="flex items-start gap-2 text-xs leading-5 text-muted"><ShieldCheck className="mt-0.5 shrink-0" size={14} /> La clé Unipile reste côté serveur. Confirmer le numéro relance automatiquement l’évaluation WhatsApp des ICP sans importer les conversations personnelles.</p>
           <button className="button button-signal shrink-0" disabled={!connection.accounts.some((account) => account.healthy)} type="submit">
-            Utiliser ce numéro
+            {connection.selectedAccountId ? "Réévaluer WhatsApp" : "Utiliser ce numéro"}
           </button>
         </div>
       </form>

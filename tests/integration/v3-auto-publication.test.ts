@@ -60,6 +60,7 @@ import { OutboundDeliveryError } from "@outbound/application/campaigns/outbound-
 import { validOutputFor } from "../fixtures/research-agent-fixtures";
 import { CampaignSourcingReconciler } from "@outbound/infrastructure/campaigns/campaign-sourcing-reconciler";
 import { PostgresProspectViewRepository } from "@outbound/infrastructure/crm/postgres-prospect-view-repository";
+import { PostgresChannelCapabilityReassessment } from "@outbound/infrastructure/campaigns/channel-capability-reassessment";
 
 const databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
 const databaseDescribe = databaseUrl ? describe : describe.skip;
@@ -1018,6 +1019,28 @@ databaseDescribe("V3 automatic ICP publication", () => {
 
     const report = await repository.getReport(workspaceId, run.snapshot.id);
     expect(report.versions).toHaveLength(5);
+
+    const rescheduled = await new PostgresChannelCapabilityReassessment(database.db).schedule({
+      workspaceId,
+      channel: "whatsapp",
+      capabilityKey: "wa-account-fixture",
+      now: clock.now(),
+    });
+    expect(rescheduled).toBe(5);
+    const reassessments = await database.db
+      .select()
+      .from(channelAssessments)
+      .where(and(
+        eq(channelAssessments.workspaceId, workspaceId),
+        eq(channelAssessments.channel, "whatsapp"),
+      ));
+    expect(reassessments.every((assessment) => assessment.status === "pending")).toBe(true);
+    const capabilityJobs = (await database.db
+      .select()
+      .from(jobs)
+      .where(and(eq(jobs.workspaceId, workspaceId), eq(jobs.type, "prospecting.channel.assess"))))
+      .filter((job) => job.idempotencyKey.endsWith(":capability:wa-account-fixture"));
+    expect(capabilityJobs).toHaveLength(5);
   }, 20_000);
 });
 
