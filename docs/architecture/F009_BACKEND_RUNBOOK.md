@@ -66,6 +66,14 @@ domaines publics externes distincts. La politique de prospectabilité filtre
 l’audience demandée, exclut les internal builders, calcule le score final et
 limite le rapport à cinq ICP.
 
+Le workflow V3 termine un dépassement de budget en `partial`, conserve les
+checkpoints et projette un rapport exploitable à partir des recherches déjà
+validées. Les étapes manquantes restent explicites et aucune hypothèse partielle
+n'est publiée. Lorsque `objective_ranking` se termine avec au moins une
+proposition, le rang 1 est automatiquement projeté, approuvé et publié dans une
+`ICPVersion` immuable avec son événement outbox. Le rapport expose alors le lien
+direct vers la découverte de prospects.
+
 `AI_PROVIDER=kimi-code` est la configuration par défaut. Elle utilise
 `ChatOpenAI` comme client OpenAI-compatible avec :
 

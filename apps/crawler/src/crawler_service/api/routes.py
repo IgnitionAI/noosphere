@@ -296,6 +296,15 @@ async def crawl_selected_pages(request: CrawlPagesRequest):
     Returns a job ID for tracking progress.
     """
     urls = [str(u) for u in request.urls]
+    if request.idempotencyKey:
+        existing = job_manager.get_job_by_idempotency_key(request.idempotencyKey)
+        if existing:
+            return CrawlPagesStartResponse(
+                success=True,
+                id=existing.id,
+                urlCount=len(urls),
+                message="Existing idempotent crawl job returned",
+            )
 
     # Acquire a concurrency slot BEFORE creating anything — same rule as
     # /crawl: no slot, no job, and release_slot() is only called for slots
@@ -323,6 +332,7 @@ async def crawl_selected_pages(request: CrawlPagesRequest):
         include_images=request.includeImages,
         exclude_patterns=[],
         include_patterns=[],
+        idempotency_key=request.idempotencyKey,
     )
 
     # Start the job

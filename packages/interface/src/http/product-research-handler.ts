@@ -364,11 +364,14 @@ export function createProductResearchHttpHandler(dependencies: ProductResearchHt
           findings: report.findings,
           proposals: report.proposals,
           versions: report.versions,
-          links: {
-            approve: `/api/v1/product-research-runs/${runId}/actions/approve-icp`,
-            reject: `/api/v1/product-research-runs/${runId}/actions/reject-icp`,
-            publish: `/api/v1/product-research-runs/${runId}/actions/publish-icp`,
-          },
+          links:
+            report.run.brief.researchVersion === 3
+              ? {}
+              : {
+                  approve: `/api/v1/product-research-runs/${runId}/actions/approve-icp`,
+                  reject: `/api/v1/product-research-runs/${runId}/actions/reject-icp`,
+                  publish: `/api/v1/product-research-runs/${runId}/actions/publish-icp`,
+                },
         });
       }
       const allowed = allowedMethods(url.pathname);

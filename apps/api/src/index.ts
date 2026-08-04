@@ -9,6 +9,7 @@ import { createResearchDocumentHttpHandler } from "@outbound/interface/http/rese
 import { createCrmHttpHandler } from "@outbound/interface/http/crm-handler";
 import { createDiscoveryHttpHandler } from "@outbound/interface/http/discovery-handler";
 import { createSequenceHttpHandler } from "@outbound/interface/http/sequence-handler";
+import { createCampaignHttpHandler } from "@outbound/interface/http/campaign-handler";
 import {
   ProviderUnavailableError,
   UnipileProspectSource,
@@ -19,6 +20,16 @@ import { WorkspaceAiSettingsApplication } from "@outbound/application/workspaces
 import { PostgresWorkspaceAiSettingsRepository } from "@outbound/infrastructure/workspaces/postgres-workspace-ai-settings-repository";
 import { createWorkspaceAiSettingsHttpHandler } from "@outbound/interface/http/workspace-ai-settings-handler";
 import { resolveResearchModelPolicyFromEnvironment } from "@outbound/infrastructure/ai/langchain-research-agent-executor";
+import { CrawlerClient } from "@outbound/infrastructure/ai/crawler-client";
+import { CrawlerProspectEnricher } from "@outbound/infrastructure/crm/crawler-prospect-enricher";
+import { UnipileWebhookIngestor } from "@outbound/infrastructure/campaigns/unipile-webhook-ingestor";
+import { createUnipileWebhookHttpHandler } from "@outbound/interface/http/unipile-webhook-handler";
+import { PostgresCalendarIntegration } from "@outbound/infrastructure/calendar/postgres-calendar-integration";
+import { createCalendarConnectionHttpHandler } from "@outbound/interface/http/calendar-connection-handler";
+import { createCalendarWebhookHttpHandler } from "@outbound/interface/http/calendar-webhook-handler";
+import { PostgresOpportunityRepository } from "@outbound/infrastructure/pipeline/postgres-opportunity-repository";
+import { createOpportunityHttpHandler } from "@outbound/interface/http/opportunity-handler";
+import { LangChainConversationDraftImprover } from "@outbound/infrastructure/campaigns/langchain-conversation-draft-improver";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
@@ -74,9 +85,18 @@ const crm = createCrmHttpHandler({
 });
 const unipileDsn = process.env.UNIPILE_DSN ?? "";
 const unipileApiKey = process.env.UNIPILE_API_KEY ?? "";
+const discoveryCrawler =
+  process.env.CRAWLER_SERVICE_URL && process.env.CRAWLER_API_KEY
+    ? new CrawlerClient({
+        baseUrl: process.env.CRAWLER_SERVICE_URL,
+        apiKey: process.env.CRAWLER_API_KEY,
+        maxConcurrentPageReads: 2,
+      })
+    : null;
 const discovery = createDiscoveryHttpHandler({
   database: database.db,
   contextResolver: auth.contextResolver,
+  jobQueue: queue,
   prospectSource: () => {
     if (!unipileDsn || !unipileApiKey) {
       return {
@@ -94,11 +114,46 @@ const discovery = createDiscoveryHttpHandler({
       ...(process.env.UNIPILE_LINKEDIN_ACCOUNT_ID
         ? { accountId: process.env.UNIPILE_LINKEDIN_ACCOUNT_ID }
         : {}),
+      ...(process.env.UNIPILE_WHATSAPP_ACCOUNT_ID
+        ? { whatsappAccountId: process.env.UNIPILE_WHATSAPP_ACCOUNT_ID }
+        : {}),
     });
   },
+  prospectEnricher: () =>
+    discoveryCrawler ? new CrawlerProspectEnricher(discoveryCrawler) : null,
 });
 const sequenceHandler = createSequenceHttpHandler({
   database: database.db,
+  contextResolver: auth.contextResolver,
+});
+const campaignHandler = createCampaignHttpHandler({
+  database: database.db,
+  contextResolver: auth.contextResolver,
+  jobQueue: queue,
+  draftImprover: new LangChainConversationDraftImprover(
+    database.db,
+    process.env,
+    workspaceAiSettingsRepository,
+  ),
+});
+const unipileWebhook = createUnipileWebhookHttpHandler({
+  ingestor: new UnipileWebhookIngestor(database.db),
+  secret: process.env.UNIPILE_WEBHOOK_SECRET ?? "",
+});
+const calendarSigningKey = process.env.CALENDAR_WEBHOOK_SIGNING_KEY
+  ?? requiredSecretEnvironment("BETTER_AUTH_SECRET");
+const calendarIntegration = new PostgresCalendarIntegration(database.db, calendarSigningKey);
+const calendarConnection = createCalendarConnectionHttpHandler({
+  integration: calendarIntegration,
+  contextResolver: auth.contextResolver,
+  publicWebhookBaseUrl: process.env.PUBLIC_WEBHOOK_BASE_URL ?? requiredEnvironment("BETTER_AUTH_URL"),
+});
+const calendarWebhook = createCalendarWebhookHttpHandler({
+  integration: calendarIntegration,
+  signingKey: calendarSigningKey,
+});
+const opportunityHandler = createOpportunityHttpHandler({
+  repository: new PostgresOpportunityRepository(database.db),
   contextResolver: auth.contextResolver,
 });
 const port = positiveIntegerEnvironment("PORT", 3000);
@@ -108,10 +163,14 @@ const server = Bun.serve({
   async fetch(request) {
     const pathname = new URL(request.url).pathname;
     if (pathname.startsWith("/api/auth/")) return auth.handle(request);
+    if (pathname === "/api/v1/webhooks/unipile") return unipileWebhook(request);
+    if (pathname.startsWith("/api/v1/webhooks/calendar/")) return calendarWebhook(request);
+    if (pathname === "/api/v1/calendar-connection") return calendarConnection(request);
+    if (pathname.startsWith("/api/v1/opportunities")) return opportunityHandler(request);
     if (pathname === "/api/v1/workspaces") return workspace(request);
     if (pathname === "/api/v1/workspace-ai-settings") return workspaceAiSettings(request);
     if (pathname.startsWith("/api/v1/research-documents")) return documents(request);
-    if (pathname.startsWith("/api/v1/companies") || pathname.startsWith("/api/v1/contacts")) {
+    if (pathname.startsWith("/api/v1/companies") || pathname.startsWith("/api/v1/contacts") || pathname.startsWith("/api/v1/prospects")) {
       return crm(request);
     }
     if (pathname.startsWith("/api/v1/icp-versions") || pathname.startsWith("/api/v1/discovery-runs")) {
@@ -119,6 +178,14 @@ const server = Bun.serve({
     }
     if (pathname.startsWith("/api/v1/sequences")) {
       return sequenceHandler(request);
+    }
+    if (
+      pathname.startsWith("/api/v1/campaigns") ||
+      pathname.startsWith("/api/v1/prospecting-plans") ||
+      pathname.startsWith("/api/v1/channel-assessments")
+      || pathname.startsWith("/api/v1/conversations")
+    ) {
+      return campaignHandler(request);
     }
     if (pathname === "/health/live") return Response.json({ status: "ok" });
     if (pathname === "/health/ready") {

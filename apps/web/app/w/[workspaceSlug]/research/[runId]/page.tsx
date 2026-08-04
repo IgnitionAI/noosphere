@@ -80,7 +80,13 @@ export default async function ResearchProgressPage({
             <span className="font-mono text-[10px] text-muted">{run.id.slice(0, 13)}</span>
           </div>
           <h1 className="page-title">
-            {run.status === "failed" ? "Étude ICP interrompue" : "Étude ICP en cours"}
+            {run.status === "failed"
+              ? "Étude ICP interrompue"
+              : run.status === "partial"
+                ? "Rapport ICP partiel disponible"
+                : ["completed", "ready_for_review"].includes(run.status)
+                  ? "Étude ICP terminée"
+                  : "Étude ICP en cours"}
           </h1>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-muted">
             Les résultats validés restent disponibles si une source ou une étape échoue.
@@ -264,10 +270,11 @@ export default async function ResearchProgressPage({
             <div>
               <strong>Le livrable ICP apparaîtra ici</strong>
               <p className="mt-1 text-xs text-signal-ink/80">
-                Publication et prospection resteront soumises à une validation humaine.
+                Le rapport est vérifié automatiquement. Si le résultat ne vous convient pas,
+                vous pourrez relancer une nouvelle étude.
               </p>
             </div>
-            {run.status === "ready_for_review" ? (
+            {["ready_for_review", "completed", "partial"].includes(run.status) ? (
               <Link className="button button-signal" href={`/w/${workspaceSlug}/research/${runId}/report`}>
                 Ouvrir le rapport
               </Link>

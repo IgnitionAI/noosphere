@@ -15,6 +15,41 @@ import {
 } from "@outbound/infrastructure/documents/research-document-service";
 import { PostgresResearchToolRunRecorder } from "@outbound/infrastructure/ai/postgres-tool-run-recorder";
 import { PostgresWorkspaceAiSettingsRepository } from "@outbound/infrastructure/workspaces/postgres-workspace-ai-settings-repository";
+import { UnipileProspectSource } from "@outbound/infrastructure/crm/unipile-prospect-source";
+import { V3SourcingValidator } from "@outbound/infrastructure/ai/v3-sourcing-validator";
+import { PostgresResearchToolRequestRegistry } from "@outbound/infrastructure/ai/postgres-research-tool-request-registry";
+import { CrawlerClient } from "@outbound/infrastructure/ai/crawler-client";
+import { CrawlerProspectEnricher } from "@outbound/infrastructure/crm/crawler-prospect-enricher";
+import { CrawlerCompanyProspectSource } from "@outbound/infrastructure/crm/crawler-company-prospect-source";
+import {
+  ProspectDiscoveryJobProcessor,
+  ProspectDiscoveryRunner,
+} from "@outbound/infrastructure/crm/prospect-discovery-runner";
+import {
+  ProviderUnavailableError,
+  type ProspectSource,
+} from "@outbound/infrastructure/crm/unipile-prospect-source";
+import { ChannelAssessmentJobProcessor } from "@outbound/infrastructure/campaigns/channel-assessment-runner";
+import { LangChainChannelStrategyPlanner } from "@outbound/infrastructure/campaigns/channel-strategy-planner";
+import { RoutedChannelObservationSource } from "@outbound/infrastructure/campaigns/channel-observation-source";
+import { CampaignAutomationJobProcessor } from "@outbound/infrastructure/campaigns/campaign-automation-runner";
+import { CampaignCompositionJobProcessor } from "@outbound/infrastructure/campaigns/campaign-composition-runner";
+import { LangChainCampaignContentGenerator } from "@outbound/infrastructure/campaigns/langchain-campaign-content-generator";
+import { UnipileCampaignChannelReadiness } from "@outbound/infrastructure/campaigns/unipile-channel-readiness";
+import { OutreachDispatchJobProcessor } from "@outbound/infrastructure/campaigns/outreach-dispatch-runner";
+import { UnipileOutboundChannelGateway } from "@outbound/infrastructure/campaigns/unipile-outbound-channel-gateway";
+import { OutboundDeliveryError, type OutboundChannelGateway } from "@outbound/application/campaigns/outbound-channel-gateway";
+import { InboundReplyJobProcessor } from "@outbound/infrastructure/campaigns/inbound-reply-runner";
+import { AutomatedReplySendJobProcessor } from "@outbound/infrastructure/campaigns/automated-reply-send-runner";
+import { LangChainInboundReplyAgent } from "@outbound/infrastructure/campaigns/langchain-inbound-reply-agent";
+import { CampaignSourcingReconciler } from "@outbound/infrastructure/campaigns/campaign-sourcing-reconciler";
+import { DailyProspectingScheduler } from "@outbound/infrastructure/campaigns/daily-prospecting-scheduler";
+import { ConversationCommandJobProcessor } from "@outbound/infrastructure/campaigns/conversation-command-runner";
+import { ProspectAssessmentReconciler } from "@outbound/infrastructure/campaigns/prospect-assessment-reconciler";
+import { CampaignHealthReconciler } from "@outbound/infrastructure/campaigns/campaign-health-reconciler";
+import { UnipileWebhookIngestor } from "@outbound/infrastructure/campaigns/unipile-webhook-ingestor";
+import { UnipileChatSynchronizer } from "@outbound/infrastructure/campaigns/unipile-chat-synchronizer";
+import { PostgresCalendarIntegration } from "@outbound/infrastructure/calendar/postgres-calendar-integration";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
@@ -37,6 +72,120 @@ const documentSearch = new ParadeDbInternalDocumentSearch(
 );
 const toolRunRecorder = new PostgresResearchToolRunRecorder(database.db);
 const workspaceAiSettings = new PostgresWorkspaceAiSettingsRepository(database.db);
+const sourcingValidator = new V3SourcingValidator(
+  process.env.UNIPILE_DSN && process.env.UNIPILE_API_KEY
+    ? new UnipileProspectSource({
+        dsn: process.env.UNIPILE_DSN,
+        apiKey: process.env.UNIPILE_API_KEY,
+        ...(process.env.UNIPILE_LINKEDIN_ACCOUNT_ID
+          ? { accountId: process.env.UNIPILE_LINKEDIN_ACCOUNT_ID }
+          : {}),
+      })
+    : null,
+);
+const toolRequestRegistry = new PostgresResearchToolRequestRegistry(database.db);
+const discoveryCrawler = new CrawlerClient({
+  baseUrl: requiredEnvironment("CRAWLER_SERVICE_URL"),
+  apiKey: requiredEnvironment("CRAWLER_API_KEY"),
+  maxConcurrentPageReads: 2,
+});
+const discoveryRunner = new ProspectDiscoveryRunner(
+  database.db,
+  createProspectSource,
+  () => new CrawlerProspectEnricher(discoveryCrawler),
+  () => new CrawlerCompanyProspectSource(discoveryCrawler, createProspectSource),
+);
+const discoveryProcessor = new ProspectDiscoveryJobProcessor(
+  database.db,
+  queue,
+  discoveryRunner,
+  clock,
+);
+const channelAssessmentProcessor = new ChannelAssessmentJobProcessor(
+  database.db,
+  queue,
+  new LangChainChannelStrategyPlanner(process.env),
+  new RoutedChannelObservationSource(discoveryCrawler, createProspectSource),
+  clock,
+);
+const campaignAutomationProcessor = new CampaignAutomationJobProcessor(database.db, queue, clock);
+const campaignContentGenerator = new LangChainCampaignContentGenerator(process.env, workspaceAiSettings);
+const calendarIntegration = new PostgresCalendarIntegration(
+  database.db,
+  process.env.CALENDAR_WEBHOOK_SIGNING_KEY ?? requiredEnvironment("BETTER_AUTH_SECRET"),
+);
+const campaignCompositionProcessor = new CampaignCompositionJobProcessor(
+  database.db,
+  queue,
+  campaignContentGenerator,
+  new UnipileCampaignChannelReadiness(createProspectSource),
+  clock,
+);
+const outreachDispatchProcessor = new OutreachDispatchJobProcessor(
+  database.db,
+  queue,
+  createOutboundGateway(),
+  clock,
+  {
+    linkedin: positiveIntegerEnvironment("OUTBOUND_LINKEDIN_DAILY_LIMIT", 20),
+    email: positiveIntegerEnvironment("OUTBOUND_EMAIL_DAILY_LIMIT", 50),
+    whatsapp: positiveIntegerEnvironment("OUTBOUND_WHATSAPP_DAILY_LIMIT", 30),
+  },
+  campaignContentGenerator,
+);
+const inboundReplyAgent = new LangChainInboundReplyAgent(process.env, workspaceAiSettings);
+const inboundReplyProcessor = new InboundReplyJobProcessor(
+  database.db,
+  queue,
+  inboundReplyAgent,
+  clock,
+  process.env.BOOKING_URL?.trim() || null,
+  calendarIntegration,
+);
+const automatedReplySendProcessor = new AutomatedReplySendJobProcessor(
+  database.db,
+  queue,
+  createOutboundGateway(),
+  clock,
+);
+const conversationCommandProcessor = new ConversationCommandJobProcessor(
+  database.db,
+  queue,
+  createOutboundGateway(),
+  inboundReplyAgent,
+  clock,
+  process.env.BOOKING_URL?.trim() || null,
+  calendarIntegration,
+);
+const dailyProspectingScheduler = new DailyProspectingScheduler(database.db, clock, {
+  localTime: process.env.DAILY_PROSPECTING_TIME ?? "06:00",
+  timezone: process.env.DAILY_PROSPECTING_TIMEZONE ?? "Europe/Paris",
+});
+const prospectAssessmentReconciler = new ProspectAssessmentReconciler(database.db, clock);
+const campaignHealthReconciler = new CampaignHealthReconciler(database.db, clock);
+const unipileChatSynchronizer = process.env.UNIPILE_DSN
+  && process.env.UNIPILE_API_KEY
+  && process.env.UNIPILE_CHAT_SYNC_ENABLED !== "false"
+  ? new UnipileChatSynchronizer(
+      database.db,
+      new UnipileWebhookIngestor(database.db),
+      { dsn: process.env.UNIPILE_DSN, apiKey: process.env.UNIPILE_API_KEY },
+    )
+  : null;
+const maintenance = {
+  async reconcile() {
+    const [dailyRuns, assessmentJobs, repairedCampaigns, inboundEvents] = await Promise.all([
+      dailyProspectingScheduler.reconcile(),
+      prospectAssessmentReconciler.reconcile(),
+      campaignHealthReconciler.reconcile(),
+      unipileChatSynchronizer?.reconcile() ?? Promise.resolve(0),
+    ]);
+    if (inboundEvents > 0) {
+      console.info(JSON.stringify({ event: "unipile_chat_sync_ingested", count: inboundEvents }));
+    }
+    return dailyRuns + assessmentJobs + repairedCampaigns + inboundEvents;
+  },
+};
 const orchestrator = new ResearchOrchestrator(
   repository,
   queue,
@@ -44,6 +193,8 @@ const orchestrator = new ResearchOrchestrator(
     documentSearch,
     toolRunRecorder,
     workspaceAiSettings,
+    sourcingValidator,
+    toolRequestRegistry,
   ),
   ids,
   clock,
@@ -54,7 +205,7 @@ const worker = new ResearchWorker(queue, orchestrator, clock, {
   leaseMs: positiveIntegerEnvironment("JOB_LEASE_MS", 60_000),
   batchSize: positiveIntegerEnvironment("JOB_BATCH_SIZE", 4),
   pollIntervalMs: positiveIntegerEnvironment("JOB_POLL_INTERVAL_MS", 1_000),
-}, documentService);
+}, documentService, discoveryProcessor, channelAssessmentProcessor, campaignAutomationProcessor, campaignCompositionProcessor, outreachDispatchProcessor, inboundReplyProcessor, automatedReplySendProcessor, conversationCommandProcessor, maintenance);
 
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
   process.once(signal, () => {
@@ -65,6 +216,14 @@ for (const signal of ["SIGTERM", "SIGINT"] as const) {
 
 console.info(JSON.stringify({ event: "research_worker_started" }));
 try {
+  const repairedCampaigns = await new CampaignSourcingReconciler(database.db, clock).reconcile();
+  if (repairedCampaigns > 0) {
+    console.info(JSON.stringify({ event: "campaign_sourcing_reconciled", count: repairedCampaigns }));
+  }
+  const repairedCampaignHealth = await campaignHealthReconciler.reconcile();
+  if (repairedCampaignHealth > 0) {
+    console.info(JSON.stringify({ event: "campaign_health_reconciled", count: repairedCampaignHealth }));
+  }
   if (process.env.WORKER_ONCE === "1") await worker.tick();
   else await worker.run();
 } finally {
@@ -84,6 +243,48 @@ function positiveIntegerEnvironment(name: string, fallback: number): number {
   const value = Number(raw);
   if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${name} must be a positive integer`);
   return value;
+}
+
+function createProspectSource(): ProspectSource {
+  if (!process.env.UNIPILE_DSN || !process.env.UNIPILE_API_KEY) {
+    return {
+      async searchPeople() {
+        throw new ProviderUnavailableError(
+          "Unipile is not configured (UNIPILE_DSN, UNIPILE_API_KEY)",
+          null,
+        );
+      },
+    };
+  }
+  return new UnipileProspectSource({
+    dsn: process.env.UNIPILE_DSN,
+    apiKey: process.env.UNIPILE_API_KEY,
+    ...(process.env.UNIPILE_LINKEDIN_ACCOUNT_ID
+      ? { accountId: process.env.UNIPILE_LINKEDIN_ACCOUNT_ID }
+      : {}),
+    ...(process.env.UNIPILE_WHATSAPP_ACCOUNT_ID
+      ? { whatsappAccountId: process.env.UNIPILE_WHATSAPP_ACCOUNT_ID }
+      : {}),
+  });
+}
+
+function createOutboundGateway(): OutboundChannelGateway {
+  if (!process.env.UNIPILE_DSN || !process.env.UNIPILE_API_KEY) {
+    return {
+      async send() {
+        throw new OutboundDeliveryError(
+          "UNIPILE_NOT_CONFIGURED",
+          "Unipile is not configured (UNIPILE_DSN, UNIPILE_API_KEY)",
+          "not_sent",
+          false,
+        );
+      },
+    };
+  }
+  return new UnipileOutboundChannelGateway({
+    dsn: process.env.UNIPILE_DSN,
+    apiKey: process.env.UNIPILE_API_KEY,
+  });
 }
 
 function documentServiceOptionsFromEnvironment() {

@@ -20,7 +20,7 @@
     "check:web": "bun run build:web",
     "check:crawler": "cd apps/crawler && uv run --extra dev pytest tests -q",
     "build:web": "next build apps/web && bun scripts/prepare-web-standalone.ts",
-    "test:integration": "bun test tests/integration",
+    "test:integration": "bun scripts/run-integration-tests.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "bun packages/infrastructure/src/database/migrate.ts",
     "bootstrap:owner": "bun scripts/bootstrap-owner.ts",

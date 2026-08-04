@@ -13,7 +13,7 @@ export default async function ProductReadingPage({
   const { workspaceSlug } = await params;
   const runs = await listResearchRuns(workspaceSlug);
   const recoverableRun = runs.find((run) =>
-    ["draft", "queued", "running", "paused", "ready_for_review"].includes(run.status),
+    ["draft", "queued", "running", "paused", "ready_for_review", "completed", "partial", "interrupted"].includes(run.status),
   );
   return (
     <>
@@ -59,7 +59,10 @@ const runStatusLabels: Record<ResearchRunSummary["status"], string> = {
   queued: "En attente",
   running: "Recherche en cours",
   paused: "Recherche en pause",
-  ready_for_review: "Rapport prêt à relire",
+  ready_for_review: "Rapport prêt",
+  completed: "Rapport prêt",
+  partial: "Rapport partiel prêt",
+  interrupted: "Recherche interrompue",
   failed: "Recherche interrompue",
 };
 
@@ -70,7 +73,7 @@ function RecoverableRun({
   workspaceSlug: string;
   run: ResearchRunSummary;
 }) {
-  const reportReady = run.status === "ready_for_review";
+  const reportReady = ["ready_for_review", "completed", "partial"].includes(run.status);
   const href = reportReady
     ? `/w/${workspaceSlug}/research/${run.id}/report`
     : `/w/${workspaceSlug}/research/${run.id}`;
@@ -89,8 +92,9 @@ function RecoverableRun({
               <span className="badge badge-signal">{runStatusLabels[run.status]}</span>
             </div>
             <p className="mt-1 text-xs leading-5 text-signal-ink/80">
-              Cette mission continue côté serveur. Vous pouvez quitter cette page et reprendre son
-              suivi à tout moment.
+              {reportReady
+                ? "L’analyse automatique est terminée. Le rapport est disponible à tout moment."
+                : "Cette mission continue côté serveur. Vous pouvez quitter cette page et reprendre son suivi à tout moment."}
             </p>
           </div>
         </div>

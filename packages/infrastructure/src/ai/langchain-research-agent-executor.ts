@@ -8,6 +8,7 @@ import {
   type AgentExecutionResult,
   type AgentStageInput,
   type CompetitorDiscoveryOutput,
+  type ProductTruthOutput,
 } from "@outbound/contracts/product-research";
 import {
   RetryableAgentError,
@@ -16,9 +17,7 @@ import {
 } from "@outbound/application/gtm/product-research-ports";
 import type { ResearchStage } from "@outbound/domain/gtm/product-research";
 import {
-  auditIcpStructurally,
   finalizeIcpSynthesis,
-  synthesizeIcpFromSegments,
   validateBuyerLandscape,
 } from "@outbound/application/gtm/icp-prospectability-policy";
 import type { WorkspaceAiModelPolicyReader } from "@outbound/application/workspaces/workspace-ai-settings";
@@ -31,6 +30,9 @@ import {
   UnavailableInternalDocumentSearch,
 } from "./research-tools";
 import { ResearchBudget, ResearchBudgetExceededError, researchBudgetLimits } from "./research-budget";
+import { V3SourcingValidator } from "./v3-sourcing-validator";
+import { V3ObjectiveRanker } from "./v3-objective-ranker";
+import { DefaultExternalQueryGuard } from "./external-query-guard";
 
 const deepStages = new Set<ResearchStage>([
   "product_analysis",
@@ -38,7 +40,20 @@ const deepStages = new Set<ResearchStage>([
   "competitor_analysis",
   "buyer_landscape_discovery",
   "evidence_review",
+  "organization_discovery",
+  "market_investigation",
+  "adversarial_review",
 ]);
+
+const principalStages = new Set<ResearchStage>([
+  "problem_mapping",
+  "organization_discovery",
+  "buying_context",
+  "icp_composition",
+  "adversarial_review",
+]);
+
+export type KimiReasoningEffort = "low" | "max";
 
 export interface LangChainResearchAgentExecutorOptions {
   readonly provider: ResearchModelProvider;
@@ -51,6 +66,9 @@ export interface LangChainResearchAgentExecutorOptions {
   readonly documents?: InternalDocumentSearch;
   readonly recorder?: ResearchToolRunRecorder;
   readonly modelPolicyReader?: WorkspaceAiModelPolicyReader;
+  readonly sourcingValidator?: V3SourcingValidator;
+  readonly toolRequestRegistry?: import("@outbound/application/gtm/product-research-ports").ResearchToolRequestRegistry;
+  readonly externalQueryGuard?: import("@outbound/application/gtm/product-research-ports").ExternalQueryGuard;
 }
 
 export type ResearchModelProvider = "kimi-code" | "openai";
@@ -77,22 +95,70 @@ export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
 
   async execute(stage: ResearchStage, input: AgentStageInput): Promise<AgentExecutionResult> {
     const startedAt = Date.now();
+    if (stage === "sourcing_validation" && input.brief.researchVersion === 3) {
+      const output = await (this.options.sourcingValidator ?? new V3SourcingValidator(null))
+        .validate(input);
+      return {
+        output,
+        metadata: {
+          provider: "unipile",
+          model: "read-only-people-search-v1",
+          promptVersion: "icp-v3-sourcing-policy-v1",
+          parameters: {
+            readOnly: true,
+            providerCalls: output.tests.reduce((total, test) => total + test.providerCalls, 0),
+          },
+          cost: 0,
+          latencyMs: Date.now() - startedAt,
+        },
+      };
+    }
+    if (stage === "objective_ranking" && input.brief.researchVersion === 3) {
+      const output = new V3ObjectiveRanker().rank(input);
+      return {
+        output,
+        metadata: {
+          provider: "local-policy",
+          model: "deterministic-objective-ranker-v1",
+          promptVersion: "icp-v3-objective-policy-v1",
+          parameters: { objective: output.objective, deterministic: true },
+          cost: 0,
+          latencyMs: Date.now() - startedAt,
+        },
+      };
+    }
     // Evidence review re-verifies every material source through the crawler:
     // it legitimately needs a longer wall-clock budget than other stages.
     const baseLimits = researchBudgetLimits[input.brief.depth];
-    const limits =
+    const legacyStageLimits =
       stage === "evidence_review"
         ? { ...baseLimits, durationMs: baseLimits.durationMs * 2 }
         : baseLimits;
+    const stageLimits = input.brief.researchVersion === 3
+      ? v3StageToolLimits(stage, legacyStageLimits)
+      : legacyStageLimits;
+    const remainingGlobalMs = input.deadlineAt
+      ? Math.max(0, new Date(input.deadlineAt).getTime() - Date.now())
+      : stageLimits.durationMs;
+    if (remainingGlobalMs === 0) {
+      throw new TerminalAgentError("RESEARCH_GLOBAL_DEADLINE_EXHAUSTED", "The V3 run deadline has expired");
+    }
+    const roleDurationMs = input.brief.researchVersion === 3
+      ? v3StageDurationMs(stage)
+      : stageLimits.durationMs;
+    const limits = {
+      ...stageLimits,
+      durationMs: Math.min(stageLimits.durationMs, roleDurationMs, remainingGlobalMs),
+    };
     const budget = new ResearchBudget(limits, {
       softTokens: this.options.provider === "kimi-code",
     });
     const controller = new AbortController();
-    const timeout = setTimeout(
-      () => controller.abort(),
-      budget.limits.durationMs + structuredOutputGraceMs(this.options.provider, budget.limits.durationMs),
-    );
-    const tools = createResearchTools({
+    const structuredGraceMs = input.brief.researchVersion === 3
+      ? Math.min(30_000, Math.floor(budget.limits.durationMs / 5))
+      : structuredOutputGraceMs(this.options.provider, budget.limits.durationMs);
+    const timeout = setTimeout(() => controller.abort(), budget.limits.durationMs + structuredGraceMs);
+    const allTools = createResearchTools({
       crawler: this.#crawler,
       documents: this.#documents,
       budget,
@@ -103,10 +169,30 @@ export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
       researchStageRunId: input.researchStageRunId,
       signal: controller.signal,
       ...(this.options.recorder ? { recorder: this.options.recorder } : {}),
+      ...(this.options.toolRequestRegistry
+        ? { registry: this.options.toolRequestRegistry }
+        : {}),
+      externalQueryGuard: this.options.externalQueryGuard ?? new DefaultExternalQueryGuard(),
+      sensitiveTerms: input.externalDlpTerms,
     });
+    const tools = selectToolsForStage(
+      stage,
+      input.brief.researchVersion,
+      input.brief.internalDocumentIds.length > 0,
+      allTools,
+    );
     try {
       const workspacePolicy = await this.options.modelPolicyReader?.find(input.workspaceId);
-      const modelCandidates = selectModelCandidates(stage, this.options, workspacePolicy);
+      const modelCandidates = selectModelCandidates(
+        stage,
+        this.options,
+        workspacePolicy,
+        input.brief.researchVersion,
+      );
+      const reasoningEffort = reasoningEffortForStage(
+        stage,
+        input.brief.researchVersion,
+      );
       if (modelCandidates.length === 0) {
         throw new Error("Workspace model policy must contain at least one model");
       }
@@ -128,7 +214,9 @@ export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
       let fallbackCount = 0;
       for (const [index, candidate] of modelCandidates.entries()) {
         modelName = candidate;
-        const model = new ChatOpenAI(buildChatModelFields(this.options, candidate));
+        const model = new ChatOpenAI(
+          buildChatModelFields(this.options, candidate, reasoningEffort),
+        );
         try {
           result = deepStages.has(stage)
             ? await this.#invokeDeep(stage, model, tools, schema, invocation, controller.signal, systemPrompt, promptJsonOutput, input.brief.depth)
@@ -154,7 +242,7 @@ export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
         structuredRecoveryAttempts = 1;
         const recovered = await this.#recoverStructuredOutput(
           stage,
-          new ChatOpenAI(buildChatModelFields(this.options, modelName)),
+          new ChatOpenAI(buildChatModelFields(this.options, modelName, reasoningEffort)),
           schema,
           result,
           input.previousOutputs,
@@ -171,7 +259,7 @@ export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
         repairAttempts = 1;
         const repaired = await this.#repairEvidenceReferences(
           stage,
-          new ChatOpenAI(buildChatModelFields(this.options, modelName)),
+          new ChatOpenAI(buildChatModelFields(this.options, modelName, reasoningEffort)),
           schema,
           output,
           unresolved,
@@ -179,7 +267,7 @@ export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
           controller.signal,
           promptJsonOutput,
         );
-        output = parseAgentOutput(stage, repaired);
+        output = parseAgentOutput(stage, sanitizeRawOutput(stage, repaired));
         const stillUnresolved = findUnresolvedEvidenceReferences(
           output,
           input.previousOutputs,
@@ -190,6 +278,55 @@ export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
             `Agent output references unknown evidence keys: ${stillUnresolved.join(", ")}`,
           );
         }
+      }
+      if (
+        stage === "product_truth" &&
+        input.brief.researchVersion === 3 &&
+        input.brief.internalDocumentIds.length > 0
+      ) {
+        const publicInput = {
+          ...input,
+          brief: { ...input.brief, internalDocumentIds: [] },
+          previousOutputs: {},
+        } as AgentStageInput;
+        const publicTools = selectToolsForStage("product_truth", 3, false, allTools);
+        const publicResult = await this.#invokeStructured(
+          "product_truth",
+          new ChatOpenAI(buildChatModelFields(this.options, modelName, reasoningEffort)),
+          publicTools,
+          schema,
+          { messages: [{ role: "user", content: buildTask("product_truth", publicInput) }] },
+          controller.signal,
+          systemPrompt,
+          promptJsonOutput,
+        );
+        budget.recordTokens(readTotalTokens(publicResult));
+        let publicOutput: unknown;
+        try {
+          publicOutput = parseAgentOutput(
+            "product_truth",
+            promptJsonOutput
+              ? readJsonFromFinalMessage(publicResult)
+              : readStructuredResponse(publicResult),
+          );
+        } catch (error) {
+          if (!promptJsonOutput) throw error;
+          publicOutput = parseAgentOutput(
+            "product_truth",
+            await this.#recoverStructuredOutput(
+              "product_truth",
+              new ChatOpenAI(buildChatModelFields(this.options, modelName, reasoningEffort)),
+              schema,
+              publicResult,
+              {},
+              controller.signal,
+            ),
+          );
+        }
+        output = mergeProductTruthOutputs(
+          output as ProductTruthOutput,
+          publicOutput as ProductTruthOutput,
+        );
       }
       if (stage === "icp_synthesis") {
         try {
@@ -233,6 +370,8 @@ export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
             modelPolicySource: workspacePolicy ? "workspace" : "environment",
             modelCandidates,
             modelFallbacks: fallbackCount,
+            modelTier: modelTierForStage(stage, input.brief.researchVersion),
+            reasoningEffort,
             structuredRecoveryAttempts,
             evidenceRepairAttempts: repairAttempts,
             budget: budget.snapshot(),
@@ -255,23 +394,6 @@ export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
         );
       }
       if (isProviderQuotaError(error)) {
-        const fallbackOutput = deterministicQuotaFallback(stage, input);
-        if (fallbackOutput !== null) {
-          return {
-            output: fallbackOutput,
-            metadata: {
-              provider: "local-policy",
-              model: "deterministic-quota-fallback-v1",
-              promptVersion: "icp-deterministic-quota-fallback-v1",
-              parameters: {
-                fallbackReason: "MODEL_PROVIDER_QUOTA_EXHAUSTED",
-                semanticEvidenceReviewRequired: stage === "evidence_review",
-              },
-              cost: 0,
-              latencyMs: Date.now() - startedAt,
-            },
-          };
-        }
         throw new TerminalAgentError(
           "MODEL_PROVIDER_QUOTA_EXHAUSTED",
           errorMessage(error),
@@ -289,7 +411,7 @@ export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
   async #invokeDeep(
     stage: ResearchStage,
     model: ChatOpenAI,
-    tools: ReturnType<typeof createResearchTools>,
+    tools: readonly ReturnType<typeof createResearchTools>[number][],
     schema: (typeof agentContracts)[ResearchStage]["output"],
     invocation: { messages: { role: "user"; content: string }[] },
     signal: AbortSignal,
@@ -329,7 +451,7 @@ export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
   async #invokeStructured(
     stage: ResearchStage,
     model: ChatOpenAI,
-    tools: ReturnType<typeof createResearchTools>,
+    tools: readonly ReturnType<typeof createResearchTools>[number][],
     schema: (typeof agentContracts)[ResearchStage]["output"],
     invocation: { messages: { role: "user"; content: string }[] },
     signal: AbortSignal,
@@ -436,22 +558,6 @@ Return exactly one JSON object and no commentary.${jsonOutputInstructions(schema
   }
 }
 
-export function deterministicQuotaFallback(
-  stage: ResearchStage,
-  input: AgentStageInput,
-): AgentExecutionResult["output"] | null {
-  if (stage === "icp_synthesis") {
-    return synthesizeIcpFromSegments({
-      brief: input.brief,
-      previousOutputs: input.previousOutputs,
-    });
-  }
-  if (stage === "evidence_review") {
-    return auditIcpStructurally({ previousOutputs: input.previousOutputs });
-  }
-  return null;
-}
-
 export function findUnresolvedEvidenceReferences(
   output: unknown,
   previousOutputs: Readonly<Record<string, unknown>>,
@@ -537,9 +643,78 @@ export function dropUnevidencedCompetitorAnalyses(rawOutput: unknown): unknown {
 }
 
 function sanitizeRawOutput(stage: ResearchStage, rawOutput: unknown): unknown {
-  return stage === "competitor_analysis"
+  const competitorSafe = stage === "competitor_analysis"
     ? dropUnevidencedCompetitorAnalyses(rawOutput)
     : rawOutput;
+  return ["market_investigation", "buying_context", "icp_composition"].includes(stage)
+    ? downgradeUnsupportedObservedClaims(competitorSafe)
+    : competitorSafe;
+}
+
+/**
+ * A model may overstate the semantic strength of a real citation. This policy
+ * never creates or upgrades evidence: it only downgrades an "observed" claim
+ * when the cited links do not satisfy the contract's directness threshold.
+ */
+export function downgradeUnsupportedObservedClaims(rawOutput: unknown): unknown {
+  const output = structuredClone(rawOutput);
+  walkRecords(output, (record) => {
+    if (record.status === "observed" && Array.isArray(record.evidence)) {
+      const directlyObserved = record.evidence.some((candidate) => {
+        if (!candidate || typeof candidate !== "object") return false;
+        const link = candidate as Record<string, unknown>;
+        return link.relation === "supports" &&
+          typeof link.directness === "number" && link.directness >= 3 &&
+          typeof link.specificity === "number" && link.specificity >= 2;
+      });
+      if (!directlyObserved) {
+        record.status = "inferred";
+        if (typeof record.confidence === "number") {
+          record.confidence = Math.min(record.confidence, 0.65);
+        }
+      }
+    }
+    if (
+      record.status === "unknown" &&
+      typeof record.confidence === "number" &&
+      record.confidence > 0.25
+    ) {
+      record.confidence = 0.25;
+    }
+    if (record.state === "priority_for_test" && record.sourcingStatus !== "verified") {
+      record.state = "adjacent_experiment";
+    }
+
+    if (!Array.isArray(record.claims)) return;
+    for (const [field, dimension] of [
+      ["budget", "budget"],
+      ["salesCycle", "sales_cycle"],
+    ] as const) {
+      const value = record[field];
+      if (!value || typeof value !== "object" || !("status" in value)) continue;
+      const observed = record.claims.some((candidate) =>
+        Boolean(candidate) &&
+        typeof candidate === "object" &&
+        (candidate as Record<string, unknown>).dimension === dimension &&
+        (candidate as Record<string, unknown>).status === "observed",
+      );
+      if (!observed && (value as Record<string, unknown>).status === "observed") {
+        (value as Record<string, unknown>).status = "inferred";
+      }
+    }
+  });
+  return output;
+}
+
+function walkRecords(value: unknown, visitor: (record: Record<string, unknown>) => void): void {
+  if (Array.isArray(value)) {
+    for (const item of value) walkRecords(item, visitor);
+    return;
+  }
+  if (!value || typeof value !== "object") return;
+  const record = value as Record<string, unknown>;
+  visitor(record);
+  for (const child of Object.values(record)) walkRecords(child, visitor);
 }
 
 export function serializeRecoveryContext(value: unknown, maxCharacters = 200_000): string {
@@ -597,6 +772,8 @@ export function createLangChainResearchAgentExecutorFromEnvironment(
   documents?: InternalDocumentSearch,
   recorder?: ResearchToolRunRecorder,
   modelPolicyReader?: WorkspaceAiModelPolicyReader,
+  sourcingValidator?: V3SourcingValidator,
+  toolRequestRegistry?: import("@outbound/application/gtm/product-research-ports").ResearchToolRequestRegistry,
 ): LangChainResearchAgentExecutor {
   const model = resolveResearchModelConfigurationFromEnvironment(process.env);
   return new LangChainResearchAgentExecutor({
@@ -605,6 +782,8 @@ export function createLangChainResearchAgentExecutorFromEnvironment(
     crawlerApiKey: requiredEnvironment("CRAWLER_API_KEY"),
     ...(documents ? { documents } : {}),
     ...(recorder ? { recorder } : {}),
+    ...(sourcingValidator ? { sourcingValidator } : {}),
+    ...(toolRequestRegistry ? { toolRequestRegistry } : {}),
     ...(model.provider === "kimi-code" && modelPolicyReader
       ? { modelPolicyReader }
       : {}),
@@ -618,10 +797,28 @@ export function selectModelCandidates(
     "researchModels" | "synthesisModels"
   >,
   workspacePolicy: WorkspaceAiModelPolicy | null | undefined,
+  researchVersion: 1 | 2 | 3 | undefined = 3,
 ): readonly string[] {
-  return deepStages.has(stage)
+  return modelTierForStage(stage, researchVersion) === "principal"
     ? workspacePolicy?.researchModels ?? defaults.researchModels
     : workspacePolicy?.synthesisModels ?? defaults.synthesisModels;
+}
+
+export function modelTierForStage(
+  stage: ResearchStage,
+  researchVersion: 1 | 2 | 3 | undefined,
+): "principal" | "executor" {
+  if (researchVersion === 3) {
+    return principalStages.has(stage) ? "principal" : "executor";
+  }
+  return deepStages.has(stage) ? "principal" : "executor";
+}
+
+export function reasoningEffortForStage(
+  stage: ResearchStage,
+  researchVersion: 1 | 2 | 3 | undefined,
+): KimiReasoningEffort {
+  return modelTierForStage(stage, researchVersion) === "principal" ? "max" : "low";
 }
 
 export function resolveResearchModelConfigurationFromEnvironment(
@@ -659,13 +856,13 @@ export function resolveResearchModelPolicyFromEnvironment(
         environment,
         "KIMI_RESEARCH_MODELS",
         "KIMI_RESEARCH_MODEL",
-        ["kimi-for-coding"],
+        ["k3", "k3-256k"],
       ),
       synthesisModels: modelCandidatesFromEnvironment(
         environment,
         "KIMI_SYNTHESIS_MODELS",
         "KIMI_SYNTHESIS_MODEL",
-        ["kimi-for-coding"],
+        ["k3-256k", "k3"],
       ),
     };
   }
@@ -688,6 +885,7 @@ export function buildChatModelFields(
     "provider" | "apiKey" | "baseUrl"
   >,
   model: string,
+  reasoningEffort: KimiReasoningEffort = "max",
 ): ChatOpenAIFields {
   return {
     apiKey: configuration.apiKey,
@@ -695,6 +893,9 @@ export function buildChatModelFields(
     maxRetries: 1,
     streamUsage: true,
     useResponsesApi: false,
+    ...(configuration.provider === "kimi-code"
+      ? { reasoning: { effort: reasoningEffort } }
+      : {}),
     ...(configuration.provider === "openai" ? { temperature: 0 } : {}),
     ...(configuration.baseUrl
       ? { configuration: { baseURL: configuration.baseUrl } }
@@ -772,13 +973,31 @@ const stageInstructions: Readonly<Record<ResearchStage, string>> = {
   competitor_analysis:
     "Analyze the discovered competitors. Delegate independent competitor investigations when useful and compare positioning, customer stories, served industries, workflows, strengths and evidence-backed gaps. Do not reduce the market to technical platform buyers.",
   buyer_landscape_discovery:
-    "Discover the real buyer landscape from external market evidence. For each competitor and status-quo alternative, research customer stories, industry pages, use cases, recurring workflows, corpus types and buying roles. Search for prospectable industry taxonomies and observable trigger signals. Before ranking, expand every promising umbrella market into independently prospectable organization types with distinct firmographics and buying committees. A combined segment such as law firms plus in-house legal departments is invalid: evaluate them separately. Do not bury regulated professional offices, specialist publishers or SME compliance teams inside generic legal/professional-services labels; investigate them as separate hypotheses and keep them only when externally evidenced. Explicitly classify every segment as end_customer, channel_partner or internal_builder, and evaluate both ability to build internally and willingness to buy. The product's own domain may support product fit but must never support marketEvidenceIds. Cover multiple plausible verticals before ranking; do not simply repeat the product landing page.",
+    "Discover the real buyer landscape from external market evidence. For each competitor and status-quo alternative, research customer stories, industry pages, use cases, recurring workflows, corpus types and buying roles. Search for prospectable industry taxonomies and observable trigger signals. Expand an umbrella market only when distinct organization types have materially different firmographics, workflows or buying committees. Explicitly classify every segment as end_customer, channel_partner or internal_builder, and evaluate both ability to build internally and willingness to buy. The product's own domain may support product fit but must never support marketEvidenceIds. Cover multiple plausible evidence routes before ranking; do not simply repeat the product landing page.",
   segment_synthesis:
-    "Synthesize distinct, actionable market segments primarily from buyer_landscape_discovery. Preserve buyer type, industries, recurring workflows, build-vs-buy assessment, prospecting filters and external market evidence. Split different organization types and buying committees into separate segments; do not merge law firms with in-house legal teams or materially different regulated professions into one generic segment.",
+    "Synthesize distinct, actionable market segments primarily from buyer_landscape_discovery. Preserve buyer type, industries, recurring workflows, build-vs-buy assessment, prospecting filters and external market evidence. Split organizations only when their firmographics, workflows or buying committees differ materially; never split or merge them merely to reach a target count.",
   icp_synthesis:
-    "Produce exactly five prospectable ICP proposals for the requested audience when five evidenced segments exist. Include buyer type, firmographics, NACE or industry terms, company size, geography, job titles, search keywords, observable triggers, exclusions and unknowns. Score product fit, pain, recurrence, budget, urgency, reachability, build ability, willingness to buy and evidence strength. Preserve portfolio diversity: when the buyer landscape evidences a specialist long-tail segment from the mandatory exploration checklist, include at least one such segment instead of filling all five slots with adjacent large-enterprise markets. For a legal/compliance product, the five proposals should cover at least four separately evidenced organization types from that checklist. A product landing page is never market-demand evidence. Internal builders are not valid primary ICPs.",
+    "Produce zero to five prospectable ICP proposals for the requested audience. Zero is valid when evidence is insufficient. Include buyer type, firmographics, industry terms, company size, geography, job titles, search keywords, observable triggers, exclusions and unknowns. Preserve distinct product fit, market evidence and sourcing criteria. A product landing page is never market-demand evidence. Internal builders are not valid primary ICPs. Never add a proposal merely to reach a target count.",
   evidence_review:
     "Audit every material finding against its cited source and audit commercial usefulness. Reject circular market claims supported only by the product's own site, reject buyer segments without external demand evidence or searchable prospecting criteria, identify contradictions, and state whether the resulting ICPs are ready for human review.",
+  product_truth:
+    "Build the product truth without ranking or recommending any market. Separate available, planned, claimed, unknown and contradicted facts. Extract 15 to 25 decision-relevant capabilities, constraints, positioning statements and workflows; omit navigation copy and repeated marketing claims. Industry examples from product content are positioning hints only. Return durable evidence capsules with source relation, evidence kind and origin family.",
+  problem_mapping:
+    "Map product facts into sector-neutral problem frames. Describe actor, workflow, recurrence, corpus, failure cost, current alternative and constraints. Use only supplied product facts. Do not name or infer organization types and do not perform market ranking.",
+  organization_discovery:
+    "Discover up to eight organization hypotheses from four evidence routes: named adoption, status-quo alternatives, buyer-side signals and adjacent workflow transfer. Every hypothesis must identify its originating problem, origin, assumptions, validation queries and falsification queries. Product-content audiences receive no ranking advantage. Do not rank candidates.",
+  market_investigation:
+    "Investigate organization hypotheses independently. When stageSnapshot.assignedHypothesisId is present, investigate exactly that hypothesis and return exactly one investigation with the same hypothesisId; never add another hypothesis. Seek direct observations and counter-evidence for problem recurrence, impact, urgency, acquisition behavior, build propensity, buyer access and competitive pressure. Budget, willingness to buy and sales cycle remain unknown without direct evidence. Preserve source families so syndicated copies never become independent proof.",
+  buying_context:
+    "Derive buying contexts only from completed investigations. Identify users, sponsors, economic buyers, purchase triggers and objections. Mark every claim observed, inferred, unknown or contradicted. Never turn an inference into an observation, and keep budget or sales cycle unknown without direct evidence.",
+  sourcing_validation:
+    "Return the structured result of a read-only sourcing validation. Distinguish verified matches from invalid queries, provider limitations, insufficient coverage, absent accounts and exhausted budget. Never interpret a provider failure as proof that a market does not exist. Attest that no import, invitation or message occurred.",
+  icp_composition:
+    "Compose zero to five ICP candidates from existing product facts, investigations, buying contexts and sourcing tests. An ICP is organization type times use case times buying context. Do not browse or add facts. Keep attractiveness, executability and research confidence separate and preserve hypothesis origin and sourcing status.",
+  adversarial_review:
+    "Attempt to invalidate each composed ICP without seeing a final rank. Check blocking product contradictions, weak problem evidence, internal-build propensity, dominant alternatives, inaccessible buyers and misleading sourcing results. Keep, downgrade or reject with resolvable evidence. Report actual generated, scanned, investigated, sourced and budget-skipped coverage.",
+  objective_ranking:
+    "Rank only the reviewed structured candidates for the mission objective. Do not browse, add facts, repair missing research or collapse attractiveness, executability and confidence into a single pseudo-scientific score. Return zero to five proposals; zero is valid. Mark the report partial when required work is missing.",
 };
 
 function evidenceSystemPrompt(task: string): string {
@@ -793,11 +1012,45 @@ Security and evidence rules:
 - The researched product's own website proves only its capabilities and positioning. It cannot prove market demand, buyer pain, willingness to buy, segment priority, budget or urgency.
 - Customer stories and competitor industry pages may support observed adoption, but important market claims should be corroborated by another external source when possible.
 - Preserve uncertainty. If evidence is missing, mark the claim as a hypothesis.
+- In V3, status "observed" requires a supporting evidence link with directness at least 3 and specificity at least 2. Otherwise use "inferred" or "unknown".
+- In V3, an "unknown" claim must have confidence at most 0.25, and only verified sourcing can support state "priority_for_test".
 - Never send a message, contact a prospect, publish an ICP, or perform an external write.
 - Return exactly the requested structured response.`;
 }
 
 function buildTask(stage: ResearchStage, input: AgentStageInput): string {
+  if (input.brief.researchVersion === 3) {
+    return JSON.stringify(
+      {
+        objective: stageInstructions[stage],
+        runId: input.runId,
+        mission: {
+          productName: input.brief.productName,
+          geography: input.brief.geography,
+          languages: input.brief.languages,
+          salesMotion: input.brief.salesMotion,
+          audienceGoal: input.brief.audienceGoal ?? "end_customers",
+          buyerConstraints: input.brief.buyerConstraints ?? "",
+          researchObjective: input.brief.researchObjective ?? "qualified_conversations",
+          depth: input.brief.depth,
+          deadlineAt: input.deadlineAt,
+          ...(stage === "market_investigation" && input.workItemKey !== "main"
+            ? {
+                assignedHypothesisId: input.previousOutputs.assignedHypothesisId,
+                workItemContract:
+                  "Return exactly one investigation for assignedHypothesisId and no other hypothesis.",
+              }
+            : {}),
+          ...(stage === "product_truth" && input.brief.internalDocumentIds.length === 0
+            ? { productUrl: input.brief.productUrl }
+            : {}),
+        },
+        stageSnapshot: input.previousOutputs,
+      },
+      null,
+      2,
+    );
+  }
   return JSON.stringify(
     {
       objective: stageInstructions[stage],
@@ -805,7 +1058,7 @@ function buildTask(stage: ResearchStage, input: AgentStageInput): string {
       brief: input.brief,
       audiencePolicy: audiencePolicy(input.brief.audienceGoal ?? "end_customers"),
       buyerConstraints: input.brief.buyerConstraints ?? "",
-      mandatoryBuyerExploration:
+      explorationPolicy:
         stage === "buyer_landscape_discovery" || stage === "icp_synthesis"
           ? mandatoryBuyerExploration(input)
           : [],
@@ -816,21 +1069,34 @@ function buildTask(stage: ResearchStage, input: AgentStageInput): string {
   );
 }
 
-export function mandatoryBuyerExploration(input: AgentStageInput): readonly string[] {
-  const productContext = JSON.stringify({
-    description: input.brief.description,
-    productAnalysis: input.previousOutputs.product_analysis,
-  }).toLowerCase();
-  const checklist = [
-    "Expand every broad market into separately searchable organization types; never merge organizations with different firmographics or buying committees.",
-    "For every required organization type, run a dedicated market query before broad catch-all queries, then either return an externally evidenced segment or explain its rejection in marketUnknowns.",
-  ];
-  if (/legal|jurid|avocat|compliance|conformit/.test(productContext)) {
-    checklist.push(
-      "Research law firms, in-house legal departments, notarial offices, specialist legal publishers, consulting firms, and SME compliance teams as six separate hypotheses. Do not combine them in one buyer segment.",
-    );
+export function selectToolsForStage(
+  stage: ResearchStage,
+  researchVersion: 1 | 2 | 3 | undefined,
+  hasInternalDocuments: boolean,
+  tools: readonly ReturnType<typeof createResearchTools>[number][],
+): readonly ReturnType<typeof createResearchTools>[number][] {
+  if (researchVersion !== 3) return [...tools];
+  const internalNames = new Set(["searchInternalDocuments", "readInternalDocument"]);
+  const externalNames = new Set(["searchWeb", "readWebPage", "discoverWebsite", "readWebsitePages"]);
+  if (stage === "product_truth") {
+    const allowed = hasInternalDocuments
+      ? internalNames
+      : new Set(["searchWeb", "readWebPage", "readWebsitePages"]);
+    return tools.filter((candidate) => allowed.has(candidate.name));
   }
-  return checklist;
+  if (["organization_discovery", "market_investigation", "adversarial_review"].includes(stage)) {
+    return tools.filter((candidate) => externalNames.has(candidate.name));
+  }
+  return [];
+}
+
+export function mandatoryBuyerExploration(input: AgentStageInput): readonly string[] {
+  void input;
+  return [
+    "Expand every broad market into separately searchable organization types; never merge organizations with different firmographics or buying committees.",
+    "Derive organization hypotheses from observed workflows, alternatives, adoption signals and adjacent transfers; never from a hidden sector checklist.",
+    "Investigate a hypothesis only when its evidence route is explicit, and record its rejection when falsifying evidence wins.",
+  ];
 }
 
 export function structuredOutputGraceMs(
@@ -841,6 +1107,41 @@ export function structuredOutputGraceMs(
   return Math.min(5 * 60_000, Math.max(2 * 60_000, Math.floor(researchDurationMs / 4)));
 }
 
+export function v3StageDurationMs(stage: ResearchStage): number {
+  const durations: Partial<Record<ResearchStage, number>> = {
+    product_truth: 150_000,
+    problem_mapping: 300_000,
+    organization_discovery: 480_000,
+    market_investigation: 480_000,
+    buying_context: 300_000,
+    sourcing_validation: 180_000,
+    icp_composition: 300_000,
+    adversarial_review: 360_000,
+    objective_ranking: 90_000,
+  };
+  return durations[stage] ?? Number.MAX_SAFE_INTEGER;
+}
+
+export function v3StageToolLimits(
+  stage: ResearchStage,
+  base: { searches: number; pages: number; tokens: number; durationMs: number },
+) {
+  const caps: Partial<Record<ResearchStage, { searches: number; pages: number; tokens: number }>> = {
+    product_truth: { searches: 2, pages: 6, tokens: 180_000 },
+    organization_discovery: { searches: 10, pages: 30, tokens: 300_000 },
+    market_investigation: { searches: 20, pages: 60, tokens: 500_000 },
+    adversarial_review: { searches: 8, pages: 20, tokens: 250_000 },
+  };
+  const cap = caps[stage];
+  if (!cap) return base;
+  return {
+    ...base,
+    searches: Math.min(base.searches, cap.searches),
+    pages: Math.min(base.pages, cap.pages),
+    tokens: Math.min(base.tokens, cap.tokens),
+  };
+}
+
 function audiencePolicy(goal: "end_customers" | "channel_partners" | "both"): string {
   if (goal === "end_customers") {
     return "Return end-user organizations that buy the outcome. Do not rank agencies, systems integrators, consultants reselling the product, or internal AI engineering teams as ICPs.";
@@ -849,6 +1150,54 @@ function audiencePolicy(goal: "end_customers" | "channel_partners" | "both"): st
     return "Return channel partners that can repeatedly resell, implement or operate the product for their own clients; do not mix them with end-user buyers.";
   }
   return "Research end customers and channel partners, classify them explicitly, and keep internal builders excluded from the final ICP list.";
+}
+
+export function mergeProductTruthOutputs(
+  internal: ProductTruthOutput,
+  publicOutput: ProductTruthOutput,
+): ProductTruthOutput {
+  const internalNamespaced = namespaceProductTruth(internal, "internal");
+  const publicNamespaced = namespaceProductTruth(publicOutput, "public");
+  return parseAgentOutput("product_truth", {
+    productSummary: `${publicNamespaced.productSummary}\n\nInternal product facts: ${internalNamespaced.productSummary}`,
+    facts: [
+      ...publicNamespaced.facts.slice(0, 15),
+      ...internalNamespaced.facts.slice(0, 15),
+    ],
+    unknowns: uniqueStrings([
+      ...publicNamespaced.unknowns,
+      ...internalNamespaced.unknowns,
+    ]).slice(0, 20),
+    evidence: [
+      ...publicNamespaced.evidence,
+      ...internalNamespaced.evidence,
+    ],
+  }) as ProductTruthOutput;
+}
+
+function namespaceProductTruth(
+  output: ProductTruthOutput,
+  namespace: "internal" | "public",
+): ProductTruthOutput {
+  const evidenceIds = new Map(
+    output.evidence.map((source) => [source.evidenceId, `${namespace}:${source.evidenceId}`]),
+  );
+  return {
+    ...output,
+    facts: output.facts.map((fact) => ({
+      ...fact,
+      factId: `${namespace}:${fact.factId}`,
+      evidenceIds: fact.evidenceIds.map((id) => evidenceIds.get(id) ?? `${namespace}:${id}`),
+    })),
+    evidence: output.evidence.map((source) => ({
+      ...source,
+      evidenceId: evidenceIds.get(source.evidenceId)!,
+    })),
+  };
+}
+
+function uniqueStrings(values: readonly string[]): string[] {
+  return [...new Set(values.filter(Boolean))];
 }
 
 function readStructuredResponse(result: unknown): unknown {

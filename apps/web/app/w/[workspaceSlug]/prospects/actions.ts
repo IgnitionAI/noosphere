@@ -5,8 +5,20 @@ import {
   addContactEmployment,
   addContactIdentity,
   createContact,
+  improveConversationDraft,
   suppressContact,
+  sendConversationCommand,
 } from "@/lib/api";
+
+export async function improveProspectMessageAction(
+  workspaceSlug: string,
+  conversationId: string,
+  draft: string,
+) {
+  const body = draft.trim();
+  if (!body) throw new Error("Le brouillon est obligatoire.");
+  return improveConversationDraft(workspaceSlug, conversationId, body);
+}
 
 export async function createContactAction(workspaceSlug: string, formData: FormData) {
   const firstName = String(formData.get("firstName") ?? "").trim();
@@ -26,6 +38,25 @@ export async function createContactAction(workspaceSlug: string, formData: FormD
     ...(companyId && title ? { employment: { companyId, title } } : {}),
   });
   revalidatePath(`/w/${workspaceSlug}/prospects`);
+}
+
+export async function sendProspectMessageAction(
+  workspaceSlug: string,
+  contactId: string,
+  conversationId: string,
+  formData: FormData,
+) {
+  const mode = String(formData.get("mode") ?? "manual");
+  if (mode !== "manual" && mode !== "setter") throw new Error("Mode d’envoi invalide.");
+  const body = String(formData.get("body") ?? "").trim();
+  if (mode === "manual" && !body) throw new Error("Le message est obligatoire.");
+  await sendConversationCommand(workspaceSlug, conversationId, {
+    mode,
+    ...(body ? { body } : {}),
+  });
+  revalidatePath(`/w/${workspaceSlug}/prospects`);
+  revalidatePath(`/w/${workspaceSlug}/prospects/${contactId}`);
+  revalidatePath(`/w/${workspaceSlug}/inbox`);
 }
 
 export async function addIdentityAction(

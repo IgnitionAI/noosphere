@@ -8,7 +8,7 @@ import {
 } from "@outbound/interface/http/request-context";
 
 const route = "/api/v1/workspace-ai-settings";
-const modelId = z.string().trim().min(1).max(100).regex(/^[a-zA-Z0-9._-]+$/);
+const modelId = z.enum(["k3", "k3-256k"]);
 const settingsInput = z
   .object({
     researchModels: z.array(modelId).min(1).max(8),

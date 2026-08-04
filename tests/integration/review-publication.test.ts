@@ -63,6 +63,7 @@ databaseDescribe("F-011 human review and publication", () => {
         knownCompetitors: [],
         internalDocumentIds: [],
         depth: "standard",
+        researchVersion: 2,
       },
     });
     runId = run.snapshot.id;
@@ -174,6 +175,7 @@ databaseDescribe("F-011 human review and publication", () => {
             knownCompetitors: [],
             internalDocumentIds: [],
             depth: "standard",
+            researchVersion: 2,
           }),
         }),
       )

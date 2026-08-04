@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { ResearchOrchestrator } from "@outbound/application/gtm/research-orchestrator";
+import {
+  isBudgetExhaustion,
+  ResearchOrchestrator,
+} from "@outbound/application/gtm/research-orchestrator";
 import {
   CreateProductResearchRun,
   PauseProductResearchRun,
@@ -13,7 +16,7 @@ import {
 } from "@outbound/application/gtm/product-research-ports";
 import { CryptoIdGenerator, type Clock } from "@outbound/application/shared/ports";
 import type { AgentExecutionResult, AgentStageInput } from "@outbound/contracts/product-research";
-import { researchStages, type ResearchStage } from "@outbound/domain/gtm/product-research";
+import { researchStages, v3ResearchStages, type ResearchStage } from "@outbound/domain/gtm/product-research";
 import { Sha256ContentHasher } from "@outbound/infrastructure/shared/sha256-content-hasher";
 import { InMemoryResearchBackend } from "@outbound/infrastructure/testing/in-memory-research-backend";
 import { validOutputFor } from "../fixtures/research-agent-fixtures";
@@ -30,10 +33,14 @@ class MutableClock implements Clock {
 
 class FakeAgents implements ResearchAgentExecutor {
   readonly calls = new Map<ResearchStage, number>();
+  readonly inputs = new Map<ResearchStage, AgentStageInput>();
   retryOnce: ResearchStage | null = null;
   failOnce: ResearchStage | null = null;
+  budgetOnce: ResearchStage | null = null;
+  organizationHypothesisCount = 1;
 
   async execute(stage: ResearchStage, _input: AgentStageInput): Promise<AgentExecutionResult> {
+    this.inputs.set(stage, structuredClone(_input));
     const calls = (this.calls.get(stage) ?? 0) + 1;
     this.calls.set(stage, calls);
     if (this.retryOnce === stage && calls === 1) {
@@ -42,8 +49,23 @@ class FakeAgents implements ResearchAgentExecutor {
     if (this.failOnce === stage && calls === 1) {
       throw new TerminalAgentError("MODEL_PROVIDER_QUOTA_EXHAUSTED", "quota exhausted");
     }
+    if (this.budgetOnce === stage && calls === 1) {
+      throw new TerminalAgentError("RESEARCH_BUDGET_EXHAUSTED", "stage budget exhausted");
+    }
+    let output = structuredClone(validOutputFor(stage)) as Record<string, any>;
+    if (stage === "organization_discovery" && this.organizationHypothesisCount > 1) {
+      const base = output.hypotheses[0];
+      output.hypotheses = Array.from({ length: this.organizationHypothesisCount }, (_, index) => ({
+        ...structuredClone(base),
+        hypothesisId: `H${String(index + 1).padStart(2, "0")}`,
+        organizationType: `Evidence-derived organization ${index + 1}`,
+      }));
+    }
+    if (stage === "market_investigation" && _input.workItemKey !== "main") {
+      output.investigations[0].hypothesisId = _input.workItemKey.replace("hypothesis:", "");
+    }
     return {
-      output: validOutputFor(stage),
+      output: output as AgentExecutionResult["output"],
       metadata: {
         provider: "fixture",
         model: "deterministic-v1",
@@ -83,6 +105,203 @@ const brief = {
 };
 
 describe("ResearchOrchestrator", () => {
+  test("recognizes both stage and global budget exhaustion as partial-report outcomes", () => {
+    expect(isBudgetExhaustion("RESEARCH_BUDGET_EXHAUSTED")).toBe(true);
+    expect(isBudgetExhaustion("RESEARCH_GLOBAL_DEADLINE_EXHAUSTED")).toBe(true);
+    expect(isBudgetExhaustion("MODEL_PROVIDER_QUOTA_EXHAUSTED")).toBe(false);
+  });
+
+  test("fans out at most four durable investigations and joins them exactly once", async () => {
+    const backend = new InMemoryResearchBackend();
+    const ids = new CryptoIdGenerator();
+    const clock = new MutableClock(new Date("2026-08-02T10:00:00.000Z"));
+    const agents = new FakeAgents();
+    agents.organizationHypothesisCount = 5;
+    const workspaceId = crypto.randomUUID();
+    const run = await new CreateProductResearchRun(backend, ids, clock).execute({
+      workspaceId,
+      brief: { ...brief, researchVersion: 3 as const },
+    });
+    await new StartProductResearchRun(backend, ids, clock).execute({
+      workspaceId,
+      runId: run.snapshot.id,
+      correlationId: "corr-fanout",
+    });
+    const orchestrator = new ResearchOrchestrator(
+      backend,
+      backend,
+      agents,
+      ids,
+      clock,
+      new Sha256ContentHasher(),
+    );
+
+    for (let index = 0; index < 3; index += 1) {
+      const [job] = await backend.lease({
+        workerId: "fanout-planner",
+        types: ["research.stage.execute"],
+        limit: 1,
+        leaseMs: 30_000,
+        now: clock.now(),
+      });
+      await orchestrator.process(job!);
+    }
+    const workItems = await backend.lease({
+      workerId: "fanout-workers",
+      types: ["research.stage.execute"],
+      limit: 10,
+      leaseMs: 30_000,
+      now: clock.now(),
+    });
+    expect(workItems).toHaveLength(4);
+    expect(new Set(workItems.map((job) => String((job.payload as Record<string, unknown>).workItemKey))).size).toBe(4);
+    await Promise.all(workItems.map((job) => orchestrator.process(job)));
+
+    const finalizers = await backend.lease({
+      workerId: "fanout-finalizer",
+      types: ["research.stage.execute"],
+      limit: 10,
+      leaseMs: 30_000,
+      now: clock.now(),
+    });
+    expect(finalizers).toHaveLength(1);
+    expect(finalizers[0]?.payload).toMatchObject({ finalizeFanout: true });
+    await orchestrator.process(finalizers[0]!);
+
+    const market = await backend.findCompletedCheckpoint(
+      workspaceId,
+      run.snapshot.id,
+      "market_investigation",
+    );
+    expect(market?.output).toMatchObject({
+      investigations: expect.arrayContaining([
+        expect.objectContaining({ hypothesisId: "H01" }),
+        expect.objectContaining({ hypothesisId: "H02" }),
+        expect.objectContaining({ hypothesisId: "H03" }),
+        expect.objectContaining({ hypothesisId: "H04" }),
+      ]),
+      notInvestigatedHypothesisIds: ["H05"],
+    });
+  });
+
+  test("runs the complete V3 workflow and exposes its automatic report", async () => {
+    const backend = new InMemoryResearchBackend();
+    const ids = new CryptoIdGenerator();
+    const clock = new MutableClock(new Date("2026-08-02T10:00:00.000Z"));
+    const agents = new FakeAgents();
+    const workspaceId = crypto.randomUUID();
+    const run = await new CreateProductResearchRun(backend, ids, clock).execute({
+      workspaceId,
+      brief: { ...brief, researchVersion: 3 as const },
+    });
+    await new StartProductResearchRun(backend, ids, clock).execute({
+      workspaceId,
+      runId: run.snapshot.id,
+      correlationId: "corr-v3",
+    });
+    const orchestrator = new ResearchOrchestrator(
+      backend,
+      backend,
+      agents,
+      ids,
+      clock,
+      new Sha256ContentHasher(),
+    );
+
+    const expectedJobs = [
+      "product_truth",
+      "problem_mapping",
+      "organization_discovery",
+      "market_investigation",
+      "market_investigation",
+      "buying_context",
+      "sourcing_validation",
+      "icp_composition",
+      "adversarial_review",
+      "objective_ranking",
+    ] as const;
+    for (const expectedStage of expectedJobs) {
+      const [job] = await backend.lease({
+        workerId: "worker-v3",
+        types: ["research.stage.execute"],
+        limit: 1,
+        leaseMs: 30_000,
+        now: clock.now(),
+      });
+      expect(job?.payload).toMatchObject({ stage: expectedStage });
+      expect((await orchestrator.process(job!)).outcome).toBe("completed");
+    }
+
+    const completed = await backend.findById(workspaceId, run.snapshot.id);
+    const report = await backend.getReport(workspaceId, run.snapshot.id);
+    expect(completed?.snapshot.status).toBe("completed");
+    expect(report.proposals).toHaveLength(1);
+    expect(report.proposals[0]).toMatchObject({
+      name: "Distributed operations teams with controlled-document workflows",
+      criteria: { origin: "external_signal", sourcingStatus: "verified" },
+    });
+    expect(backend.publishedVersions).toHaveLength(1);
+    expect(backend.publishedVersions[0]).toMatchObject({
+      workspaceId,
+      runId: run.snapshot.id,
+      userId: null,
+    });
+    expect([...agents.calls.keys()]).toEqual([...v3ResearchStages]);
+    expect(backend.aiRuns).toHaveLength(10);
+  });
+
+  test("budget exhaustion returns a useful partial V3 report instead of interrupted", async () => {
+    const backend = new InMemoryResearchBackend();
+    const ids = new CryptoIdGenerator();
+    const clock = new MutableClock(new Date("2026-08-02T10:00:00.000Z"));
+    const agents = new FakeAgents();
+    agents.budgetOnce = "buying_context";
+    const workspaceId = crypto.randomUUID();
+    const run = await new CreateProductResearchRun(backend, ids, clock).execute({
+      workspaceId,
+      brief: { ...brief, researchVersion: 3 as const },
+    });
+    await new StartProductResearchRun(backend, ids, clock).execute({
+      workspaceId,
+      runId: run.snapshot.id,
+      correlationId: "corr-partial",
+    });
+    const orchestrator = new ResearchOrchestrator(
+      backend,
+      backend,
+      agents,
+      ids,
+      clock,
+      new Sha256ContentHasher(),
+    );
+
+    for (let index = 0; index < 6; index += 1) {
+      const [job] = await backend.lease({
+        workerId: "worker-partial",
+        types: ["research.stage.execute"],
+        limit: 1,
+        leaseMs: 30_000,
+        now: clock.now(),
+      });
+      expect(job).toBeDefined();
+      await orchestrator.process(job!);
+    }
+
+    const partial = await backend.findById(workspaceId, run.snapshot.id);
+    const report = await backend.getReport(workspaceId, run.snapshot.id);
+    expect(partial?.snapshot.status).toBe("partial");
+    expect(report.stageOutputs.objective_ranking).toMatchObject({
+      status: "partial",
+      missingStages: expect.arrayContaining(["buying_context", "objective_ranking"]),
+    });
+    expect(report.proposals).not.toHaveLength(0);
+    expect(report.proposals[0]).toMatchObject({
+      rank: 1,
+      criteria: { state: "insufficient" },
+    });
+    expect(backend.publishedVersions).toHaveLength(0);
+  });
+
   test("runs all stages, persists checkpoints and never re-executes a completed stage", async () => {
     const backend = new InMemoryResearchBackend();
     const ids = new CryptoIdGenerator();

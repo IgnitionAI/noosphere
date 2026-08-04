@@ -2,6 +2,7 @@ import { ArrowLeft, Ban, Briefcase, Mail, Phone, Plus, TriangleAlert, UserRound 
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getContact, listCompanies, OutboundApiError } from "@/lib/api";
+import { resolveProspectReturn } from "@/lib/prospect-navigation";
 import { addEmploymentAction, addIdentityAction, suppressContactAction } from "../actions";
 
 export const metadata = { title: "Prospect" };
@@ -22,10 +23,14 @@ const VERIFICATION_BADGE: Record<string, { label: string; className: string }> =
 
 export default async function ContactDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ workspaceSlug: string; contactId: string }>;
+  searchParams: Promise<{ returnTo?: string }>;
 }) {
   const { workspaceSlug, contactId } = await params;
+  const { returnTo } = await searchParams;
+  const returnLink = resolveProspectReturn(workspaceSlug, returnTo);
   let contact;
   try {
     [contact] = await Promise.all([getContact(workspaceSlug, contactId)]);
@@ -44,10 +49,10 @@ export default async function ContactDetailPage({
       <header className="mb-6">
         <Link
           className="mb-4 inline-flex items-center gap-2 text-xs font-semibold text-muted"
-          href={`/w/${workspaceSlug}/prospects`}
+          href={returnLink.href}
         >
           <ArrowLeft size={14} />
-          Retour aux prospects
+          {returnLink.label}
         </Link>
         <div className="flex flex-wrap items-center gap-3">
           <span className="grid h-11 w-11 place-items-center rounded-xl bg-slate-100 text-navy">

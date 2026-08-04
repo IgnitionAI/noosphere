@@ -21,8 +21,8 @@ describe("workspace AI settings HTTP route", () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
-      researchModels: ["kimi-for-coding"],
-      synthesisModels: ["kimi-for-coding"],
+      researchModels: ["k3", "k3-256k"],
+      synthesisModels: ["k3-256k", "k3"],
       source: "environment",
       updatedAt: null,
     });
@@ -32,15 +32,15 @@ describe("workspace AI settings HTTP route", () => {
     const { handle } = fixture("owner");
     const response = await handle(
       request("PUT", {
-        researchModels: ["k3", "kimi-for-coding", "k3"],
-        synthesisModels: ["kimi-for-coding-highspeed", "kimi-for-coding"],
+        researchModels: ["k3", "k3-256k", "k3"],
+        synthesisModels: ["k3-256k", "k3"],
       }),
     );
 
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({
-      researchModels: ["k3", "kimi-for-coding"],
-      synthesisModels: ["kimi-for-coding-highspeed", "kimi-for-coding"],
+      researchModels: ["k3", "k3-256k"],
+      synthesisModels: ["k3-256k", "k3"],
       source: "workspace",
     });
   });
@@ -58,6 +58,18 @@ describe("workspace AI settings HTTP route", () => {
     expect(response.status).toBe(403);
     expect(await response.json()).toMatchObject({ code: "WORKSPACE_FORBIDDEN" });
   });
+
+  test("rejects the removed Kimi coding models", async () => {
+    const { handle } = fixture("owner");
+    const response = await handle(
+      request("PUT", {
+        researchModels: ["kimi-for-coding"],
+        synthesisModels: ["kimi-for-coding-highspeed"],
+      }),
+    );
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ code: "INVALID_REQUEST" });
+  });
 });
 
 function fixture(role: WorkspaceRole) {
@@ -65,8 +77,8 @@ function fixture(role: WorkspaceRole) {
   const application = new WorkspaceAiSettingsApplication(
     repository,
     {
-      researchModels: ["kimi-for-coding"],
-      synthesisModels: ["kimi-for-coding"],
+      researchModels: ["k3", "k3-256k"],
+      synthesisModels: ["k3-256k", "k3"],
     },
     () => new Date("2026-07-25T12:00:00.000Z"),
   );

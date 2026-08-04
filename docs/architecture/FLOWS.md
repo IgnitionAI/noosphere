@@ -4,32 +4,24 @@
 
 ```mermaid
 sequenceDiagram
-    actor Operator as Opérateur
-    participant UI
-    participant CampaignUC as Cas d’usage Campaign
-    participant Domain
+    participant Assessment as Évaluation canal
     participant DB as PostgreSQL
     participant Worker
     participant AI
 
-    Operator->>UI: Sélectionne OfferVersion + ICPVersion
-    UI->>CampaignUC: Créer campagne
-    CampaignUC->>Domain: Vérifier versions publiées
-    Domain-->>CampaignUC: Campagne draft
-    CampaignUC->>DB: Sauver campagne + outbox
+    Assessment->>DB: Canal recommended
+    Assessment->>DB: Campagne + run + job + outbox
     Worker->>DB: Consommer recherche/enrichissement
-    Worker->>AI: Scorer et expliquer
-    AI-->>Worker: Score + preuves
+    Worker->>AI: Personnaliser avec faits et preuves
+    AI-->>Worker: Messages structurés
     Worker->>DB: Sauver CampaignProspects
-    Operator->>UI: Examine et approuve la séquence
-    UI->>CampaignUC: Approuver et activer
-    CampaignUC->>Domain: approve() puis activate()
-    Domain->>Domain: Figer les cinq versions
-    CampaignUC->>DB: Commit état + outbox
+    Worker->>DB: Preflight déterministe
+    Worker->>DB: Publier séquence + enrollments + actions
 ```
 
-Activation refusée si une version manque, si la séquence n’est pas approuvée,
-ou si aucun compte expéditeur compatible n’est sain.
+Activation automatique refusée si une version manque, si la séquence est
+invalide, si aucun prospect n’est éligible ou si aucun compte compatible n’est
+sain.
 
 ## 2. Exécution d’une étape outbound
 
@@ -68,7 +60,6 @@ sequenceDiagram
     participant DB
     participant Worker
     participant AI
-    actor Reviewer as Relecteur
 
     Provider->>Webhook: Événement signé
     Webhook->>DB: INSERT IntegrationEvent unique
@@ -76,13 +67,12 @@ sequenceDiagram
     Worker->>DB: Persister conversation et message
     Worker->>DB: Suspendre séquences du contact
     Worker->>AI: Classifier avec contexte et preuves
-    AI-->>Worker: intention + confiance + brouillon
-    Worker->>DB: Classification + AIRun + ReplyDraft
-    Reviewer->>DB: Approuver, modifier ou rejeter
-    alt approuvé
-        Worker->>Provider: Envoyer réponse validée
-    else rejeté
-        Worker->>DB: Conserver feedback
+    AI-->>Worker: intention + action + réponse structurée
+    Worker->>DB: Classification + AutomatedReply ou suppression
+    alt réponse ou rendez-vous
+        Worker->>Provider: Envoyer dans le même thread
+    else refus ou opposition
+        Worker->>DB: Stopper et supprimer durablement le canal
     end
 ```
 

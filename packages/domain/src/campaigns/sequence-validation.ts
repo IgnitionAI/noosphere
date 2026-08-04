@@ -148,3 +148,41 @@ export function validateSequenceSteps(
   }
   return errors;
 }
+
+export function fitSequenceStepContent(step: SequenceStepInput): SequenceStepInput {
+  if (step.kind === "manual_task") return step;
+  const body = fitText(step.body, CHANNEL_LIMITS[step.kind]);
+  const subject = step.kind === "email" && step.subject
+    ? fitText(step.subject, EMAIL_SUBJECT_LIMIT)
+    : step.subject;
+  return { ...step, body, subject };
+}
+
+function fitText(value: string, limit: number): string {
+  const text = value.trim();
+  if (text.length <= limit) return text;
+  const questionEnd = text.lastIndexOf("?");
+  if (questionEnd >= 0) {
+    const questionStart = Math.max(
+      text.lastIndexOf(".", questionEnd - 1),
+      text.lastIndexOf("!", questionEnd - 1),
+      text.lastIndexOf("\n", questionEnd - 1),
+    ) + 1;
+    const question = text.slice(questionStart, questionEnd + 1).trim();
+    if (question.length < limit - 20) {
+      const intro = truncateAtWord(text.slice(0, questionStart).trim(), limit - question.length - 1);
+      return intro ? `${intro} ${question}` : question;
+    }
+    return `${truncateAtWord(question, limit - 1).replace(/\?+$/, "")}?`;
+  }
+  return truncateAtWord(text, limit);
+}
+
+function truncateAtWord(value: string, limit: number): string {
+  if (value.length <= limit) return value;
+  const slice = value.slice(0, limit).trimEnd();
+  const boundary = slice.lastIndexOf(" ");
+  return (boundary > Math.floor(limit * 0.6) ? slice.slice(0, boundary) : slice)
+    .replace(/[,:;\-]+$/, "")
+    .trimEnd();
+}

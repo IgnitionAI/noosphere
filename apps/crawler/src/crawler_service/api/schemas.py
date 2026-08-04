@@ -70,6 +70,7 @@ class CrawlRequest(BaseModel):
         description="URL patterns to include (regex)",
     )
     correlationId: str | None = Field(default=None, max_length=200)
+    idempotencyKey: str | None = Field(default=None, min_length=8, max_length=500)
 
     _validate_patterns = field_validator(
         "excludePatterns",
@@ -197,6 +198,7 @@ class CrawlPagesRequest(BaseModel):
         description="Extract image URLs from pages",
     )
     correlationId: str | None = Field(default=None, max_length=200)
+    idempotencyKey: str | None = Field(default=None, min_length=8, max_length=500)
 
 
 class CrawlPagesStartResponse(BaseModel):

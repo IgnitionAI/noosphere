@@ -120,6 +120,17 @@ databaseDescribe("F-020/F-021 CRM foundation", () => {
     expect((body2.data as { id: string }[]).every((row) => !ids1.has(row.id))).toBe(true);
   });
 
+  test("prospects: accepts PostgreSQL UUID values used by deterministic ICP versions", async () => {
+    const response = await handle(
+      new Request(
+        "http://localhost/api/v1/prospects?limit=100&icpVersionId=b1c82cfa-dacb-85de-6d89-8b263f6ba619",
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ data: [], filters: { icps: [] } });
+  });
+
   test("contacts: employment history, identity uniqueness, persistent suppression", async () => {
     const companyA = (await (
       await postJson("/api/v1/companies", { name: "Cabinet A", domain: "cabinet-a.fr" })

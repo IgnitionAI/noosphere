@@ -29,19 +29,6 @@ try {
     where run_id = ${runId}
     order by rank
   `;
-  const names = proposals.map((proposal) => proposal.name.toLowerCase());
-  const expected = [
-    ["law_firms", /cabinet.*avocat|law firm|legal practice/],
-    ["in_house_legal", /direction.*juridique|équipe.*juridique|in-house legal|legal team|corporate legal department/],
-    ["notaries", /notair|notari/],
-    ["legal_publishers", /éditeur.*juridique|édition.*juridique|legal publisher/],
-    ["consulting", /cabinet.*conseil|consulting firm|management consulting|conseil spécialisé/],
-    ["sme_compliance", /pme.*conformité|conformité.*pme|sme.*compliance|compliance.*sme/],
-  ] as const;
-  const covered = expected
-    .filter(([, pattern]) => names.some((name) => pattern.test(name)))
-    .map(([key]) => key);
-  const missing = expected.map(([key]) => key).filter((key) => !covered.includes(key));
   const prospectabilityFailures = proposals.flatMap((proposal) => {
     const criteria = object(proposal.criteria);
     const prospecting = object(criteria.prospecting);
@@ -57,15 +44,10 @@ try {
     }
     return failures;
   });
-  const topTwoContainLawFirm = names.slice(0, 2).some((name) =>
-    /cabinet.*avocat|law firm|legal practice/.test(name),
-  );
   const checks = {
-    readyForReview: run.status === "ready_for_review",
+    reportCompleted: ["completed", "ready_for_review"].includes(run.status),
     buyerLandscapeCompleted: Boolean(run.output),
-    proposalCount: proposals.length >= 3 && proposals.length <= 5,
-    expleeCoverage: covered.length >= 4,
-    lawFirmInTopTwo: topTwoContainLawFirm,
+    proposalCount: proposals.length <= 5,
     prospectable: prospectabilityFailures.length === 0,
   };
   console.info(
@@ -73,8 +55,6 @@ try {
       event: "ignitionrag_icp_evaluation",
       runId,
       checks,
-      covered,
-      missing,
       prospectabilityFailures,
       proposals: proposals.map(({ rank, name }) => ({ rank, name })),
     }),

@@ -1,0 +1,724 @@
+import { and, asc, desc, eq, gte, inArray, lt, or } from "drizzle-orm";
+import type {
+  OutboundChannelGateway,
+  OutboundSendRequest,
+} from "@outbound/application/campaigns/outbound-channel-gateway";
+import type { CampaignContentGenerator } from "@outbound/application/campaigns/campaign-content-generator";
+import { OutboundDeliveryError } from "@outbound/application/campaigns/outbound-channel-gateway";
+import type { JobQueue, LeasedJob } from "@outbound/application/jobs/job-queue";
+import type { Clock } from "@outbound/application/shared/ports";
+import { deriveCampaignExecutionState } from "@outbound/domain/campaigns/campaign-automation-health";
+import { nextAllowedCampaignSendAt, type CampaignSendSchedule } from "@outbound/domain/campaigns/campaign-autopilot-policy";
+import { resolveCampaignAutopilotPolicy } from "@outbound/domain/campaigns/campaign-autopilot-policy";
+import { fitSequenceStepContent, validateSequenceSteps, type SequenceStepInput } from "@outbound/domain/campaigns/sequence-validation";
+import type { Database } from "@outbound/infrastructure/database/client";
+import {
+  campaigns,
+  campaignProspects,
+  contacts,
+  contactSuppressions,
+  icpVersions,
+  outboxEvents,
+  outreachActions,
+  outreachAttempts,
+  prospectDiscoveryCandidates,
+  sequenceEnrollments,
+} from "@outbound/infrastructure/database/schema";
+
+export interface OutreachDispatchLimits {
+  readonly linkedin: number;
+  readonly email: number;
+  readonly whatsapp: number;
+}
+
+export class OutreachDispatchJobProcessor {
+  constructor(
+    private readonly database: Database,
+    private readonly queue: JobQueue,
+    private readonly gateway: OutboundChannelGateway,
+    private readonly clock: Clock,
+    private readonly limits: OutreachDispatchLimits = { linkedin: 20, email: 50, whatsapp: 30 },
+    private readonly generator?: CampaignContentGenerator,
+  ) {}
+
+  async process(job: LeasedJob): Promise<void> {
+    const payload = actionPayload(job.payload);
+    const claimed = await this.#claim(payload, job.lockedBy);
+    if (!claimed) {
+      await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
+      return;
+    }
+    if (claimed.recoveredUnknownExecution) {
+      await this.#failUnknown(claimed, "ACTION_EXECUTION_STATE_UNKNOWN", "Une exécution précédente a perdu son lease après le début de l’envoi.");
+      await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
+      return;
+    }
+    let preparedSnapshot: unknown;
+    try {
+      preparedSnapshot = await this.#prepareContentIfNeeded(claimed);
+    } catch (error) {
+      await this.#retryPreparation(claimed, job, error);
+      return;
+    }
+    const content = readContentSnapshot(preparedSnapshot);
+    if (!content) {
+      await this.#failUnknown(claimed, "INVALID_CONTENT_SNAPSHOT", "Le snapshot du message est invalide.");
+      await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
+      return;
+    }
+    if (claimed.enrollmentStatus !== "active") {
+      await this.#skip(claimed, "ENROLLMENT_NOT_ACTIVE");
+      await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
+      return;
+    }
+    const schedule = readScheduleSnapshot(preparedSnapshot);
+    if (schedule) {
+      const nextWindow = nextAllowedCampaignSendAt({
+        from: this.clock.now(),
+        delayBusinessDays: 0,
+        schedule: {
+          activeDays: schedule.activeDays,
+          windowStart: schedule.windowStart,
+          windowEnd: schedule.windowEnd,
+          timezoneMode: "recipient",
+          fallbackTimezone: schedule.timezone,
+        },
+        recipientTimezone: schedule.timezone,
+      });
+      if (nextWindow.getTime() > this.clock.now().getTime() + 1_000) {
+        await this.#defer(claimed, job, nextWindow, "OUTSIDE_SENDING_WINDOW", "Action reportée au prochain créneau du destinataire.");
+        return;
+      }
+    }
+    const previousStep = await this.#previousStepBlocker(claimed);
+    if (previousStep?.terminal) {
+      await this.#skip(claimed, "PREVIOUS_STEP_NOT_SENT");
+      await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
+      return;
+    }
+    if (previousStep) {
+      const availableAt = new Date(Math.max(
+        this.clock.now().getTime() + 5 * 60_000,
+        previousStep.dueAt.getTime() + 60_000,
+      ));
+      await this.#defer(claimed, job, availableAt, "PREVIOUS_STEP_PENDING", "La séquence attend la livraison de l’étape précédente.");
+      return;
+    }
+    if (await this.#isSuppressed(claimed, content.recipient.normalizedValue)) {
+      await this.#skip(claimed, "CONTACT_SUPPRESSED");
+      await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
+      return;
+    }
+    if (await this.#dailyLimitReached(claimed)) {
+      const availableAt = schedule
+        ? nextAllowedCampaignSendAt({
+            from: this.clock.now(),
+            delayBusinessDays: 1,
+            schedule: {
+              activeDays: schedule.activeDays,
+              windowStart: schedule.windowStart,
+              windowEnd: schedule.windowEnd,
+              timezoneMode: "recipient",
+              fallbackTimezone: schedule.timezone,
+            },
+            recipientTimezone: schedule.timezone,
+          })
+        : tomorrowMorning(this.clock.now());
+      await this.database
+        .update(outreachActions)
+        .set({
+          status: "scheduled",
+          dueAt: availableAt,
+          lockedAt: null,
+          lockedUntil: null,
+          lockedBy: null,
+          lastErrorCode: "DAILY_CHANNEL_LIMIT",
+          lastErrorMessage: "Action reportée automatiquement au prochain créneau.",
+          updatedAt: this.clock.now(),
+        })
+        .where(and(eq(outreachActions.workspaceId, claimed.workspaceId), eq(outreachActions.id, claimed.id)));
+      await this.queue.retry({
+        jobId: job.id,
+        workerId: job.lockedBy,
+        availableAt,
+        errorCode: "DAILY_CHANNEL_LIMIT",
+        errorMessage: "Daily channel limit reached",
+      });
+      return;
+    }
+    const attemptId = crypto.randomUUID();
+    await this.database.insert(outreachAttempts).values({
+      id: attemptId,
+      workspaceId: claimed.workspaceId,
+      outreachActionId: claimed.id,
+      attemptNumber: job.attempts,
+      status: "executing",
+      attemptedAt: this.clock.now(),
+    }).onConflictDoNothing();
+    try {
+      const result = await this.gateway.send({
+        accountId: claimed.providerAccountId,
+        channel: claimed.channel,
+        stepKind: claimed.stepKind,
+        recipient: content.recipient,
+        subject: content.subject,
+        body: content.body,
+        idempotencyKey: claimed.idempotencyKey,
+      });
+      await this.#markSent(claimed, attemptId, result);
+      await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
+    } catch (error) {
+      if (
+        error instanceof OutboundDeliveryError &&
+        error.deliveryState === "not_sent" &&
+        error.retryable
+      ) {
+        await this.#resetForRetry(claimed, attemptId, error);
+        await this.queue.retry({
+          jobId: job.id,
+          workerId: job.lockedBy,
+          availableAt: new Date(this.clock.now().getTime() + 60_000 * job.attempts),
+          errorCode: error.code,
+          errorMessage: error.message,
+        });
+        return;
+      }
+      const deliveryError = error instanceof OutboundDeliveryError
+        ? error
+        : new OutboundDeliveryError(
+            "OUTBOUND_DELIVERY_UNKNOWN",
+            error instanceof Error ? error.message : String(error),
+            "unknown",
+            false,
+          );
+      await this.#failUnknown(claimed, deliveryError.code, deliveryError.message, attemptId);
+      await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
+    }
+  }
+
+  async #claim(input: { workspaceId: string; actionId: string }, workerId: string) {
+    return this.database.transaction(async (tx) => {
+      const [existing] = await tx
+        .select({ status: outreachActions.status })
+        .from(outreachActions)
+        .where(and(eq(outreachActions.workspaceId, input.workspaceId), eq(outreachActions.id, input.actionId)))
+        .limit(1);
+      if (!existing || ["sent", "failed", "skipped", "cancelled"].includes(existing.status)) return null;
+      if (existing.status === "executing") {
+        const row = await loadClaimedAction(tx, input);
+        return row ? { ...row, recoveredUnknownExecution: true as const } : null;
+      }
+      const now = this.clock.now();
+      const [updated] = await tx
+        .update(outreachActions)
+        .set({
+          status: "executing",
+          lockedAt: now,
+          lockedUntil: new Date(now.getTime() + 60_000),
+          lockedBy: workerId,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(outreachActions.workspaceId, input.workspaceId),
+            eq(outreachActions.id, input.actionId),
+            eq(outreachActions.status, "scheduled"),
+          ),
+        )
+        .returning({ id: outreachActions.id });
+      if (!updated) return null;
+      const row = await loadClaimedAction(tx, input);
+      return row ? { ...row, recoveredUnknownExecution: false as const } : null;
+    });
+  }
+
+  async #isSuppressed(action: ClaimedAction, normalizedValue: string): Promise<boolean> {
+    const [row] = await this.database
+      .select({ id: contactSuppressions.id })
+      .from(contactSuppressions)
+      .where(
+        and(
+          eq(contactSuppressions.workspaceId, action.workspaceId),
+          inArray(contactSuppressions.channel, ["global", action.channel]),
+          or(
+            eq(contactSuppressions.contactId, action.contactId),
+            eq(contactSuppressions.normalizedValue, normalizedValue),
+          ),
+        ),
+      )
+      .limit(1);
+    return Boolean(row);
+  }
+
+  async #dailyLimitReached(action: ClaimedAction): Promise<boolean> {
+    const start = new Date(this.clock.now());
+    start.setHours(0, 0, 0, 0);
+    const sent = await this.database
+      .select({ id: outreachActions.id })
+      .from(outreachActions)
+      .where(
+        and(
+          eq(outreachActions.workspaceId, action.workspaceId),
+          eq(outreachActions.providerAccountId, action.providerAccountId),
+          eq(outreachActions.channel, action.channel),
+          eq(outreachActions.status, "sent"),
+          gte(outreachActions.sentAt, start),
+        ),
+      );
+    return sent.length >= this.limits[action.channel];
+  }
+
+  async #prepareContentIfNeeded(action: ClaimedAction): Promise<unknown> {
+    const snapshot = recordValue(action.contentSnapshot);
+    if (!snapshot || snapshot.generationPending !== true) return action.contentSnapshot;
+    if (!this.generator) throw new Error("CAMPAIGN_JIT_GENERATOR_UNAVAILABLE");
+    const template = readTemplateSnapshot(snapshot.template);
+    if (!template) throw new Error("CAMPAIGN_JIT_TEMPLATE_INVALID");
+    const [context] = await this.database
+      .select({
+        autopilotPolicy: campaigns.autopilotPolicy,
+        icpName: icpVersions.name,
+        problems: icpVersions.problems,
+        signals: icpVersions.signals,
+        firstName: contacts.firstName,
+        lastName: contacts.lastName,
+        headline: prospectDiscoveryCandidates.headline,
+        companyName: prospectDiscoveryCandidates.companyName,
+        location: prospectDiscoveryCandidates.location,
+        score: campaignProspects.score,
+        scoreExplanation: campaignProspects.scoreExplanation,
+        providerData: prospectDiscoveryCandidates.providerData,
+      })
+      .from(outreachActions)
+      .innerJoin(campaigns, and(
+        eq(campaigns.workspaceId, outreachActions.workspaceId),
+        eq(campaigns.id, outreachActions.campaignId),
+      ))
+      .innerJoin(icpVersions, and(
+        eq(icpVersions.workspaceId, campaigns.workspaceId),
+        eq(icpVersions.id, campaigns.icpVersionId),
+      ))
+      .innerJoin(campaignProspects, and(
+        eq(campaignProspects.workspaceId, outreachActions.workspaceId),
+        eq(campaignProspects.campaignId, outreachActions.campaignId),
+        eq(campaignProspects.candidateId, outreachActions.candidateId),
+      ))
+      .innerJoin(prospectDiscoveryCandidates, and(
+        eq(prospectDiscoveryCandidates.workspaceId, campaignProspects.workspaceId),
+        eq(prospectDiscoveryCandidates.id, campaignProspects.candidateId),
+      ))
+      .innerJoin(contacts, and(
+        eq(contacts.workspaceId, campaignProspects.workspaceId),
+        eq(contacts.id, campaignProspects.contactId),
+      ))
+      .where(and(eq(outreachActions.workspaceId, action.workspaceId), eq(outreachActions.id, action.id)))
+      .limit(1);
+    if (!context) throw new Error("CAMPAIGN_JIT_CONTEXT_MISSING");
+    const policy = resolveCampaignAutopilotPolicy(context.autopilotPolicy, action.channel);
+    const generated = await this.generator.generate({
+      workspaceId: action.workspaceId,
+      channel: action.channel,
+      icpName: context.icpName,
+      problems: context.problems,
+      signals: context.signals,
+      policy: action.channel === "email"
+        ? {
+            language: policy.email.language,
+            firstMessageInstructions: policy.email.firstMessageInstructions,
+            followUpInstructions: policy.email.followUpInstructions,
+          }
+        : null,
+      prospect: {
+        firstName: context.firstName,
+        lastName: context.lastName,
+        headline: context.headline,
+        companyName: context.companyName ?? "Entreprise",
+        location: context.location,
+        score: context.score ?? 0,
+        scoreExplanation: context.scoreExplanation,
+        publicEvidence: context.providerData,
+      },
+      templateSteps: [template],
+    });
+    const generatedStep = generated.steps.find((step) => step.position === template.position);
+    if (!generatedStep) throw new Error("CAMPAIGN_JIT_STEP_MISSING");
+    const personalized = fitSequenceStepContent({
+      ...template,
+      subject: generatedStep.subject,
+      body: generatedStep.body,
+    });
+    const validation = validateSequenceSteps([personalized]);
+    if (validation.length) throw new Error(`CAMPAIGN_JIT_STEP_INVALID:${JSON.stringify(validation)}`);
+    const updated = {
+      ...snapshot,
+      subject: personalized.subject,
+      body: personalized.body,
+      generation: generated.metadata,
+      generationPending: false,
+    };
+    await this.database
+      .update(outreachActions)
+      .set({ contentSnapshot: updated, updatedAt: this.clock.now() })
+      .where(and(eq(outreachActions.workspaceId, action.workspaceId), eq(outreachActions.id, action.id)));
+    return updated;
+  }
+
+  async #retryPreparation(action: ClaimedAction, job: LeasedJob, error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    const availableAt = new Date(this.clock.now().getTime() + 60_000 * job.attempts);
+    await this.database
+      .update(outreachActions)
+      .set({
+        status: "scheduled",
+        lockedAt: null,
+        lockedUntil: null,
+        lockedBy: null,
+        lastErrorCode: "CAMPAIGN_JIT_GENERATION_FAILED",
+        lastErrorMessage: message.slice(0, 4_000),
+        updatedAt: this.clock.now(),
+      })
+      .where(and(eq(outreachActions.workspaceId, action.workspaceId), eq(outreachActions.id, action.id)));
+    const outcome = await this.queue.retry({
+      jobId: job.id,
+      workerId: job.lockedBy,
+      availableAt,
+      errorCode: "CAMPAIGN_JIT_GENERATION_FAILED",
+      errorMessage: message,
+    });
+    if (outcome === "dead_lettered") {
+      await this.#failUnknown(action, "CAMPAIGN_JIT_GENERATION_FAILED", message);
+    }
+  }
+
+  async #previousStepBlocker(action: ClaimedAction): Promise<{
+    terminal: boolean;
+    dueAt: Date;
+  } | null> {
+    const rows = await this.database
+      .select({ status: outreachActions.status, dueAt: outreachActions.dueAt })
+      .from(outreachActions)
+      .where(and(
+        eq(outreachActions.workspaceId, action.workspaceId),
+        eq(outreachActions.enrollmentId, action.enrollmentId),
+        lt(outreachActions.stepPosition, action.stepPosition),
+      ))
+      .orderBy(asc(outreachActions.stepPosition));
+    const blocker = rows.find((row) => row.status !== "sent");
+    if (!blocker) return null;
+    return {
+      terminal: ["failed", "skipped", "cancelled"].includes(blocker.status),
+      dueAt: blocker.dueAt,
+    };
+  }
+
+  async #defer(
+    action: ClaimedAction,
+    job: LeasedJob,
+    availableAt: Date,
+    code: string,
+    message: string,
+  ) {
+    await this.database
+      .update(outreachActions)
+      .set({
+        status: "scheduled",
+        dueAt: availableAt,
+        lockedAt: null,
+        lockedUntil: null,
+        lockedBy: null,
+        lastErrorCode: code,
+        lastErrorMessage: message,
+        updatedAt: this.clock.now(),
+      })
+      .where(and(eq(outreachActions.workspaceId, action.workspaceId), eq(outreachActions.id, action.id)));
+    const outcome = await this.queue.retry({
+      jobId: job.id,
+      workerId: job.lockedBy,
+      availableAt,
+      errorCode: code,
+      errorMessage: message,
+    });
+    if (outcome === "dead_lettered") {
+      await this.#failUnknown(action, `${code}_EXHAUSTED`, `${message} Le nombre maximal de reports a été atteint.`);
+    }
+  }
+
+  async #markSent(
+    action: ClaimedAction,
+    attemptId: string,
+    result: { providerRequestId: string; conversationId: string | null },
+  ) {
+    const now = this.clock.now();
+    await this.database.transaction(async (tx) => {
+      await tx
+        .update(outreachAttempts)
+        .set({ status: "sent", providerRequestId: result.providerRequestId })
+        .where(and(eq(outreachAttempts.workspaceId, action.workspaceId), eq(outreachAttempts.id, attemptId)));
+      await tx
+        .update(outreachActions)
+        .set({
+          status: "sent",
+          providerRequestId: result.providerRequestId,
+          sentAt: now,
+          lockedAt: null,
+          lockedUntil: null,
+          lockedBy: null,
+          lastErrorCode: null,
+          lastErrorMessage: null,
+          updatedAt: now,
+        })
+        .where(and(eq(outreachActions.workspaceId, action.workspaceId), eq(outreachActions.id, action.id)));
+      const remainingEnrollmentActions = await tx
+        .select({ id: outreachActions.id })
+        .from(outreachActions)
+        .where(
+          and(
+            eq(outreachActions.workspaceId, action.workspaceId),
+            eq(outreachActions.enrollmentId, action.enrollmentId),
+            inArray(outreachActions.status, ["scheduled", "executing"]),
+          ),
+        );
+      await tx
+        .update(sequenceEnrollments)
+        .set(remainingEnrollmentActions.length
+          ? { currentPosition: action.stepPosition + 1, updatedAt: now }
+          : { status: "completed", currentPosition: action.stepPosition, completedAt: now, updatedAt: now })
+        .where(and(eq(sequenceEnrollments.workspaceId, action.workspaceId), eq(sequenceEnrollments.id, action.enrollmentId)));
+      const remainingCampaignActions = await tx
+        .select({ id: outreachActions.id })
+        .from(outreachActions)
+        .where(
+          and(
+            eq(outreachActions.workspaceId, action.workspaceId),
+            eq(outreachActions.campaignId, action.campaignId),
+            inArray(outreachActions.status, ["scheduled", "executing"]),
+          ),
+        );
+      const [latestFailedAction] = await tx
+        .select({
+          code: outreachActions.lastErrorCode,
+          message: outreachActions.lastErrorMessage,
+        })
+        .from(outreachActions)
+        .where(and(
+          eq(outreachActions.workspaceId, action.workspaceId),
+          eq(outreachActions.campaignId, action.campaignId),
+          eq(outreachActions.status, "failed"),
+        ))
+        .orderBy(desc(outreachActions.updatedAt))
+        .limit(1);
+      const campaignState = deriveCampaignExecutionState({
+        pendingActionCount: remainingCampaignActions.length,
+        latestFailedAction: latestFailedAction ?? null,
+      });
+      await tx
+        .update(campaigns)
+        .set({
+          status: campaignState.campaignStatus,
+          automationStage: campaignState.automationStage,
+          automationErrorCode: campaignState.automationErrorCode,
+          automationErrorMessage: campaignState.automationErrorMessage,
+          updatedAt: now,
+        })
+        .where(and(eq(campaigns.workspaceId, action.workspaceId), eq(campaigns.id, action.campaignId)));
+      await tx.insert(outboxEvents).values({
+        workspaceId: action.workspaceId,
+        aggregateType: "OutreachAction",
+        aggregateId: action.id,
+        eventType: "OutreachActionSent",
+        payload: {
+          actionId: action.id,
+          campaignId: action.campaignId,
+          providerRequestId: result.providerRequestId,
+          conversationId: result.conversationId,
+        },
+      });
+    });
+  }
+
+  async #resetForRetry(action: ClaimedAction, attemptId: string, error: OutboundDeliveryError) {
+    await this.database.transaction(async (tx) => {
+      await tx
+        .update(outreachAttempts)
+        .set({ status: "retry", errorCode: error.code, errorMessage: error.message })
+        .where(and(eq(outreachAttempts.workspaceId, action.workspaceId), eq(outreachAttempts.id, attemptId)));
+      await tx
+        .update(outreachActions)
+        .set({
+          status: "scheduled",
+          lockedAt: null,
+          lockedUntil: null,
+          lockedBy: null,
+          lastErrorCode: error.code,
+          lastErrorMessage: error.message,
+          updatedAt: this.clock.now(),
+        })
+        .where(and(eq(outreachActions.workspaceId, action.workspaceId), eq(outreachActions.id, action.id)));
+    });
+  }
+
+  async #skip(action: ClaimedAction, reason: string) {
+    const now = this.clock.now();
+    await this.database.transaction(async (tx) => {
+      await tx
+        .update(outreachActions)
+        .set({ status: "skipped", lastErrorCode: reason, lockedAt: null, lockedUntil: null, lockedBy: null, updatedAt: now })
+        .where(and(eq(outreachActions.workspaceId, action.workspaceId), eq(outreachActions.id, action.id)));
+      await tx
+        .update(sequenceEnrollments)
+        .set({ status: "suspended", suspensionReason: reason, suspendedAt: now, updatedAt: now })
+        .where(and(eq(sequenceEnrollments.workspaceId, action.workspaceId), eq(sequenceEnrollments.id, action.enrollmentId)));
+    });
+  }
+
+  async #failUnknown(action: ClaimedAction, code: string, message: string, attemptId?: string) {
+    const now = this.clock.now();
+    await this.database.transaction(async (tx) => {
+      if (attemptId) {
+        await tx
+          .update(outreachAttempts)
+          .set({ status: "unknown", errorCode: code, errorMessage: message })
+          .where(and(eq(outreachAttempts.workspaceId, action.workspaceId), eq(outreachAttempts.id, attemptId)));
+      }
+      await tx
+        .update(outreachActions)
+        .set({
+          status: "failed",
+          lastErrorCode: code,
+          lastErrorMessage: message.slice(0, 4_000),
+          lockedAt: null,
+          lockedUntil: null,
+          lockedBy: null,
+          updatedAt: now,
+        })
+        .where(and(eq(outreachActions.workspaceId, action.workspaceId), eq(outreachActions.id, action.id)));
+      await tx
+        .update(sequenceEnrollments)
+        .set({ status: "suspended", suspensionReason: code, suspendedAt: now, updatedAt: now })
+        .where(and(eq(sequenceEnrollments.workspaceId, action.workspaceId), eq(sequenceEnrollments.id, action.enrollmentId)));
+      await tx
+        .update(campaigns)
+        .set({ automationStage: "attention", automationErrorCode: code, automationErrorMessage: message.slice(0, 4_000), updatedAt: now })
+        .where(and(eq(campaigns.workspaceId, action.workspaceId), eq(campaigns.id, action.campaignId)));
+    });
+  }
+}
+
+type ClaimedAction = NonNullable<Awaited<ReturnType<typeof loadClaimedAction>>> & {
+  recoveredUnknownExecution: boolean;
+};
+
+async function loadClaimedAction(
+  tx: Parameters<Parameters<Database["transaction"]>[0]>[0],
+  input: { workspaceId: string; actionId: string },
+) {
+  const [row] = await tx
+    .select({
+      id: outreachActions.id,
+      workspaceId: outreachActions.workspaceId,
+      enrollmentId: outreachActions.enrollmentId,
+      campaignId: outreachActions.campaignId,
+      contactId: outreachActions.contactId,
+      providerAccountId: outreachActions.providerAccountId,
+      channel: outreachActions.channel,
+      stepPosition: outreachActions.stepPosition,
+      stepKind: outreachActions.stepKind,
+      idempotencyKey: outreachActions.idempotencyKey,
+      contentSnapshot: outreachActions.contentSnapshot,
+      enrollmentStatus: sequenceEnrollments.status,
+    })
+    .from(outreachActions)
+    .innerJoin(
+      sequenceEnrollments,
+      and(eq(sequenceEnrollments.workspaceId, outreachActions.workspaceId), eq(sequenceEnrollments.id, outreachActions.enrollmentId)),
+    )
+    .where(and(eq(outreachActions.workspaceId, input.workspaceId), eq(outreachActions.id, input.actionId)))
+    .limit(1);
+  return row ?? null;
+}
+
+function readContentSnapshot(value: unknown): Omit<OutboundSendRequest, "accountId" | "channel" | "stepKind" | "idempotencyKey"> | null {
+  if (!value || typeof value !== "object") return null;
+  const content = value as Record<string, unknown>;
+  const recipient = content.recipient as Record<string, unknown> | undefined;
+  if (
+    typeof content.body !== "string" ||
+    !recipient ||
+    typeof recipient.value !== "string" ||
+    typeof recipient.normalizedValue !== "string"
+  ) return null;
+  return {
+    subject: typeof content.subject === "string" ? content.subject : null,
+    body: content.body,
+    recipient: {
+      value: recipient.value,
+      normalizedValue: recipient.normalizedValue,
+      providerUserId: typeof recipient.providerUserId === "string" ? recipient.providerUserId : null,
+    },
+  };
+}
+
+function readScheduleSnapshot(value: unknown): (Pick<CampaignSendSchedule, "activeDays" | "windowStart" | "windowEnd"> & { timezone: string }) | null {
+  if (!value || typeof value !== "object") return null;
+  const schedule = (value as Record<string, unknown>).schedule;
+  if (!schedule || typeof schedule !== "object" || Array.isArray(schedule)) return null;
+  const data = schedule as Record<string, unknown>;
+  if (
+    !Array.isArray(data.activeDays)
+    || data.activeDays.some((day) => !Number.isInteger(day) || Number(day) < 1 || Number(day) > 7)
+    || typeof data.windowStart !== "string"
+    || typeof data.windowEnd !== "string"
+    || typeof data.timezone !== "string"
+  ) return null;
+  return {
+    activeDays: data.activeDays as CampaignSendSchedule["activeDays"],
+    windowStart: data.windowStart,
+    windowEnd: data.windowEnd,
+    timezone: data.timezone,
+  };
+}
+
+function readTemplateSnapshot(value: unknown): SequenceStepInput | null {
+  const template = recordValue(value);
+  if (!template) return null;
+  if (
+    !Number.isInteger(template.position)
+    || typeof template.kind !== "string"
+    || !Number.isInteger(template.delayDays)
+    || typeof template.body !== "string"
+  ) return null;
+  return {
+    position: Number(template.position),
+    kind: template.kind as SequenceStepInput["kind"],
+    delayDays: Number(template.delayDays),
+    windowStart: typeof template.windowStart === "string" ? template.windowStart : null,
+    windowEnd: typeof template.windowEnd === "string" ? template.windowEnd : null,
+    subject: typeof template.subject === "string" ? template.subject : null,
+    body: template.body,
+    fallbackKind: typeof template.fallbackKind === "string"
+      ? template.fallbackKind as SequenceStepInput["fallbackKind"]
+      : null,
+  };
+}
+
+function recordValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function tomorrowMorning(now: Date): Date {
+  const next = new Date(now);
+  next.setDate(next.getDate() + 1);
+  next.setHours(9, 0, 0, 0);
+  return next;
+}
+
+function actionPayload(value: unknown): { workspaceId: string; actionId: string } {
+  if (!value || typeof value !== "object") throw new Error("INVALID_OUTREACH_DISPATCH_JOB");
+  const payload = value as Record<string, unknown>;
+  if (typeof payload.workspaceId !== "string" || typeof payload.actionId !== "string") {
+    throw new Error("INVALID_OUTREACH_DISPATCH_JOB");
+  }
+  return { workspaceId: payload.workspaceId, actionId: payload.actionId };
+}
