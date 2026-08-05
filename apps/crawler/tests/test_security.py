@@ -18,11 +18,13 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
+from playwright.async_api import async_playwright
 
 from crawler_service.config import settings
 from crawler_service.core.crawler import CrawlerEngine, SelectiveCrawlerEngine
 from crawler_service.core.discovery import DiscoveryEngine
 from crawler_service.core.job_manager import CrawlJob, job_manager
+from crawler_service.core.request_safety import install_safe_request_interceptor
 from crawler_service.main import app
 
 PRIVATE_URL = "http://169.254.169.254/latest/meta-data/"
@@ -144,6 +146,84 @@ async def test_crawler_engine_keeps_content_after_public_redirect():
     await engine._crawl_page(stub, PUBLIC_URL, 0)
     assert len(engine._results) == 1
     assert engine._errors == []
+
+
+async def test_real_browser_never_connects_to_private_redirect_or_subresource():
+    """Black-box guard: a private target observes zero TCP connections."""
+
+    connections = 0
+
+    async def private_target(_reader, writer):
+        nonlocal connections
+        connections += 1
+        writer.close()
+        await writer.wait_closed()
+
+    server = await asyncio.start_server(private_target, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    private_url = f"http://127.0.0.1:{port}/metadata"
+    proxy_requests = []
+
+    async def public_proxy(reader, writer):
+        request = await reader.readuntil(b"\r\n\r\n")
+        request_line = request.split(b"\r\n", 1)[0].decode("ascii", "replace")
+        proxy_requests.append(request_line)
+        if "/redirect" in request_line:
+            response = (
+                "HTTP/1.1 302 Found\r\n"
+                f"Location: {private_url}\r\n"
+                "Content-Length: 0\r\nConnection: close\r\n\r\n"
+            ).encode()
+        else:
+            body = f'<html><body><img src="{private_url}"></body></html>'.encode()
+            response = (
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: text/html\r\n"
+                f"Content-Length: {len(body)}\r\n"
+                "Connection: close\r\n\r\n"
+            ).encode() + body
+        writer.write(response)
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+
+    proxy = await asyncio.start_server(public_proxy, "127.0.0.1", 0)
+    proxy_port = proxy.sockets[0].getsockname()[1]
+    try:
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(
+                headless=True,
+                proxy={"server": f"http://127.0.0.1:{proxy_port}"},
+            )
+            try:
+                redirect_page = await browser.new_page()
+                await install_safe_request_interceptor(redirect_page)
+                try:
+                    await redirect_page.goto(
+                        "http://1.1.1.1/redirect",
+                        wait_until="networkidle",
+                    )
+                except Exception:
+                    pass
+                await asyncio.sleep(0.05)
+                assert connections == 0
+
+                subresource_page = await browser.new_page()
+                await install_safe_request_interceptor(subresource_page)
+                await subresource_page.goto(
+                    "http://1.1.1.1/page",
+                    wait_until="networkidle",
+                )
+                await asyncio.sleep(0.05)
+                assert connections == 0
+                assert all("127.0.0.1" not in request for request in proxy_requests), proxy_requests
+            finally:
+                await browser.close()
+    finally:
+        proxy.close()
+        await proxy.wait_closed()
+        server.close()
+        await server.wait_closed()
 
 
 # ---------------------------------------------------------------------------

@@ -21,6 +21,9 @@ import { PostgresResearchToolRequestRegistry } from "@outbound/infrastructure/ai
 import { CrawlerClient } from "@outbound/infrastructure/ai/crawler-client";
 import { CrawlerProspectEnricher } from "@outbound/infrastructure/crm/crawler-prospect-enricher";
 import { CrawlerCompanyProspectSource } from "@outbound/infrastructure/crm/crawler-company-prospect-source";
+import { PostgresDailySourcingBudget } from "@outbound/infrastructure/crm/postgres-daily-sourcing-budget";
+import { PostgresWhatsappReachabilityResolver } from "@outbound/infrastructure/crm/postgres-whatsapp-reachability-resolver";
+import { SourcingRetentionReconciler } from "@outbound/infrastructure/crm/sourcing-retention-reconciler";
 import {
   ProspectDiscoveryJobProcessor,
   ProspectDiscoveryRunner,
@@ -96,14 +99,27 @@ const discoveryCrawler = new CrawlerClient({
   apiKey: requiredEnvironment("CRAWLER_API_KEY"),
   maxConcurrentPageReads: 2,
 });
+const dailySourcingBudget = new PostgresDailySourcingBudget(database.db);
+const createReachabilityResolver = (workspaceId: string) => new PostgresWhatsappReachabilityResolver(
+  database.db,
+  createProspectSource(workspaceId),
+  dailySourcingBudget,
+);
 const discoveryRunner = new ProspectDiscoveryRunner(
   database.db,
   createProspectSource,
   () => new CrawlerProspectEnricher(discoveryCrawler),
-  (workspaceId) => new CrawlerCompanyProspectSource(
-    discoveryCrawler,
-    () => createProspectSource(workspaceId),
-  ),
+  (workspaceId) => {
+    const source = createProspectSource(workspaceId);
+    return new CrawlerCompanyProspectSource(
+      discoveryCrawler,
+      () => source,
+      {
+        budget: dailySourcingBudget,
+        reachability: new PostgresWhatsappReachabilityResolver(database.db, source, dailySourcingBudget),
+      },
+    );
+  },
 );
 const discoveryProcessor = new ProspectDiscoveryJobProcessor(
   database.db,
@@ -142,6 +158,7 @@ const outreachDispatchProcessor = new OutreachDispatchJobProcessor(
     whatsapp: positiveIntegerEnvironment("OUTBOUND_WHATSAPP_DAILY_LIMIT", 30),
   },
   campaignContentGenerator,
+  createReachabilityResolver,
 );
 const inboundReplyAgent = new LangChainInboundReplyAgent(process.env, workspaceAiSettings);
 const inboundReplyProcessor = new InboundReplyJobProcessor(
@@ -173,6 +190,7 @@ const dailyProspectingScheduler = new DailyProspectingScheduler(database.db, clo
 });
 const prospectAssessmentReconciler = new ProspectAssessmentReconciler(database.db, clock);
 const campaignHealthReconciler = new CampaignHealthReconciler(database.db, clock);
+const sourcingRetentionReconciler = new SourcingRetentionReconciler(database.db, clock);
 const unipileChatSynchronizer = process.env.UNIPILE_DSN
   && process.env.UNIPILE_API_KEY
   && process.env.UNIPILE_CHAT_SYNC_ENABLED !== "false"
@@ -184,16 +202,17 @@ const unipileChatSynchronizer = process.env.UNIPILE_DSN
   : null;
 const maintenance = {
   async reconcile() {
-    const [dailyRuns, assessmentJobs, repairedCampaigns, inboundEvents] = await Promise.all([
+    const [dailyRuns, assessmentJobs, repairedCampaigns, retainedSourcing, inboundEvents] = await Promise.all([
       dailyProspectingScheduler.reconcile(),
       prospectAssessmentReconciler.reconcile(),
       campaignHealthReconciler.reconcile(),
+      sourcingRetentionReconciler.reconcile(),
       unipileChatSynchronizer?.reconcile() ?? Promise.resolve(0),
     ]);
     if (inboundEvents > 0) {
       console.info(JSON.stringify({ event: "unipile_chat_sync_ingested", count: inboundEvents }));
     }
-    return dailyRuns + assessmentJobs + repairedCampaigns + inboundEvents;
+    return dailyRuns + assessmentJobs + repairedCampaigns + retainedSourcing + inboundEvents;
   },
 };
 const orchestrator = new ResearchOrchestrator(

@@ -274,6 +274,13 @@
       "when": 1786485600000,
       "tag": "0038_lean_stingray",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1786572000000,
+      "tag": "0039_elite_giant_girl",
+      "breakpoints": true
     }
   ]
 }

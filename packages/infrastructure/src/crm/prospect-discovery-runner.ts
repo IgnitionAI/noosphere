@@ -161,17 +161,22 @@ export class ProspectDiscoveryRunner {
   }) {
     const source = this.companyProspectSource?.(input.workspaceId);
     if (!source) throw new ProviderUnavailableError("Company prospect sourcing is not configured");
-    const found = await source.searchCompanies({
+    const result = await source.searchCompanies({
+      workspaceId: input.workspaceId,
       ...input.filters,
       correlationId: `campaign-sourcing:${input.runId}`,
     });
     return this.#repository.completeRun({
       workspaceId: input.workspaceId,
       runId: input.runId,
-      candidates: found.map((candidate) => ({
+      observations: result.observations,
+      sourcingMetrics: result.metrics,
+      candidates: result.candidates.map((candidate) => ({
         id: crypto.randomUUID(),
         fullName: candidate.fullName,
-        headline: `Contact professionnel · ${candidate.companyName}`,
+        headline: candidate.providerData.candidateKind === "company_endpoint"
+          ? `Point de contact entreprise · ${candidate.companyName}`
+          : `Contact professionnel · ${candidate.companyName}`,
         linkedinUrl: null,
         linkedinNormalized: null,
         location: candidate.location,
@@ -181,7 +186,9 @@ export class ProspectDiscoveryRunner {
         channels: candidate.channels,
         providerData: candidate.providerData,
         icpFit: computeProspectIcpFit(input.version, {
-          headline: `Contact professionnel · ${candidate.companyName}`,
+          headline: candidate.providerData.candidateKind === "company_endpoint"
+            ? `Point de contact entreprise · ${candidate.companyName}`
+            : `Contact professionnel · ${candidate.companyName}`,
           companyName: candidate.companyName,
           location: candidate.location,
         }),

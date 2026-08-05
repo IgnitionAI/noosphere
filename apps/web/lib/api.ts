@@ -1041,8 +1041,27 @@ export interface CampaignProspect {
   readonly location: string | null;
   readonly companyName: string | null;
   readonly companyWebsite: string | null;
+  readonly providerData: Readonly<Record<string, unknown>>;
   readonly channels: DiscoveryCandidate["channels"];
   readonly icpFit: DiscoveryCandidate["icpFit"];
+}
+
+export interface WhatsappSourcingPool {
+  readonly shared: true;
+  readonly status: "not_started" | "scheduled" | "running" | "completed" | "partial" | "failed" | "action_required";
+  readonly localDate: string | null;
+  readonly lastPassAt: string | null;
+  readonly nextPassAt: string | null;
+  readonly contactsAssignedToday: number;
+  readonly admissibleObserved: number;
+  readonly verificationPending: number;
+  readonly verifiedObserved: number;
+  readonly pageAttempts: number;
+  readonly pageLimit: number;
+  readonly verificationAttempts: number;
+  readonly verificationLimit: number;
+  readonly actionRequired: boolean;
+  readonly errorCode: string | null;
 }
 
 export interface CampaignDetail extends CampaignSummary {
@@ -1055,6 +1074,7 @@ export interface CampaignDetail extends CampaignSummary {
   readonly assessmentEvidence: unknown;
   readonly steps: readonly SequenceStep[];
   readonly prospects: readonly CampaignProspect[];
+  readonly sourcingPool: WhatsappSourcingPool | null;
 }
 
 export type ProspectEngagementState =

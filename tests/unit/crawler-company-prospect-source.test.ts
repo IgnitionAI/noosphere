@@ -11,7 +11,8 @@ describe("CrawlerCompanyProspectSource", () => {
       () => noLinkedinSource(),
     );
 
-    const candidates = await source.searchCompanies({
+    const { candidates } = await source.searchCompanies({
+      workspaceId: crypto.randomUUID(),
       channel: "email",
       query: "cabinet avocat conformité",
       sourceKinds: ["web", "professional_directory"],
@@ -51,7 +52,8 @@ describe("CrawlerCompanyProspectSource", () => {
       }),
     );
 
-    const candidates = await source.searchCompanies({
+    const { candidates, observations } = await source.searchCompanies({
+      workspaceId: crypto.randomUUID(),
       channel: "whatsapp",
       query: "cabinet avocat conformité",
       sourceKinds: ["maps"],
@@ -64,6 +66,11 @@ describe("CrawlerCompanyProspectSource", () => {
       status: "verified",
       source: "unipile_whatsapp_profile",
       evidenceUrl: "https://cabinet-durand.fr/contact",
+    });
+    expect(observations[0]).toMatchObject({
+      attributionStatus: "strong",
+      reachabilityStatus: "verified",
+      evidenceSnippet: expect.stringContaining("Portable"),
     });
   });
 });
@@ -88,6 +95,14 @@ function fakeCrawler(markdown: string): CrawlerClient {
         contentHash: "hash",
         collectedAt: "2026-08-02T10:00:00.000Z",
         metadata: {},
+      }];
+    },
+    async discover() {
+      return [{
+        url: "https://cabinet-durand.fr/contact",
+        title: "Contact",
+        depth: 1,
+        path: "/contact",
       }];
     },
   } as unknown as CrawlerClient;

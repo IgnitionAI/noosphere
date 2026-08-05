@@ -192,14 +192,14 @@ export default async function ContactDetailPage({
             </div>
             <div className="panel-body">
               <p className="text-xs leading-5 text-muted">
-                La suppression marque toutes les coordonnées de ce contact comme inéligibles,
-                de façon persistante, y compris face à un futur réimport.
+                Cette action bloque durablement toutes les coordonnées de ce contact, notamment
+                son numéro WhatsApp. La recherche automatique ne pourra pas le réimporter dans ce workspace.
               </p>
               <form action={suppress} className="mt-3 space-y-2">
                 <input className="control w-full" name="reason" placeholder="Motif (opposition, demande RGPD…)" />
                 <button className="button w-full" type="submit">
                   <Ban size={14} />
-                  Supprimer ce contact
+                  Ne plus contacter ce prospect
                 </button>
               </form>
             </div>

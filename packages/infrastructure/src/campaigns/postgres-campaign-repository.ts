@@ -1,11 +1,15 @@
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte } from "drizzle-orm";
 import { mergeCampaignAutopilotPolicy, resolveCampaignAutopilotPolicy } from "@outbound/domain/campaigns/campaign-autopilot-policy";
 import type { Database } from "@outbound/infrastructure/database/client";
 import {
   campaigns,
   campaignProspects,
   channelAssessments,
+  contactChannelAssignments,
+  dailyProspectingSchedules,
+  dailySourcingCycles,
   icpVersions,
+  phoneObservations,
   prospectDiscoveryCandidates,
   prospectDiscoveryRuns,
   sequences,
@@ -171,6 +175,7 @@ export class PostgresCampaignRepository {
         companyName: prospectDiscoveryCandidates.companyName,
         companyWebsite: prospectDiscoveryCandidates.companyWebsite,
         channels: prospectDiscoveryCandidates.channels,
+        providerData: prospectDiscoveryCandidates.providerData,
         icpFit: prospectDiscoveryCandidates.icpFit,
       })
       .from(campaignProspects)
@@ -188,7 +193,88 @@ export class PostgresCampaignRepository {
         ),
       )
       .orderBy(asc(campaignProspects.createdAt));
-    return { ...campaign, steps, prospects };
+    const sourcingPool = campaign.channel === "whatsapp"
+      ? await this.#whatsappSourcingPool(input.workspaceId, input.campaignId)
+      : null;
+    return { ...campaign, steps, prospects, sourcingPool };
+  }
+
+  async #whatsappSourcingPool(workspaceId: string, campaignId: string) {
+    const [cycle] = await this.db
+      .select()
+      .from(dailySourcingCycles)
+      .where(eq(dailySourcingCycles.workspaceId, workspaceId))
+      .orderBy(desc(dailySourcingCycles.createdAt))
+      .limit(1);
+    const [schedule] = await this.db
+      .select({ nextRunAt: dailyProspectingSchedules.nextRunAt })
+      .from(dailyProspectingSchedules)
+      .where(eq(dailyProspectingSchedules.workspaceId, workspaceId))
+      .limit(1);
+    if (!cycle) {
+      return {
+        shared: true,
+        status: "not_started" as const,
+        localDate: null,
+        lastPassAt: null,
+        nextPassAt: schedule?.nextRunAt ?? null,
+        contactsAssignedToday: 0,
+        admissibleObserved: 0,
+        verificationPending: 0,
+        verifiedObserved: 0,
+        pageAttempts: 0,
+        pageLimit: 150,
+        verificationAttempts: 0,
+        verificationLimit: 60,
+        actionRequired: false,
+        errorCode: null,
+      };
+    }
+    const [assigned] = await this.db
+      .select({ value: count() })
+      .from(contactChannelAssignments)
+      .where(
+        and(
+          eq(contactChannelAssignments.workspaceId, workspaceId),
+          eq(contactChannelAssignments.campaignId, campaignId),
+          eq(contactChannelAssignments.channel, "whatsapp"),
+          gte(contactChannelAssignments.assignedAt, cycle.createdAt),
+        ),
+      );
+    const observations = await this.db
+      .select({
+        attributionStatus: phoneObservations.attributionStatus,
+        reachabilityStatus: phoneObservations.reachabilityStatus,
+        providerAccountId: phoneObservations.providerAccountId,
+      })
+      .from(phoneObservations)
+      .where(
+        and(
+          eq(phoneObservations.workspaceId, workspaceId),
+          eq(phoneObservations.sourcingCycleId, cycle.id),
+        ),
+      );
+    const admissible = observations.filter((item) => item.attributionStatus === "strong");
+    const pending = admissible.filter((item) => item.reachabilityStatus === "unknown");
+    const actionRequired = cycle.status === "action_required"
+      || pending.some((item) => item.providerAccountId === null);
+    return {
+      shared: true,
+      status: cycle.status,
+      localDate: cycle.localDate,
+      lastPassAt: cycle.completedAt ?? cycle.startedAt ?? cycle.createdAt,
+      nextPassAt: schedule?.nextRunAt ?? null,
+      contactsAssignedToday: Number(assigned?.value ?? 0),
+      admissibleObserved: admissible.length,
+      verificationPending: pending.length,
+      verifiedObserved: admissible.filter((item) => item.reachabilityStatus === "verified").length,
+      pageAttempts: cycle.pageAttempts,
+      pageLimit: cycle.pageLimit,
+      verificationAttempts: cycle.verificationAttempts,
+      verificationLimit: cycle.verificationLimit,
+      actionRequired,
+      errorCode: cycle.errorCode,
+    };
   }
 
   async getAutopilotPolicy(input: { workspaceId: string; campaignId: string }) {

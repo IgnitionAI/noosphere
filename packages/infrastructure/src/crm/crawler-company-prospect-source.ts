@@ -1,12 +1,22 @@
 import type {
+  CompanyPhoneObservation,
   CompanyProspectCandidate,
+  CompanyProspectSearchResult,
   CompanyProspectSource,
 } from "@outbound/application/crm/company-prospect-source";
+import type {
+  DailySourcingBudget,
+  WhatsappReachabilityResolver,
+  WhatsappReachabilityResult,
+} from "@outbound/application/crm/whatsapp-sourcing-ports";
 import {
   normalizeDomain,
   normalizeEmail,
-  normalizePhone,
 } from "@outbound/domain/crm/normalization";
+import {
+  extractPublicWhatsappObservations,
+  type PublicPhoneObservation,
+} from "@outbound/domain/crm/whatsapp-sourcing";
 import {
   emptyProspectChannels,
   type ProspectChannel,
@@ -19,7 +29,6 @@ import type {
 import type { ProspectSource } from "./unipile-prospect-source";
 
 const EMAIL_PATTERN = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
-const PHONE_PATTERN = /(?:\+\s?\d{1,3}[\s().-]*)?(?:\d[\s().-]*){8,14}\d/g;
 const BLOCKED_HOSTS = [
   "linkedin.com",
   "facebook.com",
@@ -46,16 +55,33 @@ const PERSONAL_EMAIL_DOMAINS = new Set([
   "proton.me",
   "yahoo.com",
 ]);
+const PRIORITY_PATH = /(?:contact|equipe|team|cabinet|agence|implantation|bureau|about|mentions|legal)/i;
 
 export class CrawlerCompanyProspectSource implements CompanyProspectSource {
+  readonly #budget: DailySourcingBudget;
+  readonly #reachability: WhatsappReachabilityResolver | null;
+  readonly #now: () => Date;
+  readonly #maxPagesPerCompany: number;
+
   constructor(
     private readonly crawler: CrawlerClient,
     private readonly prospectSource: () => ProspectSource,
-  ) {}
+    options: {
+      budget?: DailySourcingBudget;
+      reachability?: WhatsappReachabilityResolver | null;
+      now?: () => Date;
+      maxPagesPerCompany?: number;
+    } = {},
+  ) {
+    this.#budget = options.budget ?? unlimitedBudget;
+    this.#reachability = options.reachability ?? null;
+    this.#now = options.now ?? (() => new Date());
+    this.#maxPagesPerCompany = options.maxPagesPerCompany ?? 4;
+  }
 
   async searchCompanies(
     input: Parameters<CompanyProspectSource["searchCompanies"]>[0],
-  ): Promise<readonly CompanyProspectCandidate[]> {
+  ): Promise<CompanyProspectSearchResult> {
     const perQueryLimit = input.limit === null ? 20 : Math.min(20, input.limit);
     const searches = await Promise.all(
       buildQueries(input.query, input.sourceKinds).map((query, index) =>
@@ -69,66 +95,197 @@ export class CrawlerCompanyProspectSource implements CompanyProspectSource {
     );
     const uniqueResults = uniqueOfficialResults(searches.flat());
     const officialResults = input.limit === null ? uniqueResults : uniqueResults.slice(0, input.limit);
-    if (!officialResults.length) return [];
-    const pages = await this.crawler.readPages({
-      urls: officialResults.map((result) => result.canonicalUrl ?? result.url),
-      correlationId: `${input.correlationId}:pages`,
-      requestKey: `${input.correlationId}:pages:v1`,
-    });
-    const pageByHost = new Map(
-      pages.map((page) => [hostname(page.canonicalUrl ?? page.url), page] as const),
-    );
     const candidates: CompanyProspectCandidate[] = [];
+    const observations: CompanyPhoneObservation[] = [];
+    const verified = new Set<string>();
+    let pageAttemptCount = 0;
+    let verificationAttemptCount = 0;
+    let rawPhoneCount = 0;
+    let admissiblePhoneCount = 0;
     const identitySource = input.channel === "whatsapp" ? this.prospectSource() : null;
-    for (const result of officialResults) {
+
+    for (const [resultIndex, result] of officialResults.entries()) {
       if (input.limit !== null && candidates.length >= input.limit) break;
       const website = origin(result.canonicalUrl ?? result.url);
       const domain = normalizeDomain(website);
       if (!domain) continue;
-      const page = pageByHost.get(domain);
-      if (!page) continue;
       const companyName = companyNameFrom(result, domain);
+      const pages = await this.#readCompanyPages({
+        result,
+        correlationId: `${input.correlationId}:company:${resultIndex + 1}`,
+        sourcingCycleId: input.sourcingCycleId ?? null,
+      });
+      pageAttemptCount += pages.attemptCount;
       if (input.channel === "email") {
-        for (const email of extractEmails(page)) {
+        for (const page of pages.pages) {
+          for (const email of extractEmails(page)) {
+            candidates.push(companyCandidate({
+              companyName,
+              website,
+              domain,
+              page,
+              channel: evidenceChannel(email, normalizeEmail(email), "found", "medium", page),
+              kind: "email",
+              endpointKind: "person",
+            }));
+            if (input.limit !== null && candidates.length >= input.limit) break;
+          }
+        }
+        continue;
+      }
+      if (!identitySource) continue;
+      for (const page of pages.pages) {
+        const extracted = extractPublicWhatsappObservations({
+          markdown: page.markdown,
+          sourceUrl: page.canonicalUrl ?? page.url,
+          sourceTitle: page.title,
+          companyName,
+          companyDomain: domain,
+          sourceKind: "web",
+        });
+        rawPhoneCount += extracted.length;
+        for (const observation of extracted) {
+          let reachability: WhatsappReachabilityResult | null = null;
+          if (observation.attributionStatus === "strong" && observation.e164) {
+            admissiblePhoneCount += 1;
+            reachability = await this.#resolveReachability({
+              input,
+              identitySource,
+              observation: { ...observation, e164: observation.e164 },
+            });
+            if (reachability.source === "live") verificationAttemptCount += 1;
+          }
+          observations.push(companyObservation({
+            observation,
+            companyName,
+            domain,
+            page,
+            reachability,
+          }));
+          if (
+            !observation.e164
+            || observation.attributionStatus !== "strong"
+            || reachability?.status !== "verified"
+            || verified.has(observation.e164)
+          ) continue;
+          verified.add(observation.e164);
           candidates.push(companyCandidate({
             companyName,
             website,
             domain,
             page,
-            channel: evidenceChannel(
-              email,
-              normalizeEmail(email),
-              "found",
-              "medium",
-              page,
-            ),
-            kind: "email",
+            channel: {
+              value: observation.rawValue,
+              normalizedValue: observation.e164,
+              status: "verified",
+              confidence: "high",
+              source: reachability.source === "cache"
+                ? "unipile_whatsapp_cache"
+                : "unipile_whatsapp_profile",
+              evidenceUrl: page.canonicalUrl ?? page.url,
+              evidenceSnippet: observation.evidenceSnippet,
+              observedAt: page.collectedAt ?? null,
+            },
+            kind: "whatsapp",
+            endpointKind: observation.endpointKind,
+            providerData: {
+              personName: observation.personName,
+              personRole: observation.personRole,
+              attributionStatus: observation.attributionStatus,
+              attributionReason: observation.attributionReason,
+              providerAccountId: reachability.providerAccountId,
+              reachabilityCheckedAt: reachability.checkedAt.toISOString(),
+              reachabilityExpiresAt: reachability.expiresAt.toISOString(),
+              reachabilitySource: reachability.source,
+            },
           }));
           if (input.limit !== null && candidates.length >= input.limit) break;
         }
-        continue;
-      }
-      if (!identitySource?.verifyWhatsappNumber) continue;
-      for (const phone of extractPhones(page)) {
-        const verified = await identitySource.verifyWhatsappNumber(phone).catch(() => null);
-        if (!verified || verified.status !== "verified") continue;
-        candidates.push(companyCandidate({
-          companyName,
-          website,
-          domain,
-          page,
-          channel: {
-            ...verified,
-            evidenceUrl: page.canonicalUrl ?? page.url,
-            evidenceSnippet: `Numéro professionnel public observé sur ${companyName}.`,
-            observedAt: page.collectedAt ?? null,
-          },
-          kind: "whatsapp",
-        }));
-        if (input.limit !== null && candidates.length >= input.limit) break;
       }
     }
-    return deduplicateCandidates(candidates, input.channel);
+    const deduplicated = deduplicateCandidates(candidates, input.channel);
+    return {
+      candidates: deduplicated,
+      observations,
+      metrics: {
+        searchResultCount: officialResults.length,
+        pageAttemptCount,
+        rawPhoneCount,
+        admissiblePhoneCount,
+        verificationAttemptCount,
+        verifiedPhoneCount: verified.size,
+      },
+    };
+  }
+
+  async #readCompanyPages(input: {
+    result: CrawlerSearchResult;
+    correlationId: string;
+    sourcingCycleId: string | null;
+  }): Promise<{ pages: readonly CrawledPage[]; attemptCount: number }> {
+    const initialUrl = input.result.canonicalUrl ?? input.result.url;
+    const discovered = await this.crawler.discover({
+      url: origin(initialUrl),
+      maxPages: this.#maxPagesPerCompany * 3,
+      maxDepth: 2,
+      correlationId: `${input.correlationId}:discover`,
+    }).catch(() => []);
+    const urls = prioritizedUrls(initialUrl, discovered.map((page) => page.url))
+      .slice(0, this.#maxPagesPerCompany);
+    const reserved: string[] = [];
+    for (const url of urls) {
+      const reservation = await this.#budget.reserve({
+        cycleId: input.sourcingCycleId,
+        resource: "page",
+        amount: 1,
+        now: this.#now(),
+      });
+      if (!reservation.accepted) break;
+      reserved.push(url);
+    }
+    if (!reserved.length) return { pages: [], attemptCount: 0 };
+    const pages = await this.crawler.readPages({
+      urls: reserved,
+      correlationId: `${input.correlationId}:pages`,
+      requestKey: `${input.correlationId}:pages:v2`,
+    });
+    return { pages, attemptCount: reserved.length };
+  }
+
+  async #resolveReachability(input: {
+    input: Parameters<CompanyProspectSource["searchCompanies"]>[0];
+    identitySource: ProspectSource;
+    observation: PublicPhoneObservation & { e164: string };
+  }): Promise<WhatsappReachabilityResult> {
+    const now = this.#now();
+    if (this.#reachability) {
+      return this.#reachability.resolve({
+        workspaceId: input.input.workspaceId,
+        phone: input.observation.rawValue,
+        e164: input.observation.e164,
+        sourcingCycleId: input.input.sourcingCycleId ?? null,
+        now,
+      });
+    }
+    const reservation = await this.#budget.reserve({
+      cycleId: input.input.sourcingCycleId ?? null,
+      resource: "whatsapp_verification",
+      amount: 1,
+      now,
+    });
+    if (!reservation.accepted) return unknownReachability(now, "SOURCING_VERIFICATION_BUDGET_EXHAUSTED");
+    if (input.identitySource.verifyWhatsappReachability) {
+      return input.identitySource.verifyWhatsappReachability(input.observation.rawValue);
+    }
+    const channel = await input.identitySource.verifyWhatsappNumber?.(input.observation.rawValue).catch(() => null);
+    return {
+      status: channel?.status === "verified" ? "verified" : "unknown",
+      providerAccountId: null,
+      checkedAt: now,
+      expiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1_000),
+      source: "live",
+      errorCode: channel ? null : "UNIPILE_VERIFICATION_UNAVAILABLE",
+    };
   }
 }
 
@@ -139,34 +296,69 @@ function companyCandidate(input: {
   page: CrawledPage;
   channel: ProspectChannel;
   kind: "email" | "whatsapp";
+  endpointKind: "person" | "company";
+  providerData?: Record<string, unknown>;
 }): CompanyProspectCandidate {
   const channels = emptyProspectChannels();
+  const collective = input.endpointKind === "company";
   return {
-    fullName: input.companyName,
+    fullName: collective ? input.companyName : (input.providerData?.personName as string | null) ?? input.companyName,
     companyName: input.companyName,
     companyWebsite: input.website,
     companyDomain: input.domain,
     location: null,
     channels: { ...channels, [input.kind]: input.channel },
     providerData: {
-      candidateKind: "company",
+      candidateKind: collective ? "company_endpoint" : "person",
       source: "public_web",
       evidenceUrl: input.page.canonicalUrl ?? input.page.url,
+      evidenceSnippet: input.channel.evidenceSnippet,
       contentHash: input.page.contentHash ?? null,
       collectedAt: input.page.collectedAt ?? null,
+      ...input.providerData,
     },
   };
 }
 
+function companyObservation(input: {
+  observation: PublicPhoneObservation;
+  companyName: string;
+  domain: string;
+  page: CrawledPage;
+  reachability: WhatsappReachabilityResult | null;
+}): CompanyPhoneObservation {
+  return {
+    rawValue: input.observation.rawValue,
+    e164: input.observation.e164,
+    endpointKind: input.observation.endpointKind,
+    companyName: input.companyName,
+    companyDomain: input.domain,
+    personName: input.observation.personName,
+    personRole: input.observation.personRole,
+    attributionStatus: input.observation.attributionStatus,
+    attributionReason: input.observation.attributionReason,
+    rejectionReason: input.observation.rejectionReason,
+    sourceKind: "web",
+    sourceUrl: input.page.canonicalUrl ?? input.page.url,
+    evidenceSnippet: input.observation.evidenceSnippet,
+    contentHash: input.page.contentHash ?? null,
+    observedAt: input.page.collectedAt ?? null,
+    reachabilityStatus: input.reachability?.status ?? "unknown",
+    providerAccountId: input.reachability?.providerAccountId ?? null,
+    reachabilityCheckedAt: input.reachability?.checkedAt.toISOString() ?? null,
+    reachabilityExpiresAt: input.reachability?.expiresAt.toISOString() ?? null,
+  };
+}
+
 function buildQueries(query: string, sourceKinds: readonly string[]): string[] {
-  const suffixes = sourceKinds.map((kind) => {
+  const kinds = sourceKinds.length ? sourceKinds : ["web"];
+  const suffixes = kinds.map((kind) => {
     if (kind === "maps") return "adresse téléphone établissement";
     if (kind === "official_registry") return "registre officiel entreprise";
     if (kind === "professional_directory") return "annuaire professionnel";
-    return "site officiel entreprise contact";
+    return "site officiel entreprise contact France";
   });
-  return [...new Set((suffixes.length ? suffixes : ["site officiel entreprise contact"])
-    .map((suffix) => `${query} ${suffix}`))].slice(0, 3);
+  return [...new Set(suffixes.map((suffix) => `${query} ${suffix}`))].slice(0, 3);
 }
 
 function uniqueOfficialResults(results: readonly CrawlerSearchResult[]): CrawlerSearchResult[] {
@@ -196,20 +388,6 @@ function extractEmails(page: CrawledPage): string[] {
       return false;
     }
   });
-}
-
-function extractPhones(page: CrawledPage): string[] {
-  const normalized = new Map<string, string>();
-  for (const value of page.markdown.match(PHONE_PATTERN) ?? []) {
-    try {
-      const fingerprint = normalizePhone(value);
-      const digits = fingerprint.replace(/\D/g, "");
-      if (digits.length >= 8 && digits.length <= 15) normalized.set(fingerprint, value.trim());
-    } catch {
-      // Ignore malformed public values.
-    }
-  }
-  return [...normalized.values()];
 }
 
 function evidenceChannel(
@@ -244,6 +422,11 @@ function deduplicateCandidates(
   });
 }
 
+function prioritizedUrls(initialUrl: string, discovered: readonly string[]): string[] {
+  const unique = [...new Set([initialUrl, ...discovered])];
+  return unique.sort((left, right) => Number(PRIORITY_PATH.test(new URL(right).pathname)) - Number(PRIORITY_PATH.test(new URL(left).pathname)));
+}
+
 function companyNameFrom(result: CrawlerSearchResult, domain: string): string {
   const title = result.title.split(/[|–—-]/)[0]?.trim();
   return title || domain.split(".")[0]!.replaceAll("-", " ");
@@ -256,3 +439,20 @@ function hostname(value: string): string {
 function origin(value: string): string {
   return new URL(value).origin;
 }
+
+function unknownReachability(now: Date, errorCode: string): WhatsappReachabilityResult {
+  return {
+    status: "unknown",
+    providerAccountId: null,
+    checkedAt: now,
+    expiresAt: now,
+    source: "live",
+    errorCode,
+  };
+}
+
+const unlimitedBudget: DailySourcingBudget = {
+  async reserve() {
+    return { accepted: true, remaining: null, deadlineAt: null };
+  },
+};

@@ -8,6 +8,7 @@ import {
   normalizeLinkedinUrl,
   normalizePhone,
 } from "@outbound/domain/crm/normalization";
+import type { WhatsappReachabilityResult } from "@outbound/application/crm/whatsapp-sourcing-ports";
 
 export interface ProspectSearchFilters {
   readonly api: "classic" | "sales_navigator" | "recruiter";
@@ -32,6 +33,7 @@ export interface ProspectSource {
   searchPeople(filters: ProspectSearchFilters): Promise<readonly ProspectSourceCandidate[]>;
   enrichLinkedinProfile?(candidate: ProspectSourceCandidate): Promise<ProspectSourceCandidate>;
   verifyWhatsappNumber?(phone: string): Promise<ProspectChannel>;
+  verifyWhatsappReachability?(phone: string): Promise<WhatsappReachabilityResult>;
   resolveHealthyAccount?(channel: "linkedin" | "email" | "whatsapp"): Promise<string>;
 }
 
@@ -298,11 +300,38 @@ export class UnipileProspectSource implements ProspectSource {
   }
 
   async verifyWhatsappNumber(phone: string): Promise<ProspectChannel> {
+    const result = await this.verifyWhatsappReachability(phone);
     const normalized = safePhone(phone);
     if (!normalized) return emptyProspectChannels().whatsapp;
-    const accountId = await this.#resolveHealthyWhatsappAccountId();
+    return result.status === "verified"
+      ? channel(phone, normalized, "verified", "high", "unipile_whatsapp_profile")
+      : channel(phone, normalized, "unverified", "low", "unipile_whatsapp_check");
+  }
+
+  async verifyWhatsappReachability(phone: string): Promise<WhatsappReachabilityResult> {
+    const checkedAt = new Date();
+    const expiresAt = new Date(checkedAt.getTime() + 30 * 24 * 60 * 60 * 1_000);
+    const normalized = safePhone(phone);
+    if (!normalized) {
+      return {
+        status: "unknown",
+        providerAccountId: null,
+        checkedAt,
+        expiresAt: checkedAt,
+        source: "live",
+        errorCode: "INVALID_PHONE_NUMBER",
+      };
+    }
+    const accountId = await this.#resolveHealthyWhatsappAccountId().catch(() => null);
     if (!accountId) {
-      return channel(phone, normalized, "unverified", "low", "unipile_whatsapp_check");
+      return {
+        status: "unknown",
+        providerAccountId: null,
+        checkedAt,
+        expiresAt: checkedAt,
+        source: "live",
+        errorCode: "WHATSAPP_ACCOUNT_DISCONNECTED",
+      };
     }
     const identifier = normalized.replace(/^\+/, "");
     const url = new URL(`${this.#dsn}/api/v1/users/${encodeURIComponent(identifier)}`);
@@ -311,12 +340,24 @@ export class UnipileProspectSource implements ProspectSource {
       headers: { "X-API-KEY": this.#apiKey, accept: "application/json" },
     }).catch(() => null);
     if (!response?.ok) {
-      return channel(phone, normalized, "unverified", "low", "unipile_whatsapp_check");
+      return {
+        status: "unknown",
+        providerAccountId: accountId,
+        checkedAt,
+        expiresAt: checkedAt,
+        source: "live",
+        errorCode: response ? `UNIPILE_${response.status}` : "UNIPILE_NETWORK_ERROR",
+      };
     }
     const body = (await response.json().catch(() => null)) as { provider?: string } | null;
-    return body?.provider?.toUpperCase() === "WHATSAPP"
-      ? channel(phone, normalized, "verified", "high", "unipile_whatsapp_profile")
-      : channel(phone, normalized, "unverified", "low", "unipile_whatsapp_check");
+    return {
+      status: body?.provider?.toUpperCase() === "WHATSAPP" ? "verified" : "not_registered",
+      providerAccountId: accountId,
+      checkedAt,
+      expiresAt,
+      source: "live",
+      errorCode: null,
+    };
   }
 
   async #resolveHealthyWhatsappAccountId(): Promise<string | null> {

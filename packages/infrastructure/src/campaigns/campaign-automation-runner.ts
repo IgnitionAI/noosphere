@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, or, sql } from "drizzle-orm";
 import {
   CAMPAIGN_COMPOSITION_JOB_TYPE,
   CAMPAIGN_PROSPECT_SCORE_VERSION,
@@ -13,6 +13,7 @@ import {
   campaignProspects,
   campaigns,
   companies,
+  contactChannelAssignments,
   contactEmployments,
   contactIdentities,
   contacts,
@@ -20,7 +21,9 @@ import {
   jobs,
   outboxEvents,
   prospectDiscoveryCandidates,
+  sequenceEnrollments,
 } from "@outbound/infrastructure/database/schema";
+import { suppressionFingerprint } from "@outbound/infrastructure/crm/suppression-fingerprint";
 
 export class CampaignAutomationJobProcessor {
   constructor(
@@ -145,13 +148,21 @@ export class CampaignAutomationJobProcessor {
     return this.database.transaction(async (tx) => {
       const lockKey = `${input.workspaceId}:${input.channel}:${normalizedValue}`;
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${lockKey}))`);
+      const identityFingerprint = suppressionFingerprint({
+        workspaceId: input.workspaceId,
+        identityType: input.channel === "whatsapp" ? "whatsapp" : input.channel,
+        normalizedValue,
+      });
       const [suppression] = await tx
         .select({ id: contactSuppressions.id })
         .from(contactSuppressions)
         .where(
           and(
             eq(contactSuppressions.workspaceId, input.workspaceId),
-            eq(contactSuppressions.normalizedValue, normalizedValue),
+            or(
+              eq(contactSuppressions.identityFingerprint, identityFingerprint),
+              eq(contactSuppressions.normalizedValue, normalizedValue),
+            ),
             inArray(contactSuppressions.channel, ["global", input.channel]),
           ),
         )
@@ -190,6 +201,32 @@ export class CampaignAutomationJobProcessor {
         identity: { ...identity, normalizedValue, value: identityValue },
         now: this.clock.now(),
       });
+      if (input.channel === "whatsapp") {
+        const assigned = await assignWhatsappCampaign(tx, {
+          workspaceId: input.workspaceId,
+          contactId,
+          campaignId: input.campaignId,
+          candidateId: input.candidate.id,
+          score: scored.score,
+          now: this.clock.now(),
+        });
+        if (!assigned) {
+          await tx
+            .update(campaignProspects)
+            .set({
+              contactId,
+              state: "excluded",
+              eligible: false,
+              score: scored.score,
+              scoreVersion: CAMPAIGN_PROSPECT_SCORE_VERSION,
+              scoreExplanation: [...scored.factors],
+              exclusionReason: "CONTACT_ASSIGNED_TO_OTHER_WHATSAPP_CAMPAIGN",
+              updatedAt: this.clock.now(),
+            })
+            .where(campaignProspectKey(input));
+          return false;
+        }
+      }
       await tx
         .update(prospectDiscoveryCandidates)
         .set({ importedContactId: contactId })
@@ -412,13 +449,110 @@ function contactName(candidate: CandidateRow, channel: ProspectingChannel, ident
     }
   }
   if (providerData.candidateKind === "company") {
-    return { firstName: "Équipe", lastName: candidate.companyName ?? "Entreprise" };
+    return {
+      firstName: candidate.companyName ?? "Entreprise",
+      lastName: "Point de contact entreprise",
+    };
+  }
+  if (providerData.candidateKind === "company_endpoint") {
+    return {
+      firstName: candidate.companyName ?? "Entreprise",
+      lastName: "Point de contact entreprise",
+    };
   }
   const parts = candidate.fullName.trim().split(/\s+/).filter(Boolean);
   return {
     firstName: parts[0] ?? "Contact",
     lastName: parts.slice(1).join(" ") || candidate.companyName || "Professionnel",
   };
+}
+
+async function assignWhatsappCampaign(
+  tx: Parameters<Parameters<Database["transaction"]>[0]>[0],
+  input: {
+    workspaceId: string;
+    contactId: string;
+    campaignId: string;
+    candidateId: string;
+    score: number;
+    now: Date;
+  },
+): Promise<boolean> {
+  const [existing] = await tx
+    .select()
+    .from(contactChannelAssignments)
+    .where(
+      and(
+        eq(contactChannelAssignments.workspaceId, input.workspaceId),
+        eq(contactChannelAssignments.contactId, input.contactId),
+        eq(contactChannelAssignments.channel, "whatsapp"),
+      ),
+    )
+    .limit(1);
+  if (!existing) {
+    await tx.insert(contactChannelAssignments).values({
+      workspaceId: input.workspaceId,
+      contactId: input.contactId,
+      channel: "whatsapp",
+      campaignId: input.campaignId,
+      candidateId: input.candidateId,
+      score: input.score,
+      scoreVersion: CAMPAIGN_PROSPECT_SCORE_VERSION,
+      assignedAt: input.now,
+      updatedAt: input.now,
+    });
+    return true;
+  }
+  if (existing.campaignId === input.campaignId) return true;
+  const [started] = await tx
+    .select({ id: sequenceEnrollments.id })
+    .from(sequenceEnrollments)
+    .where(
+      and(
+        eq(sequenceEnrollments.workspaceId, input.workspaceId),
+        eq(sequenceEnrollments.contactId, input.contactId),
+        eq(sequenceEnrollments.campaignId, existing.campaignId),
+      ),
+    )
+    .limit(1);
+  const currentWins = !started && (
+    input.score > existing.score
+    || (input.score === existing.score && input.campaignId.localeCompare(existing.campaignId) < 0)
+  );
+  if (!currentWins) return false;
+  await tx
+    .update(campaignProspects)
+    .set({
+      state: "excluded",
+      eligible: false,
+      exclusionReason: "CONTACT_REASSIGNED_TO_BETTER_WHATSAPP_CAMPAIGN",
+      updatedAt: input.now,
+    })
+    .where(
+      and(
+        eq(campaignProspects.workspaceId, input.workspaceId),
+        eq(campaignProspects.campaignId, existing.campaignId),
+        eq(campaignProspects.candidateId, existing.candidateId),
+      ),
+    );
+  await tx
+    .update(contactChannelAssignments)
+    .set({
+      campaignId: input.campaignId,
+      candidateId: input.candidateId,
+      score: input.score,
+      scoreVersion: CAMPAIGN_PROSPECT_SCORE_VERSION,
+      assignedAt: input.now,
+      updatedAt: input.now,
+    })
+    .where(
+      and(
+        eq(contactChannelAssignments.workspaceId, input.workspaceId),
+        eq(contactChannelAssignments.contactId, input.contactId),
+        eq(contactChannelAssignments.channel, "whatsapp"),
+      ),
+    );
+  return true;
 }
 
 function capitalize(value: string): string {

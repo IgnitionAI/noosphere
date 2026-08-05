@@ -1,4 +1,4 @@
-import { ArrowLeft, ExternalLink, Mail, Phone, Send, UserRound } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Building2, Clock3, ExternalLink, Mail, Phone, RefreshCw, Search, Send, UserRound } from "lucide-react";
 import Link from "next/link";
 import { getCampaign } from "@/lib/api";
 import { prospectDetailHref } from "@/lib/prospect-navigation";
@@ -31,9 +31,9 @@ export default async function CampaignDetailPage({
             </span>
             <span className={campaign.discoveryStatus === "completed" ? "badge badge-success" : campaign.discoveryStatus === "failed" ? "badge badge-danger" : "badge"}>
               {campaign.discoveryStatus === "running"
-                ? "sourcing en cours"
+                ? "passage en cours"
                 : campaign.discoveryStatus === "completed"
-                  ? "sourcing terminé"
+                  ? "passage initial terminé"
                   : campaign.discoveryStatus === "failed"
                     ? "sourcing legacy échoué"
                     : "faisabilité mesurée"}
@@ -51,6 +51,10 @@ export default async function CampaignDetailPage({
         <div className="mb-5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-800">
           {campaign.automationErrorMessage ?? campaign.discoveryErrorMessage ?? campaign.automationErrorCode ?? campaign.discoveryErrorCode ?? "L’autopilote est suspendu sur une exception fournisseur."}
         </div>
+      ) : null}
+
+      {campaign.sourcingPool ? (
+        <WhatsappSourcingPoolPanel pool={campaign.sourcingPool} />
       ) : null}
 
       <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
@@ -73,7 +77,9 @@ export default async function CampaignDetailPage({
                 {campaign.prospects.map((prospect) => (
                   <li className="rounded-lg border border-line p-4" key={prospect.candidateId}>
                     <div className="flex flex-wrap items-start gap-3">
-                      <span className="grid h-9 w-9 place-items-center rounded-full bg-slate-100"><UserRound size={16} /></span>
+                        <span className="grid h-9 w-9 place-items-center rounded-full bg-slate-100">
+                          {prospect.providerData.candidateKind === "company_endpoint" ? <Building2 size={16} /> : <UserRound size={16} />}
+                        </span>
                       <div className="min-w-0 flex-1">
                         {prospect.contactId ? (
                           <Link className="block text-sm font-semibold hover:text-brand-blue" href={prospectDetailHref(workspaceSlug, prospect.contactId, campaignPath)}>
@@ -83,14 +89,22 @@ export default async function CampaignDetailPage({
                           <strong className="block text-sm">{prospect.fullName}</strong>
                         )}
                         <span className="block text-xs text-muted">{[prospect.headline, prospect.companyName].filter(Boolean).join(" · ") || "Fonction à confirmer"}</span>
+                        {prospect.providerData.candidateKind === "company_endpoint" ? (
+                          <span className="mt-1 inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">Point de contact entreprise</span>
+                        ) : null}
                       </div>
-                      <span className={prospect.eligible ? "badge badge-success" : "badge"}>{prospect.eligible ? `${prospect.score ?? 0}/100` : prospect.state === "excluded" ? "exclu" : "candidat"}</span>
+                      <span className={prospect.eligible ? "badge badge-success" : "badge"}>{prospect.eligible ? `Score ICP ${prospect.score ?? 0}/100` : prospect.state === "excluded" ? "exclu" : "contact sourcé"}</span>
                     </div>
                     <div className="mt-3 flex flex-wrap gap-2 text-xs">
                       {prospect.linkedinUrl ? <Channel href={prospect.linkedinUrl} icon={ExternalLink} label="LinkedIn" /> : null}
                       {prospect.channels.email.value ? <Channel href={`mailto:${prospect.channels.email.value}`} icon={Mail} label={prospect.channels.email.value} /> : null}
                       {prospect.channels.whatsapp.value ? <Channel href={`https://wa.me/${prospect.channels.whatsapp.normalizedValue?.replace(/\D/g, "") ?? ""}`} icon={Phone} label={prospect.channels.whatsapp.value} /> : null}
                     </div>
+                    {prospect.channels.whatsapp.status === "verified" ? (
+                      <p className="mt-2 text-[11px] text-emerald-700">
+                        Contact WhatsApp vérifié{reachabilityDate(prospect.providerData) ? ` le ${reachabilityDate(prospect.providerData)}` : ""}{prospect.providerData.reachabilitySource === "cache" ? " · contrôle encore valide" : " · contrôle direct"}
+                      </p>
+                    ) : null}
                     {prospect.icpFit.matches.length ? (
                       <p className="mt-3 text-[11px] text-emerald-700">{prospect.icpFit.matches.join(" · ")}</p>
                     ) : null}
@@ -137,7 +151,7 @@ function channelLabel(kind: string): string {
 function automationLabel(stage: string, discoveryStatus: string | null): string {
   if (stage === "sourcing") {
     if (discoveryStatus === "running") return "recherche en cours";
-    if (discoveryStatus === "completed") return "recherche terminée";
+    if (discoveryStatus === "completed") return "passage terminé";
     if (discoveryStatus === "failed") return "recherche échouée";
     return "recherche non lancée";
   }
@@ -149,4 +163,81 @@ function automationLabel(stage: string, discoveryStatus: string | null): string 
     completed: "campagne terminée",
     attention: "exception autopilote",
   } as Record<string, string>)[stage] ?? "autopilote";
+}
+
+function WhatsappSourcingPoolPanel({ pool }: { pool: NonNullable<Awaited<ReturnType<typeof getCampaign>>["sourcingPool"]> }) {
+  const actionRequired = pool.actionRequired || pool.status === "action_required";
+  const running = pool.status === "running" || pool.status === "scheduled";
+  const title = actionRequired
+    ? "Reconnecter le compte WhatsApp"
+    : running
+      ? "Passage du jour en cours"
+      : pool.status === "not_started"
+        ? "Premier passage programmé"
+        : pool.status === "failed"
+          ? "Nouvelle tentative automatique"
+          : "Passage du jour terminé";
+  const Icon = actionRequired ? AlertTriangle : running ? RefreshCw : Search;
+  const cause = actionRequired
+    ? "La vérification des numéros attend une reconnexion du compte sélectionné."
+    : pool.verificationPending > 0
+      ? `${pool.verificationPending} mobile(s) admissible(s) attendent encore leur vérification WhatsApp.`
+      : pool.admissibleObserved === 0 && pool.status !== "not_started"
+        ? "Aucun mobile professionnel admissible n’a été observé pendant ce passage."
+        : `${pool.verifiedObserved} contact(s) WhatsApp vérifié(s) observé(s) dans le pool partagé.`;
+  return (
+    <section className="panel mb-5 overflow-hidden">
+      <div className="panel-header flex-wrap gap-3">
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted">Pool de sourcing partagé</p>
+          <h2 className="mt-1 flex items-center gap-2 font-semibold"><Icon size={16} className={running ? "animate-spin" : ""} /> {title}</h2>
+        </div>
+        <span className="badge">{pool.contactsAssignedToday} affecté(s) à cette campagne aujourd’hui</span>
+      </div>
+      <div className="panel-body">
+        <p className="text-sm text-muted">{cause}</p>
+        <div className="mt-4 grid gap-3 sm:grid-cols-3">
+          <Metric label="Mobiles admissibles" value={pool.admissibleObserved} />
+          <Metric label="WhatsApp vérifiés" value={pool.verifiedObserved} />
+          <Metric label="Vérifications en attente" value={pool.verificationPending} />
+        </div>
+        <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-[11px] text-muted">
+          <span className="inline-flex items-center gap-1"><Clock3 size={12} /> Dernier passage : {formatPassDate(pool.lastPassAt)}</span>
+          <span className="inline-flex items-center gap-1"><Clock3 size={12} /> Prochain passage : {formatPassDate(pool.nextPassAt)} · heure de Paris</span>
+          <span>Diagnostic : {pool.pageAttempts}/{pool.pageLimit} pages · {pool.verificationAttempts}/{pool.verificationLimit} contrôles</span>
+        </div>
+        <p className="mt-4 rounded-lg bg-slate-50 px-3 py-2 text-[11px] leading-4 text-slate-600">
+          Cette étape recherche et importe uniquement. Elle n’envoie aucun message ; les séquences de campagne sont gérées séparément.
+        </p>
+      </div>
+    </section>
+  );
+}
+
+function Metric({ label, value }: { label: string; value: number }) {
+  return <div className="rounded-lg border border-line px-3 py-2"><strong className="block text-lg">{value}</strong><span className="text-[11px] text-muted">{label}</span></div>;
+}
+
+function formatPassDate(value: string | null): string {
+  if (!value) return "à venir";
+  return new Intl.DateTimeFormat("fr-FR", {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Europe/Paris",
+  }).format(new Date(value));
+}
+
+function reachabilityDate(providerData: Readonly<Record<string, unknown>>): string | null {
+  const value = providerData.reachabilityCheckedAt;
+  if (typeof value !== "string") return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return new Intl.DateTimeFormat("fr-FR", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    timeZone: "Europe/Paris",
+  }).format(date);
 }

@@ -223,6 +223,107 @@ export const dailyProspectingSchedules = pgTable(
   (table) => [index("daily_prospecting_schedules_due_idx").on(table.enabled, table.nextRunAt)],
 );
 
+export const dailySourcingCycleStatusEnum = pgEnum("daily_sourcing_cycle_status", [
+  "scheduled",
+  "running",
+  "completed",
+  "partial",
+  "failed",
+  "action_required",
+]);
+
+export const sourcingFrontierStatusEnum = pgEnum("sourcing_frontier_status", [
+  "active",
+  "saturated",
+  "paused",
+]);
+
+export const dailySourcingCycles = pgTable(
+  "daily_sourcing_cycles",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    localDate: varchar("local_date", { length: 10 }).notNull(),
+    timezone: varchar("timezone", { length: 120 }).notNull().default("Europe/Paris"),
+    status: dailySourcingCycleStatusEnum("status").notNull().default("scheduled"),
+    deadlineAt: timestamp("deadline_at", { withTimezone: true }).notNull(),
+    pageLimit: integer("page_limit").notNull().default(150),
+    pageAttempts: integer("page_attempts").notNull().default(0),
+    verificationLimit: integer("verification_limit").notNull().default(60),
+    verificationAttempts: integer("verification_attempts").notNull().default(0),
+    maxPagesPerCompany: integer("max_pages_per_company").notNull().default(4),
+    maxConcurrentPerDomain: integer("max_concurrent_per_domain").notNull().default(2),
+    activeIcpCount: integer("active_icp_count").notNull().default(0),
+    scheduledRunCount: integer("scheduled_run_count").notNull().default(0),
+    summary: jsonb("summary").notNull().default({}),
+    errorCode: varchar("error_code", { length: 120 }),
+    errorMessage: text("error_message"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("daily_sourcing_cycles_workspace_date_uq").on(
+      table.workspaceId,
+      table.localDate,
+    ),
+    index("daily_sourcing_cycles_workspace_status_idx").on(
+      table.workspaceId,
+      table.status,
+      table.createdAt,
+    ),
+  ],
+);
+
+export const sourcingFrontiers = pgTable(
+  "sourcing_frontiers",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    icpVersionId: uuid("icp_version_id")
+      .notNull()
+      .references(() => icpVersions.id, { onDelete: "cascade" }),
+    channel: varchar("channel", { length: 40 }).notNull().default("whatsapp"),
+    sourceKind: varchar("source_kind", { length: 80 }).notNull().default("web"),
+    regionKey: varchar("region_key", { length: 120 }).notNull().default("fr-metropolitan"),
+    querySeed: text("query_seed").notNull(),
+    queryFingerprint: varchar("query_fingerprint", { length: 128 }).notNull(),
+    status: sourcingFrontierStatusEnum("status").notNull().default("active"),
+    rotationOrdinal: integer("rotation_ordinal").notNull().default(0),
+    consecutiveEmptyRuns: integer("consecutive_empty_runs").notNull().default(0),
+    pageAttempts: integer("page_attempts").notNull().default(0),
+    verifiedFound: integer("verified_found").notNull().default(0),
+    yieldEma: numeric("yield_ema", { precision: 10, scale: 6 }).notNull().default("0"),
+    nextEligibleAt: timestamp("next_eligible_at", { withTimezone: true }).notNull(),
+    lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+    lastYieldAt: timestamp("last_yield_at", { withTimezone: true }),
+    metadata: jsonb("metadata").notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("sourcing_frontiers_logical_uq").on(
+      table.workspaceId,
+      table.icpVersionId,
+      table.channel,
+      table.sourceKind,
+      table.regionKey,
+      table.queryFingerprint,
+    ),
+    index("sourcing_frontiers_due_idx").on(
+      table.workspaceId,
+      table.channel,
+      table.status,
+      table.nextEligibleAt,
+    ),
+  ],
+);
+
 export const productResearchRuns = pgTable(
   "product_research_runs",
   {
@@ -882,6 +983,7 @@ export const contactSuppressions = pgTable(
     channel: suppressionChannelEnum("channel").notNull(),
     identityType: contactIdentityTypeEnum("identity_type"),
     normalizedValue: varchar("normalized_value", { length: 600 }),
+    identityFingerprint: varchar("identity_fingerprint", { length: 128 }),
     reason: text("reason"),
     createdBy: uuid("created_by").references(() => authUsers.id),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -895,6 +997,9 @@ export const contactSuppressions = pgTable(
     uniqueIndex("contact_suppressions_fingerprint_uq")
       .on(table.workspaceId, table.identityType, table.normalizedValue)
       .where(sql`${table.normalizedValue} is not null`),
+    uniqueIndex("contact_suppressions_hmac_uq")
+      .on(table.workspaceId, table.identityType, table.identityFingerprint)
+      .where(sql`${table.identityFingerprint} is not null`),
   ],
 );
 
@@ -915,6 +1020,12 @@ export const prospectDiscoveryRuns = pgTable(
     campaignId: uuid("campaign_id").references((): AnyPgColumn => campaigns.id, {
       onDelete: "cascade",
     }),
+    sourcingCycleId: uuid("sourcing_cycle_id").references(() => dailySourcingCycles.id, {
+      onDelete: "set null",
+    }),
+    sourcingFrontierId: uuid("sourcing_frontier_id").references(() => sourcingFrontiers.id, {
+      onDelete: "set null",
+    }),
     trigger: varchar("trigger", { length: 40 }).notNull().default("manual"),
     provider: varchar("provider", { length: 80 }).notNull().default("unipile"),
     channel: prospectingChannelEnum("channel").notNull().default("linkedin"),
@@ -934,6 +1045,7 @@ export const prospectDiscoveryRuns = pgTable(
       name: "prospect_discovery_runs_workspace_fk",
     }).onDelete("cascade"),
     index("prospect_discovery_runs_version_idx").on(table.workspaceId, table.icpVersionId),
+    index("prospect_discovery_runs_cycle_idx").on(table.workspaceId, table.sourcingCycleId),
     uniqueIndex("prospect_discovery_runs_active_version_uq")
       .on(table.workspaceId, table.icpVersionId, table.channel)
       .where(sql`${table.status} = 'running'`),
@@ -974,6 +1086,107 @@ export const prospectDiscoveryCandidates = pgTable(
     uniqueIndex("prospect_discovery_candidates_run_linkedin_uq")
       .on(table.workspaceId, table.runId, table.linkedinNormalized)
       .where(sql`${table.linkedinNormalized} is not null`),
+  ],
+);
+
+export const phoneAttributionStatusEnum = pgEnum("phone_attribution_status", [
+  "strong",
+  "weak",
+  "conflict",
+  "rejected",
+]);
+
+export const phoneEndpointKindEnum = pgEnum("phone_endpoint_kind", [
+  "person",
+  "company",
+]);
+
+export const whatsappReachabilityStatusEnum = pgEnum("whatsapp_reachability_status", [
+  "verified",
+  "not_registered",
+  "unknown",
+]);
+
+export const phoneObservations = pgTable(
+  "phone_observations",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    runId: uuid("run_id")
+      .notNull()
+      .references(() => prospectDiscoveryRuns.id, { onDelete: "cascade" }),
+    sourcingCycleId: uuid("sourcing_cycle_id").references(() => dailySourcingCycles.id, {
+      onDelete: "set null",
+    }),
+    sourcingFrontierId: uuid("sourcing_frontier_id").references(() => sourcingFrontiers.id, {
+      onDelete: "set null",
+    }),
+    logicalFingerprint: varchar("logical_fingerprint", { length: 128 }).notNull(),
+    e164: varchar("e164", { length: 32 }),
+    rawValue: varchar("raw_value", { length: 120 }),
+    endpointKind: phoneEndpointKindEnum("endpoint_kind").notNull(),
+    companyName: varchar("company_name", { length: 300 }).notNull(),
+    companyDomain: varchar("company_domain", { length: 300 }),
+    companyFingerprint: varchar("company_fingerprint", { length: 128 }).notNull(),
+    personName: varchar("person_name", { length: 300 }),
+    personRole: varchar("person_role", { length: 300 }),
+    attributionStatus: phoneAttributionStatusEnum("attribution_status").notNull(),
+    attributionReason: text("attribution_reason").notNull(),
+    sourceKind: varchar("source_kind", { length: 80 }).notNull(),
+    sourceUrl: varchar("source_url", { length: 1200 }).notNull(),
+    evidenceSnippet: text("evidence_snippet").notNull(),
+    contentHash: varchar("content_hash", { length: 128 }),
+    reachabilityStatus: whatsappReachabilityStatusEnum("reachability_status")
+      .notNull()
+      .default("unknown"),
+    providerAccountId: text("provider_account_id"),
+    reachabilityCheckedAt: timestamp("reachability_checked_at", { withTimezone: true }),
+    reachabilityExpiresAt: timestamp("reachability_expires_at", { withTimezone: true }),
+    rejectionReason: varchar("rejection_reason", { length: 160 }),
+    firstObservedAt: timestamp("first_observed_at", { withTimezone: true }).notNull(),
+    lastObservedAt: timestamp("last_observed_at", { withTimezone: true }).notNull(),
+    contradictedAt: timestamp("contradicted_at", { withTimezone: true }),
+    rawRetainUntil: timestamp("raw_retain_until", { withTimezone: true }),
+    metadata: jsonb("metadata").notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("phone_observations_logical_uq").on(
+      table.workspaceId,
+      table.logicalFingerprint,
+    ),
+    index("phone_observations_e164_idx").on(
+      table.workspaceId,
+      table.e164,
+      table.attributionStatus,
+    ),
+    index("phone_observations_cycle_idx").on(table.workspaceId, table.sourcingCycleId),
+  ],
+);
+
+export const whatsappReachabilityChecks = pgTable(
+  "whatsapp_reachability_checks",
+  {
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    providerAccountId: text("provider_account_id").notNull(),
+    e164: varchar("e164", { length: 32 }).notNull(),
+    status: whatsappReachabilityStatusEnum("status").notNull(),
+    source: varchar("source", { length: 120 }).notNull().default("unipile"),
+    checkedAt: timestamp("checked_at", { withTimezone: true }).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    lastErrorCode: varchar("last_error_code", { length: 120 }),
+    responseHash: varchar("response_hash", { length: 128 }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.workspaceId, table.providerAccountId, table.e164] }),
+    index("whatsapp_reachability_expiry_idx").on(table.workspaceId, table.expiresAt),
   ],
 );
 
@@ -1283,6 +1496,37 @@ export const campaignProspects = pgTable(
       table.workspaceId,
       table.campaignId,
       table.state,
+    ),
+  ],
+);
+
+export const contactChannelAssignments = pgTable(
+  "contact_channel_assignments",
+  {
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    contactId: uuid("contact_id")
+      .notNull()
+      .references(() => contacts.id, { onDelete: "cascade" }),
+    channel: prospectingChannelEnum("channel").notNull(),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    candidateId: uuid("candidate_id")
+      .notNull()
+      .references(() => prospectDiscoveryCandidates.id, { onDelete: "cascade" }),
+    score: integer("score").notNull(),
+    scoreVersion: varchar("score_version", { length: 80 }).notNull(),
+    assignedAt: timestamp("assigned_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.workspaceId, table.contactId, table.channel] }),
+    index("contact_channel_assignments_campaign_idx").on(
+      table.workspaceId,
+      table.campaignId,
+      table.assignedAt,
     ),
   ],
 );

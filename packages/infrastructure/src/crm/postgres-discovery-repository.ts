@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import type { Database } from "@outbound/infrastructure/database/client";
 import type { ProspectChannels } from "@outbound/domain/crm/prospect-channels";
+import type { CompanyPhoneObservation } from "@outbound/application/crm/company-prospect-source";
 import {
   CAMPAIGN_AUTOMATION_JOB_TYPE,
 } from "@outbound/application/campaigns/autonomous-prospecting";
@@ -13,6 +14,9 @@ import {
   outboxEvents,
   prospectDiscoveryCandidates,
   prospectDiscoveryRuns,
+  phoneObservations,
+  sourcingFrontiers,
+  dailySourcingCycles,
 } from "@outbound/infrastructure/database/schema";
 
 export class PostgresDiscoveryRepository {
@@ -101,12 +105,23 @@ export class PostgresDiscoveryRepository {
       providerData: unknown;
       icpFit: unknown;
     }[];
+    observations?: readonly CompanyPhoneObservation[];
+    sourcingMetrics?: {
+      searchResultCount: number;
+      pageAttemptCount: number;
+      rawPhoneCount: number;
+      admissiblePhoneCount: number;
+      verificationAttemptCount: number;
+      verifiedPhoneCount: number;
+    };
   }) {
     return this.db.transaction(async (tx) => {
       const [run] = await tx
         .select({
           campaignId: prospectDiscoveryRuns.campaignId,
           trigger: prospectDiscoveryRuns.trigger,
+          sourcingCycleId: prospectDiscoveryRuns.sourcingCycleId,
+          sourcingFrontierId: prospectDiscoveryRuns.sourcingFrontierId,
         })
         .from(prospectDiscoveryRuns)
         .where(
@@ -130,6 +145,55 @@ export class PostgresDiscoveryRepository {
             )
             .limit(1);
       const campaignId = run.campaignId ?? legacyCampaign?.id ?? null;
+      if (input.observations?.length) {
+        const now = input.now ?? new Date();
+        await tx
+          .insert(phoneObservations)
+          .values(input.observations.map((observation) => ({
+            id: crypto.randomUUID(),
+            workspaceId: input.workspaceId,
+            runId: input.runId,
+            sourcingCycleId: run.sourcingCycleId,
+            sourcingFrontierId: run.sourcingFrontierId,
+            logicalFingerprint: observationFingerprint(observation),
+            e164: observation.e164,
+            rawValue: observation.rawValue,
+            endpointKind: observation.endpointKind,
+            companyName: observation.companyName,
+            companyDomain: observation.companyDomain,
+            companyFingerprint: companyFingerprint(observation.companyName, observation.companyDomain),
+            personName: observation.personName,
+            personRole: observation.personRole,
+            attributionStatus: observation.attributionStatus,
+            attributionReason: observation.attributionReason,
+            sourceKind: observation.sourceKind,
+            sourceUrl: observation.sourceUrl,
+            evidenceSnippet: observation.evidenceSnippet,
+            contentHash: observation.contentHash,
+            reachabilityStatus: observation.reachabilityStatus,
+            providerAccountId: observation.providerAccountId,
+            reachabilityCheckedAt: parseDate(observation.reachabilityCheckedAt),
+            reachabilityExpiresAt: parseDate(observation.reachabilityExpiresAt),
+            rejectionReason: observation.rejectionReason,
+            firstObservedAt: parseDate(observation.observedAt) ?? now,
+            lastObservedAt: parseDate(observation.observedAt) ?? now,
+            rawRetainUntil: observation.rejectionReason
+              ? new Date(now.getTime() + 30 * 24 * 60 * 60 * 1_000)
+              : null,
+            updatedAt: now,
+          })))
+          .onConflictDoUpdate({
+            target: [phoneObservations.workspaceId, phoneObservations.logicalFingerprint],
+            set: {
+              lastObservedAt: now,
+              reachabilityStatus: sql`excluded.reachability_status`,
+              providerAccountId: sql`excluded.provider_account_id`,
+              reachabilityCheckedAt: sql`excluded.reachability_checked_at`,
+              reachabilityExpiresAt: sql`excluded.reachability_expires_at`,
+              updatedAt: now,
+            },
+          });
+      }
       const existingFingerprints = campaignId
         ? await this.#campaignFingerprints(tx, input.workspaceId, campaignId)
         : new Set<string>();
@@ -268,6 +332,66 @@ export class PostgresDiscoveryRepository {
           },
         });
       }
+      if (run.sourcingFrontierId && input.sourcingMetrics) {
+        const pages = input.sourcingMetrics.pageAttemptCount;
+        const verifiedCount = input.sourcingMetrics.verifiedPhoneCount;
+        const [frontier] = await tx
+          .select({
+            yieldEma: sourcingFrontiers.yieldEma,
+            consecutiveEmptyRuns: sourcingFrontiers.consecutiveEmptyRuns,
+          })
+          .from(sourcingFrontiers)
+          .where(eq(sourcingFrontiers.id, run.sourcingFrontierId))
+          .limit(1);
+        const previousYield = Number(frontier?.yieldEma ?? 0);
+        const currentYield = pages > 0 ? verifiedCount / pages : 0;
+        const nextEma = previousYield === 0 ? currentYield : previousYield * 0.7 + currentYield * 0.3;
+        const emptyRuns = verifiedCount > 0 ? 0 : (frontier?.consecutiveEmptyRuns ?? 0) + 1;
+        await tx
+          .update(sourcingFrontiers)
+          .set({
+            pageAttempts: sql`${sourcingFrontiers.pageAttempts} + ${pages}`,
+            verifiedFound: sql`${sourcingFrontiers.verifiedFound} + ${verifiedCount}`,
+            yieldEma: String(nextEma),
+            consecutiveEmptyRuns: emptyRuns,
+            status: emptyRuns >= 5 ? "saturated" : "active",
+            nextEligibleAt: new Date(now.getTime() + frontierDelayMs(emptyRuns)),
+            lastRunAt: now,
+            lastYieldAt: verifiedCount > 0 ? now : undefined,
+            rotationOrdinal: sql`${sourcingFrontiers.rotationOrdinal} + 1`,
+            updatedAt: now,
+          })
+          .where(eq(sourcingFrontiers.id, run.sourcingFrontierId));
+      }
+      if (run.sourcingCycleId) {
+        const [active] = await tx
+          .select({ id: prospectDiscoveryRuns.id })
+          .from(prospectDiscoveryRuns)
+          .where(
+            and(
+              eq(prospectDiscoveryRuns.sourcingCycleId, run.sourcingCycleId),
+              eq(prospectDiscoveryRuns.status, "running"),
+            ),
+          )
+          .limit(1);
+        if (!active) {
+          await tx
+            .update(dailySourcingCycles)
+            .set({
+              status: "completed",
+              completedAt: now,
+              summary: sql`jsonb_build_object(
+                'candidateCount', (
+                  select coalesce(sum(${prospectDiscoveryRuns.candidateCount}), 0)
+                  from ${prospectDiscoveryRuns}
+                  where ${prospectDiscoveryRuns.sourcingCycleId} = ${run.sourcingCycleId}
+                )
+              )`,
+              updatedAt: now,
+            })
+            .where(eq(dailySourcingCycles.id, run.sourcingCycleId));
+        }
+      }
       return rows[0]!;
     });
   }
@@ -308,23 +432,77 @@ export class PostgresDiscoveryRepository {
     errorCode: string;
     errorMessage: string;
   }) {
-    const rows = await this.db
-      .update(prospectDiscoveryRuns)
-      .set({
-        status: "failed",
-        errorCode: input.errorCode,
-        errorMessage: input.errorMessage,
-        completedAt: new Date(),
-      })
-      .where(
-        and(
-          eq(prospectDiscoveryRuns.workspaceId, input.workspaceId),
-          eq(prospectDiscoveryRuns.id, input.runId),
-        ),
-      )
-      .returning();
-    if (rows.length !== 1) throw new Error("DISCOVERY_RUN_NOT_FOUND");
-    return rows[0]!;
+    return this.db.transaction(async (tx) => {
+      const now = new Date();
+      const rows = await tx
+        .update(prospectDiscoveryRuns)
+        .set({
+          status: "failed",
+          errorCode: input.errorCode,
+          errorMessage: input.errorMessage,
+          completedAt: now,
+        })
+        .where(
+          and(
+            eq(prospectDiscoveryRuns.workspaceId, input.workspaceId),
+            eq(prospectDiscoveryRuns.id, input.runId),
+          ),
+        )
+        .returning({
+          id: prospectDiscoveryRuns.id,
+          sourcingCycleId: prospectDiscoveryRuns.sourcingCycleId,
+          sourcingFrontierId: prospectDiscoveryRuns.sourcingFrontierId,
+        });
+      if (rows.length !== 1) throw new Error("DISCOVERY_RUN_NOT_FOUND");
+      const run = rows[0]!;
+      if (run.sourcingFrontierId) {
+        await tx
+          .update(sourcingFrontiers)
+          .set({
+            nextEligibleAt: new Date(now.getTime() + 24 * 60 * 60 * 1_000),
+            lastRunAt: now,
+            updatedAt: now,
+          })
+          .where(eq(sourcingFrontiers.id, run.sourcingFrontierId));
+      }
+      if (run.sourcingCycleId) {
+        const [running] = await tx
+          .select({ id: prospectDiscoveryRuns.id })
+          .from(prospectDiscoveryRuns)
+          .where(
+            and(
+              eq(prospectDiscoveryRuns.sourcingCycleId, run.sourcingCycleId),
+              eq(prospectDiscoveryRuns.status, "running"),
+            ),
+          )
+          .limit(1);
+        if (!running) {
+          await tx
+            .update(dailySourcingCycles)
+            .set({
+              status: input.errorCode === "WHATSAPP_ACCOUNT_DISCONNECTED"
+                ? "action_required"
+                : "partial",
+              errorCode: input.errorCode,
+              errorMessage: input.errorMessage.slice(0, 4_000),
+              completedAt: now,
+              updatedAt: now,
+            })
+            .where(eq(dailySourcingCycles.id, run.sourcingCycleId));
+        }
+      }
+      const [persisted] = await tx
+        .select()
+        .from(prospectDiscoveryRuns)
+        .where(
+          and(
+            eq(prospectDiscoveryRuns.workspaceId, input.workspaceId),
+            eq(prospectDiscoveryRuns.id, input.runId),
+          ),
+        )
+        .limit(1);
+      return persisted!;
+    });
   }
 
   async restartRun(input: { workspaceId: string; runId: string }) {
@@ -484,4 +662,33 @@ function candidateFingerprints(candidate: {
         : null,
   ];
   return [...new Set(values.filter((value): value is string => Boolean(value)))];
+}
+
+function observationFingerprint(observation: CompanyPhoneObservation): string {
+  return new Bun.CryptoHasher("sha256")
+    .update([
+      observation.e164 ?? observation.rawValue.replace(/\s+/g, ""),
+      observation.companyDomain ?? observation.companyName.toLocaleLowerCase("fr"),
+      observation.sourceUrl,
+    ].join("|"))
+    .digest("hex");
+}
+
+function companyFingerprint(companyName: string, companyDomain: string | null): string {
+  return new Bun.CryptoHasher("sha256")
+    .update(companyDomain ?? companyName.trim().toLocaleLowerCase("fr"))
+    .digest("hex");
+}
+
+function parseDate(value: string | null): Date | null {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function frontierDelayMs(consecutiveEmptyRuns: number): number {
+  if (consecutiveEmptyRuns >= 5) return 30 * 24 * 60 * 60 * 1_000;
+  if (consecutiveEmptyRuns >= 3) return 7 * 24 * 60 * 60 * 1_000;
+  if (consecutiveEmptyRuns >= 1) return 2 * 24 * 60 * 60 * 1_000;
+  return 24 * 60 * 60 * 1_000;
 }

@@ -7,6 +7,7 @@ import type { CampaignContentGenerator } from "@outbound/application/campaigns/c
 import { OutboundDeliveryError } from "@outbound/application/campaigns/outbound-channel-gateway";
 import type { JobQueue, LeasedJob } from "@outbound/application/jobs/job-queue";
 import type { Clock } from "@outbound/application/shared/ports";
+import type { WhatsappReachabilityResolver } from "@outbound/application/crm/whatsapp-sourcing-ports";
 import { deriveCampaignExecutionState } from "@outbound/domain/campaigns/campaign-automation-health";
 import { nextAllowedCampaignSendAt, type CampaignSendSchedule } from "@outbound/domain/campaigns/campaign-autopilot-policy";
 import { resolveCampaignAutopilotPolicy } from "@outbound/domain/campaigns/campaign-autopilot-policy";
@@ -24,6 +25,7 @@ import {
   prospectDiscoveryCandidates,
   sequenceEnrollments,
 } from "@outbound/infrastructure/database/schema";
+import { suppressionFingerprint } from "@outbound/infrastructure/crm/suppression-fingerprint";
 
 export interface OutreachDispatchLimits {
   readonly linkedin: number;
@@ -39,6 +41,7 @@ export class OutreachDispatchJobProcessor {
     private readonly clock: Clock,
     private readonly limits: OutreachDispatchLimits = { linkedin: 20, email: 50, whatsapp: 30 },
     private readonly generator?: CampaignContentGenerator,
+    private readonly reachabilityResolver?: (workspaceId: string) => WhatsappReachabilityResolver,
   ) {}
 
   async process(job: LeasedJob): Promise<void> {
@@ -109,7 +112,11 @@ export class OutreachDispatchJobProcessor {
       await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
       return;
     }
-    if (await this.#dailyLimitReached(claimed)) {
+    const deliveryAction = claimed.channel === "whatsapp"
+      ? await this.#revalidateWhatsapp(claimed, content.recipient.normalizedValue, job)
+      : claimed;
+    if (!deliveryAction) return;
+    if (await this.#dailyLimitReached(deliveryAction)) {
       const availableAt = schedule
         ? nextAllowedCampaignSendAt({
             from: this.clock.now(),
@@ -157,7 +164,7 @@ export class OutreachDispatchJobProcessor {
     }).onConflictDoNothing();
     try {
       const result = await this.gateway.send({
-        accountId: claimed.providerAccountId,
+        accountId: deliveryAction.providerAccountId,
         channel: claimed.channel,
         stepKind: claimed.stepKind,
         recipient: content.recipient,
@@ -194,6 +201,56 @@ export class OutreachDispatchJobProcessor {
       await this.#failUnknown(claimed, deliveryError.code, deliveryError.message, attemptId);
       await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
     }
+  }
+
+  async #revalidateWhatsapp(
+    action: ClaimedAction,
+    e164: string,
+    job: LeasedJob,
+  ): Promise<ClaimedAction | null> {
+    if (!this.reachabilityResolver) {
+      await this.#defer(
+        action,
+        job,
+        new Date(this.clock.now().getTime() + 15 * 60_000),
+        "WHATSAPP_REVALIDATION_UNAVAILABLE",
+        "La vérification WhatsApp avant envoi est temporairement indisponible.",
+      );
+      return null;
+    }
+    const result = await this.reachabilityResolver(action.workspaceId).resolve({
+      workspaceId: action.workspaceId,
+      phone: e164,
+      e164,
+      sourcingCycleId: null,
+      now: this.clock.now(),
+    });
+    if (result.status === "not_registered") {
+      await this.#skip(action, "WHATSAPP_NOT_REACHABLE");
+      await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
+      return null;
+    }
+    if (result.status !== "verified" || !result.providerAccountId) {
+      const reconnect = result.errorCode === "WHATSAPP_ACCOUNT_DISCONNECTED";
+      await this.#defer(
+        action,
+        job,
+        new Date(this.clock.now().getTime() + (reconnect ? 60 : 15) * 60_000),
+        reconnect ? "WHATSAPP_ACCOUNT_RECONNECT_REQUIRED" : "WHATSAPP_REVALIDATION_PENDING",
+        reconnect
+          ? "Le compte WhatsApp doit être reconnecté avant l’envoi."
+          : "La vérification WhatsApp sera retentée automatiquement avant l’envoi.",
+      );
+      return null;
+    }
+    if (result.providerAccountId !== action.providerAccountId) {
+      await this.database
+        .update(outreachActions)
+        .set({ providerAccountId: result.providerAccountId, updatedAt: this.clock.now() })
+        .where(and(eq(outreachActions.workspaceId, action.workspaceId), eq(outreachActions.id, action.id)));
+      return { ...action, providerAccountId: result.providerAccountId };
+    }
+    return action;
   }
 
   async #claim(input: { workspaceId: string; actionId: string }, workerId: string) {
@@ -233,6 +290,11 @@ export class OutreachDispatchJobProcessor {
   }
 
   async #isSuppressed(action: ClaimedAction, normalizedValue: string): Promise<boolean> {
+    const identityFingerprint = suppressionFingerprint({
+      workspaceId: action.workspaceId,
+      identityType: action.channel === "whatsapp" ? "whatsapp" : action.channel,
+      normalizedValue,
+    });
     const [row] = await this.database
       .select({ id: contactSuppressions.id })
       .from(contactSuppressions)
@@ -243,6 +305,7 @@ export class OutreachDispatchJobProcessor {
           or(
             eq(contactSuppressions.contactId, action.contactId),
             eq(contactSuppressions.normalizedValue, normalizedValue),
+            eq(contactSuppressions.identityFingerprint, identityFingerprint),
           ),
         ),
       )
