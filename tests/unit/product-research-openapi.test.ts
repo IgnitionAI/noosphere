@@ -96,3 +96,11 @@ test("every F-009 operation requires authenticated workspace route context", () 
     expect(references).toContain("#/components/parameters/WorkspaceSlug");
   }
 });
+
+test("OfferClaim ids are optional draft fields while claim data is required", () => {
+  const document = JSON.parse(
+    readFileSync(resolve(import.meta.dir, "../../packages/contracts/openapi/product-research-v1.json"), "utf8"),
+  ) as { components: { schemas: { OfferClaim: { required?: string[] } } } };
+  expect(document.components.schemas.OfferClaim.required).toEqual(["claim", "validationStatus"]);
+  expect(document.components.schemas.OfferClaim.required).not.toContain("id");
+});

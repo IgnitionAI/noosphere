@@ -1660,6 +1660,7 @@
       },
       "OfferClaim": {
         "type": "object",
+        "required": ["claim", "validationStatus"],
         "properties": { "id": { "type": "string", "format": "uuid" }, "claim": { "type": "string" }, "validationStatus": { "type": "string" }, "evidenceUri": { "type": ["string", "null"] } }
       },
       "Offer": {
