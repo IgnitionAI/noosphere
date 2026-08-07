@@ -11,3 +11,13 @@ coverage/
 .env
 .env.*
 !.env.example
+
+# Python
+__pycache__/
+*.pyc
+
+# Agent tool dirs
+.aionrs/
+.claude/
+.codex/
+.kimi/
