@@ -86,7 +86,7 @@ canonique, des coordonnées vérifiées ou non, et un historique d’emplois.
 | POST | `/api/v1/contacts/:contactId/actions/suppress` | suppression persistante |
 
 **Événements sortants** : `ContactCreated`, `ContactEmploymentChanged`,
-`ContactSuppressed`.
+`SuppressionRegistered`.
 
 ## Données et confidentialité
 

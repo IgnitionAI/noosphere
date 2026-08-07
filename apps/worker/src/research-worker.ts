@@ -10,6 +10,10 @@ export interface ResearchWorkerOptions {
   readonly pollIntervalMs: number;
 }
 
+export interface OutboxDispatcher {
+  dispatchBatch(): Promise<number>;
+}
+
 export class ResearchWorker {
   #stopping = false;
 
@@ -19,6 +23,7 @@ export class ResearchWorker {
     private readonly clock: Clock,
     private readonly options: ResearchWorkerOptions,
     private readonly documentProcessor?: { process(job: LeasedJob): Promise<void> },
+    private readonly outboxDispatcher?: OutboxDispatcher,
   ) {}
 
   stop(): void {
@@ -45,7 +50,8 @@ export class ResearchWorker {
         this.#processSafely(job),
       ),
     );
-    return jobs.length;
+    const delivered = this.outboxDispatcher ? await this.outboxDispatcher.dispatchBatch() : 0;
+    return jobs.length + delivered;
   }
 
   async #processSafely(job: LeasedJob): Promise<void> {

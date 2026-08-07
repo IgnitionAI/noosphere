@@ -1092,3 +1092,24 @@ export const outboxEvents = pgTable(
     index("outbox_events_workspace_idx").on(table.workspaceId, table.createdAt),
   ],
 );
+
+export const auditLogs = pgTable(
+  "audit_logs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    actorUserId: uuid("actor_user_id").references(() => authUsers.id, { onDelete: "set null" }),
+    action: varchar("action", { length: 160 }).notNull(),
+    subjectType: varchar("subject_type", { length: 120 }).notNull(),
+    subjectId: uuid("subject_id").notNull(),
+    changes: jsonb("changes").notNull().default({}),
+    correlationId: varchar("correlation_id", { length: 200 }),
+    sourceEventId: uuid("source_event_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("audit_logs_source_event_uq").on(table.sourceEventId),
+    index("audit_logs_workspace_created_idx").on(table.workspaceId, table.createdAt),
+    index("audit_logs_subject_idx").on(table.workspaceId, table.subjectType, table.subjectId),
+  ],
+);

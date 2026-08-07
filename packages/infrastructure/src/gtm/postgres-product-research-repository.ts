@@ -19,6 +19,7 @@ import type {
 import type { Database } from "@outbound/infrastructure/database/client";
 import {
   aiRuns,
+  auditLogs,
   competitorCandidates,
   icpProposals,
   icpCriterion,
@@ -534,6 +535,7 @@ export class PostgresProductResearchRepository
           runId: input.runId,
           workspaceId: input.workspaceId,
           icpId: input.icpId,
+          actorUserId: input.userId,
           versionId: input.id,
           proposalId: input.proposalId,
           version,
@@ -591,7 +593,7 @@ export class PostgresProductResearchRepository
       ));
       await insertEvents(tx, [{
         type: "ICPVersionPublished", runId: null, workspaceId: input.workspaceId,
-        icpId: input.icpId, versionId: input.id, proposalId: null, version,
+        icpId: input.icpId, actorUserId: input.userId, versionId: input.id, proposalId: null, version,
       }]);
       if (inserted.length !== 1) throw new Error("ICP_VERSION_PUBLISH_FAILED");
       return inserted[0]!;
@@ -872,7 +874,7 @@ async function insertJob(executor: DbExecutor, job: NewJob): Promise<void> {
 
 async function insertEvents(executor: DbExecutor, events: readonly ProductResearchEvent[]): Promise<void> {
   if (!events.length) return;
-  await executor.insert(outboxEvents).values(
+  const rows = await executor.insert(outboxEvents).values(
     events.map((event) => ({
       workspaceId: event.workspaceId,
       aggregateType: event.type === "ICPVersionPublished" ? "ICP" : "ProductResearchRun",
@@ -880,7 +882,21 @@ async function insertEvents(executor: DbExecutor, events: readonly ProductResear
       eventType: event.type,
       payload: event,
     })),
-  );
+  ).returning({ id: outboxEvents.id });
+  for (const [index, event] of events.entries()) {
+    if (event.type !== "ICPVersionPublished") continue;
+    const sourceEventId = rows[index]?.id;
+    if (!sourceEventId) continue;
+    await executor.insert(auditLogs).values({
+      workspaceId: event.workspaceId,
+      actorUserId: event.actorUserId,
+      action: event.type,
+      subjectType: "ICP",
+      subjectId: event.icpId,
+      changes: event,
+      sourceEventId,
+    });
+  }
 }
 
 function criteriaToRows(criteria: unknown, workspaceId: string, icpVersionId: string) {

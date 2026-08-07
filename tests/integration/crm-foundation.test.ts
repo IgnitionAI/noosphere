@@ -41,12 +41,15 @@ databaseDescribe("F-020/F-021 CRM foundation", () => {
   });
 
   afterAll(async () => {
+    await database.client`drop trigger if exists audit_logs_immutable_trg on audit_logs`;
+    await database.client`delete from audit_logs where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`delete from outbox_events where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`delete from contact_suppressions where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`delete from companies where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`delete from contacts where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`delete from auth_users where id = ${userId}`;
     await database.client`delete from workspaces where id in (${workspaceId}, ${otherWorkspaceId})`;
+    await database.client`create trigger audit_logs_immutable_trg before update or delete on audit_logs for each row execute function reject_audit_log_mutation()`;
     await database.close();
   });
 

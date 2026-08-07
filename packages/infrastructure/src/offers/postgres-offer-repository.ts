@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { validateOfferForPublication, type OfferClaimDraft, type OfferDraft } from "@outbound/domain/gtm/offers";
 import type { Database } from "@outbound/infrastructure/database/client";
-import { offerClaims, offerVersions, offers, outboxEvents } from "@outbound/infrastructure/database/schema";
+import { auditLogs, offerClaims, offerVersions, offers, outboxEvents } from "@outbound/infrastructure/database/schema";
 
 export class PostgresOfferRepository {
   constructor(private readonly db: Database) {}
@@ -87,11 +87,22 @@ export class PostgresOfferRepository {
       await tx.insert(offerClaims).values(claims);
       await tx.update(offers).set({ currentVersion: version, updatedAt: input.publishedAt })
         .where(and(eq(offers.workspaceId, input.workspaceId), eq(offers.id, input.offerId)));
-      await tx.insert(outboxEvents).values({
+      const [outbox] = await tx.insert(outboxEvents).values({
         workspaceId: input.workspaceId, aggregateType: "Offer", aggregateId: input.offerId,
         eventType: "OfferVersionPublished",
-        payload: { type: "OfferVersionPublished", offerId: input.offerId, version, versionId: published.id, workspaceId: input.workspaceId },
-      });
+        payload: { type: "OfferVersionPublished", offerId: input.offerId, version, versionId: published.id, workspaceId: input.workspaceId, actorUserId: input.userId },
+      }).returning({ id: outboxEvents.id });
+      if (outbox) {
+        await tx.insert(auditLogs).values({
+          workspaceId: input.workspaceId,
+          actorUserId: input.userId,
+          action: "OfferVersionPublished",
+          subjectType: "Offer",
+          subjectId: input.offerId,
+          changes: { offerId: input.offerId, version, versionId: published.id },
+          sourceEventId: outbox.id,
+        });
+      }
       return { ...published, claims };
     });
   }

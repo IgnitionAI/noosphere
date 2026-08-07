@@ -29,6 +29,8 @@ databaseDescribe("F-010 offers", () => {
   });
 
   afterAll(async () => {
+    await database.client`drop trigger if exists audit_logs_immutable_trg on audit_logs`;
+    await database.client`delete from audit_logs where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`alter table offer_claims disable trigger "offer_claims_immutable_trg"`;
     await database.client`alter table offer_versions disable trigger "offer_versions_immutable_trg"`;
     try {
@@ -42,6 +44,7 @@ databaseDescribe("F-010 offers", () => {
     await database.client`delete from outbox_events where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`delete from auth_users where id = ${userId}`;
     await database.client`delete from workspaces where id in (${workspaceId}, ${otherWorkspaceId})`;
+    await database.client`create trigger audit_logs_immutable_trg before update or delete on audit_logs for each row execute function reject_audit_log_mutation()`;
     await database.close();
   });
 

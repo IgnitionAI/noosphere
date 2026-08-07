@@ -99,6 +99,13 @@
       "when": 1786104600000,
       "tag": "0013_offers",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1786104700000,
+      "tag": "0014_audit_logs",
+      "breakpoints": true
     }
   ]
 }

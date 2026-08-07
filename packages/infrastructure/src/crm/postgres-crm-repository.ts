@@ -2,6 +2,7 @@ import { and, asc, eq, gt, ilike, inArray, or, sql, lte, gte, type SQL } from "d
 import type { Database } from "@outbound/infrastructure/database/client";
 import {
   companies,
+  auditLogs,
   contactEmployments,
   contactIdentities,
   contacts,
@@ -45,7 +46,7 @@ export class PostgresCrmRepository {
           source: input.source,
         })
         .returning();
-      await this.recordEvent(input.workspaceId, "Company", input.id, "CompanyCreated", {
+      await this.recordEvent(this.db, input.workspaceId, "Company", input.id, "CompanyCreated", {
         companyId: input.id,
       });
       return rows[0]!;
@@ -241,7 +242,7 @@ export class PostgresCrmRepository {
           isCurrent: true,
         });
       }
-      await this.recordEvent(input.workspaceId, "Contact", input.id, "ContactCreated", {
+      await this.recordEvent(tx, input.workspaceId, "Contact", input.id, "ContactCreated", {
         contactId: input.id,
       });
       return inserted[0]!;
@@ -450,7 +451,8 @@ export class PostgresCrmRepository {
           isCurrent: true,
         })
         .returning();
-      await this.recordEvent(
+      const eventId = await this.recordEvent(
+        tx,
         input.workspaceId,
         "Contact",
         input.contactId,
@@ -509,13 +511,23 @@ export class PostgresCrmRepository {
           )
           .onConflictDoNothing();
       }
-      await this.recordEvent(
+      const eventId = await this.recordEvent(
+        tx,
         input.workspaceId,
         "Contact",
         input.contactId,
-        "ContactSuppressed",
-        { contactId: input.contactId, channel: input.channel },
+        "SuppressionRegistered",
+        { contactId: input.contactId, channel: input.channel, actorUserId: input.userId },
       );
+      await tx.insert(auditLogs).values({
+        workspaceId: input.workspaceId,
+        actorUserId: input.userId,
+        action: "SuppressionRegistered",
+        subjectType: "Contact",
+        subjectId: input.contactId,
+        changes: { contactId: input.contactId, channel: input.channel, reason: input.reason },
+        sourceEventId: eventId,
+      });
     });
   }
 
@@ -593,19 +605,21 @@ export class PostgresCrmRepository {
   }
 
   private async recordEvent(
+    executor: Pick<Database, "insert">,
     workspaceId: string,
     aggregateType: string,
     aggregateId: string,
     eventType: string,
     payload: Readonly<Record<string, unknown>>,
-  ): Promise<void> {
-    await this.db.insert(outboxEvents).values({
+  ): Promise<string> {
+    const rows = await executor.insert(outboxEvents).values({
       workspaceId,
       aggregateType,
       aggregateId,
       eventType,
       payload,
-    });
+    }).returning({ id: outboxEvents.id });
+    return rows[0]!.id;
   }
 }
 

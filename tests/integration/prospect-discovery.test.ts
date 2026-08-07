@@ -115,6 +115,8 @@ databaseDescribe("F-023 prospect discovery", () => {
   });
 
   afterAll(async () => {
+    await database.client`drop trigger if exists audit_logs_immutable_trg on audit_logs`;
+    await database.client`delete from audit_logs where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`delete from prospect_discovery_candidates where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`delete from prospect_discovery_runs where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`delete from contact_suppressions where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
@@ -128,6 +130,7 @@ databaseDescribe("F-023 prospect discovery", () => {
     await database.client`delete from auth_users where id = ${userId}`;
     await database.client`delete from workspaces where id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`create trigger icp_versions_immutable_trg before update or delete on icp_versions for each row execute function reject_icp_version_mutation()`;
+    await database.client`create trigger audit_logs_immutable_trg before update or delete on audit_logs for each row execute function reject_audit_log_mutation()`;
     await database.close();
   });
 

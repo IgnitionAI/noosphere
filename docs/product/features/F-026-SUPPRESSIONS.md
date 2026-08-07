@@ -108,8 +108,7 @@ suppressions dans les réglages ou la fiche prospect.
 | POST | `/api/v1/suppressions/check` | contrôle d’éligibilité (identité, canal) | à spécifier |
 | POST | `/api/v1/suppressions/:id/actions/lift` | levage justifié (owner/admin) | à spécifier |
 
-**Événements sortants** : `ContactSuppressed` (implémenté) ; le catalogue
-nomme `SuppressionRegistered` — alignement du nom à trancher dans le contrat
+**Événements sortants** : `SuppressionRegistered`.
 d’événements. `SuppressionLifted` à ajouter.
 
 **Ports externes** : aucun.

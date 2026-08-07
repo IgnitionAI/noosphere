@@ -91,6 +91,7 @@ export type ProductResearchEvent =
       readonly runId: string | null;
       readonly workspaceId: string;
       readonly icpId: string;
+      readonly actorUserId: string | null;
       readonly versionId: string;
       readonly proposalId: string | null;
       readonly version: number;
