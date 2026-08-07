@@ -120,6 +120,13 @@
       "when": 1786104900000,
       "tag": "0016_csv_imports",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1786105000000,
+      "tag": "0017_contact_merges",
+      "breakpoints": true
     }
   ]
 }

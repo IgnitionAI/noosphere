@@ -937,6 +937,26 @@
     "/api/v1/imports/{importId}": {
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/ImportId" }],
       "get": { "operationId": "getImport", "responses": { "200": { "description": "Import report" } } }
+    },
+    "/api/v1/merge-candidates": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
+      "get": { "operationId": "listMergeCandidates", "responses": { "200": { "description": "Merge review queue" } } }
+    },
+    "/api/v1/merge-candidates/{candidateId}/actions/approve": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/CandidateId" }],
+      "post": { "operationId": "approveMergeCandidate", "responses": { "201": { "description": "Contacts merged" } } }
+    },
+    "/api/v1/merge-candidates/{candidateId}/actions/reject": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/CandidateId" }],
+      "post": { "operationId": "rejectMergeCandidate", "responses": { "200": { "description": "Candidate rejected" } } }
+    },
+    "/api/v1/contacts/{contactId}/actions/undo-merge": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/ContactId" }],
+      "post": { "operationId": "undoContactMerge", "responses": { "200": { "description": "Merge undone" } } }
+    },
+    "/api/v1/contacts/{contactId}/merges": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/ContactId" }],
+      "get": { "operationId": "listContactMerges", "responses": { "200": { "description": "Contact merge history" } } }
     }
   },
   "components": {
@@ -1008,6 +1028,10 @@
       },
       "ImportId": {
         "name": "importId", "in": "path", "required": true,
+        "schema": { "type": "string", "format": "uuid" }
+      },
+      "CandidateId": {
+        "name": "candidateId", "in": "path", "required": true,
         "schema": { "type": "string", "format": "uuid" }
       }
     },

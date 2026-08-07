@@ -11,6 +11,7 @@ import { createDiscoveryHttpHandler } from "@outbound/interface/http/discovery-h
 import { createSequenceHttpHandler } from "@outbound/interface/http/sequence-handler";
 import { createOfferHttpHandler } from "@outbound/interface/http/offer-handler";
 import { createImportHttpHandler } from "@outbound/interface/http/import-handler";
+import { createMergeHttpHandler } from "@outbound/interface/http/merge-handler";
 import {
   ProviderUnavailableError,
   UnipileProspectSource,
@@ -105,6 +106,7 @@ const sequenceHandler = createSequenceHttpHandler({
 });
 const offers = createOfferHttpHandler({ database: database.db, contextResolver: auth.contextResolver });
 const imports = createImportHttpHandler({ database: database.db, contextResolver: auth.contextResolver, queue });
+const merges = createMergeHttpHandler({ database: database.db, contextResolver: auth.contextResolver });
 const port = positiveIntegerEnvironment("PORT", 3000);
 const server = Bun.serve({
   port,
@@ -123,6 +125,7 @@ const server = Bun.serve({
     }
     if (pathname.startsWith("/api/v1/offers")) return offers(request);
     if (pathname.startsWith("/api/v1/imports")) return imports(request);
+    if (pathname.startsWith("/api/v1/merge-candidates") || (pathname.startsWith("/api/v1/contacts/") && (pathname.includes("/actions/undo-merge") || pathname.endsWith("/merges")))) return merges(request);
     if (pathname.startsWith("/api/v1/sequences")) {
       return sequenceHandler(request);
     }

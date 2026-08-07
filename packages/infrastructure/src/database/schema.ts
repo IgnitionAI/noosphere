@@ -779,6 +779,8 @@ export const contacts = pgTable(
     preferredChannel: varchar("preferred_channel", { length: 40 }),
     status: contactStatusEnum("status").notNull().default("active"),
     source: crmSourceEnum("source").notNull().default("manual"),
+    mergedIntoId: uuid("merged_into_id"),
+    mergedAt: timestamp("merged_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -790,6 +792,11 @@ export const contacts = pgTable(
     }).onDelete("cascade"),
     unique("contacts_workspace_id_uq").on(table.workspaceId, table.id),
     index("contacts_workspace_name_idx").on(table.workspaceId, table.lastName, table.firstName),
+    foreignKey({
+      columns: [table.mergedIntoId],
+      foreignColumns: [table.id],
+      name: "contacts_merged_into_fk",
+    }).onDelete("set null"),
   ],
 );
 
@@ -878,6 +885,54 @@ export const contactSuppressions = pgTable(
     uniqueIndex("contact_suppressions_fingerprint_uq")
       .on(table.workspaceId, table.identityType, table.normalizedValue, table.channel)
       .where(sql`${table.normalizedValue} is not null`),
+  ],
+);
+
+export const mergeCandidates = pgTable(
+  "merge_candidates",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    primaryContactId: uuid("primary_contact_id").notNull(),
+    secondaryContactId: uuid("secondary_contact_id").notNull(),
+    pairKey: varchar("pair_key", { length: 80 }).notNull(),
+    matchType: varchar("match_type", { length: 30 }).notNull(),
+    signals: jsonb("signals").notNull().default({}),
+    status: varchar("status", { length: 30 }).notNull().default("pending"),
+    decisionReason: text("decision_reason"),
+    decidedBy: uuid("decided_by").references(() => authUsers.id, { onDelete: "set null" }),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({ columns: [table.workspaceId], foreignColumns: [workspaces.id], name: "merge_candidates_workspace_fk" }).onDelete("cascade"),
+    foreignKey({ columns: [table.workspaceId, table.primaryContactId], foreignColumns: [contacts.workspaceId, contacts.id], name: "merge_candidates_primary_fk" }).onDelete("cascade"),
+    foreignKey({ columns: [table.workspaceId, table.secondaryContactId], foreignColumns: [contacts.workspaceId, contacts.id], name: "merge_candidates_secondary_fk" }).onDelete("cascade"),
+    unique("merge_candidates_workspace_pair_uq").on(table.workspaceId, table.pairKey),
+    index("merge_candidates_workspace_status_idx").on(table.workspaceId, table.status, table.createdAt),
+  ],
+);
+
+export const contactMerges = pgTable(
+  "contact_merges",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    survivorContactId: uuid("survivor_contact_id").notNull(),
+    mergedContactId: uuid("merged_contact_id").notNull(),
+    candidateId: uuid("candidate_id").references(() => mergeCandidates.id, { onDelete: "set null" }),
+    snapshot: jsonb("snapshot").notNull(),
+    status: varchar("status", { length: 30 }).notNull().default("active"),
+    mergedBy: uuid("merged_by").references(() => authUsers.id, { onDelete: "set null" }),
+    mergedAt: timestamp("merged_at", { withTimezone: true }).notNull().defaultNow(),
+    undoneBy: uuid("undone_by").references(() => authUsers.id, { onDelete: "set null" }),
+    undoneAt: timestamp("undone_at", { withTimezone: true }),
+  },
+  (table) => [
+    foreignKey({ columns: [table.workspaceId], foreignColumns: [workspaces.id], name: "contact_merges_workspace_fk" }).onDelete("cascade"),
+    foreignKey({ columns: [table.workspaceId, table.survivorContactId], foreignColumns: [contacts.workspaceId, contacts.id], name: "contact_merges_survivor_fk" }).onDelete("cascade"),
+    foreignKey({ columns: [table.workspaceId, table.mergedContactId], foreignColumns: [contacts.workspaceId, contacts.id], name: "contact_merges_merged_fk" }).onDelete("cascade"),
+    index("contact_merges_workspace_history_idx").on(table.workspaceId, table.mergedAt),
   ],
 );
 
