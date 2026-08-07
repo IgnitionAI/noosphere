@@ -72,6 +72,13 @@ export const researchDocumentStatusEnum = pgEnum("research_document_status", [
   "failed",
   "deleted",
 ]);
+export const offerStatusEnum = pgEnum("offer_status", ["draft", "archived"]);
+export const offerClaimValidationStatusEnum = pgEnum("offer_claim_validation_status", [
+  "hypothesis",
+  "sourced",
+  "validated",
+  "invalidated",
+]);
 
 export const authUsers = pgTable(
   "auth_users",
@@ -563,6 +570,77 @@ export const icpVersions = pgTable(
     uniqueIndex("icp_versions_proposal_uq").on(table.workspaceId, table.proposalId),
     uniqueIndex("icp_versions_workspace_version_uq").on(table.workspaceId, table.version),
     index("icp_versions_workspace_idx").on(table.workspaceId, table.publishedAt),
+  ],
+);
+
+export const offers = pgTable(
+  "offers",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    name: varchar("name", { length: 500 }).notNull(),
+    status: offerStatusEnum("status").notNull().default("draft"),
+    currentVersion: integer("current_version").notNull().default(0),
+    category: varchar("category", { length: 80 }).notNull().default("autre"),
+    valueProposition: text("value_proposition").notNull().default(""),
+    targetAudience: text("target_audience").notNull().default(""),
+    pricing: jsonb("pricing").notNull().default({}),
+    commercialRules: jsonb("commercial_rules").notNull().default({}),
+    constraints: jsonb("constraints").notNull().default({}),
+    claims: jsonb("claims").notNull().default([]),
+    objections: jsonb("objections").notNull().default([]),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    createdBy: uuid("created_by").references(() => authUsers.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({ columns: [table.workspaceId], foreignColumns: [workspaces.id], name: "offers_workspace_fk" }).onDelete("cascade"),
+    unique("offers_workspace_id_uq").on(table.workspaceId, table.id),
+    uniqueIndex("offers_workspace_name_uq").on(table.workspaceId, table.name),
+  ],
+);
+
+export const offerVersions = pgTable(
+  "offer_versions",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    offerId: uuid("offer_id").notNull(),
+    version: integer("version").notNull(),
+    name: varchar("name", { length: 500 }).notNull(),
+    category: varchar("category", { length: 80 }).notNull(),
+    valueProposition: text("value_proposition").notNull(),
+    targetAudience: text("target_audience").notNull(),
+    pricing: jsonb("pricing").notNull().default({}),
+    commercialRules: jsonb("commercial_rules").notNull().default({}),
+    constraints: jsonb("constraints").notNull().default({}),
+    objections: jsonb("objections").notNull().default([]),
+    publishedBy: uuid("published_by").references(() => authUsers.id),
+    publishedAt: timestamp("published_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({ columns: [table.workspaceId, table.offerId], foreignColumns: [offers.workspaceId, offers.id], name: "offer_versions_workspace_offer_fk" }).onDelete("restrict"),
+    unique("offer_versions_workspace_id_uq").on(table.workspaceId, table.id),
+    uniqueIndex("offer_versions_offer_version_uq").on(table.workspaceId, table.offerId, table.version),
+    index("offer_versions_workspace_idx").on(table.workspaceId, table.publishedAt),
+  ],
+);
+
+export const offerClaims = pgTable(
+  "offer_claims",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    offerVersionId: uuid("offer_version_id").notNull(),
+    claim: text("claim").notNull(),
+    validationStatus: offerClaimValidationStatusEnum("validation_status").notNull(),
+    evidenceUri: text("evidence_uri"),
+  },
+  (table) => [
+    foreignKey({ columns: [table.workspaceId, table.offerVersionId], foreignColumns: [offerVersions.workspaceId, offerVersions.id], name: "offer_claims_workspace_version_fk" }).onDelete("restrict"),
+    index("offer_claims_workspace_version_idx").on(table.workspaceId, table.offerVersionId),
   ],
 );
 
