@@ -110,7 +110,8 @@ const merges = createMergeHttpHandler({ database: database.db, contextResolver: 
 const port = positiveIntegerEnvironment("PORT", 3000);
 const server = Bun.serve({
   port,
-  maxRequestBodySize: 1_048_576,
+  // F-022 CSV uploads are accepted up to 10 MiB; leave headroom for JSON/multipart overhead.
+  maxRequestBodySize: 12 * 1024 * 1024,
   async fetch(request) {
     const pathname = new URL(request.url).pathname;
     if (pathname.startsWith("/api/auth/")) return auth.handle(request);
