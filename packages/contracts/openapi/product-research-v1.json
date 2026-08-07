@@ -908,6 +908,19 @@
     "/api/v1/contacts/{contactId}/actions/suppress": {
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/ContactId" }],
       "post": { "operationId": "suppressContact", "responses": { "204": { "description": "Contact suppressed" } } }
+    },
+    "/api/v1/suppressions": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
+      "get": { "operationId": "listSuppressions", "responses": { "200": { "description": "Workspace suppressions" } } },
+      "post": { "operationId": "createSuppression", "responses": { "201": { "description": "Suppression registered" } } }
+    },
+    "/api/v1/suppressions/check": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
+      "post": { "operationId": "checkSuppression", "responses": { "200": { "description": "Suppression eligibility" } } }
+    },
+    "/api/v1/suppressions/{suppressionId}/actions/lift": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/SuppressionId" }],
+      "post": { "operationId": "liftSuppression", "responses": { "200": { "description": "Suppression lifted" } } }
     }
   },
   "components": {
@@ -971,6 +984,10 @@
       },
       "ContactId": {
         "name": "contactId", "in": "path", "required": true,
+        "schema": { "type": "string", "format": "uuid" }
+      },
+      "SuppressionId": {
+        "name": "suppressionId", "in": "path", "required": true,
         "schema": { "type": "string", "format": "uuid" }
       }
     },

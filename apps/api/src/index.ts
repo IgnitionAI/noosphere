@@ -113,7 +113,7 @@ const server = Bun.serve({
     if (pathname === "/api/v1/workspaces") return workspace(request);
     if (pathname === "/api/v1/workspace-ai-settings") return workspaceAiSettings(request);
     if (pathname.startsWith("/api/v1/research-documents")) return documents(request);
-    if (pathname.startsWith("/api/v1/companies") || pathname.startsWith("/api/v1/contacts")) {
+    if (pathname.startsWith("/api/v1/companies") || pathname.startsWith("/api/v1/contacts") || pathname.startsWith("/api/v1/suppressions")) {
       return crm(request);
     }
     if (pathname.startsWith("/api/v1/icp-versions") || pathname.startsWith("/api/v1/icps") || pathname.startsWith("/api/v1/discovery-runs")) {

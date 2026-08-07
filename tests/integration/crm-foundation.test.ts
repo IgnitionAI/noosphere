@@ -17,7 +17,7 @@ databaseDescribe("F-020/F-021 CRM foundation", () => {
   const context = {
     userId,
     workspaceId,
-    role: "operator" as "operator" | "reviewer" | "viewer",
+    role: "operator" as "operator" | "reviewer" | "viewer" | "admin" | "owner",
   };
   const handle = createCrmHttpHandler({
     contextResolver: { async resolve() { return context; } },
@@ -216,6 +216,64 @@ databaseDescribe("F-020/F-021 CRM foundation", () => {
     expect(list.status).toBe(200);
     const create = await postJson("/api/v1/companies", { name: "Viewer Corp" });
     expect(create.status).toBe(403);
+    context.role = "operator";
+  });
+
+  test("fingerprint suppressions: idempotence, eligibility, lift authorization, and isolation", async () => {
+    const email = `suppression-${crypto.randomUUID()}@example.com`;
+    const create = await postJson("/api/v1/suppressions", {
+      identityType: "email",
+      value: email,
+      channel: "global",
+      reason: "Customer opposition",
+    });
+    expect(create.status).toBe(201);
+    const suppression = (await create.json()) as { id: string; normalizedValue: string };
+    expect(suppression.normalizedValue).toContain("…");
+
+    const duplicate = await postJson("/api/v1/suppressions", {
+      identityType: "email",
+      value: email.toUpperCase(),
+      channel: "global",
+    });
+    expect(duplicate.status).toBe(201);
+    expect(((await duplicate.json()) as { id: string }).id).toBe(suppression.id);
+
+    const blocked = await postJson("/api/v1/suppressions/check", {
+      identityType: "email",
+      value: email,
+      channel: "email",
+    });
+    expect(blocked.status).toBe(200);
+    expect(((await blocked.json()) as { eligible: boolean; suppressionId: string }).eligible).toBe(false);
+
+    context.workspaceId = otherWorkspaceId;
+    const foreignCheck = await postJson("/api/v1/suppressions/check", {
+      identityType: "email",
+      value: email,
+      channel: "email",
+    });
+    expect(((await foreignCheck.json()) as { eligible: boolean }).eligible).toBe(true);
+    context.workspaceId = workspaceId;
+
+    const list = await handle(new Request("http://localhost/api/v1/suppressions"));
+    expect(list.status).toBe(200);
+    expect(((await list.json()) as { data: Array<{ id: string; normalizedValue: string }> }).data.some((row) => row.id === suppression.id)).toBe(true);
+
+    const operatorLift = await postJson(`/api/v1/suppressions/${suppression.id}/actions/lift`, { justification: "Not allowed" });
+    expect(operatorLift.status).toBe(403);
+    context.role = "admin";
+    const missingJustification = await postJson(`/api/v1/suppressions/${suppression.id}/actions/lift`, {});
+    expect(missingJustification.status).toBe(400);
+    const lifted = await postJson(`/api/v1/suppressions/${suppression.id}/actions/lift`, { justification: "Verified opt-in request" });
+    expect(lifted.status).toBe(200);
+    expect(((await lifted.json()) as { liftedAt: string | null }).liftedAt).toBeTruthy();
+    const eligible = await postJson("/api/v1/suppressions/check", {
+      identityType: "email",
+      value: email,
+      channel: "email",
+    });
+    expect(((await eligible.json()) as { eligible: boolean }).eligible).toBe(true);
     context.role = "operator";
   });
 });

@@ -864,6 +864,9 @@ export const contactSuppressions = pgTable(
     normalizedValue: varchar("normalized_value", { length: 600 }),
     reason: text("reason"),
     createdBy: uuid("created_by").references(() => authUsers.id),
+    liftedAt: timestamp("lifted_at", { withTimezone: true }),
+    liftedBy: uuid("lifted_by").references(() => authUsers.id),
+    liftJustification: text("lift_justification"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
@@ -873,7 +876,7 @@ export const contactSuppressions = pgTable(
       name: "contact_suppressions_workspace_fk",
     }).onDelete("cascade"),
     uniqueIndex("contact_suppressions_fingerprint_uq")
-      .on(table.workspaceId, table.identityType, table.normalizedValue)
+      .on(table.workspaceId, table.identityType, table.normalizedValue, table.channel)
       .where(sql`${table.normalizedValue} is not null`),
   ],
 );

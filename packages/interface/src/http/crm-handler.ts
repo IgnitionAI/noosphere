@@ -89,12 +89,26 @@ const suppressionCreateSchema = z
     reason: z.string().trim().max(2_000).nullish(),
   })
   .strict();
+const suppressionFingerprintSchema = z
+  .object({
+    identityType: z.enum(["email", "linkedin", "phone", "whatsapp"]),
+    value: z.string().trim().min(1).max(600).optional(),
+    normalizedValue: z.string().trim().min(1).max(600).optional(),
+    channel: z.enum(["global", "email", "linkedin", "whatsapp"]).default("global"),
+    reason: z.string().trim().max(2_000).nullish(),
+  })
+  .strict()
+  .refine((body) => Boolean(body.value) !== Boolean(body.normalizedValue), {
+    message: "Exactly one of value or normalizedValue is required",
+    path: ["value"],
+  });
 
 const companyPath = /^\/api\/v1\/companies\/([^/]+)$/;
 const contactPath = /^\/api\/v1\/contacts\/([^/]+)$/;
 const contactIdentitiesPath = /^\/api\/v1\/contacts\/([^/]+)\/identities$/;
 const contactEmploymentsPath = /^\/api\/v1\/contacts\/([^/]+)\/employments$/;
 const contactSuppressPath = /^\/api\/v1\/contacts\/([^/]+)\/actions\/suppress$/;
+const suppressionLiftPath = /^\/api\/v1\/suppressions\/([^/]+)\/actions\/lift$/;
 
 export interface CrmHttpDependencies {
   readonly contextResolver: RequestContextResolver;
@@ -107,6 +121,68 @@ export function createCrmHttpHandler(dependencies: CrmHttpDependencies) {
     try {
       const url = new URL(request.url);
       const context = await resolveContext(dependencies.contextResolver, request);
+
+      if (url.pathname === "/api/v1/suppressions") {
+        if (request.method === "POST") {
+          requireOperator(context.role);
+          const body = suppressionFingerprintSchema.parse(await request.json());
+          const normalizedValue = body.normalizedValue ?? normalizeIdentity(body.identityType, body.value!);
+          const suppression = await repository.createSuppression({
+            id: crypto.randomUUID(),
+            workspaceId: context.workspaceId,
+            identityType: body.identityType,
+            normalizedValue,
+            channel: body.channel,
+            reason: body.reason ?? null,
+            createdBy: context.userId,
+          });
+          return json(serializeSuppression(suppression, context.role), 201);
+        }
+        if (request.method === "GET") {
+          requireViewer(context.role);
+          const channel = url.searchParams.get("channel");
+          const parsedChannel = channel && ["global", "email", "linkedin", "whatsapp"].includes(channel)
+            ? channel as "global" | "email" | "linkedin" | "whatsapp"
+            : undefined;
+          if (channel && !parsedChannel) throw new Error("INVALID_CHANNEL");
+          const { data, nextCursor } = await repository.listSuppressions({
+            workspaceId: context.workspaceId,
+            ...(parsedChannel ? { channel: parsedChannel } : {}),
+            ...(url.searchParams.get("cursor") ? { cursor: decodeCursor(url.searchParams.get("cursor"))! } : {}),
+            limit: parseLimit(url.searchParams.get("limit")),
+          });
+          return json({
+            data: data.map((suppression) => serializeSuppression(suppression, context.role)),
+            nextCursor: encodeCursor(nextCursor),
+          });
+        }
+      }
+
+      if (url.pathname === "/api/v1/suppressions/check" && request.method === "POST") {
+        requireViewer(context.role);
+        const body = suppressionFingerprintSchema.parse(await request.json());
+        const normalizedValue = body.normalizedValue ?? normalizeIdentity(body.identityType, body.value!);
+        const result = await repository.checkSuppression({
+          workspaceId: context.workspaceId,
+          identityType: body.identityType,
+          normalizedValue,
+          channel: body.channel,
+        });
+        return json(result);
+      }
+
+      const suppressionLiftMatch = suppressionLiftPath.exec(url.pathname);
+      if (request.method === "POST" && suppressionLiftMatch) {
+        requireAdmin(context.role);
+        const body = z.object({ justification: z.string().trim().min(3).max(2_000) }).strict().parse(await request.json());
+        const suppression = await repository.liftSuppression({
+          workspaceId: context.workspaceId,
+          suppressionId: uuidSchema.parse(suppressionLiftMatch[1]),
+          liftedBy: context.userId,
+          justification: body.justification,
+        });
+        return json(serializeSuppression(suppression, context.role));
+      }
 
       if (url.pathname === "/api/v1/companies") {
         if (request.method === "GET") {
@@ -340,6 +416,9 @@ export function createCrmHttpHandler(dependencies: CrmHttpDependencies) {
       if (message === "CONTACT_NOT_FOUND") {
         return problem(404, message, "Contact not found");
       }
+      if (message === "SUPPRESSION_NOT_FOUND") {
+        return problem(404, message, "Suppression not found");
+      }
       return problem(500, "INTERNAL_ERROR", "An unexpected error occurred");
     }
   };
@@ -359,10 +438,50 @@ function requireOperator(role: string): void {
   }
 }
 
+function requireAdmin(role: string): void {
+  if (!["admin", "owner"].includes(role)) {
+    throw new WorkspacePermissionError("Administrator access is required");
+  }
+}
+
 function normalizeIdentity(type: "email" | "linkedin" | "phone" | "whatsapp", value: string): string {
   if (type === "email") return normalizeEmail(value);
   if (type === "linkedin") return normalizeLinkedinUrl(value);
   return normalizePhone(value);
+}
+
+function serializeSuppression(
+  suppression: {
+    id: string;
+    workspaceId: string;
+    contactId: string | null;
+    channel: string;
+    identityType: string | null;
+    normalizedValue: string | null;
+    reason: string | null;
+    createdBy: string | null;
+    liftedAt: Date | null;
+    liftedBy: string | null;
+    liftJustification: string | null;
+    createdAt: Date;
+  },
+  role: string,
+) {
+  const privileged = role === "admin" || role === "owner";
+  const value = suppression.normalizedValue;
+  return {
+    id: suppression.id,
+    channel: suppression.channel,
+    identityType: suppression.identityType,
+    normalizedValue: privileged || !value ? value : `…${value.slice(-4)}`,
+    reason: suppression.reason,
+    contactId: suppression.contactId,
+    createdBy: suppression.createdBy,
+    liftedAt: suppression.liftedAt,
+    liftedBy: suppression.liftedBy,
+    liftJustification: suppression.liftJustification,
+    createdAt: suppression.createdAt,
+  };
 }
 
 async function resolveContext(resolver: RequestContextResolver, request: Request) {
@@ -411,6 +530,8 @@ function allowedMethods(pathname: string): string | null {
   ) {
     return "POST";
   }
+  if (pathname === "/api/v1/suppressions") return "GET, POST";
+  if (pathname === "/api/v1/suppressions/check" || suppressionLiftPath.test(pathname)) return "POST";
   return null;
 }
 

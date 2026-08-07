@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, ilike, inArray, or, sql, lte, gte, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gt, ilike, inArray, isNull, lt, or, sql, lte, gte, type SQL } from "drizzle-orm";
 import type { Database } from "@outbound/infrastructure/database/client";
 import {
   companies,
@@ -531,6 +531,184 @@ export class PostgresCrmRepository {
     });
   }
 
+  async createSuppression(input: {
+    id: string;
+    workspaceId: string;
+    identityType: "email" | "linkedin" | "phone" | "whatsapp";
+    normalizedValue: string;
+    channel: "global" | "email" | "linkedin" | "whatsapp";
+    reason: string | null;
+    createdBy: string;
+  }) {
+    return this.db.transaction(async (tx) => {
+      const inserted = await tx
+        .insert(contactSuppressions)
+        .values({
+          id: input.id,
+          workspaceId: input.workspaceId,
+          contactId: null,
+          identityType: input.identityType,
+          normalizedValue: input.normalizedValue,
+          channel: input.channel,
+          reason: input.reason,
+          createdBy: input.createdBy,
+        })
+        .onConflictDoNothing()
+        .returning();
+      if (!inserted[0]) {
+        const existing = await tx
+          .select()
+          .from(contactSuppressions)
+          .where(
+            and(
+              eq(contactSuppressions.workspaceId, input.workspaceId),
+              eq(contactSuppressions.identityType, input.identityType),
+              eq(contactSuppressions.normalizedValue, input.normalizedValue),
+              eq(contactSuppressions.channel, input.channel),
+            ),
+          )
+          .limit(1);
+        if (!existing[0]) throw new Error("SUPPRESSION_CREATE_FAILED");
+        return existing[0];
+      }
+      const suppression = inserted[0];
+      const eventId = await this.recordEvent(
+        tx,
+        input.workspaceId,
+        "Suppression",
+        suppression.id,
+        "SuppressionRegistered",
+        {
+          suppressionId: suppression.id,
+          identityType: input.identityType,
+          channel: input.channel,
+        },
+      );
+      await tx.insert(auditLogs).values({
+        workspaceId: input.workspaceId,
+        actorUserId: input.createdBy,
+        action: "SuppressionRegistered",
+        subjectType: "Suppression",
+        subjectId: suppression.id,
+        changes: { identityType: input.identityType, channel: input.channel, reason: input.reason },
+        sourceEventId: eventId,
+      });
+      return suppression;
+    });
+  }
+
+  async listSuppressions(input: {
+    workspaceId: string;
+    channel?: "global" | "email" | "linkedin" | "whatsapp";
+    cursor?: CompanyListCursor;
+    limit: number;
+  }) {
+    const conditions: SQL[] = [eq(contactSuppressions.workspaceId, input.workspaceId)];
+    if (input.channel) conditions.push(eq(contactSuppressions.channel, input.channel));
+    if (input.cursor) {
+      conditions.push(
+        or(
+          sql`date_trunc('milliseconds', ${contactSuppressions.createdAt}) < ${input.cursor.createdAt.toISOString()}::timestamptz`,
+          and(
+            sql`date_trunc('milliseconds', ${contactSuppressions.createdAt}) = ${input.cursor.createdAt.toISOString()}::timestamptz`,
+            lt(contactSuppressions.id, input.cursor.id),
+          ),
+        )!,
+      );
+    }
+    const rows = await this.db
+      .select()
+      .from(contactSuppressions)
+      .where(and(...conditions))
+      .orderBy(desc(contactSuppressions.createdAt), desc(contactSuppressions.id))
+      .limit(input.limit + 1);
+    const data = rows.slice(0, input.limit);
+    const last = data.at(-1);
+    return {
+      data,
+      nextCursor: rows.length > input.limit && last ? { createdAt: last.createdAt, id: last.id } : null,
+    };
+  }
+
+  async checkSuppression(input: {
+    workspaceId: string;
+    identityType: "email" | "linkedin" | "phone" | "whatsapp";
+    normalizedValue: string;
+    channel: "global" | "email" | "linkedin" | "phone" | "whatsapp";
+  }) {
+    const rows = await this.db
+      .select({ id: contactSuppressions.id, channel: contactSuppressions.channel, reason: contactSuppressions.reason })
+      .from(contactSuppressions)
+      .where(
+        and(
+          eq(contactSuppressions.workspaceId, input.workspaceId),
+          eq(contactSuppressions.identityType, input.identityType),
+          eq(contactSuppressions.normalizedValue, input.normalizedValue),
+          isNull(contactSuppressions.liftedAt),
+          or(eq(contactSuppressions.channel, "global"), eq(contactSuppressions.channel, input.channel as never)),
+        ),
+      )
+      .limit(1);
+    const match = rows[0];
+    return match
+      ? { eligible: false, suppressionId: match.id, channel: match.channel, reason: match.reason }
+      : { eligible: true, suppressionId: null, channel: null, reason: null };
+  }
+
+  async liftSuppression(input: {
+    workspaceId: string;
+    suppressionId: string;
+    liftedBy: string;
+    justification: string;
+  }) {
+    return this.db.transaction(async (tx) => {
+      const rows = await tx
+        .select()
+        .from(contactSuppressions)
+        .where(
+          and(
+            eq(contactSuppressions.workspaceId, input.workspaceId),
+            eq(contactSuppressions.id, input.suppressionId),
+          ),
+        )
+        .limit(1);
+      const existing = rows[0];
+      if (!existing) throw new Error("SUPPRESSION_NOT_FOUND");
+      if (existing.liftedAt) return existing;
+      const liftedAt = new Date();
+      const updated = await tx
+        .update(contactSuppressions)
+        .set({ liftedAt, liftedBy: input.liftedBy, liftJustification: input.justification })
+        .where(
+          and(
+            eq(contactSuppressions.workspaceId, input.workspaceId),
+            eq(contactSuppressions.id, input.suppressionId),
+            isNull(contactSuppressions.liftedAt),
+          ),
+        )
+        .returning();
+      if (!updated[0]) return existing;
+      const eventId = await this.recordEvent(
+        tx,
+        input.workspaceId,
+        "Suppression",
+        input.suppressionId,
+        "SuppressionLifted",
+        { suppressionId: input.suppressionId, justification: input.justification },
+      );
+      await tx.insert(auditLogs).values({
+        workspaceId: input.workspaceId,
+        actorUserId: input.liftedBy,
+        action: "SuppressionLifted",
+        subjectType: "Suppression",
+        subjectId: input.suppressionId,
+        changes: { justification: input.justification },
+        sourceEventId: eventId,
+      });
+      return updated[0]!;
+    });
+  }
+
   private async assertNotSuppressed(
     tx: Pick<Database, "select">,
     workspaceId: string,
@@ -545,6 +723,7 @@ export class PostgresCrmRepository {
             eq(contactSuppressions.workspaceId, workspaceId),
             eq(contactSuppressions.identityType, identity.type as never),
             eq(contactSuppressions.normalizedValue, identity.normalizedValue),
+            isNull(contactSuppressions.liftedAt),
           ),
         )
         .limit(1);
