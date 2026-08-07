@@ -2,8 +2,9 @@ import { ArrowLeft, Ban, Briefcase, Mail, Phone, Plus, TriangleAlert, UserRound 
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { CrmPermissionState } from "@/components/crm-states";
-import { getContact, listCompanies, OutboundApiError } from "@/lib/api";
-import { addEmploymentAction, addIdentityAction, suppressContactAction } from "../actions";
+import { getContact, listCompanies, listWorkspaces, OutboundApiError } from "@/lib/api";
+import { MutationForm } from "../../research/[runId]/report/mutation-form";
+import { addEmploymentAction, addIdentityAction, suppressContactAction, updateContactAction } from "../actions";
 
 export const metadata = { title: "Prospect" };
 export const dynamic = "force-dynamic";
@@ -49,7 +50,11 @@ export default async function ContactDetailPage({
   const addIdentity = addIdentityAction.bind(null, workspaceSlug, contactId);
   const addEmployment = addEmploymentAction.bind(null, workspaceSlug, contactId);
   const suppress = suppressContactAction.bind(null, workspaceSlug, contactId);
+  const update = updateContactAction.bind(null, workspaceSlug, contactId);
+  const workspace = (await listWorkspaces()).find((item) => item.slug === workspaceSlug);
+  const canEdit = workspace ? ["operator", "admin", "owner"].includes(workspace.role) : false;
   const suppressed = contact.status === "suppressed";
+  const currentCompanyId = contact.employments.find((employment) => employment.isCurrent)?.companyId;
 
   return (
     <>
@@ -113,7 +118,7 @@ export default async function ContactDetailPage({
                   );
                 })
               )}
-              {!suppressed ? (
+              {canEdit && !suppressed ? (
                 <details className="pt-2">
                   <summary className="cursor-pointer text-sm font-semibold text-brand-blue">
                     <Plus size={13} className="mr-1 inline" />
@@ -161,16 +166,16 @@ export default async function ContactDetailPage({
                   </div>
                 ))
               )}
-              {!suppressed ? (
+              {canEdit && !suppressed ? (
                 <details className="pt-2">
                   <summary className="cursor-pointer text-sm font-semibold text-brand-blue">
                     <Plus size={13} className="mr-1 inline" />
                     Déclarer un nouvel employeur
                   </summary>
-                  <form action={addEmployment} className="mt-3 space-y-2">
+                  <MutationForm action={addEmployment} className="mt-3 space-y-2" confirmation="Confirmer le changement d’employeur ? L’emploi courant sera clôturé automatiquement." successMessage="Le nouvel emploi a été enregistré.">
                     <select className="control w-full" name="companyId" required defaultValue="">
                       <option value="" disabled>Choisir une entreprise…</option>
-                      {companies.data.map((company) => (
+                      {companies.data.filter((company) => company.id !== currentCompanyId).map((company) => (
                         <option key={company.id} value={company.id}>{company.name}</option>
                       ))}
                     </select>
@@ -182,14 +187,14 @@ export default async function ContactDetailPage({
                       L’emploi courant actuel sera clôturé automatiquement — la personne reste
                       unique dans le CRM.
                     </p>
-                  </form>
+                  </MutationForm>
                 </details>
               ) : null}
             </div>
           </section>
         </main>
 
-        {!suppressed ? (
+        {canEdit && !suppressed ? (
           <aside className="panel border-warning">
             <div className="panel-header">
               <h2 className="flex items-center gap-2 font-semibold">
@@ -202,17 +207,49 @@ export default async function ContactDetailPage({
                 La suppression marque toutes les coordonnées de ce contact comme inéligibles,
                 de façon persistante, y compris face à un futur réimport.
               </p>
-              <form action={suppress} className="mt-3 space-y-2">
+              <MutationForm action={suppress} className="mt-3 space-y-2" confirmation="Confirmer la suppression persistante de ce contact ?" successMessage="Le contact a été supprimé.">
                 <input className="control w-full" name="reason" placeholder="Motif (opposition, demande RGPD…)" />
                 <button className="button w-full" type="submit">
                   <Ban size={14} />
                   Supprimer ce contact
                 </button>
-              </form>
+              </MutationForm>
             </div>
           </aside>
         ) : null}
       </div>
+      {canEdit ? (
+        <section className="panel mt-5">
+          <div className="panel-header">
+            <h2 className="font-semibold">Modifier le contact</h2>
+          </div>
+          <MutationForm action={update} className="panel-body grid gap-3 sm:grid-cols-2" successMessage="La fiche contact a été mise à jour.">
+            <label className="text-xs font-semibold text-muted">
+              Prénom *
+              <input className="control mt-1 w-full" name="firstName" required defaultValue={contact.firstName} />
+            </label>
+            <label className="text-xs font-semibold text-muted">
+              Nom *
+              <input className="control mt-1 w-full" name="lastName" required defaultValue={contact.lastName} />
+            </label>
+            <label className="text-xs font-semibold text-muted">
+              Canal préféré
+              <select className="control mt-1 w-full" name="preferredChannel" defaultValue={contact.preferredChannel ?? ""}>
+                <option value="">Non défini</option>
+                <option value="email">Email</option>
+                <option value="linkedin">LinkedIn</option>
+                <option value="phone">Téléphone</option>
+                <option value="whatsapp">WhatsApp</option>
+              </select>
+            </label>
+            <label className="text-xs font-semibold text-muted">
+              Photo (URL)
+              <input className="control mt-1 w-full" name="photoUrl" type="url" defaultValue={contact.photoUrl ?? ""} />
+            </label>
+            <button className="button button-signal sm:col-span-2" type="submit">Enregistrer les modifications</button>
+          </MutationForm>
+        </section>
+      ) : null}
     </>
   );
 }

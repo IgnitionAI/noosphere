@@ -5,6 +5,7 @@ import {
   addContactEmployment,
   addContactIdentity,
   createContact,
+  updateContact,
   suppressContact,
 } from "@/lib/api";
 
@@ -37,6 +38,26 @@ export async function addIdentityAction(
   const value = String(formData.get("value") ?? "").trim();
   if (!value) throw new Error("La coordonnée est obligatoire.");
   await addContactIdentity(workspaceSlug, contactId, { type, value });
+  revalidatePath(`/w/${workspaceSlug}/prospects/${contactId}`);
+}
+
+export async function updateContactAction(
+  workspaceSlug: string,
+  contactId: string,
+  formData: FormData,
+) {
+  const firstName = String(formData.get("firstName") ?? "").trim();
+  const lastName = String(formData.get("lastName") ?? "").trim();
+  if (!firstName || !lastName) throw new Error("Prénom et nom sont obligatoires.");
+  const photoUrl = String(formData.get("photoUrl") ?? "").trim();
+  const preferredChannel = String(formData.get("preferredChannel") ?? "").trim();
+  await updateContact(workspaceSlug, contactId, {
+    firstName,
+    lastName,
+    photoUrl: photoUrl || null,
+    preferredChannel: preferredChannel || null,
+  });
+  revalidatePath(`/w/${workspaceSlug}/prospects`);
   revalidatePath(`/w/${workspaceSlug}/prospects/${contactId}`);
 }
 

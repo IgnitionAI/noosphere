@@ -401,6 +401,8 @@ export interface ContactDetail {
   readonly id: string;
   readonly firstName: string;
   readonly lastName: string;
+  readonly photoUrl?: string | null;
+  readonly preferredChannel?: string | null;
   readonly status: "active" | "suppressed";
   readonly identities: readonly {
     readonly id: string;
@@ -437,11 +439,23 @@ async function crmFetch<T>(
 
 export async function listCompanies(
   workspaceSlug: string,
-  options: { search?: string | undefined; cursor?: string | undefined; limit?: number | undefined } | string = {},
+  options: {
+    search?: string | undefined;
+    sector?: string | undefined;
+    location?: string | undefined;
+    employeeCountMin?: number | undefined;
+    employeeCountMax?: number | undefined;
+    cursor?: string | undefined;
+    limit?: number | undefined;
+  } | string = {},
 ): Promise<{ data: Company[]; nextCursor: string | null }> {
   const normalized = typeof options === "string" ? { search: options } : options;
   const params = new URLSearchParams({ limit: String(normalized.limit ?? 50) });
   if (normalized.search) params.set("search", normalized.search);
+  if (normalized.sector) params.set("sector", normalized.sector);
+  if (normalized.location) params.set("location", normalized.location);
+  if (normalized.employeeCountMin !== undefined) params.set("employeeCountMin", String(normalized.employeeCountMin));
+  if (normalized.employeeCountMax !== undefined) params.set("employeeCountMax", String(normalized.employeeCountMax));
   if (normalized.cursor) params.set("cursor", normalized.cursor);
   return crmFetch(
     workspaceSlug,
@@ -461,6 +475,25 @@ export async function createCompany(
   },
 ): Promise<Company> {
   return crmFetch(workspaceSlug, "/api/v1/companies", { method: "POST", body: input });
+}
+
+export async function updateCompany(
+  workspaceSlug: string,
+  companyId: string,
+  input: {
+    name?: string;
+    domain?: string | null;
+    sector?: string | null;
+    employeeCountMin?: number | null;
+    employeeCountMax?: number | null;
+    location?: string | null;
+    linkedinUrl?: string | null;
+  },
+): Promise<Company> {
+  return crmFetch(workspaceSlug, `/api/v1/companies/${companyId}`, {
+    method: "PATCH",
+    body: input,
+  });
 }
 
 export async function getCompany(
@@ -502,6 +535,22 @@ export async function getContact(
   contactId: string,
 ): Promise<ContactDetail> {
   return crmFetch(workspaceSlug, `/api/v1/contacts/${contactId}`);
+}
+
+export async function updateContact(
+  workspaceSlug: string,
+  contactId: string,
+  input: {
+    firstName?: string;
+    lastName?: string;
+    photoUrl?: string | null;
+    preferredChannel?: string | null;
+  },
+): Promise<ContactDetail> {
+  return crmFetch(workspaceSlug, `/api/v1/contacts/${contactId}`, {
+    method: "PATCH",
+    body: input,
+  });
 }
 
 export async function addContactIdentity(

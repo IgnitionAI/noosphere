@@ -2,7 +2,7 @@ import { UserRoundPlus, Users } from "lucide-react";
 import Link from "next/link";
 import { CursorPagination } from "@/components/cursor-pagination";
 import { CrmPermissionState } from "@/components/crm-states";
-import { listCompanies, listContacts, OutboundApiError } from "@/lib/api";
+import { listCompanies, listContacts, listWorkspaces, OutboundApiError } from "@/lib/api";
 import { cursorStackValue, paginationHref, parseCursorStack } from "@/lib/crm-pagination";
 import { createContactAction } from "./actions";
 
@@ -33,6 +33,8 @@ export default async function ProspectsPage({
     }
     throw error;
   }
+  const workspace = (await listWorkspaces()).find((item) => item.slug === workspaceSlug);
+  const canEdit = workspace ? ["operator", "admin", "owner"].includes(workspace.role) : false;
   const create = createContactAction.bind(null, workspaceSlug);
   const pathname = `/w/${workspaceSlug}/prospects`;
   const previousHref = cursorStack.length
@@ -118,7 +120,7 @@ export default async function ProspectsPage({
           </div>
         </section>
 
-        <aside className="panel">
+        {canEdit ? <aside className="panel">
           <div className="panel-header">
             <h2 className="flex items-center gap-2 font-semibold">
               <UserRoundPlus size={15} className="text-brand-blue" />
@@ -162,7 +164,7 @@ export default async function ProspectsPage({
               Créer le contact
             </button>
           </form>
-        </aside>
+        </aside> : null}
       </div>
     </>
   );

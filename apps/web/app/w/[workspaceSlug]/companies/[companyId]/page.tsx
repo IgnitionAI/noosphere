@@ -2,7 +2,9 @@ import { ArrowLeft, Building2, ExternalLink } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { CrmPermissionState } from "@/components/crm-states";
-import { getCompany, OutboundApiError } from "@/lib/api";
+import { getCompany, listWorkspaces, OutboundApiError } from "@/lib/api";
+import { MutationForm } from "../../research/[runId]/report/mutation-form";
+import { updateCompanyAction } from "../actions";
 
 export const metadata = { title: "Entreprise" };
 export const dynamic = "force-dynamic";
@@ -15,7 +17,7 @@ export default async function CompanyDetailPage({
   const { workspaceSlug, companyId } = await params;
   let company;
   try {
-    company = await getCompany(workspaceSlug, companyId);
+    [company] = await Promise.all([getCompany(workspaceSlug, companyId)]);
   } catch (error) {
     if (error instanceof OutboundApiError && error.status === 404) notFound();
     if (error instanceof OutboundApiError && (error.status === 401 || error.status === 403)) {
@@ -23,6 +25,9 @@ export default async function CompanyDetailPage({
     }
     throw error;
   }
+  const workspace = (await listWorkspaces()).find((item) => item.slug === workspaceSlug);
+  const canEdit = workspace ? ["operator", "admin", "owner"].includes(workspace.role) : false;
+  const update = updateCompanyAction.bind(null, workspaceSlug, companyId);
 
   return (
     <>
@@ -102,6 +107,44 @@ export default async function CompanyDetailPage({
           </div>
         </aside>
       </div>
+      {canEdit ? (
+        <section className="panel mt-5">
+          <div className="panel-header">
+            <h2 className="font-semibold">Modifier la fiche</h2>
+          </div>
+          <MutationForm action={update} className="panel-body grid gap-3 sm:grid-cols-2" successMessage="La fiche entreprise a été mise à jour.">
+            <label className="text-xs font-semibold text-muted">
+              Nom *
+              <input className="control mt-1 w-full" name="name" required defaultValue={company.name} />
+            </label>
+            <label className="text-xs font-semibold text-muted">
+              Domaine
+              <input className="control mt-1 w-full" name="domain" defaultValue={company.normalizedDomain ?? ""} />
+            </label>
+            <label className="text-xs font-semibold text-muted">
+              Secteur
+              <input className="control mt-1 w-full" name="sector" defaultValue={company.sector ?? ""} />
+            </label>
+            <label className="text-xs font-semibold text-muted">
+              Localisation
+              <input className="control mt-1 w-full" name="location" defaultValue={company.location ?? ""} />
+            </label>
+            <label className="text-xs font-semibold text-muted">
+              Effectif min
+              <input className="control mt-1 w-full" min="0" name="employeeCountMin" type="number" defaultValue={company.employeeCountMin ?? ""} />
+            </label>
+            <label className="text-xs font-semibold text-muted">
+              Effectif max
+              <input className="control mt-1 w-full" min="0" name="employeeCountMax" type="number" defaultValue={company.employeeCountMax ?? ""} />
+            </label>
+            <label className="text-xs font-semibold text-muted sm:col-span-2">
+              URL LinkedIn
+              <input className="control mt-1 w-full" name="linkedinUrl" type="url" defaultValue={company.linkedinUrl ?? ""} />
+            </label>
+            <button className="button button-signal sm:col-span-2" type="submit">Enregistrer les modifications</button>
+          </MutationForm>
+        </section>
+      ) : null}
     </>
   );
 }
