@@ -51,7 +51,8 @@ export default async function SuppressionsPage({
         <div>
           <h1 className="page-title">Suppressions</h1>
           <p className="mt-2 text-sm text-muted">
-            Empreintes protégées contre toute sollicitation, par workspace et par canal.
+            Une suppression globale bloque la création et l’import. Une suppression par canal
+            limite uniquement les sollicitations sur ce canal.
           </p>
         </div>
         <span className="badge">{activeSuppressions.length} actives</span>
@@ -90,11 +91,15 @@ export default async function SuppressionsPage({
               <label className="block text-xs font-semibold text-muted">Valeur à protéger *
                 <input className="control mt-1 w-full" name="value" required placeholder="email@example.com" />
               </label>
-              <label className="block text-xs font-semibold text-muted">Canal bloqué
+              <label className="block text-xs font-semibold text-muted">Portée de la suppression
                 <select className="control mt-1 w-full" name="channel" defaultValue="global">
                   <option value="global">Tous les canaux</option><option value="email">Email</option><option value="linkedin">LinkedIn</option><option value="whatsapp">WhatsApp</option>
                 </select>
               </label>
+              <p className="-mt-1 text-[11px] leading-4 text-muted">
+                « Tous les canaux » bloque aussi la création/import ; une portée canal ne bloque
+                pas la création du contact.
+              </p>
               <label className="block text-xs font-semibold text-muted">Motif
                 <textarea className="control mt-1 min-h-20 w-full" name="reason" maxLength={2000} placeholder="Opposition, demande RGPD…" />
               </label>
@@ -120,7 +125,7 @@ function SuppressionRow({
   return (
     <tr>
       <td className="font-semibold">{suppression.identityType ?? "—"}</td>
-      <td><span className="badge">{suppression.channel}</span></td>
+      <td><span className="badge">{channelLabel(suppression.channel)}</span></td>
       <td className="font-mono text-xs">{suppression.normalizedValue ?? "—"}</td>
       <td className="max-w-52 text-xs">{suppression.reason ?? "—"}</td>
       <td className="whitespace-nowrap text-xs">{formatDate(suppression.createdAt)}</td>
@@ -141,4 +146,8 @@ function SuppressionRow({
 
 function formatDate(value: string): string {
   return new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium" }).format(new Date(value));
+}
+
+function channelLabel(channel: Suppression["channel"]): string {
+  return channel === "global" ? "Tous les canaux" : `${channel} seulement`;
 }
