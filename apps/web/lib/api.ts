@@ -648,6 +648,53 @@ export async function liftSuppression(
   });
 }
 
+export type ImportRowStatus = "valid" | "invalid" | "duplicate" | "suppressed" | "created" | "failed";
+
+export interface ImportRow {
+  readonly id: string;
+  readonly lineNumber: number;
+  readonly rawData: unknown;
+  readonly normalizedData: unknown;
+  readonly status: ImportRowStatus;
+  readonly reason: string | null;
+  readonly companyId: string | null;
+  readonly contactId: string | null;
+}
+
+export interface ImportBatch {
+  readonly id: string;
+  readonly filename: string;
+  readonly status: string;
+  readonly previewedAt: string | null;
+  readonly appliedAt: string | null;
+  readonly completedAt: string | null;
+  readonly totals: Readonly<Record<string, number>>;
+  readonly createdAt: string;
+  readonly rows: readonly ImportRow[];
+}
+
+export async function createImport(
+  workspaceSlug: string,
+  input: { filename: string; content: string; mapping?: Readonly<Record<string, string>> },
+): Promise<ImportBatch> {
+  return crmFetch(workspaceSlug, "/api/v1/imports", { method: "POST", body: input });
+}
+
+export async function getImportPreview(workspaceSlug: string, importId: string): Promise<ImportBatch> {
+  return crmFetch(workspaceSlug, `/api/v1/imports/${importId}/preview`);
+}
+
+export async function getImport(workspaceSlug: string, importId: string): Promise<ImportBatch> {
+  return crmFetch(workspaceSlug, `/api/v1/imports/${importId}`);
+}
+
+export async function applyImport(workspaceSlug: string, importId: string): Promise<ImportBatch> {
+  return crmFetch(workspaceSlug, `/api/v1/imports/${importId}/actions/apply`, {
+    method: "POST",
+    body: {},
+  });
+}
+
 export type OfferClaimValidationStatus = "hypothesis" | "sourced" | "validated" | "invalidated";
 
 export interface OfferClaim {

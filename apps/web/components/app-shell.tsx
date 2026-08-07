@@ -6,6 +6,7 @@ import {
   Building2,
   ChevronDown,
   FlaskConical,
+  FileSpreadsheet,
   Inbox,
   LayoutDashboard,
   Menu,
@@ -55,6 +56,7 @@ export function AppShell({
     [`/w/${workspace.slug}/companies`, "Entreprises", Building2],
     [`/w/${workspace.slug}/sequences`, "Séquences", Send],
     [suppressionsHref, "Suppressions", ShieldAlert],
+    [`/w/${workspace.slug}/imports`, "Imports", FileSpreadsheet],
   ] as const;
   const initials = session.user.name
     .split(/\s+/)
@@ -168,7 +170,7 @@ export function AppShell({
             Prospection
           </div>
           <div className="space-y-1">
-            {crmNavigation.map(([href, label, Icon]) => (
+            {crmNavigation.filter(([href]) => href !== `/w/${workspace.slug}/imports` || workspace.role !== "viewer").map(([href, label, Icon]) => (
               <Link
                 aria-current={pathname.startsWith(href) ? "page" : undefined}
                 className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium ${
