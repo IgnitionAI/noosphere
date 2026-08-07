@@ -3,6 +3,7 @@ import { normalizeLinkedinUrl } from "@outbound/domain/crm/normalization";
 import type { Database } from "@outbound/infrastructure/database/client";
 import { PostgresCrmRepository } from "@outbound/infrastructure/crm/postgres-crm-repository";
 import { PostgresDiscoveryRepository } from "@outbound/infrastructure/crm/postgres-discovery-repository";
+import { PostgresProductResearchRepository } from "@outbound/infrastructure/gtm/postgres-product-research-repository";
 import {
   ProviderUnavailableError,
   type ProspectSource,
@@ -33,6 +34,8 @@ const runPath = /^\/api\/v1\/discovery-runs\/([^/]+)$/;
 const runRetryPath = /^\/api\/v1\/discovery-runs\/([^/]+)\/actions\/retry$/;
 const candidateImportPath =
   /^\/api\/v1\/discovery-runs\/([^/]+)\/candidates\/([^/]+)\/actions\/import$/;
+const icpPath = /^\/api\/v1\/icps\/([^/]+)$/;
+const icpPublishPath = /^\/api\/v1\/icps\/([^/]+)\/actions\/publish$/;
 
 export interface DiscoveryHttpDependencies {
   readonly contextResolver: RequestContextResolver;
@@ -42,6 +45,7 @@ export interface DiscoveryHttpDependencies {
 
 export function createDiscoveryHttpHandler(dependencies: DiscoveryHttpDependencies) {
   const repository = new PostgresDiscoveryRepository(dependencies.database);
+  const productResearch = new PostgresProductResearchRepository(dependencies.database);
   const crm = createCrmHttpHandler({
     contextResolver: dependencies.contextResolver,
     database: dependencies.database,
@@ -74,6 +78,35 @@ export function createDiscoveryHttpHandler(dependencies: DiscoveryHttpDependenci
             publishedAt: version.publishedAt.toISOString(),
           })),
         });
+      }
+
+      if (request.method === "GET" && url.pathname === "/api/v1/icps") {
+        requireViewer(context.role);
+        return json({ data: await repository.listIcps(context.workspaceId) });
+      }
+      const versionPath = /^\/api\/v1\/icp-versions\/([^/]+)$/;
+      const versionMatch = versionPath.exec(url.pathname);
+      if (request.method === "GET" && versionMatch) {
+        requireViewer(context.role);
+        const version = await repository.getIcpVersion({ workspaceId: context.workspaceId, versionId: uuidSchema.parse(versionMatch[1]) });
+        if (!version) return problem(404, "ICP_VERSION_NOT_FOUND", "Published ICP version not found");
+        return json(normalizeVersion(version));
+      }
+      const icpMatch = icpPath.exec(url.pathname);
+      if (request.method === "GET" && icpMatch) {
+        requireViewer(context.role);
+        const icp = await repository.getIcp({ workspaceId: context.workspaceId, icpId: uuidSchema.parse(icpMatch[1]) });
+        if (!icp) return problem(404, "ICP_NOT_FOUND", "ICP not found");
+        return json({ ...icp, versions: icp.versions.map(normalizeVersion) });
+      }
+      const publishIcpMatch = icpPublishPath.exec(url.pathname);
+      if (request.method === "POST" && publishIcpMatch) {
+        requireAdmin(context.role);
+        const version = await productResearch.publishNextIcpVersion({
+          id: crypto.randomUUID(), icpId: uuidSchema.parse(publishIcpMatch[1]),
+          workspaceId: context.workspaceId, userId: context.userId, publishedAt: new Date(),
+        });
+        return json(normalizeVersion(version), 201);
       }
 
       const launchMatch = versionDiscoveryPath.exec(url.pathname);
@@ -212,6 +245,12 @@ export function createDiscoveryHttpHandler(dependencies: DiscoveryHttpDependenci
       }
       if (message === "CONTACT_NOT_FOUND") {
         return problem(404, message, "Contact not found");
+      }
+      if (["ICP_NOT_FOUND", "ICP_VERSION_NOT_FOUND"].includes(message)) {
+        return problem(404, message, "Published ICP version not found");
+      }
+      if (["ICP_DELETED", "ICP_NOT_PUBLISHABLE", "ICP_VERSION_ALLOCATION_CONFLICT"].includes(message)) {
+        return problem(409, message, "The ICP cannot be published");
       }
       return problem(500, "INTERNAL_ERROR", "An unexpected error occurred");
     }
@@ -433,6 +472,20 @@ function requireOperator(role: string): void {
   }
 }
 
+function requireAdmin(role: string): void {
+  if (!["admin", "owner"].includes(role)) throw new WorkspacePermissionError("Admin access is required to publish an ICP version");
+}
+
+function normalizeVersion(input: unknown) {
+  const version = input as Record<string, unknown>;
+  return {
+    ...version,
+    confidence: Number(version.confidence),
+    publishedAt: version.publishedAt instanceof Date ? version.publishedAt.toISOString() : version.publishedAt,
+    createdAt: version.createdAt instanceof Date ? version.createdAt.toISOString() : version.createdAt,
+  };
+}
+
 async function resolveContext(resolver: RequestContextResolver, request: Request) {
   try {
     return requestContextSchema.parse(await resolver.resolve(request));
@@ -450,6 +503,10 @@ async function resolveContext(resolver: RequestContextResolver, request: Request
 
 function allowedMethods(pathname: string): string | null {
   if (pathname === "/api/v1/icp-versions" || pathname === "/api/v1/discovery-runs") return "GET";
+  if (pathname === "/api/v1/icps") return "GET";
+  if (icpPath.test(pathname)) return "GET";
+  if (icpPublishPath.test(pathname)) return "POST";
+  if (/^\/api\/v1\/icp-versions\/[^/]+$/.test(pathname)) return "GET";
   if (versionDiscoveryPath.test(pathname)) return "POST";
   if (runPath.test(pathname)) return "GET";
   if (runRetryPath.test(pathname) || candidateImportPath.test(pathname)) return "POST";

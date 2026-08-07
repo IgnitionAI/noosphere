@@ -814,6 +814,56 @@
           }
         }
       }
+    },
+    "/api/v1/icps": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
+      "get": {
+        "operationId": "listIcps",
+        "summary": "List active ICP containers",
+        "responses": { "200": { "description": "ICP containers", "content": { "application/json": { "schema": { "type": "object", "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/Icp" } } } } } } } }
+      }
+    },
+    "/api/v1/icps/{icpId}": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/IcpId" }],
+      "get": {
+        "operationId": "getIcp",
+        "summary": "Read an ICP and immutable history",
+        "responses": { "200": { "description": "ICP detail", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/IcpDetail" } } } } }
+      }
+    },
+    "/api/v1/icps/{icpId}/actions/publish": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/IcpId" }],
+      "post": {
+        "operationId": "publishNextIcpVersion",
+        "summary": "Publish the next immutable ICP version",
+        "responses": { "201": { "description": "Published ICP version", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/IcpVersion" } } } } }
+      }
+    },
+    "/api/v1/icp-versions/{versionId}": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "name": "versionId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+      "get": {
+        "operationId": "getIcpVersion",
+        "summary": "Read an immutable ICP version",
+        "responses": { "200": { "description": "ICP version", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/IcpVersion" } } } } }
+      }
+    },
+    "/api/v1/offers": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
+      "get": { "operationId": "listOffers", "responses": { "200": { "description": "Offers" } } },
+      "post": { "operationId": "createOffer", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OfferCreateRequest" } } } }, "responses": { "201": { "description": "Offer created" } } }
+    },
+    "/api/v1/offers/{offerId}": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/OfferId" }],
+      "get": { "operationId": "getOffer", "responses": { "200": { "description": "Offer detail", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OfferDetail" } } } } } },
+      "patch": { "operationId": "updateOffer", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OfferPatchRequest" } } } }, "responses": { "200": { "description": "Offer updated" } } }
+    },
+    "/api/v1/offers/{offerId}/actions/publish": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/OfferId" }],
+      "post": { "operationId": "publishOffer", "responses": { "201": { "description": "Published offer version" } } }
+    },
+    "/api/v1/offers/{offerId}/versions": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/OfferId" }],
+      "get": { "operationId": "listOfferVersions", "responses": { "200": { "description": "Offer versions" } } }
     }
   },
   "components": {
@@ -862,6 +912,14 @@
           "type": "string",
           "format": "uuid"
         }
+      },
+      "IcpId": {
+        "name": "icpId", "in": "path", "required": true,
+        "schema": { "type": "string", "format": "uuid" }
+      },
+      "OfferId": {
+        "name": "offerId", "in": "path", "required": true,
+        "schema": { "type": "string", "format": "uuid" }
       }
     },
     "responses": {
@@ -1438,25 +1496,32 @@
       },
       "IcpVersion": {
         "type": "object",
+        "required": ["id", "workspaceId", "icpId", "version", "name", "publishedAt"],
         "properties": {
           "id": {
             "type": "string",
             "format": "uuid"
           },
           "runId": {
-            "type": "string",
+            "type": ["string", "null"],
             "format": "uuid"
           },
           "proposalId": {
-            "type": "string",
+            "type": ["string", "null"],
             "format": "uuid"
           },
-          "version": {
-            "type": "integer"
-          },
-          "name": {
-            "type": "string"
-          },
+          "workspaceId": { "type": "string", "format": "uuid" },
+          "icpId": { "type": "string", "format": "uuid" },
+          "version": { "type": "integer" },
+          "name": { "type": "string" },
+          "confidence": { "type": "number" },
+          "criteria": {},
+          "buyingCommittee": {},
+          "problems": {},
+          "signals": {},
+          "exclusions": {},
+          "publishedBy": { "type": ["string", "null"], "format": "uuid" },
+          "createdAt": { "type": "string", "format": "date-time" },
           "unknowns": {},
           "unresolvedContradictions": {},
           "blockedFindings": {},
@@ -1466,6 +1531,37 @@
           }
         }
       },
+      "Icp": {
+        "type": "object",
+        "required": ["id", "workspaceId", "name", "currentVersion"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "workspaceId": { "type": "string", "format": "uuid" },
+          "name": { "type": "string" },
+          "currentVersion": { "type": "integer" },
+          "deletedAt": { "type": ["string", "null"], "format": "date-time" }
+        }
+      },
+      "IcpDetail": {
+        "allOf": [{ "$ref": "#/components/schemas/Icp" }, { "type": "object", "required": ["versions"], "properties": { "versions": { "type": "array", "items": { "$ref": "#/components/schemas/IcpVersion" } } } }]
+      },
+      "OfferClaim": {
+        "type": "object",
+        "properties": { "id": { "type": "string", "format": "uuid" }, "claim": { "type": "string" }, "validationStatus": { "type": "string" }, "evidenceUri": { "type": ["string", "null"] } }
+      },
+      "Offer": {
+        "type": "object",
+        "properties": { "id": { "type": "string", "format": "uuid" }, "workspaceId": { "type": "string", "format": "uuid" }, "name": { "type": "string" }, "status": { "type": "string" }, "currentVersion": { "type": "integer" } }
+      },
+      "OfferDetail": {
+        "allOf": [{ "$ref": "#/components/schemas/Offer" }, { "type": "object", "properties": { "versions": { "type": "array", "items": { "type": "object" } } } }]
+      },
+      "OfferCreateRequest": {
+        "type": "object", "required": ["name"], "properties": { "name": { "type": "string" }, "category": { "type": "string" }, "targetAudience": { "type": "string" } }
+      },
+      "OfferPatchRequest": {
+        "type": "object", "properties": { "name": { "type": "string" }, "category": { "type": "string" }, "valueProposition": { "type": "string" }, "targetAudience": { "type": "string" }, "pricing": {}, "commercialRules": {}, "constraints": {}, "claims": { "type": "array", "items": { "$ref": "#/components/schemas/OfferClaim" } }, "objections": { "type": "array" } }
+      },
       "ProductResearchReport": {
         "type": "object",
         "required": [
@@ -1474,7 +1570,8 @@
           "evidence",
           "competitors",
           "findings",
-          "proposals"
+          "proposals",
+          "versions"
         ],
         "properties": {
           "run": {
@@ -1506,6 +1603,10 @@
             "items": {
               "type": "object"
             }
+          },
+          "versions": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/IcpVersion" }
           }
         }
       },

@@ -88,10 +88,11 @@ export type ProductResearchEvent =
     }
   | {
       readonly type: "ICPVersionPublished";
-      readonly runId: string;
+      readonly runId: string | null;
       readonly workspaceId: string;
+      readonly icpId: string;
       readonly versionId: string;
-      readonly proposalId: string;
+      readonly proposalId: string | null;
       readonly version: number;
     };
 

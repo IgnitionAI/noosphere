@@ -85,6 +85,20 @@
       "when": 1785601154838,
       "tag": "0011_modern_demogoblin",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1786104500000,
+      "tag": "0012_immutable_icp_versions",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1786104600000,
+      "tag": "0013_offers",
+      "breakpoints": true
     }
   ]
 }

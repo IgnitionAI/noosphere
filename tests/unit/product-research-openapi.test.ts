@@ -31,6 +31,14 @@ test("the OpenAPI contract declares every F-009 HTTP route", () => {
       "/api/v1/research-documents/{documentId}",
       "/api/v1/research-documents/{documentId}/complete",
       "/api/v1/workspace-ai-settings",
+      "/api/v1/icps",
+      "/api/v1/icps/{icpId}",
+      "/api/v1/icps/{icpId}/actions/publish",
+      "/api/v1/icp-versions/{versionId}",
+      "/api/v1/offers",
+      "/api/v1/offers/{offerId}",
+      "/api/v1/offers/{offerId}/actions/publish",
+      "/api/v1/offers/{offerId}/versions",
     ].sort(),
   );
   expect(document.paths["/api/v1/product-research-runs"]?.get).toBeDefined();

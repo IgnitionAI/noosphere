@@ -539,13 +539,31 @@ export const icpProposals = pgTable(
   ],
 );
 
+export const icps = pgTable(
+  "icps",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    name: varchar("name", { length: 500 }).notNull(),
+    currentVersion: integer("current_version").notNull().default(0),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({ columns: [table.workspaceId], foreignColumns: [workspaces.id], name: "icps_workspace_fk" }).onDelete("cascade"),
+    unique("icps_workspace_id_uq").on(table.workspaceId, table.id),
+  ],
+);
+
 export const icpVersions = pgTable(
   "icp_versions",
   {
     id: uuid("id").primaryKey(),
     workspaceId: uuid("workspace_id").notNull(),
-    runId: uuid("run_id").notNull(),
-    proposalId: uuid("proposal_id").notNull(),
+    icpId: uuid("icp_id").notNull(),
+    runId: uuid("run_id"),
+    proposalId: uuid("proposal_id"),
     version: integer("version").notNull(),
     name: varchar("name", { length: 500 }).notNull(),
     confidence: numeric("confidence", { precision: 5, scale: 4 }).notNull(),
@@ -563,13 +581,38 @@ export const icpVersions = pgTable(
   },
   (table) => [
     foreignKey({
+      columns: [table.workspaceId, table.icpId],
+      foreignColumns: [icps.workspaceId, icps.id],
+      name: "icp_versions_workspace_icp_fk",
+    }).onDelete("restrict"),
+    foreignKey({
       columns: [table.workspaceId, table.runId],
       foreignColumns: [productResearchRuns.workspaceId, productResearchRuns.id],
       name: "icp_versions_workspace_run_fk",
-    }).onDelete("cascade"),
+    }).onDelete("restrict"),
     uniqueIndex("icp_versions_proposal_uq").on(table.workspaceId, table.proposalId),
-    uniqueIndex("icp_versions_workspace_version_uq").on(table.workspaceId, table.version),
+    unique("icp_versions_workspace_id_uq").on(table.workspaceId, table.id),
+    uniqueIndex("icp_versions_icp_version_uq").on(table.workspaceId, table.icpId, table.version),
     index("icp_versions_workspace_idx").on(table.workspaceId, table.publishedAt),
+  ],
+);
+
+export const icpCriterion = pgTable(
+  "icp_criterion",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    icpVersionId: uuid("icp_version_id").notNull(),
+    dimension: varchar("dimension", { length: 200 }).notNull(),
+    operator: varchar("operator", { length: 60 }).notNull(),
+    expectedValue: jsonb("expected_value").notNull(),
+    weight: numeric("weight", { precision: 5, scale: 4 }),
+    required: boolean("required").notNull().default(false),
+    exclusion: boolean("exclusion").notNull().default(false),
+  },
+  (table) => [
+    foreignKey({ columns: [table.workspaceId, table.icpVersionId], foreignColumns: [icpVersions.workspaceId, icpVersions.id], name: "icp_criterion_workspace_version_fk" }).onDelete("restrict"),
+    index("icp_criterion_workspace_version_idx").on(table.workspaceId, table.icpVersionId),
   ],
 );
 

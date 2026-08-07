@@ -206,13 +206,13 @@ export function createProductResearchHttpHandler(dependencies: ProductResearchHt
         requireAdmin(context.role);
         const runId = uuidSchema.parse(actionMatch[1]);
         const body = publishIcpSchema.parse(await request.json());
-        const version = (await dependencies.application.publishIcpVersion({
+        const version = await dependencies.application.publishIcpVersion({
           workspaceId: context.workspaceId,
           runId,
           proposalId: body.proposalId,
           userId: context.userId,
-        })) as Record<string, unknown>;
-        return json(version, 201);
+        });
+        return json(normalizeVersion(version), 201);
       }
       const findingMatch = findingPathPattern.exec(url.pathname);
       if (request.method === "PATCH" && findingMatch) {
@@ -414,12 +414,28 @@ export function createProductResearchHttpHandler(dependencies: ProductResearchHt
       if (message === "ICP_VERSION_ALREADY_PUBLISHED") {
         return problem(409, message, "This ICP proposal is already published as an immutable version");
       }
+      if (message === "ICP_VERSION_ALLOCATION_CONFLICT") {
+        return problem(409, message, "Concurrent ICP version allocation conflict");
+      }
+      if (message === "ICP_PROPOSAL_ALREADY_PUBLISHED") {
+        return problem(409, message, "Published ICP proposals cannot be corrected");
+      }
       return problem(500, "INTERNAL_ERROR", "An unexpected error occurred");
     }
   };
 }
 
 class WorkspacePermissionError extends Error {}
+
+function normalizeVersion(input: unknown) {
+  const version = input as Record<string, unknown>;
+  return {
+    ...version,
+    confidence: Number(version.confidence),
+    publishedAt: version.publishedAt instanceof Date ? version.publishedAt.toISOString() : version.publishedAt,
+    createdAt: version.createdAt instanceof Date ? version.createdAt.toISOString() : version.createdAt,
+  };
+}
 
 function requireOperator(role: string): void {
   if (!["operator", "admin", "owner"].includes(role)) {

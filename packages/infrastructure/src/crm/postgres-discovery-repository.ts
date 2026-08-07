@@ -1,7 +1,8 @@
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, isNull } from "drizzle-orm";
 import type { Database } from "@outbound/infrastructure/database/client";
 import {
   companies,
+  icps,
   icpVersions,
   prospectDiscoveryCandidates,
   prospectDiscoveryRuns,
@@ -9,6 +10,23 @@ import {
 
 export class PostgresDiscoveryRepository {
   constructor(private readonly db: Database) {}
+
+  async listIcps(workspaceId: string) {
+    return this.db.select().from(icps)
+      .where(and(eq(icps.workspaceId, workspaceId), isNull(icps.deletedAt)))
+      .orderBy(asc(icps.name));
+  }
+
+  async getIcp(input: { workspaceId: string; icpId: string }) {
+    const rows = await this.db.select().from(icps).where(and(
+      eq(icps.workspaceId, input.workspaceId), eq(icps.id, input.icpId),
+    )).limit(1);
+    if (!rows[0]) return null;
+    const versions = await this.db.select().from(icpVersions).where(and(
+      eq(icpVersions.workspaceId, input.workspaceId), eq(icpVersions.icpId, input.icpId),
+    )).orderBy(desc(icpVersions.version));
+    return { ...rows[0], versions };
+  }
 
   async listIcpVersions(workspaceId: string) {
     return this.db

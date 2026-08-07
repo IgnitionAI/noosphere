@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, inArray, ne, or } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, ne, or, sql } from "drizzle-orm";
 import {
   ProductResearchRun,
   type ProductResearchBrief,
@@ -14,12 +14,15 @@ import type {
   MarketEvidenceView,
   ResearchStageRunView,
   ResearchAIRun,
+  IcpVersionView,
 } from "@outbound/application/gtm/product-research-ports";
 import type { Database } from "@outbound/infrastructure/database/client";
 import {
   aiRuns,
   competitorCandidates,
   icpProposals,
+  icpCriterion,
+  icps,
   icpVersions,
   jobs,
   marketEvidence,
@@ -379,6 +382,10 @@ export class PostgresProductResearchRepository
     };
     updatedAt: Date;
   }) {
+    const published = await this.db.select({ id: icpVersions.id }).from(icpVersions).where(and(
+      eq(icpVersions.workspaceId, input.workspaceId), eq(icpVersions.proposalId, input.proposalId),
+    )).limit(1);
+    if (published.length) throw new Error("ICP_PROPOSAL_ALREADY_PUBLISHED");
     const rows = await this.db
       .update(icpProposals)
       .set({
@@ -410,13 +417,15 @@ export class PostgresProductResearchRepository
 
   async publishIcpVersion(input: {
     id: string;
+    icpId: string;
     workspaceId: string;
     runId: string;
     proposalId: string;
     userId: string;
     publishedAt: Date;
-  }) {
+  }): Promise<IcpVersionView> {
     return this.db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${input.workspaceId}, 0))`);
       const proposals = await tx
         .select()
         .from(icpProposals)
@@ -433,6 +442,10 @@ export class PostgresProductResearchRepository
       if (proposal.reviewStatus !== "approved") {
         throw new Error("ICP_PROPOSAL_NOT_APPROVED");
       }
+      const duplicate = await tx.select({ id: icpVersions.id }).from(icpVersions).where(and(
+        eq(icpVersions.workspaceId, input.workspaceId), eq(icpVersions.proposalId, input.proposalId),
+      )).limit(1);
+      if (duplicate.length) throw new Error("ICP_VERSION_ALREADY_PUBLISHED");
       const reviewCheckpoints = await tx
         .select({ output: researchStageRuns.output })
         .from(researchStageRuns)
@@ -469,13 +482,15 @@ export class PostgresProductResearchRepository
             eq(researchFindings.reviewStatus, "rejected"),
           ),
         );
-      const current = await tx
-        .select({ version: icpVersions.version })
-        .from(icpVersions)
-        .where(eq(icpVersions.workspaceId, input.workspaceId))
-        .orderBy(desc(icpVersions.version))
-        .limit(1);
-      const version = (current[0]?.version ?? 0) + 1;
+      const existingIcp = await tx.select({ id: icps.id }).from(icps).where(and(
+        eq(icps.workspaceId, input.workspaceId), eq(icps.id, input.icpId),
+      )).limit(1);
+      if (existingIcp.length) throw new Error("ICP_VERSION_ALLOCATION_CONFLICT");
+      const version = 1;
+      await tx.insert(icps).values({
+        id: input.icpId, workspaceId: input.workspaceId, name: proposal.name,
+        currentVersion: 0,
+      });
       let inserted;
       try {
         inserted = await tx
@@ -483,6 +498,7 @@ export class PostgresProductResearchRepository
           .values({
             id: input.id,
             workspaceId: input.workspaceId,
+            icpId: input.icpId,
             runId: input.runId,
             proposalId: input.proposalId,
             version,
@@ -507,16 +523,77 @@ export class PostgresProductResearchRepository
         throw error;
       }
       if (inserted.length !== 1) throw new Error("ICP_VERSION_PUBLISH_FAILED");
+      const criteriaRows = criteriaToRows(proposal.criteria, input.workspaceId, input.id);
+      if (criteriaRows.length) await tx.insert(icpCriterion).values(criteriaRows);
+      await tx.update(icps).set({ currentVersion: version, updatedAt: input.publishedAt }).where(and(
+        eq(icps.workspaceId, input.workspaceId), eq(icps.id, input.icpId),
+      ));
       await insertEvents(tx, [
         {
           type: "ICPVersionPublished",
           runId: input.runId,
           workspaceId: input.workspaceId,
+          icpId: input.icpId,
           versionId: input.id,
           proposalId: input.proposalId,
           version,
         },
       ]);
+      return inserted[0]!;
+    });
+  }
+
+  async publishNextIcpVersion(input: {
+    id: string;
+    workspaceId: string;
+    icpId: string;
+    userId: string;
+    publishedAt: Date;
+  }): Promise<IcpVersionView> {
+    return this.db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${input.icpId}, 0))`);
+      const containers = await tx.select().from(icps).where(and(
+        eq(icps.workspaceId, input.workspaceId), eq(icps.id, input.icpId),
+      )).limit(1);
+      const container = containers[0];
+      if (!container) throw new Error("ICP_NOT_FOUND");
+      if (container.deletedAt) throw new Error("ICP_DELETED");
+      const latest = await tx.select().from(icpVersions).where(and(
+        eq(icpVersions.workspaceId, input.workspaceId), eq(icpVersions.icpId, input.icpId),
+      )).orderBy(desc(icpVersions.version)).limit(1);
+      const source = latest[0];
+      if (!source) throw new Error("ICP_NOT_PUBLISHABLE");
+      const version = source.version + 1;
+      let inserted;
+      try {
+        inserted = await tx.insert(icpVersions).values({
+          id: input.id, workspaceId: input.workspaceId, icpId: input.icpId,
+          runId: null, proposalId: null, version, name: source.name,
+          confidence: source.confidence, criteria: source.criteria,
+          buyingCommittee: source.buyingCommittee, problems: source.problems,
+          signals: source.signals, exclusions: source.exclusions, unknowns: source.unknowns,
+          unresolvedContradictions: source.unresolvedContradictions,
+          blockedFindings: source.blockedFindings, publishedBy: input.userId,
+          publishedAt: input.publishedAt,
+        }).returning();
+      } catch (error) {
+        if (isUniqueViolation(error)) throw new Error("ICP_VERSION_ALLOCATION_CONFLICT");
+        throw error;
+      }
+      const criteria = await tx.select().from(icpCriterion).where(and(
+        eq(icpCriterion.workspaceId, input.workspaceId), eq(icpCriterion.icpVersionId, source.id),
+      ));
+      if (criteria.length) await tx.insert(icpCriterion).values(criteria.map((row) => ({
+        ...row, id: crypto.randomUUID(), icpVersionId: input.id,
+      })));
+      await tx.update(icps).set({ currentVersion: version, updatedAt: input.publishedAt }).where(and(
+        eq(icps.workspaceId, input.workspaceId), eq(icps.id, input.icpId),
+      ));
+      await insertEvents(tx, [{
+        type: "ICPVersionPublished", runId: null, workspaceId: input.workspaceId,
+        icpId: input.icpId, versionId: input.id, proposalId: null, version,
+      }]);
+      if (inserted.length !== 1) throw new Error("ICP_VERSION_PUBLISH_FAILED");
       return inserted[0]!;
     });
   }
@@ -798,12 +875,21 @@ async function insertEvents(executor: DbExecutor, events: readonly ProductResear
   await executor.insert(outboxEvents).values(
     events.map((event) => ({
       workspaceId: event.workspaceId,
-      aggregateType: "ProductResearchRun",
-      aggregateId: event.runId,
+      aggregateType: event.type === "ICPVersionPublished" ? "ICP" : "ProductResearchRun",
+      aggregateId: event.type === "ICPVersionPublished" ? event.icpId : event.runId,
       eventType: event.type,
       payload: event,
     })),
   );
+}
+
+function criteriaToRows(criteria: unknown, workspaceId: string, icpVersionId: string) {
+  if (!criteria || typeof criteria !== "object" || Array.isArray(criteria)) return [];
+  return Object.entries(criteria as Record<string, unknown>).map(([dimension, expectedValue]) => ({
+    id: crypto.randomUUID(), workspaceId, icpVersionId, dimension,
+    operator: "matches", expectedValue, required: false,
+    exclusion: dimension === "exclusions",
+  }));
 }
 
 function isUniqueViolation(error: unknown): boolean {

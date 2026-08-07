@@ -18,6 +18,7 @@ import type {
   MarketEvidenceView,
   ResearchStageRunView,
   ResearchAIRun,
+  IcpVersionView,
 } from "@outbound/application/gtm/product-research-ports";
 
 type StoredJob = Omit<NewJob, "availableAt"> & {
@@ -248,14 +249,23 @@ export class InMemoryResearchBackend
 
   async publishIcpVersion(input: {
     id: string;
+    icpId: string;
     workspaceId: string;
     runId: string;
     proposalId: string;
     userId: string;
     publishedAt: Date;
-  }): Promise<unknown> {
+  }): Promise<IcpVersionView> {
     this.publishedVersions.push(clone(input));
-    return clone(input);
+    return {
+      ...input,
+      version: 1,
+      name: "",
+      confidence: "0",
+      criteria: {}, buyingCommittee: {}, problems: {}, signals: {}, exclusions: {}, unknowns: {},
+      unresolvedContradictions: [], blockedFindings: [], publishedBy: input.userId,
+      createdAt: input.publishedAt,
+    };
   }
 
   async enqueue(job: NewJob): Promise<{ inserted: boolean }> {

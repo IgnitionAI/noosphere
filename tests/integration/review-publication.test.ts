@@ -71,9 +71,14 @@ databaseDescribe("F-011 human review and publication", () => {
   afterAll(async () => {
     await database.client`delete from jobs where workspace_id = ${workspaceId}`;
     await database.client`delete from outbox_events where workspace_id = ${workspaceId}`;
+    await database.client`drop trigger if exists icp_versions_immutable_trg on icp_versions`;
+    await database.client`delete from icp_criterion where workspace_id = ${workspaceId}`;
+    await database.client`delete from icp_versions where workspace_id = ${workspaceId}`;
+    await database.client`delete from icps where workspace_id = ${workspaceId}`;
     await database.client`delete from product_research_runs where workspace_id = ${workspaceId}`;
     await database.client`delete from auth_users where id = ${reviewerId}`;
     await database.client`delete from workspaces where id = ${workspaceId}`;
+    await database.client`create trigger icp_versions_immutable_trg before update or delete on icp_versions for each row execute function reject_icp_version_mutation()`;
     await database.close();
   });
 

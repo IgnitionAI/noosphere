@@ -12,6 +12,7 @@ import {
 import {
   authUsers,
   icpProposals,
+  icps,
   icpVersions,
   workspaces,
 } from "@outbound/infrastructure/database/schema";
@@ -88,9 +89,13 @@ databaseDescribe("F-023 prospect discovery", () => {
       unknowns: ["Budget"],
     });
     versionId = crypto.randomUUID();
+    await database.db.insert(icps).values({
+      id: versionId, workspaceId, name: "Cabinets juridiques français", currentVersion: 1,
+    });
     await database.db.insert(icpVersions).values({
       id: versionId,
       workspaceId,
+      icpId: versionId,
       runId: run.snapshot.id,
       proposalId,
       version: 1,
@@ -116,10 +121,13 @@ databaseDescribe("F-023 prospect discovery", () => {
     await database.client`delete from contacts where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`delete from companies where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`delete from outbox_events where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
+    await database.client`drop trigger if exists icp_versions_immutable_trg on icp_versions`;
     await database.client`delete from icp_versions where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
+    await database.client`delete from icps where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`delete from product_research_runs where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`delete from auth_users where id = ${userId}`;
     await database.client`delete from workspaces where id in (${workspaceId}, ${otherWorkspaceId})`;
+    await database.client`create trigger icp_versions_immutable_trg before update or delete on icp_versions for each row execute function reject_icp_version_mutation()`;
     await database.close();
   });
 

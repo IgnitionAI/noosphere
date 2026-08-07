@@ -84,12 +84,35 @@ export interface ProductResearchRepository {
   }): Promise<unknown>;
   publishIcpVersion(input: {
     id: string;
+    icpId: string;
     workspaceId: string;
     runId: string;
     proposalId: string;
     userId: string;
     publishedAt: Date;
-  }): Promise<unknown>;
+  }): Promise<IcpVersionView>;
+}
+
+export interface IcpVersionView {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly icpId: string;
+  readonly runId: string | null;
+  readonly proposalId: string | null;
+  readonly version: number;
+  readonly name: string;
+  readonly confidence: string;
+  readonly criteria: unknown;
+  readonly buyingCommittee: unknown;
+  readonly problems: unknown;
+  readonly signals: unknown;
+  readonly exclusions: unknown;
+  readonly unknowns: unknown;
+  readonly unresolvedContradictions: unknown;
+  readonly blockedFindings: unknown;
+  readonly publishedBy: string | null;
+  readonly publishedAt: Date;
+  readonly createdAt: Date;
 }
 
 export interface ProductResearchViewRepository {
