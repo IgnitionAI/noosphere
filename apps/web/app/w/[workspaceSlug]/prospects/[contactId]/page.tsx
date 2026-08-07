@@ -2,9 +2,9 @@ import { ArrowLeft, Ban, Briefcase, Mail, Phone, Plus, TriangleAlert, UserRound 
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { CrmPermissionState } from "@/components/crm-states";
-import { getContact, listCompanies, listWorkspaces, OutboundApiError } from "@/lib/api";
+import { getContact, listCompanies, listContactMerges, listWorkspaces, OutboundApiError } from "@/lib/api";
 import { MutationForm } from "../../research/[runId]/report/mutation-form";
-import { addEmploymentAction, addIdentityAction, suppressContactAction, updateContactAction } from "../actions";
+import { addEmploymentAction, addIdentityAction, suppressContactAction, undoContactMergeAction, updateContactAction } from "../actions";
 
 export const metadata = { title: "Prospect" };
 export const dynamic = "force-dynamic";
@@ -47,10 +47,20 @@ export default async function ContactDetailPage({
     }
     throw error;
   }
+  let merges;
+  try {
+    merges = await listContactMerges(workspaceSlug, contactId);
+  } catch (error) {
+    if (error instanceof OutboundApiError && (error.status === 401 || error.status === 403)) {
+      return <CrmPermissionState resource="l’historique des fusions" />;
+    }
+    throw error;
+  }
   const addIdentity = addIdentityAction.bind(null, workspaceSlug, contactId);
   const addEmployment = addEmploymentAction.bind(null, workspaceSlug, contactId);
   const suppress = suppressContactAction.bind(null, workspaceSlug, contactId);
   const update = updateContactAction.bind(null, workspaceSlug, contactId);
+  const undo = undoContactMergeAction.bind(null, workspaceSlug, contactId);
   const workspace = (await listWorkspaces()).find((item) => item.slug === workspaceSlug);
   const canEdit = workspace ? ["operator", "admin", "owner"].includes(workspace.role) : false;
   const suppressed = contact.status === "suppressed";
@@ -250,6 +260,23 @@ export default async function ContactDetailPage({
           </MutationForm>
         </section>
       ) : null}
+      {merges.length ? (
+        <section className="panel mt-5">
+          <div className="panel-header"><h2 className="font-semibold">Historique des fusions</h2><span className="badge">{merges.length}</span></div>
+          <div className="panel-body space-y-3">
+            {merges.map((merge) => (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line p-3" key={merge.id}>
+                <div className="text-xs"><p className="font-semibold">{merge.status === "active" ? "Fusion active" : "Fusion annulée"}</p><p className="mt-1 text-muted">{formatMergeDate(merge.mergedAt)} · contact conservé {merge.survivorContactId === contactId ? "ici" : "ailleurs"}</p></div>
+                {canEdit && merge.status === "active" ? <MutationForm action={undo} confirmation="Annuler cette fusion ? Les deux fiches, identités, emplois et suppressions seront restaurés." successMessage="La fusion a été annulée."><button className="button" type="submit">Annuler la fusion</button></MutationForm> : null}
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
     </>
   );
+}
+
+function formatMergeDate(value: string): string {
+  return new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 }

@@ -5,6 +5,7 @@ import {
   addContactEmployment,
   addContactIdentity,
   createContact,
+  undoContactMerge,
   updateContact,
   suppressContact,
 } from "@/lib/api";
@@ -84,5 +85,15 @@ export async function suppressContactAction(
     contactId,
     reason || "Suppression déclarée depuis la fiche prospect.",
   );
+  revalidatePath(`/w/${workspaceSlug}/prospects/${contactId}`);
+}
+
+export async function undoContactMergeAction(
+  workspaceSlug: string,
+  contactId: string,
+  _formData: FormData,
+) {
+  await undoContactMerge(workspaceSlug, contactId);
+  revalidatePath(`/w/${workspaceSlug}/prospects`);
   revalidatePath(`/w/${workspaceSlug}/prospects/${contactId}`);
 }

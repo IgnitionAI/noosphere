@@ -401,6 +401,9 @@ export interface ContactDetail {
   readonly id: string;
   readonly firstName: string;
   readonly lastName: string;
+  readonly source?: string;
+  readonly createdAt?: string;
+  readonly updatedAt?: string;
   readonly photoUrl?: string | null;
   readonly preferredChannel?: string | null;
   readonly status: "active" | "suppressed";
@@ -690,6 +693,75 @@ export async function getImport(workspaceSlug: string, importId: string): Promis
 
 export async function applyImport(workspaceSlug: string, importId: string): Promise<ImportBatch> {
   return crmFetch(workspaceSlug, `/api/v1/imports/${importId}/actions/apply`, {
+    method: "POST",
+    body: {},
+  });
+}
+
+export type MergeMatchType = "certain" | "probable";
+export type MergeCandidateStatus = "pending" | "approved" | "rejected";
+
+export interface MergeCandidate {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly primaryContactId: string;
+  readonly secondaryContactId: string;
+  readonly pairKey: string;
+  readonly matchType: MergeMatchType;
+  readonly status: MergeCandidateStatus;
+  readonly signals: Readonly<Record<string, unknown>>;
+  readonly decisionReason: string | null;
+  readonly decidedBy: string | null;
+  readonly decidedAt: string | null;
+  readonly createdAt: string;
+  readonly contacts: readonly ContactSummary[];
+}
+
+export interface ContactMerge {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly survivorContactId: string;
+  readonly mergedContactId: string;
+  readonly candidateId: string | null;
+  readonly status: "active" | "undone";
+  readonly mergedAt: string;
+  readonly mergedBy: string | null;
+  readonly undoneAt: string | null;
+  readonly undoneBy: string | null;
+}
+
+export async function listMergeCandidates(workspaceSlug: string): Promise<MergeCandidate[]> {
+  return crmFetch(workspaceSlug, "/api/v1/merge-candidates");
+}
+
+export async function getMergeCandidate(workspaceSlug: string, candidateId: string): Promise<MergeCandidate> {
+  return crmFetch(workspaceSlug, `/api/v1/merge-candidates/${candidateId}`);
+}
+
+export async function approveMergeCandidate(workspaceSlug: string, candidateId: string): Promise<ContactMerge> {
+  return crmFetch(workspaceSlug, `/api/v1/merge-candidates/${candidateId}/actions/approve`, {
+    method: "POST",
+    body: {},
+  });
+}
+
+export async function rejectMergeCandidate(
+  workspaceSlug: string,
+  candidateId: string,
+  reason?: string | null,
+): Promise<MergeCandidate> {
+  return crmFetch(workspaceSlug, `/api/v1/merge-candidates/${candidateId}/actions/reject`, {
+    method: "POST",
+    body: { reason: reason || null },
+  });
+}
+
+export async function listContactMerges(workspaceSlug: string, contactId: string): Promise<ContactMerge[]> {
+  return crmFetch(workspaceSlug, `/api/v1/contacts/${contactId}/merges`);
+}
+
+export async function undoContactMerge(workspaceSlug: string, contactId: string): Promise<ContactMerge> {
+  return crmFetch(workspaceSlug, `/api/v1/contacts/${contactId}/actions/undo-merge`, {
     method: "POST",
     body: {},
   });

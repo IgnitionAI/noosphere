@@ -7,6 +7,7 @@ import {
   ChevronDown,
   FlaskConical,
   FileSpreadsheet,
+  GitMerge,
   Inbox,
   LayoutDashboard,
   Menu,
@@ -57,6 +58,7 @@ export function AppShell({
     [`/w/${workspace.slug}/sequences`, "Séquences", Send],
     [suppressionsHref, "Suppressions", ShieldAlert],
     [`/w/${workspace.slug}/imports`, "Imports", FileSpreadsheet],
+    [`/w/${workspace.slug}/duplicates`, "Doublons", GitMerge],
   ] as const;
   const initials = session.user.name
     .split(/\s+/)
