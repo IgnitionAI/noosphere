@@ -143,6 +143,9 @@ preuves, objections, prix communicables, contraintes et publication immuable.
 **Dépendances** : F-002, F-003.  
 **Surface** : `/w/[workspaceSlug]/offers`.
 
+**Spécification** :
+[`F-010-OFFERS.md`](features/F-010-OFFERS.md).
+
 ### F-011 — Revue ICP et versions publiées (`P0`)
 
 **Valeur** : définir précisément les entreprises et personnes à cibler.
@@ -202,6 +205,9 @@ identifiants externes, contacts liés et historique.
 **Dépendances** : F-002, F-003.  
 **Surface** : entreprises et détail entreprise.
 
+**Spécification** :
+[`F-020-COMPANIES.md`](features/F-020-COMPANIES.md).
+
 ### F-021 — Contacts, identités et emplois (`P0`)
 
 **Valeur** : suivre une personne malgré ses changements d’employeur.
@@ -220,6 +226,9 @@ emplois historisés, préférence de canal et provenance.
 **Dépendances** : F-020.  
 **Surface** : prospects et détail prospect.
 
+**Spécification** :
+[`F-021-CONTACTS.md`](features/F-021-CONTACTS.md).
+
 ### F-022 — Import manuel et CSV (`P0`)
 
 **Valeur** : alimenter le CRM avant tout connecteur de sourcing.
@@ -236,6 +245,9 @@ rapport de lignes acceptées/rejetées et traitement idempotent.
 - la provenance `manual` ou `csv` est conservée.
 
 **Dépendances** : F-020, F-021, F-024, F-026.
+
+**Spécification** :
+[`F-022-CSV-IMPORT.md`](features/F-022-CSV-IMPORT.md).
 
 ### F-023 — Découverte de prospects (`P0`)
 
@@ -273,6 +285,9 @@ annulation.
 
 **Dépendances** : F-003, F-021.
 
+**Spécification** :
+[`F-024-DEDUP-MERGE.md`](features/F-024-DEDUP-MERGE.md).
+
 ### F-025 — Enrichissement et vérification (`P0`)
 
 **Valeur** : compléter les profils et trouver des coordonnées professionnelles.
@@ -307,6 +322,9 @@ d’éligibilité, justification et audit.
 - seul un rôle autorisé peut lever une suppression, avec justification.
 
 **Dépendances** : F-003, F-021.
+
+**Spécification** :
+[`F-026-SUPPRESSIONS.md`](features/F-026-SUPPRESSIONS.md).
 
 ### F-027 — Signaux entreprise et contact (`P1`)
 

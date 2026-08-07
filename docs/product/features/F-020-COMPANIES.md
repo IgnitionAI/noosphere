@@ -57,7 +57,10 @@ recherche ICP, l’import manuel et — plus tard — le sourcing.
 
 ## États et erreurs
 
+- loading : skeleton de la liste et de la fiche ;
+- empty : aucune entreprise — action principale « créer une entreprise » ;
 - validation (nom vide, domaine malformé) ;
+- forbidden : reviewer/viewer en lecture seule, contrôles serveur inchangés ;
 - conflit domaine (409) ;
 - isolation workspace (404).
 
