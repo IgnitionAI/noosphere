@@ -185,6 +185,9 @@ templates par canal, variables autorisées, règles d’approbation et escalade.
 **Dépendances** : F-010, F-011.  
 **Surface** : offres, séquences, campagne builder.
 
+**Spécification** :
+[`F-012-MESSAGING-STRATEGY.md`](features/F-012-MESSAGING-STRATEGY.md).
+
 ## Epic 3 — CRM et intelligence prospect
 
 ### F-020 — Entreprises (`P0`)
@@ -267,6 +270,9 @@ prévisualisation des candidats, provenance et import sélectionné.
 
 **Dépendances** : F-011, F-020, F-021, F-026.  
 **Surface** : `/w/[workspaceSlug]/prospects/discover`.
+
+**Spécification** :
+[`F-023-PROSPECT-DISCOVERY.md`](features/F-023-PROSPECT-DISCOVERY.md).
 
 ### F-024 — Déduplication et fusion réversible (`P0`)
 
