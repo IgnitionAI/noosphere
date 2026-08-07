@@ -24,6 +24,7 @@ export class ResearchWorker {
     private readonly options: ResearchWorkerOptions,
     private readonly documentProcessor?: { process(job: LeasedJob): Promise<void> },
     private readonly outboxDispatcher?: OutboxDispatcher,
+    private readonly importProcessor?: { process(job: LeasedJob): Promise<void> },
   ) {}
 
   stop(): void {
@@ -40,7 +41,7 @@ export class ResearchWorker {
   async tick(): Promise<number> {
     const jobs = await this.queue.lease({
       workerId: this.options.workerId,
-      types: ["research.stage.execute", "research.document.process"],
+      types: ["research.stage.execute", "research.document.process", "crm.import.apply"],
       limit: this.options.batchSize,
       leaseMs: this.options.leaseMs,
       now: this.clock.now(),
@@ -59,6 +60,8 @@ export class ResearchWorker {
     try {
       if (job.type === "research.document.process" && this.documentProcessor) {
         await this.documentProcessor.process(job);
+      } else if (job.type === "crm.import.apply" && this.importProcessor) {
+        await this.importProcessor.process(job);
       } else {
         await this.orchestrator.process(job);
       }

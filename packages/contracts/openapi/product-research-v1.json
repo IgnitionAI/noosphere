@@ -921,6 +921,22 @@
     "/api/v1/suppressions/{suppressionId}/actions/lift": {
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/SuppressionId" }],
       "post": { "operationId": "liftSuppression", "responses": { "200": { "description": "Suppression lifted" } } }
+    },
+    "/api/v1/imports": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
+      "post": { "operationId": "createImport", "responses": { "201": { "description": "Import preview created" } } }
+    },
+    "/api/v1/imports/{importId}/preview": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/ImportId" }],
+      "get": { "operationId": "getImportPreview", "responses": { "200": { "description": "Import preview" } } }
+    },
+    "/api/v1/imports/{importId}/actions/apply": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/ImportId" }],
+      "post": { "operationId": "applyImport", "responses": { "202": { "description": "Import application queued" } } }
+    },
+    "/api/v1/imports/{importId}": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/ImportId" }],
+      "get": { "operationId": "getImport", "responses": { "200": { "description": "Import report" } } }
     }
   },
   "components": {
@@ -988,6 +1004,10 @@
       },
       "SuppressionId": {
         "name": "suppressionId", "in": "path", "required": true,
+        "schema": { "type": "string", "format": "uuid" }
+      },
+      "ImportId": {
+        "name": "importId", "in": "path", "required": true,
         "schema": { "type": "string", "format": "uuid" }
       }
     },

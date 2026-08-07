@@ -1074,6 +1074,71 @@ export const jobs = pgTable(
   ],
 );
 
+export const importBatches = pgTable(
+  "import_batches",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    filename: varchar("filename", { length: 500 }).notNull(),
+    fileHash: varchar("file_hash", { length: 64 }).notNull(),
+    idempotencyKey: varchar("idempotency_key", { length: 128 }).notNull(),
+    mapping: jsonb("mapping").notNull().default({}),
+    rawContent: text("raw_content").notNull(),
+    rawExpiresAt: timestamp("raw_expires_at", { withTimezone: true }).notNull(),
+    status: varchar("status", { length: 40 }).notNull().default("uploaded"),
+    previewedAt: timestamp("previewed_at", { withTimezone: true }),
+    appliedAt: timestamp("applied_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdBy: uuid("created_by").references(() => authUsers.id, { onDelete: "set null" }),
+    totals: jsonb("totals").notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.workspaceId],
+      foreignColumns: [workspaces.id],
+      name: "import_batches_workspace_fk",
+    }).onDelete("cascade"),
+    unique("import_batches_workspace_id_uq").on(table.workspaceId, table.id),
+    uniqueIndex("import_batches_workspace_key_uq").on(table.workspaceId, table.idempotencyKey),
+    index("import_batches_workspace_created_idx").on(table.workspaceId, table.createdAt),
+  ],
+);
+
+export const importRows = pgTable(
+  "import_rows",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    batchId: uuid("batch_id").notNull(),
+    lineNumber: integer("line_number").notNull(),
+    rawData: jsonb("raw_data").notNull().default({}),
+    normalizedData: jsonb("normalized_data").notNull().default({}),
+    rowFingerprint: varchar("row_fingerprint", { length: 64 }).notNull(),
+    status: varchar("status", { length: 40 }).notNull().default("pending"),
+    reason: varchar("reason", { length: 500 }),
+    companyId: uuid("company_id"),
+    contactId: uuid("contact_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.workspaceId],
+      foreignColumns: [workspaces.id],
+      name: "import_rows_workspace_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.workspaceId, table.batchId],
+      foreignColumns: [importBatches.workspaceId, importBatches.id],
+      name: "import_rows_batch_fk",
+    }).onDelete("cascade"),
+    unique("import_rows_workspace_line_uq").on(table.workspaceId, table.batchId, table.lineNumber),
+    index("import_rows_batch_status_idx").on(table.workspaceId, table.batchId, table.status),
+  ],
+);
+
 export const outboxEvents = pgTable(
   "outbox_events",
   {

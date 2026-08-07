@@ -49,6 +49,10 @@ test("the OpenAPI contract declares every F-009 HTTP route", () => {
       "/api/v1/suppressions",
       "/api/v1/suppressions/check",
       "/api/v1/suppressions/{suppressionId}/actions/lift",
+      "/api/v1/imports",
+      "/api/v1/imports/{importId}",
+      "/api/v1/imports/{importId}/actions/apply",
+      "/api/v1/imports/{importId}/preview",
     ].sort(),
   );
   expect(document.paths["/api/v1/product-research-runs"]?.get).toBeDefined();

@@ -16,10 +16,12 @@ import {
 import { PostgresResearchToolRunRecorder } from "@outbound/infrastructure/ai/postgres-tool-run-recorder";
 import { PostgresWorkspaceAiSettingsRepository } from "@outbound/infrastructure/workspaces/postgres-workspace-ai-settings-repository";
 import { PostgresOutboxDispatcher } from "@outbound/infrastructure/outbox/postgres-outbox-dispatcher";
+import { PostgresImportService } from "@outbound/infrastructure/crm/postgres-import-service";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
 const queue = new PostgresJobQueue(database.client);
+const importService = new PostgresImportService(database.db, queue);
 const outboxDispatcher = new PostgresOutboxDispatcher(database.client);
 const repository = new PostgresProductResearchRepository(database.db);
 const clock = new SystemClock();
@@ -56,7 +58,7 @@ const worker = new ResearchWorker(queue, orchestrator, clock, {
   leaseMs: positiveIntegerEnvironment("JOB_LEASE_MS", 60_000),
   batchSize: positiveIntegerEnvironment("JOB_BATCH_SIZE", 4),
   pollIntervalMs: positiveIntegerEnvironment("JOB_POLL_INTERVAL_MS", 1_000),
-}, documentService, outboxDispatcher);
+}, documentService, outboxDispatcher, importService);
 
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
   process.once(signal, () => {

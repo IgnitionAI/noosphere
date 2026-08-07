@@ -10,6 +10,7 @@ import { createCrmHttpHandler } from "@outbound/interface/http/crm-handler";
 import { createDiscoveryHttpHandler } from "@outbound/interface/http/discovery-handler";
 import { createSequenceHttpHandler } from "@outbound/interface/http/sequence-handler";
 import { createOfferHttpHandler } from "@outbound/interface/http/offer-handler";
+import { createImportHttpHandler } from "@outbound/interface/http/import-handler";
 import {
   ProviderUnavailableError,
   UnipileProspectSource,
@@ -103,6 +104,7 @@ const sequenceHandler = createSequenceHttpHandler({
   contextResolver: auth.contextResolver,
 });
 const offers = createOfferHttpHandler({ database: database.db, contextResolver: auth.contextResolver });
+const imports = createImportHttpHandler({ database: database.db, contextResolver: auth.contextResolver, queue });
 const port = positiveIntegerEnvironment("PORT", 3000);
 const server = Bun.serve({
   port,
@@ -120,6 +122,7 @@ const server = Bun.serve({
       return discovery(request);
     }
     if (pathname.startsWith("/api/v1/offers")) return offers(request);
+    if (pathname.startsWith("/api/v1/imports")) return imports(request);
     if (pathname.startsWith("/api/v1/sequences")) {
       return sequenceHandler(request);
     }
