@@ -1,6 +1,7 @@
 import { ArrowLeft, Ban, Briefcase, Mail, Phone, Plus, TriangleAlert, UserRound } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { CrmPermissionState } from "@/components/crm-states";
 import { getContact, listCompanies, OutboundApiError } from "@/lib/api";
 import { addEmploymentAction, addIdentityAction, suppressContactAction } from "../actions";
 
@@ -31,9 +32,20 @@ export default async function ContactDetailPage({
     [contact] = await Promise.all([getContact(workspaceSlug, contactId)]);
   } catch (error) {
     if (error instanceof OutboundApiError && error.status === 404) notFound();
+    if (error instanceof OutboundApiError && (error.status === 401 || error.status === 403)) {
+      return <CrmPermissionState resource="ce prospect" />;
+    }
     throw error;
   }
-  const companies = await listCompanies(workspaceSlug);
+  let companies;
+  try {
+    companies = await listCompanies(workspaceSlug, { limit: 50 });
+  } catch (error) {
+    if (error instanceof OutboundApiError && (error.status === 401 || error.status === 403)) {
+      return <CrmPermissionState resource="les entreprises" />;
+    }
+    throw error;
+  }
   const addIdentity = addIdentityAction.bind(null, workspaceSlug, contactId);
   const addEmployment = addEmploymentAction.bind(null, workspaceSlug, contactId);
   const suppress = suppressContactAction.bind(null, workspaceSlug, contactId);

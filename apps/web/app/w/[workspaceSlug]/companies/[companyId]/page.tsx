@@ -1,6 +1,7 @@
 import { ArrowLeft, Building2, ExternalLink } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { CrmPermissionState } from "@/components/crm-states";
 import { getCompany, OutboundApiError } from "@/lib/api";
 
 export const metadata = { title: "Entreprise" };
@@ -17,6 +18,9 @@ export default async function CompanyDetailPage({
     company = await getCompany(workspaceSlug, companyId);
   } catch (error) {
     if (error instanceof OutboundApiError && error.status === 404) notFound();
+    if (error instanceof OutboundApiError && (error.status === 401 || error.status === 403)) {
+      return <CrmPermissionState resource="cette entreprise" />;
+    }
     throw error;
   }
 

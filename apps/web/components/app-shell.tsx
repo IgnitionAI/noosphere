@@ -9,6 +9,7 @@ import {
   Inbox,
   LayoutDashboard,
   Menu,
+  Package,
   Search,
   Send,
   Settings,
@@ -41,7 +42,12 @@ export function AppShell({
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const productReadingHref = `/w/${workspace.slug}/strategy/product-reading`;
+  const icpsHref = `/w/${workspace.slug}/icps`;
+  const offersHref = `/w/${workspace.slug}/offers`;
   const aiSettingsHref = `/w/${workspace.slug}/settings/ai`;
+  const productReadingActive = pathname.startsWith(productReadingHref);
+  const icpsActive = pathname.startsWith(icpsHref);
+  const offersActive = pathname.startsWith(offersHref);
   const crmNavigation = [
     [`/w/${workspace.slug}/prospects`, "Prospects", Users],
     [`/w/${workspace.slug}/companies`, "Entreprises", Building2],
@@ -114,8 +120,12 @@ export function AppShell({
             Stratégie
           </div>
           <Link
-            aria-current={pathname.startsWith(productReadingHref) ? "page" : undefined}
-            className="flex items-center gap-3 rounded-lg bg-white/10 px-3 py-2.5 text-[13px] font-medium text-white"
+            aria-current={productReadingActive ? "page" : undefined}
+            className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium ${
+              productReadingActive
+                ? "bg-white/10 text-white"
+                : "text-slate-300 hover:bg-white/5 hover:text-white"
+            }`}
             href={productReadingHref}
             onClick={() => setOpen(false)}
           >
@@ -124,6 +134,32 @@ export function AppShell({
             <span className="ml-auto rounded-full bg-signal px-2 py-0.5 text-[9px] font-bold text-signal-ink">
               LIVE
             </span>
+          </Link>
+          <Link
+            aria-current={icpsActive ? "page" : undefined}
+            className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium ${
+              icpsActive
+                ? "bg-white/10 text-white"
+                : "text-slate-300 hover:bg-white/5 hover:text-white"
+            }`}
+            href={icpsHref}
+            onClick={() => setOpen(false)}
+          >
+            <Target size={17} />
+            ICP
+          </Link>
+          <Link
+            aria-current={offersActive ? "page" : undefined}
+            className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium ${
+              offersActive
+                ? "bg-white/10 text-white"
+                : "text-slate-300 hover:bg-white/5 hover:text-white"
+            }`}
+            href={offersHref}
+            onClick={() => setOpen(false)}
+          >
+            <Package size={17} />
+            Offres
           </Link>
           <div className="mb-2 mt-6 px-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">
             Prospection

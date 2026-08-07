@@ -1,6 +1,9 @@
 import { UserRoundPlus, Users } from "lucide-react";
 import Link from "next/link";
-import { listCompanies, listContacts } from "@/lib/api";
+import { CursorPagination } from "@/components/cursor-pagination";
+import { CrmPermissionState } from "@/components/crm-states";
+import { listCompanies, listContacts, OutboundApiError } from "@/lib/api";
+import { cursorStackValue, paginationHref, parseCursorStack } from "@/lib/crm-pagination";
 import { createContactAction } from "./actions";
 
 export const metadata = { title: "Prospects" };
@@ -11,15 +14,33 @@ export default async function ProspectsPage({
   searchParams,
 }: {
   params: Promise<{ workspaceSlug: string }>;
-  searchParams: Promise<{ search?: string }>;
+  searchParams: Promise<{ search?: string; companyId?: string; cursor?: string }>;
 }) {
   const { workspaceSlug } = await params;
-  const { search } = await searchParams;
-  const [contacts, companies] = await Promise.all([
-    listContacts(workspaceSlug, search),
-    listCompanies(workspaceSlug),
-  ]);
+  const { search, companyId, cursor } = await searchParams;
+  const cursorStack = parseCursorStack(cursor);
+  const currentCursor = cursorStack.at(-1);
+  let contacts;
+  let companies;
+  try {
+    [contacts, companies] = await Promise.all([
+      listContacts(workspaceSlug, { search, companyId, cursor: currentCursor, limit: 50 }),
+      listCompanies(workspaceSlug, { limit: 50 }),
+    ]);
+  } catch (error) {
+    if (error instanceof OutboundApiError && (error.status === 401 || error.status === 403)) {
+      return <CrmPermissionState resource="les prospects" />;
+    }
+    throw error;
+  }
   const create = createContactAction.bind(null, workspaceSlug);
+  const pathname = `/w/${workspaceSlug}/prospects`;
+  const previousHref = cursorStack.length
+    ? paginationHref(pathname, { search, companyId, cursor: cursorStackValue(cursorStack.slice(0, -1)) })
+    : undefined;
+  const nextHref = contacts.nextCursor
+    ? paginationHref(pathname, { search, companyId, cursor: cursorStackValue([...cursorStack, contacts.nextCursor]) })
+    : undefined;
 
   return (
     <>
@@ -41,16 +62,21 @@ export default async function ProspectsPage({
       <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
         <section className="panel">
           <div className="panel-header">
-            <form className="flex flex-1 gap-2" action={`/w/${workspaceSlug}/prospects`} method="get">
+            <form className="flex flex-1 flex-wrap gap-2" action={`/w/${workspaceSlug}/prospects`} method="get">
               <input
-                className="control min-w-0 flex-1"
+                className="control min-w-0 flex-1 basis-48"
                 name="search"
                 placeholder="Rechercher un prospect…"
                 defaultValue={search ?? ""}
               />
+              <select className="control min-w-0 basis-48 sm:w-52 sm:flex-none" name="companyId" defaultValue={companyId ?? ""}>
+                <option value="">Toutes les entreprises</option>
+                {companies.data.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}
+              </select>
               <button className="button" type="submit">Filtrer</button>
             </form>
           </div>
+          <CursorPagination nextHref={nextHref} page={cursorStack.length + 1} previousHref={previousHref} />
           <div className="panel-body overflow-x-auto">
             {contacts.data.length === 0 ? (
               <p className="py-8 text-center text-sm text-muted">

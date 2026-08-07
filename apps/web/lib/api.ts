@@ -112,16 +112,43 @@ export interface ResearchReport {
   readonly versions: readonly Record<string, unknown>[];
 }
 
-export interface IcpVersionView {
+export interface IcpVersion {
   readonly id: string;
-  readonly runId: string;
-  readonly proposalId: string;
+  readonly workspaceId: string;
+  readonly icpId: string;
+  readonly runId: string | null;
+  readonly proposalId: string | null;
   readonly version: number;
   readonly name: string;
-  readonly unknowns: readonly unknown[];
-  readonly unresolvedContradictions: readonly unknown[];
-  readonly blockedFindings: readonly { findingId: string; statement: string; reason: string | null }[];
+  readonly confidence: number;
+  readonly criteria: unknown;
+  readonly buyingCommittee: unknown;
+  readonly problems: unknown;
+  readonly signals: unknown;
+  readonly exclusions: unknown;
+  readonly unknowns: unknown;
+  readonly unresolvedContradictions: unknown;
+  readonly blockedFindings: unknown;
+  readonly publishedBy: string | null;
   readonly publishedAt: string;
+  readonly createdAt: string;
+}
+
+/** Compatibility name retained for report publication responses. */
+export type IcpVersionView = IcpVersion;
+
+export interface Icp {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly name: string;
+  readonly currentVersion: number;
+  readonly deletedAt: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface IcpDetail extends Icp {
+  readonly versions: readonly IcpVersion[];
 }
 
 export class OutboundApiError extends Error {
@@ -410,11 +437,15 @@ async function crmFetch<T>(
 
 export async function listCompanies(
   workspaceSlug: string,
-  search?: string,
+  options: { search?: string | undefined; cursor?: string | undefined; limit?: number | undefined } | string = {},
 ): Promise<{ data: Company[]; nextCursor: string | null }> {
+  const normalized = typeof options === "string" ? { search: options } : options;
+  const params = new URLSearchParams({ limit: String(normalized.limit ?? 50) });
+  if (normalized.search) params.set("search", normalized.search);
+  if (normalized.cursor) params.set("cursor", normalized.cursor);
   return crmFetch(
     workspaceSlug,
-    `/api/v1/companies${search ? `?search=${encodeURIComponent(search)}&limit=50` : "?limit=50"}`,
+    `/api/v1/companies?${params.toString()}`,
   );
 }
 
@@ -441,11 +472,16 @@ export async function getCompany(
 
 export async function listContacts(
   workspaceSlug: string,
-  search?: string,
+  options: { search?: string | undefined; companyId?: string | undefined; cursor?: string | undefined; limit?: number | undefined } | string = {},
 ): Promise<{ data: ContactSummary[]; nextCursor: string | null }> {
+  const normalized = typeof options === "string" ? { search: options } : options;
+  const params = new URLSearchParams({ limit: String(normalized.limit ?? 50) });
+  if (normalized.search) params.set("search", normalized.search);
+  if (normalized.companyId) params.set("companyId", normalized.companyId);
+  if (normalized.cursor) params.set("cursor", normalized.cursor);
   return crmFetch(
     workspaceSlug,
-    `/api/v1/contacts${search ? `?search=${encodeURIComponent(search)}&limit=50` : "?limit=50"}`,
+    `/api/v1/contacts?${params.toString()}`,
   );
 }
 
@@ -501,16 +537,96 @@ export async function suppressContact(
   });
 }
 
-export interface PublishedIcpVersion {
+export type OfferClaimValidationStatus = "hypothesis" | "sourced" | "validated" | "invalidated";
+
+export interface OfferClaim {
+  readonly id?: string;
+  readonly claim: string;
+  readonly validationStatus: OfferClaimValidationStatus;
+  readonly evidenceUri: string | null;
+}
+
+export interface Offer {
   readonly id: string;
-  readonly runId: string;
-  readonly proposalId: string;
+  readonly workspaceId: string;
+  readonly name: string;
+  readonly status: "draft" | "archived";
+  readonly currentVersion: number;
+  readonly category: string;
+  readonly valueProposition: string;
+  readonly targetAudience: string;
+  readonly pricing: unknown;
+  readonly commercialRules: unknown;
+  readonly constraints: unknown;
+  readonly claims: readonly OfferClaim[];
+  readonly objections: unknown;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly deletedAt?: string | null;
+}
+
+export interface OfferVersion {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly offerId: string;
   readonly version: number;
   readonly name: string;
-  readonly confidence: number;
-  readonly unknowns: readonly unknown[];
+  readonly category: string;
+  readonly valueProposition: string;
+  readonly targetAudience: string;
+  readonly pricing: unknown;
+  readonly commercialRules: unknown;
+  readonly constraints: unknown;
+  readonly objections: unknown;
+  readonly claims: readonly OfferClaim[];
+  readonly publishedBy: string | null;
   readonly publishedAt: string;
+  readonly createdAt: string;
 }
+
+export interface OfferDetail extends Offer {
+  readonly versions: readonly OfferVersion[];
+}
+
+export async function listOffers(workspaceSlug: string): Promise<{ data: Offer[] }> {
+  return crmFetch(workspaceSlug, "/api/v1/offers");
+}
+
+export async function createOffer(
+  workspaceSlug: string,
+  input: { name: string; category?: string; targetAudience?: string },
+): Promise<Offer> {
+  return crmFetch(workspaceSlug, "/api/v1/offers", { method: "POST", body: input });
+}
+
+export async function getOffer(workspaceSlug: string, offerId: string): Promise<OfferDetail> {
+  return crmFetch(workspaceSlug, `/api/v1/offers/${offerId}`);
+}
+
+export async function updateOfferDraft(
+  workspaceSlug: string,
+  offerId: string,
+  fields: Readonly<Record<string, unknown>>,
+): Promise<Offer> {
+  return crmFetch(workspaceSlug, `/api/v1/offers/${offerId}`, { method: "PATCH", body: fields });
+}
+
+export async function publishOfferVersion(
+  workspaceSlug: string,
+  offerId: string,
+): Promise<OfferVersion> {
+  return crmFetch(workspaceSlug, `/api/v1/offers/${offerId}/actions/publish`, { method: "POST" });
+}
+
+export async function listOfferVersions(
+  workspaceSlug: string,
+  offerId: string,
+): Promise<{ data: OfferVersion[] }> {
+  return crmFetch(workspaceSlug, `/api/v1/offers/${offerId}/versions`);
+}
+
+/** Legacy list retained for discovery; canonical pages use listIcps. */
+export type PublishedIcpVersion = IcpVersion;
 
 export interface DiscoveryRun {
   readonly id: string;
@@ -538,8 +654,27 @@ export interface DiscoveryCandidate {
 
 export async function listIcpVersions(
   workspaceSlug: string,
-): Promise<{ data: PublishedIcpVersion[] }> {
+): Promise<{ data: IcpVersion[] }> {
   return crmFetch(workspaceSlug, "/api/v1/icp-versions");
+}
+
+export async function getIcpVersion(workspaceSlug: string, versionId: string): Promise<IcpVersion> {
+  return crmFetch(workspaceSlug, `/api/v1/icp-versions/${versionId}`);
+}
+
+export async function listIcps(workspaceSlug: string): Promise<{ data: Icp[] }> {
+  return crmFetch(workspaceSlug, "/api/v1/icps");
+}
+
+export async function getIcp(workspaceSlug: string, icpId: string): Promise<IcpDetail> {
+  return crmFetch(workspaceSlug, `/api/v1/icps/${icpId}`);
+}
+
+export async function publishNextIcpVersion(
+  workspaceSlug: string,
+  icpId: string,
+): Promise<IcpVersion> {
+  return crmFetch(workspaceSlug, `/api/v1/icps/${icpId}/actions/publish`, { method: "POST" });
 }
 
 export async function launchDiscoveryRun(

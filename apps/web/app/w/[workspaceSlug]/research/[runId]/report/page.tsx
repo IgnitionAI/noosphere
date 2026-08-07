@@ -14,6 +14,8 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { EvidenceReference } from "./evidence-reference";
+import { MutationForm } from "./mutation-form";
 import { getResearchReport, listWorkspaces, OutboundApiError } from "@/lib/api";
 import {
   approveProposal,
@@ -77,6 +79,11 @@ export default async function ResearchReportPage({
   const canReview = ["operator", "reviewer", "admin", "owner"].includes(role);
   const readyForReview = report.run.status === "ready_for_review";
   const moreResearch = requestMoreResearch.bind(null, workspaceSlug, runId);
+  const publicationReasons = [
+    ...(!proposals.length ? ["Aucune proposition ICP disponible."] : []),
+    ...(contradictions.length ? [`${contradictions.length} contradiction${contradictions.length > 1 ? "s" : ""} non résolue${contradictions.length > 1 ? "s" : ""}.`] : []),
+    ...(versions.length === 0 && !canPublish ? ["La publication est réservée aux administrateurs et propriétaires."] : []),
+  ];
 
   return (
     <>
@@ -133,6 +140,25 @@ export default async function ResearchReportPage({
           </details>
         ) : null}
       </header>
+
+      <div className="mb-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
+        <section className={`panel ${publicationReasons.length ? "border-warning" : "border-success"}`}>
+          <div className="panel-header">
+            <h2 className="flex items-center gap-2 font-semibold"><ShieldCheck size={16} className={publicationReasons.length ? "text-warning" : "text-success"} />Préflight de publication</h2>
+            <span className={publicationReasons.length ? "badge badge-warning" : "badge badge-success"}>{publicationReasons.length ? "À compléter" : "Prêt"}</span>
+          </div>
+          <div className="panel-body text-xs leading-5">
+            {publicationReasons.length ? <ul className="space-y-1 text-warning">{publicationReasons.map((reason) => <li key={reason}>• {reason}</li>)}</ul> : <p className="text-success">Aucune contradiction bloquante détectée par la revue des preuves.</p>}
+            <p className="mt-2 text-muted">Le bouton de publication reste soumis aux droits et validations serveur.</p>
+          </div>
+        </section>
+        <nav aria-label="Sommaire du rapport" className="panel p-4">
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">Sommaire</h2>
+          <div className="mt-3 flex flex-wrap gap-2 text-xs lg:block lg:space-y-2">
+            {[["synthese", "Synthèse"], ["concurrents", "Concurrents"], ["acheteurs", "Acheteurs"], ["icp", "ICP proposés"], ["findings", "Findings"]].map(([id, label]) => <a className="inline-flex text-brand-blue hover:underline lg:block" href={`#${id}`} key={id}>{label}</a>)}
+          </div>
+        </nav>
+      </div>
 
       <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
         <main className="min-w-0 space-y-4">
@@ -320,7 +346,7 @@ export default async function ResearchReportPage({
                           <summary className="cursor-pointer text-sm font-semibold text-brand-blue">
                             Corriger cette proposition
                           </summary>
-                          <form action={correct} className="mt-3 space-y-3">
+                          <MutationForm action={correct} className="mt-3 space-y-3" successMessage="La proposition est corrigée.">
                             <label className="block text-xs font-semibold text-muted">
                               Nom
                               <input className="control mt-1 w-full" name="name" defaultValue={text(proposal.name)} />
@@ -341,33 +367,33 @@ export default async function ResearchReportPage({
                               </label>
                             </div>
                             <button className="button" type="submit">Enregistrer les corrections</button>
-                          </form>
+                          </MutationForm>
                         </details>
                         <div className="flex flex-col gap-2 sm:flex-row">
                           {status === "pending" ? (
                             <>
-                              <form action={approve}>
+                              <MutationForm action={approve} successMessage="La proposition est approuvée.">
                                 <button className="button button-signal" type="submit">
                                   <Check size={15} />
                                   Approuver
                                 </button>
-                              </form>
-                              <form action={reject} className="flex flex-1 gap-2">
+                              </MutationForm>
+                              <MutationForm action={reject} className="flex flex-1 gap-2" successMessage="La proposition est rejetée.">
                                 <input className="control min-w-0 flex-1" name="reason" placeholder="Motif du rejet" required />
                                 <button className="button" type="submit">
                                   <X size={15} />
                                   Rejeter
                                 </button>
-                              </form>
+                              </MutationForm>
                             </>
                           ) : null}
                           {status === "approved" && canPublish ? (
-                            <form action={publish}>
+                            <MutationForm action={publish} confirmation="Publier cette proposition en version immuable ?" successMessage="La version ICP est publiée.">
                               <button className="button button-signal" type="submit">
                                 <CheckCircle2 size={15} />
                                 Publier en version immuable
                               </button>
-                            </form>
+                            </MutationForm>
                           ) : null}
                           {status === "approved" && !canPublish ? (
                             <p className="text-xs text-muted">
@@ -427,16 +453,11 @@ export default async function ResearchReportPage({
                     {findingEvidence.length ? (
                       <div className="mt-2 flex flex-wrap gap-2">
                         {findingEvidence.map((item) => (
-                          <a
-                            className="badge hover:border-brand-blue"
-                            href={item.url ?? undefined}
+                          <EvidenceReference
+                            evidenceId={item.id}
                             key={item.id}
-                            rel="noreferrer"
-                            target="_blank"
-                            title={item.title}
-                          >
-                            {item.sourceType === "public_web" ? "Web" : "Interne"} · {item.title.slice(0, 40)}
-                          </a>
+                            label={`${item.sourceType === "public_web" ? "Web" : "Interne"} · ${item.title.slice(0, 40)}`}
+                          />
                         ))}
                       </div>
                     ) : (
@@ -444,25 +465,25 @@ export default async function ResearchReportPage({
                     )}
                     {canReview && status !== "rejected" ? (
                       <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-line pt-3">
-                        <form action={confirm}>
+                        <MutationForm action={confirm} successMessage="Le finding est confirmé.">
                           <button className="button" type="submit">
                             <Check size={14} />
                             Confirmer
                           </button>
-                        </form>
+                        </MutationForm>
                         <details className="relative">
                           <summary className="button cursor-pointer list-none">Corriger</summary>
-                          <form action={correctFindingAction} className="absolute z-10 mt-2 w-72 space-y-2 rounded-lg border border-line bg-white p-3 shadow-lg">
+                          <MutationForm action={correctFindingAction} className="absolute z-10 mt-2 w-72 space-y-2 rounded-lg border border-line bg-white p-3 shadow-lg" successMessage="Le finding est corrigé.">
                             <textarea className="control h-20 w-full text-xs" name="statement" defaultValue={text(finding.statement)} required />
                             <button className="button button-signal w-full" type="submit">Enregistrer</button>
-                          </form>
+                          </MutationForm>
                         </details>
                         <details className="relative">
                           <summary className="button cursor-pointer list-none">Rejeter</summary>
-                          <form action={rejectFindingAction} className="absolute z-10 mt-2 w-72 space-y-2 rounded-lg border border-line bg-white p-3 shadow-lg">
+                          <MutationForm action={rejectFindingAction} className="absolute z-10 mt-2 w-72 space-y-2 rounded-lg border border-line bg-white p-3 shadow-lg" successMessage="Le finding est rejeté.">
                             <input className="control w-full text-xs" name="reason" placeholder="Motif (contradiction, source faible…)" />
                             <button className="button w-full" type="submit">Rejeter le finding</button>
-                          </form>
+                          </MutationForm>
                         </details>
                       </div>
                     ) : null}
@@ -518,7 +539,7 @@ export default async function ResearchReportPage({
             </div>
             <div className="panel-body max-h-[480px] space-y-2 overflow-y-auto">
               {report.evidence.map((item) => (
-                <article className="rounded-lg border border-line p-3" key={item.id}>
+                <article className="rounded-lg border border-line p-3" id={`evidence-${item.id}`} key={item.id} tabIndex={-1}>
                   <div className="flex items-center justify-between gap-2">
                     <strong className="text-xs">{item.title}</strong>
                     <span className="badge">{item.sourceType === "public_web" ? "Web public" : "Document fourni"}</span>

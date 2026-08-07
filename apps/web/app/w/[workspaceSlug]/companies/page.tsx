@@ -1,6 +1,9 @@
 import { Building2, Plus } from "lucide-react";
 import Link from "next/link";
-import { listCompanies } from "@/lib/api";
+import { CursorPagination } from "@/components/cursor-pagination";
+import { CrmPermissionState } from "@/components/crm-states";
+import { listCompanies, OutboundApiError } from "@/lib/api";
+import { cursorStackValue, paginationHref, parseCursorStack } from "@/lib/crm-pagination";
 import { createCompanyAction } from "./actions";
 
 export const metadata = { title: "Entreprises" };
@@ -11,12 +14,29 @@ export default async function CompaniesPage({
   searchParams,
 }: {
   params: Promise<{ workspaceSlug: string }>;
-  searchParams: Promise<{ search?: string }>;
+  searchParams: Promise<{ search?: string; cursor?: string }>;
 }) {
   const { workspaceSlug } = await params;
-  const { search } = await searchParams;
-  const companies = await listCompanies(workspaceSlug, search);
+  const { search, cursor } = await searchParams;
+  const cursorStack = parseCursorStack(cursor);
+  const currentCursor = cursorStack.at(-1);
+  let companies;
+  try {
+    companies = await listCompanies(workspaceSlug, { search, cursor: currentCursor, limit: 50 });
+  } catch (error) {
+    if (error instanceof OutboundApiError && (error.status === 401 || error.status === 403)) {
+      return <CrmPermissionState resource="les entreprises" />;
+    }
+    throw error;
+  }
   const create = createCompanyAction.bind(null, workspaceSlug);
+  const pathname = `/w/${workspaceSlug}/companies`;
+  const previousHref = cursorStack.length
+    ? paginationHref(pathname, { search, cursor: cursorStackValue(cursorStack.slice(0, -1)) })
+    : undefined;
+  const nextHref = companies.nextCursor
+    ? paginationHref(pathname, { search, cursor: cursorStackValue([...cursorStack, companies.nextCursor]) })
+    : undefined;
 
   return (
     <>
@@ -84,6 +104,7 @@ export default async function CompaniesPage({
               </table>
             )}
           </div>
+          <CursorPagination nextHref={nextHref} page={cursorStack.length + 1} previousHref={previousHref} />
         </section>
 
         <aside className="panel">
