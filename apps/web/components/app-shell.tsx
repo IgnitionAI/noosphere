@@ -13,6 +13,7 @@ import {
   Search,
   Send,
   Settings,
+  ShieldAlert,
   Target,
   Users,
   X,
@@ -44,6 +45,7 @@ export function AppShell({
   const productReadingHref = `/w/${workspace.slug}/strategy/product-reading`;
   const icpsHref = `/w/${workspace.slug}/icps`;
   const offersHref = `/w/${workspace.slug}/offers`;
+  const suppressionsHref = `/w/${workspace.slug}/suppressions`;
   const aiSettingsHref = `/w/${workspace.slug}/settings/ai`;
   const productReadingActive = pathname.startsWith(productReadingHref);
   const icpsActive = pathname.startsWith(icpsHref);
@@ -52,6 +54,7 @@ export function AppShell({
     [`/w/${workspace.slug}/prospects`, "Prospects", Users],
     [`/w/${workspace.slug}/companies`, "Entreprises", Building2],
     [`/w/${workspace.slug}/sequences`, "Séquences", Send],
+    [suppressionsHref, "Suppressions", ShieldAlert],
   ] as const;
   const initials = session.user.name
     .split(/\s+/)

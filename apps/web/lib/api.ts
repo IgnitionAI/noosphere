@@ -422,6 +422,24 @@ export interface ContactDetail {
   }[];
 }
 
+export type SuppressionIdentityType = "email" | "linkedin" | "phone" | "whatsapp";
+export type SuppressionChannel = "global" | "email" | "linkedin" | "whatsapp";
+
+export interface Suppression {
+  readonly id: string;
+  readonly channel: SuppressionChannel;
+  readonly identityType: SuppressionIdentityType | null;
+  /** The API masks this value for non-privileged workspace roles. */
+  readonly normalizedValue: string | null;
+  readonly reason: string | null;
+  readonly contactId: string | null;
+  readonly createdBy: string | null;
+  readonly liftedAt: string | null;
+  readonly liftedBy: string | null;
+  readonly liftJustification: string | null;
+  readonly createdAt: string;
+}
+
 async function crmFetch<T>(
   workspaceSlug: string,
   pathname: string,
@@ -583,6 +601,50 @@ export async function suppressContact(
   return crmFetch(workspaceSlug, `/api/v1/contacts/${contactId}/actions/suppress`, {
     method: "POST",
     body: { channel: "global", reason },
+  });
+}
+
+export async function listSuppressions(
+  workspaceSlug: string,
+  options: { channel?: SuppressionChannel; cursor?: string; limit?: number } = {},
+): Promise<{ data: Suppression[]; nextCursor: string | null }> {
+  const params = new URLSearchParams({ limit: String(options.limit ?? 50) });
+  if (options.channel) params.set("channel", options.channel);
+  if (options.cursor) params.set("cursor", options.cursor);
+  return crmFetch(workspaceSlug, `/api/v1/suppressions?${params.toString()}`);
+}
+
+export async function createSuppression(
+  workspaceSlug: string,
+  input: {
+    identityType: SuppressionIdentityType;
+    value: string;
+    channel: SuppressionChannel;
+    reason?: string | null;
+  },
+): Promise<Suppression> {
+  return crmFetch(workspaceSlug, "/api/v1/suppressions", { method: "POST", body: input });
+}
+
+export async function checkSuppression(
+  workspaceSlug: string,
+  input: {
+    identityType: SuppressionIdentityType;
+    value: string;
+    channel: SuppressionChannel;
+  },
+): Promise<{ eligible: boolean; suppressionId: string | null; channel: string | null; reason: string | null }> {
+  return crmFetch(workspaceSlug, "/api/v1/suppressions/check", { method: "POST", body: input });
+}
+
+export async function liftSuppression(
+  workspaceSlug: string,
+  suppressionId: string,
+  justification: string,
+): Promise<Suppression> {
+  return crmFetch(workspaceSlug, `/api/v1/suppressions/${suppressionId}/actions/lift`, {
+    method: "POST",
+    body: { justification },
   });
 }
 
