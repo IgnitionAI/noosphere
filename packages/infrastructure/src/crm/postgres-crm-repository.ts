@@ -724,6 +724,7 @@ export class PostgresCrmRepository {
             eq(contactSuppressions.identityType, identity.type as never),
             eq(contactSuppressions.normalizedValue, identity.normalizedValue),
             isNull(contactSuppressions.liftedAt),
+            eq(contactSuppressions.channel, "global"),
           ),
         )
         .limit(1);
