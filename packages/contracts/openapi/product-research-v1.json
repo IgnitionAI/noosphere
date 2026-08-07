@@ -864,6 +864,50 @@
     "/api/v1/offers/{offerId}/versions": {
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/OfferId" }],
       "get": { "operationId": "listOfferVersions", "responses": { "200": { "description": "Offer versions" } } }
+    },
+    "/api/v1/companies": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
+      "get": {
+        "operationId": "listCompanies",
+        "parameters": [
+          { "name": "search", "in": "query", "schema": { "type": "string" } },
+          { "name": "sector", "in": "query", "schema": { "type": "string" } },
+          { "name": "location", "in": "query", "schema": { "type": "string" } },
+          { "name": "employeeCountMin", "in": "query", "schema": { "type": "integer", "minimum": 0 } },
+          { "name": "employeeCountMax", "in": "query", "schema": { "type": "integer", "minimum": 0 } },
+          { "name": "cursor", "in": "query", "schema": { "type": "string" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100 } }
+        ],
+        "responses": { "200": { "description": "Workspace companies" } }
+      },
+      "post": { "operationId": "createCompany", "responses": { "201": { "description": "Company created" } } }
+    },
+    "/api/v1/companies/{companyId}": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/CompanyId" }],
+      "get": { "operationId": "getCompany", "responses": { "200": { "description": "Company detail" } } },
+      "patch": { "operationId": "updateCompany", "responses": { "200": { "description": "Company updated" } } }
+    },
+    "/api/v1/contacts": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
+      "get": { "operationId": "listContacts", "responses": { "200": { "description": "Workspace contacts" } } },
+      "post": { "operationId": "createContact", "responses": { "201": { "description": "Contact created" } } }
+    },
+    "/api/v1/contacts/{contactId}": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/ContactId" }],
+      "get": { "operationId": "getContact", "responses": { "200": { "description": "Contact detail" } } },
+      "patch": { "operationId": "updateContact", "responses": { "200": { "description": "Contact updated" } } }
+    },
+    "/api/v1/contacts/{contactId}/identities": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/ContactId" }],
+      "post": { "operationId": "addContactIdentity", "responses": { "201": { "description": "Identity added" } } }
+    },
+    "/api/v1/contacts/{contactId}/employments": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/ContactId" }],
+      "post": { "operationId": "changeContactEmployment", "responses": { "201": { "description": "Employment changed" } } }
+    },
+    "/api/v1/contacts/{contactId}/actions/suppress": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/ContactId" }],
+      "post": { "operationId": "suppressContact", "responses": { "204": { "description": "Contact suppressed" } } }
     }
   },
   "components": {
@@ -919,6 +963,14 @@
       },
       "OfferId": {
         "name": "offerId", "in": "path", "required": true,
+        "schema": { "type": "string", "format": "uuid" }
+      },
+      "CompanyId": {
+        "name": "companyId", "in": "path", "required": true,
+        "schema": { "type": "string", "format": "uuid" }
+      },
+      "ContactId": {
+        "name": "contactId", "in": "path", "required": true,
         "schema": { "type": "string", "format": "uuid" }
       }
     },

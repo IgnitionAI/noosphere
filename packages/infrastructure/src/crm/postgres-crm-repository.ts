@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, ilike, inArray, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, eq, gt, ilike, inArray, or, sql, lte, gte, type SQL } from "drizzle-orm";
 import type { Database } from "@outbound/infrastructure/database/client";
 import {
   companies,
@@ -70,12 +70,24 @@ export class PostgresCrmRepository {
   async listCompanies(input: {
     workspaceId: string;
     search?: string;
+    sector?: string;
+    location?: string;
+    employeeCountMin?: number;
+    employeeCountMax?: number;
     cursor?: CompanyListCursor;
     limit: number;
   }) {
     const conditions: SQL[] = [eq(companies.workspaceId, input.workspaceId)];
     if (input.search) {
       conditions.push(ilike(companies.name, `%${input.search}%`));
+    }
+    if (input.sector) conditions.push(ilike(companies.sector, `%${input.sector}%`));
+    if (input.location) conditions.push(ilike(companies.location, `%${input.location}%`));
+    if (input.employeeCountMin !== undefined) {
+      conditions.push(gte(companies.employeeCountMax, input.employeeCountMin));
+    }
+    if (input.employeeCountMax !== undefined) {
+      conditions.push(lte(companies.employeeCountMin, input.employeeCountMax));
     }
     if (input.cursor) {
       conditions.push(
@@ -100,6 +112,29 @@ export class PostgresCrmRepository {
       data,
       nextCursor: rows.length > input.limit && last ? { createdAt: last.createdAt, id: last.id } : null,
     };
+  }
+
+  async updateCompany(input: {
+    workspaceId: string;
+    companyId: string;
+    fields: Partial<Pick<typeof companies.$inferInsert,
+      "name" | "normalizedDomain" | "sector" | "employeeCountMin" | "employeeCountMax" | "location" | "linkedinUrl">>;
+  }) {
+    try {
+      const rows = await this.db.update(companies).set({ ...input.fields, updatedAt: new Date() }).where(and(
+        eq(companies.workspaceId, input.workspaceId), eq(companies.id, input.companyId),
+      )).returning();
+      if (!rows[0]) throw new Error("COMPANY_NOT_FOUND");
+      return rows[0];
+    } catch (error) {
+      if (isUniqueViolation(error) && input.fields.normalizedDomain) {
+        const existing = await this.db.select({ id: companies.id }).from(companies).where(and(
+          eq(companies.workspaceId, input.workspaceId), eq(companies.normalizedDomain, input.fields.normalizedDomain),
+        )).limit(1);
+        throw new Error(`COMPANY_DOMAIN_CONFLICT:${existing[0]?.id ?? ""}`);
+      }
+      throw error;
+    }
   }
 
   async getCompany(input: { workspaceId: string; companyId: string }) {
@@ -325,6 +360,18 @@ export class PostgresCrmRepository {
         .orderBy(asc(contactEmployments.createdAt)),
     ]);
     return { ...contact, identities, employments };
+  }
+
+  async updateContact(input: {
+    workspaceId: string;
+    contactId: string;
+    fields: Partial<Pick<typeof contacts.$inferInsert, "firstName" | "lastName" | "photoUrl" | "preferredChannel">>;
+  }) {
+    const rows = await this.db.update(contacts).set({ ...input.fields, updatedAt: new Date() }).where(and(
+      eq(contacts.workspaceId, input.workspaceId), eq(contacts.id, input.contactId),
+    )).returning();
+    if (!rows[0]) throw new Error("CONTACT_NOT_FOUND");
+    return rows[0];
   }
 
   async addIdentity(input: {

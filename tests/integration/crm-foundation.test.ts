@@ -17,7 +17,7 @@ databaseDescribe("F-020/F-021 CRM foundation", () => {
   const context = {
     userId,
     workspaceId,
-    role: "operator" as "operator" | "viewer",
+    role: "operator" as "operator" | "reviewer" | "viewer",
   };
   const handle = createCrmHttpHandler({
     contextResolver: { async resolve() { return context; } },
@@ -58,6 +58,14 @@ databaseDescribe("F-020/F-021 CRM foundation", () => {
         body: JSON.stringify(body),
       }),
     );
+  }
+
+  function patchJson(pathname: string, body: unknown) {
+    return handle(new Request(`http://localhost${pathname}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }));
   }
 
   test("companies: normalized unique domain, workspace isolation, stable pagination", async () => {
@@ -118,6 +126,15 @@ databaseDescribe("F-020/F-021 CRM foundation", () => {
     expect(body2.data).toHaveLength(5);
     const ids1 = new Set((body1.data as { id: string }[]).map((row) => row.id));
     expect((body2.data as { id: string }[]).every((row) => !ids1.has(row.id))).toBe(true);
+
+    const filtered = await handle(new Request("http://localhost/api/v1/companies?sector=LegalTech&employeeCountMin=40&employeeCountMax=250&location=Paris"));
+    expect(((await filtered.json()) as { data: { id: string }[] }).data.map((row) => row.id)).toContain(company.id);
+    const patched = await patchJson(`/api/v1/companies/${company.id}`, { name: "Example Corp Updated" });
+    expect(patched.status).toBe(200);
+    expect(((await patched.json()) as { name: string }).name).toBe("Example Corp Updated");
+    context.role = "viewer";
+    expect((await patchJson(`/api/v1/companies/${company.id}`, { name: "Forbidden" })).status).toBe(403);
+    context.role = "operator";
   });
 
   test("contacts: employment history, identity uniqueness, persistent suppression", async () => {
@@ -167,6 +184,13 @@ databaseDescribe("F-020/F-021 CRM foundation", () => {
     const previous = body.employments.find((employment) => employment.companyId === companyA.id);
     expect(previous?.isCurrent).toBe(false);
     expect(previous?.endedOn).toBe("2026-07-01");
+
+    const patchedContact = await patchJson(`/api/v1/contacts/${contact.id}`, { firstName: "Jean-Pierre" });
+    expect(patchedContact.status).toBe(200);
+    expect(((await patchedContact.json()) as { firstName: string }).firstName).toBe("Jean-Pierre");
+    context.role = "reviewer";
+    expect((await patchJson(`/api/v1/contacts/${contact.id}`, { lastName: "Forbidden" })).status).toBe(403);
+    context.role = "operator";
 
     // Suppression persists across re-import.
     const suppress = await postJson(`/api/v1/contacts/${contact.id}/actions/suppress`, {

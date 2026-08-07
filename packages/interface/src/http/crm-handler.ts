@@ -32,6 +32,18 @@ const companyCreateSchema = z
     linkedinUrl: z.string().trim().max(600).nullish(),
   })
   .strict();
+const companyPatchSchema = z
+  .object({
+    name: z.string().trim().min(1).max(300).optional(),
+    domain: z.string().trim().max(600).nullish(),
+    sector: z.string().trim().max(200).nullish(),
+    employeeCountMin: z.number().int().min(0).nullish(),
+    employeeCountMax: z.number().int().min(0).nullish(),
+    location: z.string().trim().max(300).nullish(),
+    linkedinUrl: z.string().trim().max(600).nullish(),
+  })
+  .strict()
+  .refine((value) => Object.keys(value).length > 0, "At least one company field is required");
 
 const identityInputSchema = z.object({
   type: z.enum(["email", "linkedin", "phone", "whatsapp"]),
@@ -53,6 +65,15 @@ const contactCreateSchema = z
       .nullish(),
   })
   .strict();
+const contactPatchSchema = z
+  .object({
+    firstName: z.string().trim().min(1).max(200).optional(),
+    lastName: z.string().trim().min(1).max(200).optional(),
+    photoUrl: z.string().trim().max(600).nullish(),
+    preferredChannel: z.string().trim().max(40).nullish(),
+  })
+  .strict()
+  .refine((value) => Object.keys(value).length > 0, "At least one contact field is required");
 
 const employmentCreateSchema = z
   .object({
@@ -95,6 +116,14 @@ export function createCrmHttpHandler(dependencies: CrmHttpDependencies) {
             ...(url.searchParams.get("search")?.trim()
               ? { search: url.searchParams.get("search")!.trim() }
               : {}),
+            ...(url.searchParams.get("sector")?.trim()
+              ? { sector: url.searchParams.get("sector")!.trim() }
+              : {}),
+            ...(url.searchParams.get("location")?.trim()
+              ? { location: url.searchParams.get("location")!.trim() }
+              : {}),
+            ...optionalCountFilter(url.searchParams, "employeeCountMin"),
+            ...optionalCountFilter(url.searchParams, "employeeCountMax"),
             ...(url.searchParams.get("cursor")
               ? { cursor: decodeCursor(url.searchParams.get("cursor"))! }
               : {}),
@@ -122,6 +151,24 @@ export function createCrmHttpHandler(dependencies: CrmHttpDependencies) {
       }
 
       const companyMatch = companyPath.exec(url.pathname);
+      if (request.method === "PATCH" && companyMatch) {
+        requireOperator(context.role);
+        const body = companyPatchSchema.parse(await request.json());
+        const company = await repository.updateCompany({
+          workspaceId: context.workspaceId,
+          companyId: uuidSchema.parse(companyMatch[1]),
+          fields: {
+            ...(body.name !== undefined ? { name: body.name } : {}),
+            ...(body.domain !== undefined ? { normalizedDomain: normalizeDomain(body.domain) } : {}),
+            ...(body.sector !== undefined ? { sector: body.sector ?? null } : {}),
+            ...(body.employeeCountMin !== undefined ? { employeeCountMin: body.employeeCountMin ?? null } : {}),
+            ...(body.employeeCountMax !== undefined ? { employeeCountMax: body.employeeCountMax ?? null } : {}),
+            ...(body.location !== undefined ? { location: body.location ?? null } : {}),
+            ...(body.linkedinUrl !== undefined ? { linkedinUrl: body.linkedinUrl ?? null } : {}),
+          },
+        });
+        return json(company);
+      }
       if (request.method === "GET" && companyMatch) {
         requireViewer(context.role);
         const company = await repository.getCompany({
@@ -179,6 +226,21 @@ export function createCrmHttpHandler(dependencies: CrmHttpDependencies) {
       }
 
       const contactMatch = contactPath.exec(url.pathname);
+      if (request.method === "PATCH" && contactMatch) {
+        requireOperator(context.role);
+        const body = contactPatchSchema.parse(await request.json());
+        const contact = await repository.updateContact({
+          workspaceId: context.workspaceId,
+          contactId: uuidSchema.parse(contactMatch[1]),
+          fields: {
+            ...(body.firstName === undefined ? {} : { firstName: body.firstName }),
+            ...(body.lastName === undefined ? {} : { lastName: body.lastName }),
+            ...(body.photoUrl === undefined ? {} : { photoUrl: body.photoUrl ?? null }),
+            ...(body.preferredChannel === undefined ? {} : { preferredChannel: body.preferredChannel ?? null }),
+          },
+        });
+        return json(contact);
+      }
       if (request.method === "GET" && contactMatch) {
         requireViewer(context.role);
         const contact = await repository.getContact({
@@ -341,7 +403,7 @@ function decodeCursor(raw: string | null): { createdAt: Date; id: string } | und
 
 function allowedMethods(pathname: string): string | null {
   if (pathname === "/api/v1/companies" || pathname === "/api/v1/contacts") return "GET, POST";
-  if (companyPath.test(pathname) || contactPath.test(pathname)) return "GET";
+  if (companyPath.test(pathname) || contactPath.test(pathname)) return "GET, PATCH";
   if (
     contactIdentitiesPath.test(pathname) ||
     contactEmploymentsPath.test(pathname) ||
@@ -350,6 +412,14 @@ function allowedMethods(pathname: string): string | null {
     return "POST";
   }
   return null;
+}
+
+function optionalCountFilter(params: URLSearchParams, name: string): Record<string, number> {
+  const raw = params.get(name);
+  if (raw === null || raw.trim() === "") return {};
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < 0) throw new Error(`INVALID_${name}`);
+  return { [name]: value };
 }
 
 function methodNotAllowed(allowed: string): Response {
