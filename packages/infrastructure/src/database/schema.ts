@@ -1033,6 +1033,25 @@ export const enrichmentPhoneKindEnum = pgEnum("enrichment_phone_kind", [
   "personal",
 ]);
 
+export const signalTypeEnum = pgEnum("signal_type", [
+  "hiring",
+  "funding",
+  "job_change",
+  "leadership_change",
+  "geographic_expansion",
+  "public_activity",
+  "technology",
+  "competitor",
+]);
+
+export const signalCollectionStatusEnum = pgEnum("signal_collection_status", [
+  "queued",
+  "running",
+  "succeeded",
+  "partial",
+  "failed",
+]);
+
 export const suppressionChannelEnum = pgEnum("suppression_channel", [
   "global",
   "email",
@@ -1314,6 +1333,61 @@ export const enrichmentObservations = pgTable(
     ),
     index("enrichment_observations_entity_idx").on(table.workspaceId, table.entityType, table.entityId, table.field),
     index("enrichment_observations_job_idx").on(table.workspaceId, table.jobId),
+  ],
+);
+
+export const signalCollectionRuns = pgTable(
+  "signal_collection_runs",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    companyId: uuid("company_id").references(() => companies.id, { onDelete: "cascade" }),
+    contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "cascade" }),
+    requestKey: varchar("request_key", { length: 500 }).notNull(),
+    status: signalCollectionStatusEnum("status").notNull().default("queued"),
+    source: varchar("source", { length: 200 }).notNull(),
+    errorCode: varchar("error_code", { length: 120 }),
+    errorMessage: text("error_message"),
+    requestedBy: uuid("requested_by").references(() => authUsers.id, { onDelete: "set null" }),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("signal_collection_runs_workspace_request_uq").on(table.workspaceId, table.requestKey),
+    index("signal_collection_runs_workspace_status_idx").on(table.workspaceId, table.status, table.createdAt),
+  ],
+);
+
+export const signals = pgTable(
+  "signals",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    signalType: signalTypeEnum("signal_type").notNull(),
+    entityType: varchar("entity_type", { length: 30 }).notNull(),
+    entityId: uuid("entity_id").notNull(),
+    companyId: uuid("company_id").references(() => companies.id, { onDelete: "cascade" }),
+    contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "cascade" }),
+    source: varchar("source", { length: 200 }).notNull(),
+    sources: jsonb("sources").notNull().default([]),
+    providerEventId: varchar("provider_event_id", { length: 500 }),
+    evidenceUrl: text("evidence_url").notNull(),
+    evidenceSnippet: text("evidence_snippet"),
+    observedAt: timestamp("observed_at", { withTimezone: true }).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    confidence: varchar("confidence", { length: 20 }).notNull(),
+    deduplicationKey: varchar("deduplication_key", { length: 700 }).notNull(),
+    legalBasis: varchar("legal_basis", { length: 200 }).notNull(),
+    sourceAuthorized: boolean("source_authorized").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("signals_workspace_dedup_uq").on(table.workspaceId, table.deduplicationKey),
+    index("signals_workspace_entity_expiry_idx").on(table.workspaceId, table.entityType, table.entityId, table.expiresAt),
+    index("signals_workspace_type_expiry_idx").on(table.workspaceId, table.signalType, table.expiresAt),
   ],
 );
 

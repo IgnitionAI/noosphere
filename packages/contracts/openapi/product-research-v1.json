@@ -1113,6 +1113,30 @@
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/ContactId" }],
       "get": { "operationId": "getContactEnrichment", "responses": { "200": { "description": "Field observations and provenance" }, "404": { "description": "Contact not found" } } }
     },
+    "/api/v1/companies/{companyId}/signals": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/CompanyId" }],
+      "get": { "operationId": "listCompanySignals", "responses": { "200": { "description": "Current or historical intent signals" } } }
+    },
+    "/api/v1/contacts/{contactId}/signals": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/ContactId" }],
+      "get": { "operationId": "listContactSignals", "responses": { "200": { "description": "Current or historical intent signals" } } }
+    },
+    "/api/v1/signals": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
+      "get": { "operationId": "listSignals", "responses": { "200": { "description": "Workspace intent signals", "content": { "application/json": { "schema": { "type": "object", "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/IntentSignal" } } } } } } } } }
+    },
+    "/api/v1/signals/actions/collect": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
+      "post": { "operationId": "collectSignals", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SignalCollectionRequest" } } } }, "responses": { "202": { "description": "Collection queued" }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" }, "409": { "description": "Collection already requested" } } }
+    },
+    "/api/v1/signal-collection-runs/{runId}": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/JobId" }],
+      "get": { "operationId": "getSignalCollectionRun", "responses": { "200": { "description": "Collection status" }, "404": { "description": "Run not found" } } }
+    },
+    "/api/v1/settings/signals": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
+      "put": { "operationId": "updateSignalSettings", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SignalSettings" } } } }, "responses": { "200": { "description": "Signal settings updated" }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" } } }
+    },
     "/api/v1/contacts/{contactId}/actions/suppress": {
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/ContactId" }],
       "post": { "operationId": "suppressContact", "responses": { "204": { "description": "Contact suppressed" } } }
@@ -2381,6 +2405,32 @@
           { "type": "object", "required": ["observations"], "properties": { "observations": { "type": "array", "items": { "$ref": "#/components/schemas/EnrichmentObservation" } } } }
         ]
       },
+      "SignalType": { "type": "string", "enum": ["hiring", "funding", "job_change", "leadership_change", "geographic_expansion", "public_activity", "technology", "competitor"] },
+      "SignalCollectionRequest": {
+        "type": "object", "additionalProperties": false,
+        "properties": {
+          "companyId": { "type": "string", "format": "uuid" }, "contactId": { "type": "string", "format": "uuid" },
+          "requestKey": { "type": "string", "minLength": 1, "maxLength": 500 },
+          "signalTypes": { "type": "array", "minItems": 1, "items": { "$ref": "#/components/schemas/SignalType" } }
+        }
+      },
+      "IntentSignal": {
+        "type": "object", "required": ["id", "signalType", "entityType", "entityId", "source", "sources", "evidenceUrl", "observedAt", "expiresAt", "confidence", "legalBasis"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" }, "signalType": { "$ref": "#/components/schemas/SignalType" },
+          "entityType": { "type": "string", "enum": ["company", "contact"] }, "entityId": { "type": "string", "format": "uuid" },
+          "companyId": { "type": ["string", "null"], "format": "uuid" }, "contactId": { "type": ["string", "null"], "format": "uuid" },
+          "source": { "type": "string" }, "sources": { "type": "array", "items": { "type": "string" } },
+          "providerEventId": { "type": ["string", "null"] }, "evidenceUrl": { "type": ["string", "null"], "format": "uri" }, "evidenceSnippet": { "type": ["string", "null"] },
+          "observedAt": { "type": "string", "format": "date-time" }, "expiresAt": { "type": "string", "format": "date-time" },
+          "confidence": { "type": "string", "enum": ["high", "medium", "low"] }, "legalBasis": { "type": "string" }, "sourceAuthorized": { "type": "boolean" }
+        }
+      },
+      "SignalCollectionRun": {
+        "type": "object", "required": ["id", "requestKey", "status", "source", "createdAt", "updatedAt"],
+        "properties": { "id": { "type": "string", "format": "uuid" }, "workspaceId": { "type": "string", "format": "uuid" }, "companyId": { "type": ["string", "null"], "format": "uuid" }, "contactId": { "type": ["string", "null"], "format": "uuid" }, "requestKey": { "type": "string" }, "status": { "type": "string", "enum": ["queued", "running", "succeeded", "partial", "failed"] }, "source": { "type": "string" }, "errorCode": { "type": ["string", "null"] }, "errorMessage": { "type": ["string", "null"] }, "startedAt": { "type": ["string", "null"], "format": "date-time" }, "completedAt": { "type": ["string", "null"], "format": "date-time" }, "createdAt": { "type": "string", "format": "date-time" }, "updatedAt": { "type": "string", "format": "date-time" } }
+      },
+      "SignalSettings": { "type": "object", "additionalProperties": false, "required": ["signalTypes"], "properties": { "signalTypes": { "type": "array", "minItems": 1, "items": { "$ref": "#/components/schemas/SignalType" } } } },
       "Problem": {
         "type": "object",
         "required": [

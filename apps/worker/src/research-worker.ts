@@ -42,6 +42,7 @@ export class ResearchWorker {
     private readonly importProcessor?: { process(job: LeasedJob): Promise<void> },
     private readonly outreachProcessor?: OutreachSchedulerProcessor,
     private readonly enrichmentProcessor?: { process(job: LeasedJob): Promise<void> },
+    private readonly signalProcessor?: { process(job: LeasedJob): Promise<void> },
   ) {}
 
   stop(): void {
@@ -78,6 +79,7 @@ export class ResearchWorker {
         ...(this.importProcessor ? ["crm.import.apply"] : []),
         ...(this.outreachProcessor ? ["outreach.action.execute"] : []),
         ...(this.enrichmentProcessor ? ["crm.enrichment.execute"] : []),
+        ...(this.signalProcessor ? ["crm.signals.collect"] : []),
       ],
       limit: this.options.batchSize,
       leaseMs: this.options.leaseMs,
@@ -122,6 +124,8 @@ export class ResearchWorker {
         await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
       } else if (job.type === "crm.enrichment.execute" && this.enrichmentProcessor) {
         await this.enrichmentProcessor.process(job);
+      } else if (job.type === "crm.signals.collect" && this.signalProcessor) {
+        await this.signalProcessor.process(job);
       } else {
         await this.orchestrator.process(job);
       }

@@ -56,6 +56,8 @@ import { PostgresCalendarIntegration } from "@outbound/infrastructure/calendar/p
 import { PostgresUnipileChannelConnections } from "@outbound/infrastructure/channels/postgres-unipile-channel-connections";
 import { PostgresImportService } from "@outbound/infrastructure/crm/postgres-import-service";
 import { EnrichmentJobProcessor, PostgresEnrichmentRepository } from "@outbound/infrastructure/crm/postgres-enrichment-repository";
+import { CrawlerSignalSource } from "@outbound/infrastructure/crm/crawler-signal-source";
+import { PostgresSignalRepository, SignalCollectionJobProcessor } from "@outbound/infrastructure/crm/postgres-signal-repository";
 import { PostgresOutboxDispatcher } from "@outbound/infrastructure/outbox/postgres-outbox-dispatcher";
 import { HttpUnipileClient, UnavailableUnipileClient } from "@outbound/infrastructure/integrations/unipile-client";
 import { PostgresOutreachScheduler } from "@outbound/infrastructure/scheduler/postgres-outreach-scheduler";
@@ -71,6 +73,7 @@ const unipileChannelConnections = process.env.UNIPILE_DSN && process.env.UNIPILE
 const queue = new PostgresJobQueue(database.client);
 const importService = new PostgresImportService(database.db, queue);
 const enrichmentRepository = new PostgresEnrichmentRepository(database.db, new SystemClock());
+const signalRepository = new PostgresSignalRepository(database.db, new SystemClock());
 const outboxDispatcher = new PostgresOutboxDispatcher(database.client);
 const unipileDsn = process.env.UNIPILE_DSN ?? "";
 const unipileApiKey = process.env.UNIPILE_API_KEY ?? "";
@@ -136,6 +139,11 @@ const discoveryRunner = new ProspectDiscoveryRunner(
 const enrichmentProcessor = new EnrichmentJobProcessor(
   enrichmentRepository,
   new CrawlerProspectEnricher(discoveryCrawler),
+  queue,
+);
+const signalProcessor = new SignalCollectionJobProcessor(
+  signalRepository,
+  new CrawlerSignalSource(discoveryCrawler),
   queue,
 );
 const discoveryProcessor = new ProspectDiscoveryJobProcessor(
@@ -251,7 +259,7 @@ const worker = new ResearchWorker(queue, orchestrator, clock, {
   leaseMs: positiveIntegerEnvironment("JOB_LEASE_MS", 60_000),
   batchSize: positiveIntegerEnvironment("JOB_BATCH_SIZE", 4),
   pollIntervalMs: positiveIntegerEnvironment("JOB_POLL_INTERVAL_MS", 1_000),
-}, documentService, discoveryProcessor, channelAssessmentProcessor, campaignAutomationProcessor, campaignCompositionProcessor, outreachDispatchProcessor, inboundReplyProcessor, automatedReplySendProcessor, conversationCommandProcessor, maintenance, outboxDispatcher, importService, outreachScheduler, enrichmentProcessor);
+}, documentService, discoveryProcessor, channelAssessmentProcessor, campaignAutomationProcessor, campaignCompositionProcessor, outreachDispatchProcessor, inboundReplyProcessor, automatedReplySendProcessor, conversationCommandProcessor, maintenance, outboxDispatcher, importService, outreachScheduler, enrichmentProcessor, signalProcessor);
 
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
   process.once(signal, () => {
