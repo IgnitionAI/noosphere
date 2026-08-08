@@ -37,9 +37,10 @@ import {
   prospectingPlans,
   sequences,
   sequenceSteps,
-  sequenceEnrollments,
+  campaignEnrollments,
   sequenceVersions,
   contacts,
+  authUsers,
   workspaces,
 } from "@outbound/infrastructure/database/schema";
 import { PostgresProductResearchRepository } from "@outbound/infrastructure/gtm/postgres-product-research-repository";
@@ -76,6 +77,7 @@ databaseDescribe("V3 automatic ICP publication", () => {
     now: () => new Date(currentTime),
   };
   const workspaceId = crypto.randomUUID();
+  const campaignUserId = crypto.randomUUID();
 
   beforeAll(async () => {
     await migrate(database.db, {
@@ -86,13 +88,19 @@ databaseDescribe("V3 automatic ICP publication", () => {
       slug: `v3-auto-${workspaceId}`,
       name: "V3 automatic publication",
     });
+    await database.db.insert(authUsers).values({
+      id: campaignUserId,
+      name: "V3 campaign operator",
+      email: `v3-campaign-${campaignUserId}@example.com`,
+    });
   });
 
   afterAll(async () => {
     await database.client`delete from jobs where workspace_id = ${workspaceId}`;
     await database.client`delete from outbox_events where workspace_id = ${workspaceId}`;
-    await database.client`delete from product_research_runs where workspace_id = ${workspaceId}`;
-    await database.client`delete from workspaces where id = ${workspaceId}`;
+    // ICP versions are immutable snapshots and retain a RESTRICT provenance
+    // link to the run. Leave this disposable workspace graph intact instead
+    // of mutating/deleting published versions during cleanup.
     await database.close();
   });
 
@@ -175,7 +183,12 @@ databaseDescribe("V3 automatic ICP publication", () => {
     const events = await database.db
       .select()
       .from(outboxEvents)
-      .where(eq(outboxEvents.aggregateId, run.snapshot.id));
+      .where(
+        and(
+          eq(outboxEvents.eventType, "ICPVersionPublished"),
+          eq(outboxEvents.workspaceId, workspaceId),
+        ),
+      );
 
     expect(proposals).toHaveLength(5);
     expect(proposals.map((proposal) => proposal.rank).sort()).toEqual([1, 2, 3, 4, 5]);
@@ -189,7 +202,10 @@ databaseDescribe("V3 automatic ICP publication", () => {
     expect(initialCampaigns).toHaveLength(0);
     expect(discoveryRows).toHaveLength(0);
     expect(publishedSequenceVersions).toHaveLength(0);
-    expect(events.filter((event) => event.eventType === "ICPVersionPublished")).toHaveLength(5);
+    expect(events.filter((event) => {
+      const payload = event.payload as { runId?: string };
+      return payload.runId === run.snapshot.id;
+    })).toHaveLength(5);
 
     const processor = new ChannelAssessmentJobProcessor(
       database.db,
@@ -337,10 +353,11 @@ databaseDescribe("V3 automatic ICP publication", () => {
     expect(normalizedRetryJobs).toHaveLength(1);
     const firstCampaign = repairedCampaign!;
 
+    let campaignRole: "operator" | "admin" = "operator";
     const campaignHandler = createCampaignHttpHandler({
       contextResolver: {
         async resolve() {
-          return { userId: crypto.randomUUID(), workspaceId, role: "operator" as const };
+          return { userId: campaignUserId, workspaceId, role: campaignRole };
         },
       },
       database: database.db,
@@ -525,8 +542,8 @@ databaseDescribe("V3 automatic ICP publication", () => {
     expect(activatedCampaign!.sequenceVersionId).not.toBeNull();
     const enrollments = await database.db
       .select()
-      .from(sequenceEnrollments)
-      .where(eq(sequenceEnrollments.campaignId, firstCampaign.id));
+      .from(campaignEnrollments)
+      .where(eq(campaignEnrollments.campaignId, firstCampaign.id));
     expect(enrollments).toHaveLength(1);
     const actions = await database.db
       .select()
@@ -1005,12 +1022,13 @@ databaseDescribe("V3 automatic ICP publication", () => {
       .from(contactSuppressions)
       .where(eq(contactSuppressions.workspaceId, workspaceId));
     expect(suppressions).toHaveLength(0);
-    const archivedEmail = await campaignHandler(
+    campaignRole = "admin";
+    const authorizedArchive = await campaignHandler(
       new Request(`http://localhost/api/v1/campaigns/${emailCampaignId}/actions/archive`, {
         method: "POST",
       }),
     );
-    expect(archivedEmail.status).toBe(200);
+    expect(authorizedArchive.status).toBe(200);
     const deterministicBackfillId = "61586072-f228-2405-5bf7-e2e90c59882a";
     const missingBackfillCampaign = await campaignHandler(
       new Request(`http://localhost/api/v1/campaigns/${deterministicBackfillId}`),

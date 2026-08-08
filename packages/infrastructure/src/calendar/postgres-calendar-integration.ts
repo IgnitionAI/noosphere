@@ -824,7 +824,10 @@ export class PostgresCalendarIntegration implements WorkspaceCalendarScheduler {
       ? await this.#latestCampaign(connection.workspaceId, contactId)
       : null;
     const eventId = crypto.randomUUID();
-    const now = new Date();
+    // The provider occurrence time is the business clock for stage history.
+    // Using wall-clock receipt time can reorder a cancellation that happened
+    // before a later operator transition when webhooks arrive asynchronously.
+    const now = event.occurredAt;
     return this.database.transaction(async (tx) => {
       const [insertedEvent] = await tx.insert(integrationEvents).values({
         id: eventId,

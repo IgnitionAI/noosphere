@@ -23,7 +23,7 @@ import {
   outreachActions,
   outreachAttempts,
   prospectDiscoveryCandidates,
-  sequenceEnrollments,
+  campaignEnrollments,
 } from "@outbound/infrastructure/database/schema";
 import { suppressionFingerprint } from "@outbound/infrastructure/crm/suppression-fingerprint";
 
@@ -541,12 +541,12 @@ export class OutreachDispatchJobProcessor {
             inArray(outreachActions.status, ["scheduled", "executing"]),
           ),
         );
-      await tx
-        .update(sequenceEnrollments)
-        .set(remainingEnrollmentActions.length
-          ? { currentPosition: action.stepPosition + 1, updatedAt: now }
-          : { status: "completed", currentPosition: action.stepPosition, completedAt: now, updatedAt: now })
-        .where(and(eq(sequenceEnrollments.workspaceId, action.workspaceId), eq(sequenceEnrollments.id, action.enrollmentId)));
+      if (!remainingEnrollmentActions.length) {
+        await tx
+          .update(campaignEnrollments)
+          .set({ status: "completed", completedAt: now })
+          .where(and(eq(campaignEnrollments.workspaceId, action.workspaceId), eq(campaignEnrollments.id, action.enrollmentId)));
+      }
       const remainingCampaignActions = await tx
         .select({ id: outreachActions.id })
         .from(outreachActions)
@@ -628,9 +628,9 @@ export class OutreachDispatchJobProcessor {
         .set({ status: "skipped", lastErrorCode: reason, lockedAt: null, lockedUntil: null, lockedBy: null, updatedAt: now })
         .where(and(eq(outreachActions.workspaceId, action.workspaceId), eq(outreachActions.id, action.id)));
       await tx
-        .update(sequenceEnrollments)
-        .set({ status: "suspended", suspensionReason: reason, suspendedAt: now, updatedAt: now })
-        .where(and(eq(sequenceEnrollments.workspaceId, action.workspaceId), eq(sequenceEnrollments.id, action.enrollmentId)));
+        .update(campaignEnrollments)
+        .set({ status: "cancelled", completedAt: now })
+        .where(and(eq(campaignEnrollments.workspaceId, action.workspaceId), eq(campaignEnrollments.id, action.enrollmentId)));
     });
   }
 
@@ -656,9 +656,9 @@ export class OutreachDispatchJobProcessor {
         })
         .where(and(eq(outreachActions.workspaceId, action.workspaceId), eq(outreachActions.id, action.id)));
       await tx
-        .update(sequenceEnrollments)
-        .set({ status: "suspended", suspensionReason: code, suspendedAt: now, updatedAt: now })
-        .where(and(eq(sequenceEnrollments.workspaceId, action.workspaceId), eq(sequenceEnrollments.id, action.enrollmentId)));
+        .update(campaignEnrollments)
+        .set({ status: "cancelled", completedAt: now })
+        .where(and(eq(campaignEnrollments.workspaceId, action.workspaceId), eq(campaignEnrollments.id, action.enrollmentId)));
       await tx
         .update(campaigns)
         .set({ automationStage: "attention", automationErrorCode: code, automationErrorMessage: message.slice(0, 4_000), updatedAt: now })
@@ -688,12 +688,12 @@ async function loadClaimedAction(
       stepKind: outreachActions.stepKind,
       idempotencyKey: outreachActions.idempotencyKey,
       contentSnapshot: outreachActions.contentSnapshot,
-      enrollmentStatus: sequenceEnrollments.status,
+      enrollmentStatus: campaignEnrollments.status,
     })
     .from(outreachActions)
     .innerJoin(
-      sequenceEnrollments,
-      and(eq(sequenceEnrollments.workspaceId, outreachActions.workspaceId), eq(sequenceEnrollments.id, outreachActions.enrollmentId)),
+      campaignEnrollments,
+      and(eq(campaignEnrollments.workspaceId, outreachActions.workspaceId), eq(campaignEnrollments.id, outreachActions.enrollmentId)),
     )
     .where(and(eq(outreachActions.workspaceId, input.workspaceId), eq(outreachActions.id, input.actionId)))
     .limit(1);

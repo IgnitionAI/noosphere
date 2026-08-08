@@ -176,10 +176,8 @@ describe("WhatsApp sourcing V1", () => {
     await database.client`delete from channel_assessments where workspace_id = ${workspaceId}`;
     await database.client`delete from prospecting_plans where workspace_id = ${workspaceId}`;
     await database.client`delete from sequences where workspace_id = ${workspaceId}`;
-    await database.client`delete from icp_versions where workspace_id = ${workspaceId}`;
-    await database.client`delete from product_research_runs where workspace_id = ${workspaceId}`;
-    await database.client`delete from auth_users where id = ${userId}`;
-    await database.client`delete from workspaces where id = ${workspaceId}`;
+    // Published ICP versions are immutable and retain provenance to their run;
+    // this test uses a disposable workspace and must not bypass those guards.
     await database.close();
   });
 

@@ -206,11 +206,12 @@ export function createDiscoveryHttpHandler(dependencies: DiscoveryHttpDependenci
           versionId: run.icpVersionId,
         });
         if (!version) return problem(404, "ICP_VERSION_NOT_FOUND", "Published ICP version not found");
+        const restarted = await repository.beginRetry({
+          workspaceId: context.workspaceId,
+          runId: run.id,
+          maxRetries: 3,
+        });
         if (dependencies.jobQueue) {
-          const restarted = await repository.restartRun({
-            workspaceId: context.workspaceId,
-            runId: run.id,
-          });
           await enqueueDiscovery(dependencies.jobQueue, {
             workspaceId: context.workspaceId,
             runId: run.id,
@@ -222,7 +223,7 @@ export function createDiscoveryHttpHandler(dependencies: DiscoveryHttpDependenci
           workspaceId: context.workspaceId,
           runId: run.id,
           version,
-          filters: run.filters as ReturnType<typeof buildFilters>,
+          filters: restarted.filters as ReturnType<typeof buildFilters>,
         });
         return json(retried);
       }
@@ -363,7 +364,7 @@ async function importCandidate(
     workspaceId: input.workspaceId,
     firstName: firstName ?? candidate.fullName,
     lastName,
-    source: "provider",
+    source: "discovery",
     identities,
     employment: companyId
       ? {

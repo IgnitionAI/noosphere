@@ -22,7 +22,7 @@ import {
   outreachActions,
   prospectDiscoveryCandidates,
   replyClassifications,
-  sequenceEnrollments,
+  campaignEnrollments,
 } from "@outbound/infrastructure/database/schema";
 
 export class PostgresCampaignConversationRepository {
@@ -89,7 +89,7 @@ export class PostgresCampaignConversationRepository {
       });
       const lastActivityAt = latestDate([
         lastMessage?.occurredAt,
-        enrollment?.suspendedAt,
+        enrollment?.completedAt,
         prospect.updatedAt,
       ]) ?? prospect.updatedAt;
       return {
@@ -110,14 +110,14 @@ export class PostgresCampaignConversationRepository {
         enrollment: enrollment
           ? {
               status: enrollment.status,
-              suspensionReason: enrollment.suspensionReason,
-              suspendedAt: enrollment.suspendedAt,
+              suspensionReason: null,
+              suspendedAt: enrollment.completedAt,
             }
           : null,
         sentCount: sentActions.length,
         pendingFollowUps: scheduledActions.length,
         cancelledFollowUps: cancelledActions.length,
-        relaunchesCancelled: enrollment?.suspensionReason === "PROSPECT_REPLIED"
+        relaunchesCancelled: enrollment?.status === "cancelled"
           && cancelledActions.length > 0,
         opportunity: opportunity
           ? { stage: opportunity.stage, nextAction: opportunity.nextAction }
@@ -246,13 +246,13 @@ export class PostgresCampaignConversationRepository {
       enrollment: enrollment
         ? {
             status: enrollment.status,
-            suspensionReason: enrollment.suspensionReason,
-            suspendedAt: enrollment.suspendedAt,
+            suspensionReason: null,
+            suspendedAt: enrollment.completedAt,
           }
         : null,
       pendingFollowUps,
       cancelledFollowUps,
-      relaunchesCancelled: enrollment?.suspensionReason === "PROSPECT_REPLIED"
+      relaunchesCancelled: enrollment?.status === "cancelled"
         && cancelledFollowUps > 0,
       opportunity: opportunity
         ? { stage: opportunity.stage, nextAction: opportunity.nextAction }
@@ -394,14 +394,13 @@ export class PostgresCampaignConversationRepository {
   #enrollments(input: { workspaceId: string; campaignId: string }) {
     return this.db
       .select({
-        contactId: sequenceEnrollments.contactId,
-        status: sequenceEnrollments.status,
-        suspensionReason: sequenceEnrollments.suspensionReason,
-        suspendedAt: sequenceEnrollments.suspendedAt,
-        updatedAt: sequenceEnrollments.updatedAt,
+        contactId: campaignEnrollments.contactId,
+        status: campaignEnrollments.status,
+        completedAt: campaignEnrollments.completedAt,
+        updatedAt: campaignEnrollments.createdAt,
       })
-      .from(sequenceEnrollments)
-      .where(and(eq(sequenceEnrollments.workspaceId, input.workspaceId), eq(sequenceEnrollments.campaignId, input.campaignId)));
+      .from(campaignEnrollments)
+      .where(and(eq(campaignEnrollments.workspaceId, input.workspaceId), eq(campaignEnrollments.campaignId, input.campaignId)));
   }
 
   #conversationMessages(workspaceId: string, conversationId: string) {

@@ -30,7 +30,7 @@ import {
   outreachActions,
   prospectDiscoveryCandidates,
   replyClassifications,
-  sequenceEnrollments,
+  campaignEnrollments,
 } from "@outbound/infrastructure/database/schema";
 import { upsertOpportunityStage } from "@outbound/infrastructure/pipeline/opportunity-stage-writer";
 
@@ -404,13 +404,13 @@ export class InboundReplyJobProcessor {
         createdAt: now,
       }).onConflictDoNothing().returning({ id: messages.id });
       await tx
-        .update(sequenceEnrollments)
-        .set({ status: "suspended", suspensionReason: "PROSPECT_REPLIED", suspendedAt: now, updatedAt: now })
+        .update(campaignEnrollments)
+        .set({ status: "cancelled", completedAt: now })
         .where(
           and(
-            eq(sequenceEnrollments.workspaceId, input.workspaceId),
-            eq(sequenceEnrollments.contactId, input.matched.contactId),
-            eq(sequenceEnrollments.status, "active"),
+            eq(campaignEnrollments.workspaceId, input.workspaceId),
+            eq(campaignEnrollments.contactId, input.matched.contactId),
+            eq(campaignEnrollments.status, "active"),
           ),
         );
       await tx

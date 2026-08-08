@@ -30,7 +30,7 @@ import {
   outboxEvents,
   outreachActions,
   prospectDiscoveryCandidates,
-  sequenceEnrollments,
+  campaignEnrollments,
   sequences,
   sequenceSteps,
   sequenceVersions,
@@ -529,28 +529,25 @@ async function ensureEnrollment(
   },
 ): Promise<string> {
   const id = crypto.randomUUID();
-  const [inserted] = await tx.insert(sequenceEnrollments).values({
+  const [inserted] = await tx.insert(campaignEnrollments).values({
     id,
     workspaceId: input.workspaceId,
     campaignId: input.campaignId,
-    candidateId: input.candidateId,
     contactId: input.contactId,
     sequenceVersionId: input.sequenceVersionId,
     status: "active",
-    currentPosition: 1,
-    startedAt: input.now,
+    enrolledAt: input.now,
     createdAt: input.now,
-    updatedAt: input.now,
-  }).onConflictDoNothing().returning({ id: sequenceEnrollments.id });
+  }).onConflictDoNothing().returning({ id: campaignEnrollments.id });
   if (inserted) return inserted.id;
   const [existing] = await tx
-    .select({ id: sequenceEnrollments.id })
-    .from(sequenceEnrollments)
+    .select({ id: campaignEnrollments.id })
+    .from(campaignEnrollments)
     .where(
       and(
-        eq(sequenceEnrollments.workspaceId, input.workspaceId),
-        eq(sequenceEnrollments.campaignId, input.campaignId),
-        eq(sequenceEnrollments.contactId, input.contactId),
+        eq(campaignEnrollments.workspaceId, input.workspaceId),
+        eq(campaignEnrollments.campaignId, input.campaignId),
+        eq(campaignEnrollments.contactId, input.contactId),
       ),
     )
     .limit(1);
