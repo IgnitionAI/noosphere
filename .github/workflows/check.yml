@@ -86,8 +86,20 @@ jobs:
           enable-cache: true
           cache-dependency-glob: apps/crawler/uv.lock
 
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('apps/crawler/uv.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
+
+      - name: Install Playwright Chromium
+        working-directory: apps/crawler
+        run: uv run playwright install --with-deps chromium
 
       - name: Apply database migrations
         run: bun run db:migrate
