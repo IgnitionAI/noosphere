@@ -18,7 +18,9 @@ env:
   # CI-only values. They are intentionally non-secret and never used against
   # external providers or production services.
   DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/ignition_outbound_test
-  TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/ignition_outbound_test
+  # Integration tests create/migrate their own database and must not share the
+  # database used by the repository migration check above.
+  TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/ignition_outbound_integration_test
   OPENAI_API_KEY: ci-test-openai-key
   OPENAI_RESEARCH_MODEL: ci-test-research-model
   OPENAI_SYNTHESIS_MODEL: ci-test-synthesis-model
