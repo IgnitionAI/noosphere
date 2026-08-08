@@ -862,6 +862,81 @@ export async function getAIPolicy(workspaceSlug: string, policyId: string): Prom
   return crmFetch(workspaceSlug, `/api/v1/ai-policies/${policyId}`);
 }
 
+export type ApprovalItemStatus = "pending" | "approved" | "rejected" | "invalidated";
+export type ApprovalDecision = "approve" | "reject";
+
+export interface ApprovalItem {
+  readonly id: string;
+  readonly campaignId: string | null;
+  readonly contactId: string | null;
+  readonly enrollmentId: string | null;
+  readonly itemType: string;
+  readonly channel: string;
+  readonly stepPosition: number | null;
+  readonly contentOriginal: unknown;
+  readonly contentEdited: unknown;
+  readonly context: Readonly<Record<string, unknown>>;
+  readonly sourceUpdatedAt: string | null;
+  readonly status: ApprovalItemStatus;
+  readonly decisionBy: string | null;
+  readonly decidedAt: string | null;
+  readonly rejectionJustification: string | null;
+  readonly invalidationReason: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface ApprovalBulkDecisionResult {
+  readonly approved: readonly string[];
+  readonly rejected: readonly string[];
+  readonly invalidated: readonly string[];
+  readonly conflicts: readonly { itemId: string; code: string }[];
+}
+
+export async function listApprovalItems(
+  workspaceSlug: string,
+  options: { campaignId?: string; status?: ApprovalItemStatus; limit?: number } = {},
+): Promise<{ data: ApprovalItem[] }> {
+  const params = new URLSearchParams();
+  if (options.campaignId) params.set("campaignId", options.campaignId);
+  if (options.status) params.set("status", options.status);
+  if (options.limit) params.set("limit", String(options.limit));
+  const query = params.toString();
+  return crmFetch(workspaceSlug, `/api/v1/approval-items${query ? `?${query}` : ""}`);
+}
+
+export async function getApprovalItem(workspaceSlug: string, itemId: string): Promise<ApprovalItem> {
+  return crmFetch(workspaceSlug, `/api/v1/approval-items/${itemId}`);
+}
+
+export async function editApprovalItem(workspaceSlug: string, itemId: string, contentEdited: unknown): Promise<ApprovalItem> {
+  return crmFetch(workspaceSlug, `/api/v1/approval-items/${itemId}`, {
+    method: "PATCH",
+    body: { contentEdited },
+  });
+}
+
+export async function approveApprovalItem(workspaceSlug: string, itemId: string): Promise<ApprovalItem> {
+  return crmFetch(workspaceSlug, `/api/v1/approval-items/${itemId}/actions/approve`, { method: "POST", body: {} });
+}
+
+export async function rejectApprovalItem(workspaceSlug: string, itemId: string, justification: string): Promise<ApprovalItem> {
+  return crmFetch(workspaceSlug, `/api/v1/approval-items/${itemId}/actions/reject`, {
+    method: "POST",
+    body: { justification },
+  });
+}
+
+export async function bulkDecideApprovalItems(
+  workspaceSlug: string,
+  input: { itemIds: readonly string[]; decision: ApprovalDecision; justification?: string },
+): Promise<ApprovalBulkDecisionResult> {
+  return crmFetch(workspaceSlug, "/api/v1/approval-items/actions/bulk-decide", {
+    method: "POST",
+    body: input,
+  });
+}
+
 export type OfferClaimValidationStatus = "hypothesis" | "sourced" | "validated" | "invalidated";
 
 export interface OfferClaim {

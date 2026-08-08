@@ -54,6 +54,7 @@ export function AppShell({
   const messagingHref = `/w/${workspace.slug}/messaging`;
   const discoveryHref = `/w/${workspace.slug}/prospects/discover`;
   const suppressionsHref = `/w/${workspace.slug}/suppressions`;
+  const approvalsHref = `/w/${workspace.slug}/approvals`;
   const aiSettingsHref = `/w/${workspace.slug}/settings/ai`;
   const productReadingActive = pathname.startsWith(productReadingHref);
   const icpsActive = pathname.startsWith(icpsHref);
@@ -68,6 +69,7 @@ export function AppShell({
     [`/w/${workspace.slug}/imports`, "Imports", FileSpreadsheet],
     [`/w/${workspace.slug}/duplicates`, "Doublons", GitMerge],
     [`/w/${workspace.slug}/campaigns`, "Campagnes", Megaphone],
+    [approvalsHref, "Approbations", Inbox],
     [`/w/${workspace.slug}/integrations`, "Intégrations", PlugZap],
   ] as const;
   const initials = session.user.name
@@ -195,7 +197,7 @@ export function AppShell({
             Prospection
           </div>
           <div className="space-y-1">
-            {crmNavigation.filter(([href]) => href !== `/w/${workspace.slug}/imports` || workspace.role !== "viewer").map(([href, label, Icon]) => (
+            {crmNavigation.filter(([href]) => (href !== `/w/${workspace.slug}/imports` || workspace.role !== "viewer") && (href !== approvalsHref || workspace.role !== "viewer")).map(([href, label, Icon]) => (
               <Link
                 aria-current={pathname.startsWith(href) ? "page" : undefined}
                 className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium ${
