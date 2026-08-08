@@ -9,6 +9,7 @@ import { createResearchDocumentHttpHandler } from "@outbound/interface/http/rese
 import { createCrmHttpHandler } from "@outbound/interface/http/crm-handler";
 import { createDiscoveryHttpHandler } from "@outbound/interface/http/discovery-handler";
 import { createSequenceHttpHandler } from "@outbound/interface/http/sequence-handler";
+import { createCampaignHttpHandler } from "@outbound/interface/http/campaign-handler";
 import { createOfferHttpHandler } from "@outbound/interface/http/offer-handler";
 import { createImportHttpHandler } from "@outbound/interface/http/import-handler";
 import { createMergeHttpHandler } from "@outbound/interface/http/merge-handler";
@@ -106,6 +107,7 @@ const sequenceHandler = createSequenceHttpHandler({
   database: database.db,
   contextResolver: auth.contextResolver,
 });
+const campaignHandler = createCampaignHttpHandler({ database: database.db, contextResolver: auth.contextResolver });
 const offers = createOfferHttpHandler({ database: database.db, contextResolver: auth.contextResolver });
 const imports = createImportHttpHandler({ database: database.db, contextResolver: auth.contextResolver, queue });
 const merges = createMergeHttpHandler({ database: database.db, contextResolver: auth.contextResolver });
@@ -132,6 +134,9 @@ const server = Bun.serve({
     if (pathname.startsWith("/api/v1/merge-candidates") || (pathname.startsWith("/api/v1/contacts/") && (pathname.includes("/actions/undo-merge") || pathname.endsWith("/merges")))) return merges(request);
     if (pathname.startsWith("/api/v1/sequences")) {
       return sequenceHandler(request);
+    }
+    if (pathname.startsWith("/api/v1/campaigns")) {
+      return campaignHandler(request);
     }
     if (pathname.startsWith("/api/v1/messaging-strategies") || pathname.startsWith("/api/v1/ai-policies")) {
       return messagingStrategies(request);

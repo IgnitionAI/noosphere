@@ -1173,6 +1173,47 @@ export const sequenceVersions = pgTable(
       table.sequenceId,
       table.version,
     ),
+    unique("sequence_versions_workspace_id_uq").on(table.workspaceId, table.id),
+  ],
+);
+
+export const campaignStatusEnum = pgEnum("campaign_status", [
+  "draft",
+  "active",
+  "paused",
+  "archived",
+]);
+
+export const campaigns = pgTable(
+  "campaigns",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    name: varchar("name", { length: 300 }).notNull(),
+    objective: text("objective").notNull().default(""),
+    status: campaignStatusEnum("status").notNull().default("draft"),
+    offerVersionId: uuid("offer_version_id").notNull(),
+    icpVersionId: uuid("icp_version_id").notNull(),
+    messagingStrategyVersionId: uuid("messaging_strategy_version_id").notNull(),
+    aiPolicyVersionId: uuid("ai_policy_version_id").notNull(),
+    sequenceVersionId: uuid("sequence_version_id").notNull(),
+    createdBy: uuid("created_by").references(() => authUsers.id, { onDelete: "set null" }),
+    activatedBy: uuid("activated_by").references(() => authUsers.id, { onDelete: "set null" }),
+    activatedAt: timestamp("activated_at", { withTimezone: true }),
+    pausedAt: timestamp("paused_at", { withTimezone: true }),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({ columns: [table.workspaceId], foreignColumns: [workspaces.id], name: "campaigns_workspace_fk" }).onDelete("cascade"),
+    foreignKey({ columns: [table.workspaceId, table.offerVersionId], foreignColumns: [offerVersions.workspaceId, offerVersions.id], name: "campaigns_offer_version_fk" }).onDelete("restrict"),
+    foreignKey({ columns: [table.workspaceId, table.icpVersionId], foreignColumns: [icpVersions.workspaceId, icpVersions.id], name: "campaigns_icp_version_fk" }).onDelete("restrict"),
+    foreignKey({ columns: [table.workspaceId, table.messagingStrategyVersionId], foreignColumns: [messagingStrategyVersions.workspaceId, messagingStrategyVersions.id], name: "campaigns_messaging_version_fk" }).onDelete("restrict"),
+    foreignKey({ columns: [table.workspaceId, table.aiPolicyVersionId], foreignColumns: [aiPolicyVersions.workspaceId, aiPolicyVersions.id], name: "campaigns_ai_policy_version_fk" }).onDelete("restrict"),
+    foreignKey({ columns: [table.workspaceId, table.sequenceVersionId], foreignColumns: [sequenceVersions.workspaceId, sequenceVersions.id], name: "campaigns_sequence_version_fk" }).onDelete("restrict"),
+    unique("campaigns_workspace_id_uq").on(table.workspaceId, table.id),
+    index("campaigns_workspace_status_idx").on(table.workspaceId, table.status, table.updatedAt),
   ],
 );
 

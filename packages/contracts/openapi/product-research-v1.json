@@ -889,6 +889,36 @@
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/SequenceId" }],
       "post": { "operationId": "publishSequenceVersion", "summary": "Publish an immutable sequence version (admin or owner only)", "responses": { "201": { "description": "Sequence version published", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SequenceVersion" } } } }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" }, "422": { "description": "Sequence validation failed with errors localized by step", "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/Problem" } } } } } }
     },
+    "/api/v1/campaigns": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
+      "get": { "operationId": "listCampaigns", "responses": { "200": { "description": "Workspace campaigns" } } },
+      "post": { "operationId": "createCampaign", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CampaignCreateRequest" } } } }, "responses": { "201": { "description": "Campaign draft created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Campaign" } } } } } }
+    },
+    "/api/v1/campaigns/{campaignId}": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/CampaignId" }],
+      "get": { "operationId": "getCampaign", "responses": { "200": { "description": "Campaign and immutable snapshot", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Campaign" } } } } } },
+      "patch": { "operationId": "updateCampaign", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CampaignPatchRequest" } } } }, "responses": { "200": { "description": "Campaign draft updated" } } }
+    },
+    "/api/v1/campaigns/{campaignId}/actions/preflight": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/CampaignId" }],
+      "post": { "operationId": "preflightCampaign", "responses": { "200": { "description": "Replayable campaign preflight", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CampaignPreflight" } } } } } }
+    },
+    "/api/v1/campaigns/{campaignId}/actions/activate": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/CampaignId" }],
+      "post": { "operationId": "activateCampaign", "responses": { "200": { "description": "Campaign activated with immutable snapshot" }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" }, "422": { "description": "Preflight blockers" } } }
+    },
+    "/api/v1/campaigns/{campaignId}/actions/pause": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/CampaignId" }],
+      "post": { "operationId": "pauseCampaign", "responses": { "200": { "description": "Campaign paused" }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" } } }
+    },
+    "/api/v1/campaigns/{campaignId}/actions/resume": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/CampaignId" }],
+      "post": { "operationId": "resumeCampaign", "responses": { "200": { "description": "Campaign resumed" }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" } } }
+    },
+    "/api/v1/campaigns/{campaignId}/actions/archive": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/CampaignId" }],
+      "post": { "operationId": "archiveCampaign", "responses": { "200": { "description": "Campaign archived" }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" } } }
+    },
     "/api/v1/offers": {
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
       "get": { "operationId": "listOffers", "responses": { "200": { "description": "Offers" } } },
@@ -1094,6 +1124,10 @@
       },
       "SequenceId": {
         "name": "sequenceId", "in": "path", "required": true,
+        "schema": { "type": "string", "format": "uuid" }
+      },
+      "CampaignId": {
+        "name": "campaignId", "in": "path", "required": true,
         "schema": { "type": "string", "format": "uuid" }
       },
       "CompanyId": {
@@ -1826,6 +1860,60 @@
       "SequenceStepsRequest": {
         "type": "object", "required": ["steps"], "additionalProperties": false,
         "properties": { "steps": { "type": "array", "maxItems": 30, "items": { "$ref": "#/components/schemas/SequenceStepDraft" } } }
+      },
+      "Campaign": {
+        "type": "object", "required": ["id", "workspaceId", "name", "objective", "status", "offerVersionId", "icpVersionId", "messagingStrategyVersionId", "aiPolicyVersionId", "sequenceVersionId", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "workspaceId": { "type": "string", "format": "uuid" },
+          "name": { "type": "string" },
+          "objective": { "type": "string" },
+          "status": { "type": "string", "enum": ["draft", "active", "paused", "archived"] },
+          "offerVersionId": { "type": "string", "format": "uuid" },
+          "icpVersionId": { "type": "string", "format": "uuid" },
+          "messagingStrategyVersionId": { "type": "string", "format": "uuid" },
+          "aiPolicyVersionId": { "type": "string", "format": "uuid" },
+          "sequenceVersionId": { "type": "string", "format": "uuid" },
+          "createdBy": { "type": ["string", "null"], "format": "uuid" },
+          "activatedBy": { "type": ["string", "null"], "format": "uuid" },
+          "activatedAt": { "type": ["string", "null"], "format": "date-time" },
+          "pausedAt": { "type": ["string", "null"], "format": "date-time" },
+          "archivedAt": { "type": ["string", "null"], "format": "date-time" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "CampaignCreateRequest": {
+        "type": "object", "required": ["name", "offerVersionId", "icpVersionId", "messagingStrategyVersionId", "aiPolicyVersionId", "sequenceVersionId"], "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "maxLength": 300 },
+          "objective": { "type": "string", "maxLength": 10000 },
+          "offerVersionId": { "type": "string", "format": "uuid" },
+          "icpVersionId": { "type": "string", "format": "uuid" },
+          "messagingStrategyVersionId": { "type": "string", "format": "uuid" },
+          "aiPolicyVersionId": { "type": "string", "format": "uuid" },
+          "sequenceVersionId": { "type": "string", "format": "uuid" }
+        }
+      },
+      "CampaignPatchRequest": {
+        "type": "object", "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "maxLength": 300 },
+          "objective": { "type": "string", "maxLength": 10000 },
+          "offerVersionId": { "type": "string", "format": "uuid" },
+          "icpVersionId": { "type": "string", "format": "uuid" },
+          "messagingStrategyVersionId": { "type": "string", "format": "uuid" },
+          "aiPolicyVersionId": { "type": "string", "format": "uuid" },
+          "sequenceVersionId": { "type": "string", "format": "uuid" }
+        }
+      },
+      "CampaignPreflight": {
+        "type": "object", "required": ["ok", "blockers", "warnings"],
+        "properties": {
+          "ok": { "type": "boolean" },
+          "blockers": { "type": "array", "items": { "type": "object" } },
+          "warnings": { "type": "array", "items": { "type": "object" } }
+        }
       },
       "MessagingTemplate": {
         "type": "object", "required": ["channel", "body"], "properties": { "channel": { "type": "string", "enum": ["linkedin", "email", "whatsapp"] }, "body": { "type": "string" }, "subject": { "type": "string" }, "maxLength": { "type": "integer" }, "cta": { "type": "string" }, "constraints": { "type": "object" } }
