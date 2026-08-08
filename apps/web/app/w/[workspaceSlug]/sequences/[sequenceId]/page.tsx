@@ -1,6 +1,7 @@
 import { ArrowLeft, Lock, Send } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { CrmPermissionState } from "@/components/crm-states";
 import {
   getSequence,
   listSequenceVersions,
@@ -30,6 +31,7 @@ export default async function SequenceDetailPage({
     role = workspaces.find((workspace) => workspace.slug === workspaceSlug)?.role ?? "viewer";
   } catch (error) {
     if (error instanceof OutboundApiError && error.status === 404) notFound();
+    if (error instanceof OutboundApiError && (error.status === 401 || error.status === 403)) return <CrmPermissionState resource="cette séquence" />;
     throw error;
   }
 
@@ -73,6 +75,7 @@ export default async function SequenceDetailPage({
               workspaceSlug={workspaceSlug}
               sequenceId={sequenceId}
               initialSteps={sequence.steps}
+              canEdit={["operator", "admin", "owner"].includes(role)}
               canPublish={["admin", "owner"].includes(role)}
             />
           </div>

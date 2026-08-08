@@ -12,12 +12,14 @@ export function MutationForm({
   children,
   className,
   confirmation,
+  onError,
   successMessage = "Modification enregistrée. La page est actualisée.",
 }: {
   action: MutationAction;
   children: ReactNode;
   className?: string;
   confirmation?: string;
+  onError?: (message: string) => void;
   successMessage?: string;
 }) {
   const router = useRouter();
@@ -35,7 +37,9 @@ export function MutationForm({
       router.refresh();
     } catch (error) {
       setStatus("error");
-      setMessage(error instanceof Error && error.message ? error.message : "La modification a échoué. Réessayez.");
+      const nextMessage = error instanceof Error && error.message ? error.message : "La modification a échoué. Réessayez.";
+      setMessage(nextMessage);
+      onError?.(nextMessage);
     }
   }
 
