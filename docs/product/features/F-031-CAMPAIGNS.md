@@ -112,8 +112,9 @@ le snapshot des versions est figé pour toute la vie de la campagne.
 | POST | `/api/v1/campaigns/:id/actions/archive` | archiver |
 
 **Événements sortants** : `CampaignActivated` (catalogue) ;
-`CampaignPaused`, `CampaignResumed`, `CampaignArchived` proposés — tous via
-l’outbox transactionnelle, un seul exemplaire dispatché par transition.
+`CampaignPaused`, `CampaignResumed`, `CampaignArchived` (entérinés par
+décision lead, déjà émis par le backend) — tous via l’outbox
+transactionnelle, un seul exemplaire dispatché par transition.
 
 **Ports externes** : aucun direct ; les capacités des comptes d’envoi sont
 lues via F-035.
