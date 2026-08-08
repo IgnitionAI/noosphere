@@ -134,6 +134,13 @@
       "when": 1786183153000,
       "tag": "0018_messaging_strategy_policy",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1786183200000,
+      "tag": "0019_messaging_draft_rules",
+      "breakpoints": true
     }
   ]
 }

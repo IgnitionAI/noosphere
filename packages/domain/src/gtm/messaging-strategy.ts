@@ -41,10 +41,10 @@ export const validateTemplateVariables = validateMessagingTemplateVariables;
 export interface MessagingTemplate {
   readonly channel: MessagingChannel;
   readonly body: string;
-  readonly subject?: string;
-  readonly maxLength?: number;
-  readonly cta?: string;
-  readonly constraints?: Readonly<Record<string, unknown>>;
+  readonly subject?: string | undefined;
+  readonly maxLength?: number | undefined;
+  readonly cta?: string | undefined;
+  readonly constraints?: Readonly<Record<string, unknown>> | undefined;
 }
 
 export interface MessagingStrategyRules {
@@ -52,7 +52,8 @@ export interface MessagingStrategyRules {
   readonly angle: string;
   readonly templates: readonly MessagingTemplate[];
   readonly allowedClaimIds: readonly string[];
-  readonly constraints?: Readonly<Record<string, unknown>>;
+  readonly offerVersionId?: string | undefined;
+  readonly constraints?: Readonly<Record<string, unknown>> | undefined;
 }
 
 export interface MessagingStrategyVersion {
@@ -75,12 +76,12 @@ export interface MessagingStrategy {
 
 export interface AIPolicyRules {
   /** Must remain true: first contact is always human approved. */
-  readonly firstContactRequiresHumanApproval?: boolean;
+  readonly firstContactRequiresHumanApproval?: boolean | undefined;
   /** Must remain true: every response is always human approved. */
-  readonly responsesRequireHumanApproval?: boolean;
+  readonly responsesRequireHumanApproval?: boolean | undefined;
   /** Only this class of action may be automated. */
   readonly followUpsMayBeAutomated: boolean;
-  readonly escalationRules?: Readonly<Record<string, unknown>>;
+  readonly escalationRules?: Readonly<Record<string, unknown>> | undefined;
 }
 
 export interface AIPolicyVersion {

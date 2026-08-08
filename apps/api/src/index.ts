@@ -12,6 +12,7 @@ import { createSequenceHttpHandler } from "@outbound/interface/http/sequence-han
 import { createOfferHttpHandler } from "@outbound/interface/http/offer-handler";
 import { createImportHttpHandler } from "@outbound/interface/http/import-handler";
 import { createMergeHttpHandler } from "@outbound/interface/http/merge-handler";
+import { createMessagingStrategyHttpHandler } from "@outbound/interface/http/messaging-strategy-handler";
 import {
   ProviderUnavailableError,
   UnipileProspectSource,
@@ -107,6 +108,7 @@ const sequenceHandler = createSequenceHttpHandler({
 const offers = createOfferHttpHandler({ database: database.db, contextResolver: auth.contextResolver });
 const imports = createImportHttpHandler({ database: database.db, contextResolver: auth.contextResolver, queue });
 const merges = createMergeHttpHandler({ database: database.db, contextResolver: auth.contextResolver });
+const messagingStrategies = createMessagingStrategyHttpHandler({ database: database.db, contextResolver: auth.contextResolver });
 const port = positiveIntegerEnvironment("PORT", 3000);
 const server = Bun.serve({
   port,
@@ -129,6 +131,9 @@ const server = Bun.serve({
     if (pathname.startsWith("/api/v1/merge-candidates") || (pathname.startsWith("/api/v1/contacts/") && (pathname.includes("/actions/undo-merge") || pathname.endsWith("/merges")))) return merges(request);
     if (pathname.startsWith("/api/v1/sequences")) {
       return sequenceHandler(request);
+    }
+    if (pathname.startsWith("/api/v1/messaging-strategies") || pathname.startsWith("/api/v1/ai-policies")) {
+      return messagingStrategies(request);
     }
     if (pathname === "/health/live") return Response.json({ status: "ok" });
     if (pathname === "/health/ready") {

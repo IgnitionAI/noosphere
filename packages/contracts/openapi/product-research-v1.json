@@ -865,6 +865,34 @@
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/OfferId" }],
       "get": { "operationId": "listOfferVersions", "responses": { "200": { "description": "Offer versions" } } }
     },
+    "/api/v1/messaging-strategies": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
+      "get": { "operationId": "listMessagingStrategies", "responses": { "200": { "description": "Messaging strategies" } } },
+      "post": { "operationId": "createMessagingStrategy", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MessagingStrategyDraftRequest" } } } }, "responses": { "201": { "description": "Messaging strategy created" } } }
+    },
+    "/api/v1/messaging-strategies/{strategyId}": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/MessagingStrategyId" }],
+      "get": { "operationId": "getMessagingStrategy", "responses": { "200": { "description": "Messaging strategy detail", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MessagingStrategyDetail" } } } } } },
+      "patch": { "operationId": "updateMessagingStrategy", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MessagingStrategyPatchRequest" } } } }, "responses": { "200": { "description": "Messaging strategy updated" } } }
+    },
+    "/api/v1/messaging-strategies/{strategyId}/actions/publish": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/MessagingStrategyId" }],
+      "post": { "operationId": "publishMessagingStrategy", "responses": { "201": { "description": "Published messaging strategy version", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MessagingStrategyVersion" } } } } } }
+    },
+    "/api/v1/ai-policies": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
+      "get": { "operationId": "listAiPolicies", "responses": { "200": { "description": "AI supervision policies" } } },
+      "post": { "operationId": "createAiPolicy", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AIPolicyDraftRequest" } } } }, "responses": { "201": { "description": "AI policy created" } } }
+    },
+    "/api/v1/ai-policies/{policyId}": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/AIPolicyId" }],
+      "get": { "operationId": "getAiPolicy", "responses": { "200": { "description": "AI policy detail", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AIPolicyDetail" } } } } } },
+      "patch": { "operationId": "updateAiPolicy", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AIPolicyPatchRequest" } } } }, "responses": { "200": { "description": "AI policy updated" } } }
+    },
+    "/api/v1/ai-policies/{policyId}/actions/publish": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/AIPolicyId" }],
+      "post": { "operationId": "publishAiPolicy", "responses": { "201": { "description": "Published AI policy version", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AIPolicyVersion" } } } } } }
+    },
     "/api/v1/companies": {
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
       "get": {
@@ -1008,6 +1036,14 @@
       },
       "IcpId": {
         "name": "icpId", "in": "path", "required": true,
+        "schema": { "type": "string", "format": "uuid" }
+      },
+      "MessagingStrategyId": {
+        "name": "strategyId", "in": "path", "required": true,
+        "schema": { "type": "string", "format": "uuid" }
+      },
+      "AIPolicyId": {
+        "name": "policyId", "in": "path", "required": true,
         "schema": { "type": "string", "format": "uuid" }
       },
       "OfferId": {
@@ -1675,6 +1711,45 @@
       },
       "OfferPatchRequest": {
         "type": "object", "properties": { "name": { "type": "string" }, "category": { "type": "string" }, "valueProposition": { "type": "string" }, "targetAudience": { "type": "string" }, "pricing": {}, "commercialRules": {}, "constraints": {}, "claims": { "type": "array", "items": { "$ref": "#/components/schemas/OfferClaim" } }, "objections": { "type": "array" } }
+      },
+      "MessagingTemplate": {
+        "type": "object", "required": ["channel", "body"], "properties": { "channel": { "type": "string", "enum": ["linkedin", "email", "whatsapp"] }, "body": { "type": "string" }, "subject": { "type": "string" }, "maxLength": { "type": "integer" }, "cta": { "type": "string" }, "constraints": { "type": "object" } }
+      },
+      "MessagingStrategyRules": {
+        "type": "object", "required": ["tone", "angle", "templates", "allowedClaimIds"], "properties": { "tone": { "type": "string" }, "angle": { "type": "string" }, "templates": { "type": "array", "items": { "$ref": "#/components/schemas/MessagingTemplate" } }, "allowedClaimIds": { "type": "array", "items": { "type": "string", "format": "uuid" } }, "offerVersionId": { "type": "string", "format": "uuid" }, "constraints": { "type": "object" } }
+      },
+      "MessagingStrategyDraftRequest": {
+        "type": "object", "required": ["name", "rules"], "properties": { "name": { "type": "string" }, "rules": { "$ref": "#/components/schemas/MessagingStrategyRules" } }
+      },
+      "MessagingStrategyPatchRequest": {
+        "type": "object", "properties": { "name": { "type": "string" }, "rules": { "$ref": "#/components/schemas/MessagingStrategyRules" } }
+      },
+      "MessagingStrategy": {
+        "type": "object", "required": ["id", "workspaceId", "name", "currentVersion", "draftRules"], "properties": { "id": { "type": "string", "format": "uuid" }, "workspaceId": { "type": "string", "format": "uuid" }, "name": { "type": "string" }, "currentVersion": { "type": "integer" }, "draftRules": { "$ref": "#/components/schemas/MessagingStrategyRules" }, "deletedAt": { "type": ["string", "null"], "format": "date-time" } }
+      },
+      "MessagingStrategyVersion": {
+        "type": "object", "required": ["id", "workspaceId", "strategyId", "version", "rules", "publishedAt"], "properties": { "id": { "type": "string", "format": "uuid" }, "workspaceId": { "type": "string", "format": "uuid" }, "strategyId": { "type": "string", "format": "uuid" }, "version": { "type": "integer" }, "rules": { "$ref": "#/components/schemas/MessagingStrategyRules" }, "publishedBy": { "type": ["string", "null"], "format": "uuid" }, "publishedAt": { "type": "string", "format": "date-time" } }
+      },
+      "MessagingStrategyDetail": {
+        "allOf": [{ "$ref": "#/components/schemas/MessagingStrategy" }, { "type": "object", "required": ["versions"], "properties": { "versions": { "type": "array", "items": { "$ref": "#/components/schemas/MessagingStrategyVersion" } } } }]
+      },
+      "AIPolicyRules": {
+        "type": "object", "required": ["followUpsMayBeAutomated"], "properties": { "firstContactRequiresHumanApproval": { "type": "boolean", "default": true }, "responsesRequireHumanApproval": { "type": "boolean", "default": true }, "followUpsMayBeAutomated": { "type": "boolean" }, "escalationRules": { "type": "object" } }
+      },
+      "AIPolicyDraftRequest": {
+        "type": "object", "required": ["name", "rules"], "properties": { "name": { "type": "string" }, "rules": { "$ref": "#/components/schemas/AIPolicyRules" } }
+      },
+      "AIPolicyPatchRequest": {
+        "type": "object", "properties": { "name": { "type": "string" }, "rules": { "$ref": "#/components/schemas/AIPolicyRules" } }
+      },
+      "AIPolicy": {
+        "type": "object", "required": ["id", "workspaceId", "name", "currentVersion", "draftRules"], "properties": { "id": { "type": "string", "format": "uuid" }, "workspaceId": { "type": "string", "format": "uuid" }, "name": { "type": "string" }, "currentVersion": { "type": "integer" }, "draftRules": { "$ref": "#/components/schemas/AIPolicyRules" }, "deletedAt": { "type": ["string", "null"], "format": "date-time" } }
+      },
+      "AIPolicyVersion": {
+        "type": "object", "required": ["id", "workspaceId", "policyId", "version", "rules", "publishedAt"], "properties": { "id": { "type": "string", "format": "uuid" }, "workspaceId": { "type": "string", "format": "uuid" }, "policyId": { "type": "string", "format": "uuid" }, "version": { "type": "integer" }, "rules": { "$ref": "#/components/schemas/AIPolicyRules" }, "publishedBy": { "type": ["string", "null"], "format": "uuid" }, "publishedAt": { "type": "string", "format": "date-time" } }
+      },
+      "AIPolicyDetail": {
+        "allOf": [{ "$ref": "#/components/schemas/AIPolicy" }, { "type": "object", "required": ["versions"], "properties": { "versions": { "type": "array", "items": { "$ref": "#/components/schemas/AIPolicyVersion" } } } }]
       },
       "ProductResearchReport": {
         "type": "object",
