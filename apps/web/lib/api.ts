@@ -963,6 +963,39 @@ export async function disconnectConnectedAccount(workspaceSlug: string, accountI
   return crmFetch(workspaceSlug, `/api/v1/connected-accounts/${accountId}`, { method: "DELETE" });
 }
 
+export type CampaignProspectStatus = "candidate" | "selected" | "excluded" | "enrolled";
+export interface CampaignProspectExplanation {
+  readonly facts: readonly Record<string, unknown>[];
+  readonly missing: readonly Record<string, unknown>[];
+  readonly exclusions: readonly Record<string, unknown>[];
+}
+export interface CampaignProspect {
+  readonly id: string;
+  readonly campaignId: string;
+  readonly contactId: string;
+  readonly status: CampaignProspectStatus;
+  readonly score: number;
+  readonly explanation: CampaignProspectExplanation;
+  readonly exclusionReason: string | null;
+  readonly selectedAt: string | null;
+  readonly excludedAt: string | null;
+  readonly enrolledAt: string | null;
+  readonly contact?: {
+    readonly firstName: string;
+    readonly lastName: string;
+    readonly status: string;
+    readonly preferredChannel: string | null;
+    readonly employment: { readonly title?: string | null; readonly company?: { readonly name?: string | null } | null } | null;
+    readonly company?: { readonly name?: string | null } | null;
+  };
+}
+export interface CampaignEnrollment { readonly id: string; readonly campaignId: string; readonly contactId: string; readonly sequenceVersionId: string; readonly status: string; readonly enrolledAt: string; }
+export async function listCampaignProspects(workspaceSlug: string, campaignId: string): Promise<{ data: CampaignProspect[] }> { return crmFetch(workspaceSlug, `/api/v1/campaigns/${campaignId}/prospects`); }
+export async function selectCampaignProspects(workspaceSlug: string, campaignId: string, contactIds: readonly string[]): Promise<{ data: CampaignProspect[] }> { return crmFetch(workspaceSlug, `/api/v1/campaigns/${campaignId}/prospects/select`, { method: "POST", body: { contactIds } }); }
+export async function getCampaignProspectExplanation(workspaceSlug: string, campaignId: string, contactId: string): Promise<CampaignProspect> { return crmFetch(workspaceSlug, `/api/v1/campaigns/${campaignId}/prospects/${contactId}/explanation`); }
+export async function enrollCampaignProspect(workspaceSlug: string, campaignId: string, contactId: string): Promise<CampaignEnrollment> { return crmFetch(workspaceSlug, `/api/v1/campaigns/${campaignId}/prospects/${contactId}/actions/enroll`, { method: "POST", body: {} }); }
+export async function excludeCampaignProspect(workspaceSlug: string, campaignId: string, contactId: string, reason: string): Promise<CampaignProspect> { return crmFetch(workspaceSlug, `/api/v1/campaigns/${campaignId}/prospects/${contactId}/actions/exclude`, { method: "POST", body: { reason } }); }
+
 export async function listCampaigns(workspaceSlug: string): Promise<{ data: Campaign[] }> {
   return crmFetch(workspaceSlug, "/api/v1/campaigns");
 }
@@ -1234,12 +1267,12 @@ async function apiFetch(
 
 async function throwApiError(response: Response): Promise<never> {
   const body = (await response.json().catch(() => null)) as
-    | { code?: string; detail?: string; message?: string; errors?: unknown; blockedClaimIds?: unknown; blockers?: unknown; warnings?: unknown }
+    | { code?: string; detail?: string; message?: string; errors?: unknown; blockedClaimIds?: unknown; blockers?: unknown; warnings?: unknown; campaignId?: unknown; campaignName?: unknown; reason?: unknown; channel?: unknown; suppressionId?: unknown; contactId?: unknown }
     | null;
   throw new OutboundApiError(
     response.status,
     body?.code ?? "UPSTREAM_ERROR",
     body?.detail ?? body?.message ?? "Le serveur n’a pas pu traiter la demande.",
-    body ? { errors: body.errors, blockedClaimIds: body.blockedClaimIds, blockers: body.blockers, warnings: body.warnings } : null,
+    body ? { errors: body.errors, blockedClaimIds: body.blockedClaimIds, blockers: body.blockers, warnings: body.warnings, campaignId: body.campaignId, campaignName: body.campaignName, reason: body.reason, channel: body.channel, suppressionId: body.suppressionId, contactId: body.contactId } : null,
   );
 }
