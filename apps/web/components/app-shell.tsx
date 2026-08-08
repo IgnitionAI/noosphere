@@ -20,6 +20,7 @@ import {
   Target,
   Users,
   X,
+  Radar,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -49,6 +50,7 @@ export function AppShell({
   const icpsHref = `/w/${workspace.slug}/icps`;
   const offersHref = `/w/${workspace.slug}/offers`;
   const messagingHref = `/w/${workspace.slug}/messaging`;
+  const discoveryHref = `/w/${workspace.slug}/prospects/discover`;
   const suppressionsHref = `/w/${workspace.slug}/suppressions`;
   const aiSettingsHref = `/w/${workspace.slug}/settings/ai`;
   const productReadingActive = pathname.startsWith(productReadingHref);
@@ -57,6 +59,7 @@ export function AppShell({
   const messagingActive = pathname.startsWith(messagingHref);
   const crmNavigation = [
     [`/w/${workspace.slug}/prospects`, "Prospects", Users],
+    [discoveryHref, "Découverte", Radar],
     [`/w/${workspace.slug}/companies`, "Entreprises", Building2],
     [`/w/${workspace.slug}/sequences`, "Séquences", Send],
     [suppressionsHref, "Suppressions", ShieldAlert],

@@ -9,16 +9,21 @@ import {
   UserRoundPlus,
 } from "lucide-react";
 import Link from "next/link";
+import { CrmPermissionState } from "@/components/crm-states";
 import {
   getDiscoveryRun,
   listDiscoveryRuns,
   listIcpVersions,
+  listWorkspaces,
+  OutboundApiError,
 } from "@/lib/api";
+import { MutationForm } from "../../research/[runId]/report/mutation-form";
 import {
   importCandidateAction,
   launchDiscoveryAction,
   retryDiscoveryAction,
 } from "./actions";
+import { DiscoveryRefresh } from "./refresh";
 
 export const metadata = { title: "Découverte de prospects" };
 export const dynamic = "force-dynamic";
@@ -38,11 +43,24 @@ export default async function DiscoverPage({
 }) {
   const { workspaceSlug } = await params;
   const { versionId, runId } = await searchParams;
-  const [versions, runs] = await Promise.all([
-    listIcpVersions(workspaceSlug),
-    listDiscoveryRuns(workspaceSlug, versionId),
-  ]);
+  const workspace = (await listWorkspaces()).find((item) => item.slug === workspaceSlug);
+  if (!workspace) return <CrmPermissionState resource="la découverte de prospects" />;
+  let versions;
+  let runs;
+  try {
+    [versions, runs] = await Promise.all([
+      listIcpVersions(workspaceSlug),
+      listDiscoveryRuns(workspaceSlug, versionId),
+    ]);
+  } catch (error) {
+    if (error instanceof OutboundApiError && (error.status === 401 || error.status === 403)) {
+      return <CrmPermissionState resource="la découverte de prospects" />;
+    }
+    throw error;
+  }
   const selectedRun = runId ? await getDiscoveryRun(workspaceSlug, runId) : null;
+  const canMutate = ["operator", "admin", "owner"].includes(workspace.role);
+  const hasRunningRun = runs.data.some((run) => run.status === "running") || selectedRun?.status === "running";
 
   return (
     <>
@@ -97,11 +115,11 @@ export default async function DiscoverPage({
                       </div>
                       <p className="mt-1 text-[11px] text-muted">
                         Publiée le {version.publishedAt.slice(0, 10)} ·{" "}
-                        <Link className="text-brand-blue" href={`/w/${workspaceSlug}/research/${version.runId}/report`}>
-                          voir le rapport
-                        </Link>
+                        {version.runId ? <Link className="text-brand-blue" href={`/w/${workspaceSlug}/research/${version.runId}/report`}>
+                          voir le rapport source
+                        </Link> : <span>ICP canonique (sans rapport source)</span>}
                       </p>
-                      <form action={launch} className="mt-3 flex items-center gap-2">
+                      {canMutate ? <MutationForm action={launch} className="mt-3 flex flex-wrap items-center gap-2" confirmation="Lancer cette recherche LinkedIn avec les filtres ICP publiés ?" successMessage="Run lancé. Les candidats apparaîtront dès que le fournisseur aura répondu.">
                         <input
                           className="control w-24"
                           name="limit"
@@ -121,7 +139,7 @@ export default async function DiscoverPage({
                         >
                           Ses runs
                         </Link>
-                      </form>
+                      </MutationForm> : <p className="mt-3 text-xs text-muted">Votre rôle permet la lecture, mais pas le lancement d’une recherche.</p>}
                     </article>
                   );
                 })
@@ -153,20 +171,21 @@ export default async function DiscoverPage({
                       </p>
                       {run.status === "failed" ? (
                         <div className="mt-2 rounded-lg border border-warning/30 bg-amber-50 p-2 text-[11px] text-warning">
-                          {run.errorCode} — {run.errorMessage}
+                          <strong>{providerErrorLabel(run.errorCode)}</strong>
+                          <span className="ml-1">— {run.errorMessage ?? "Le fournisseur n’a pas répondu."}</span>
                         </div>
                       ) : null}
                       <div className="mt-2 flex gap-2">
                         <Link className="button" href={`/w/${workspaceSlug}/prospects/discover?versionId=${run.icpVersionId}&runId=${run.id}`}>
                           Voir les candidats
                         </Link>
-                        {run.status === "failed" ? (
-                          <form action={retry}>
+                        {run.status === "failed" && canMutate ? (
+                          <MutationForm action={retry} confirmation="Relancer ce run échoué ? Les candidats déjà importés seront conservés." successMessage="Relance effectuée. Le statut du run est actualisé.">
                             <button className="button" type="submit">
                               <RotateCcw size={13} />
                               Relancer
                             </button>
-                          </form>
+                          </MutationForm>
                         ) : null}
                       </div>
                     </div>
@@ -187,11 +206,19 @@ export default async function DiscoverPage({
               <p className="py-6 text-center text-sm text-muted">
                 Sélectionnez un run pour prévisualiser ses candidats.
               </p>
+            ) : selectedRun.status === "failed" ? (
+              <div className="space-y-3 py-4">
+                <div className="rounded-lg border border-danger/30 bg-red-50 p-4 text-sm text-danger" role="alert">
+                  <p className="font-semibold">{providerErrorLabel(selectedRun.errorCode)}</p>
+                  <p className="mt-1">{selectedRun.errorMessage ?? "Le fournisseur est indisponible. Ce run n’est pas un résultat vide."}</p>
+                  {canMutate ? <MutationForm action={retryDiscoveryAction.bind(null, workspaceSlug, selectedRun.id)} className="mt-3" confirmation="Relancer ce run échoué ?" successMessage="Relance effectuée.">
+                    <button className="button" type="submit"><RotateCcw size={13} /> Relancer</button>
+                  </MutationForm> : null}
+                </div>
+              </div>
             ) : selectedRun.candidates.length === 0 ? (
               <p className="py-6 text-center text-sm text-muted">
-                {selectedRun.status === "failed"
-                  ? "Le fournisseur était indisponible : aucune liste vide trompeuse — relancez le run."
-                  : "Aucun candidat retourné par le fournisseur pour ces filtres."}
+                Aucun candidat retourné par le fournisseur pour ces filtres.
               </p>
             ) : (
               selectedRun.candidates.map((candidate) => {
@@ -215,30 +242,35 @@ export default async function DiscoverPage({
                       ) : null}
                     </div>
                     <div className="mt-3 space-y-1">
-                      {candidate.icpFit.matches.map((match) => (
+                      {(candidate.icpFit.matches ?? []).map((match) => (
                         <p className="flex items-center gap-2 text-[11px] text-success" key={match}>
                           <Check size={12} /> {match}
                         </p>
                       ))}
-                      {candidate.icpFit.gaps.map((gap) => (
+                      {(candidate.icpFit.gaps ?? []).map((gap) => (
                         <p className="flex items-center gap-2 text-[11px] text-warning" key={gap}>
                           <TriangleAlert size={12} /> {gap}
                         </p>
                       ))}
                     </div>
                     <div className="mt-3 border-t border-line pt-3">
+                      <div className="mb-3 rounded-md bg-slate-50 px-3 py-2 text-[11px] text-muted">
+                        <p><strong>Provenance :</strong> {candidate.source} via {selectedRun.provider}</p>
+                        <p className="mt-1"><strong>Run :</strong> <span className="font-mono">{candidate.runId}</span></p>
+                        <p className="mt-1"><strong>Filtres :</strong> {formatFilters(selectedRun.filters)}</p>
+                      </div>
                       {candidate.importedContactId ? (
                         <Link className="button" href={`/w/${workspaceSlug}/prospects/${candidate.importedContactId}`}>
                           <Check size={14} />
                           Importé — voir la fiche
                         </Link>
                       ) : (
-                        <form action={importAction}>
+                        canMutate ? <MutationForm action={importAction} confirmation="Importer ce candidat dans le CRM ? Aucune fusion automatique ne sera effectuée." successMessage="Candidat importé dans le CRM.">
                           <button className="button button-signal" type="submit">
                             <UserRoundPlus size={14} />
                             Importer dans le CRM
                           </button>
-                        </form>
+                        </MutationForm> : <p className="text-xs text-muted">Votre rôle permet la lecture, mais pas l’import.</p>
                       )}
                     </div>
                   </article>
@@ -248,6 +280,19 @@ export default async function DiscoverPage({
           </div>
         </section>
       </div>
+      <DiscoveryRefresh active={hasRunningRun} />
     </>
   );
+}
+
+function providerErrorLabel(code: string | null): string {
+  if (code === "PROVIDER_UNAVAILABLE") return "Fournisseur indisponible (PROVIDER_UNAVAILABLE)";
+  if (code === "RETRY_EXHAUSTED" || code === "DISCOVERY_RETRY_EXHAUSTED") return "Nombre maximal de relances atteint (RETRY_EXHAUSTED)";
+  return code ? `Échec du fournisseur (${code})` : "Échec de la recherche fournisseur";
+}
+
+function formatFilters(filters: Readonly<Record<string, unknown>>): string {
+  const entries = Object.entries(filters).filter(([, value]) => value !== null && value !== undefined && value !== "");
+  if (!entries.length) return "aucun filtre";
+  return entries.map(([key, value]) => `${key}=${Array.isArray(value) ? value.join(", ") : String(value)}`).join(" · ");
 }

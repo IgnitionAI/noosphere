@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import {
   importDiscoveryCandidate,
   launchDiscoveryRun,
+  OutboundApiError,
   retryDiscoveryRun,
 } from "@/lib/api";
 
@@ -34,6 +35,18 @@ export async function importCandidateAction(
   candidateId: string,
   _formData: FormData,
 ) {
-  await importDiscoveryCandidate(workspaceSlug, runId, candidateId);
+  try {
+    await importDiscoveryCandidate(workspaceSlug, runId, candidateId);
+  } catch (error) {
+    if (error instanceof OutboundApiError) {
+      const reason = error.code === "CONTACT_IDENTITY_CONFLICT"
+        ? `${error.code}: ${error.message} Une revue humaine est nécessaire dans Doublons.`
+        : error.code === "CONTACT_SUPPRESSED"
+          ? `${error.code}: ${error.message} Une suppression globale active bloque cet import.`
+          : `${error.code}: ${error.message}`;
+      throw new Error(reason);
+    }
+    throw error;
+  }
   revalidatePath(PAGE(workspaceSlug));
 }

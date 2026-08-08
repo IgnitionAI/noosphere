@@ -951,9 +951,14 @@ export type PublishedIcpVersion = IcpVersion;
 
 export interface DiscoveryRun {
   readonly id: string;
+  readonly workspaceId?: string;
   readonly icpVersionId: string;
   readonly provider: string;
-  readonly filters: { keywords?: string; category?: string; limit?: number };
+  readonly filters: Readonly<Record<string, unknown>> & {
+    readonly keywords?: string;
+    readonly category?: string;
+    readonly limit?: number;
+  };
   readonly status: "running" | "completed" | "failed";
   readonly errorCode: string | null;
   readonly errorMessage: string | null;
@@ -964,12 +969,16 @@ export interface DiscoveryRun {
 
 export interface DiscoveryCandidate {
   readonly id: string;
+  readonly runId: string;
+  /** Provenance discriminator returned by the discovery API. */
+  readonly source: "discovery";
   readonly fullName: string;
   readonly headline: string | null;
   readonly linkedinUrl: string | null;
   readonly location: string | null;
   readonly companyName: string | null;
-  readonly icpFit: { matches: string[]; gaps: string[] };
+  readonly providerData: Readonly<Record<string, unknown>>;
+  readonly icpFit: { matches?: readonly string[]; gaps?: readonly string[] };
   readonly importedContactId: string | null;
 }
 
