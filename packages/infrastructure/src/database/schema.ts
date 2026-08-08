@@ -771,6 +771,7 @@ export const crmSourceEnum = pgEnum("crm_source", [
   "manual",
   "csv",
   "icp_research",
+  "discovery",
   "provider",
 ]);
 

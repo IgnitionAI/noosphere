@@ -28,7 +28,7 @@ export class PostgresCrmRepository {
     employeeCountMax: number | null;
     location: string | null;
     linkedinUrl: string | null;
-    source: "manual" | "csv" | "icp_research" | "provider";
+    source: "manual" | "csv" | "icp_research" | "discovery" | "provider";
   }) {
     try {
       const rows = await this.db
@@ -182,7 +182,7 @@ export class PostgresCrmRepository {
     workspaceId: string;
     firstName: string;
     lastName: string;
-    source: "manual" | "csv" | "icp_research" | "provider";
+    source: "manual" | "csv" | "icp_research" | "discovery" | "provider";
     identities: readonly {
       id: string;
       type: "email" | "linkedin" | "phone" | "whatsapp";

@@ -203,6 +203,14 @@ databaseDescribe("F-023 prospect discovery", () => {
         and payload->>'runId' = ${run.id}
     `;
     expect(discoveredEvents[0]?.count).toBe(2);
+    const discoveryAudits = await database.client<{ count: number }[]>`
+      select count(*)::int as count
+      from audit_logs
+      where workspace_id = ${workspaceId}
+        and action = 'ProspectDiscovered'
+        and changes->>'runId' = ${run.id}
+    `;
+    expect(discoveryAudits[0]?.count).toBe(2);
 
     const detail = await handle(
       new Request(`http://localhost/api/v1/discovery-runs/${run.id}`),
@@ -210,12 +218,14 @@ databaseDescribe("F-023 prospect discovery", () => {
     const body = (await detail.json()) as {
       candidates: Array<{
         id: string;
+        source: string;
         fullName: string;
         icpFit: { matches: string[]; gaps: string[] };
       }>;
     };
     const marion = body.candidates.find((candidate) => candidate.fullName === "Marion Delacroix")!;
     const john = body.candidates.find((candidate) => candidate.fullName === "John Smith")!;
+    expect(marion.source).toBe("discovery");
     expect(marion.icpFit.matches.join(" ")).toContain("France");
     expect(john.icpFit.gaps.length).toBeGreaterThan(0);
 
@@ -226,7 +236,7 @@ databaseDescribe("F-023 prospect discovery", () => {
     );
     expect(imported.status).toBe(201);
     const contact = (await imported.json()) as { id: string; source: string };
-    expect(contact.source).toBe("provider");
+    expect(contact.source).toBe("discovery");
 
     const contactDetail = await handle(
       new Request(`http://localhost/api/v1/contacts/${contact.id}`),

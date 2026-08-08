@@ -847,6 +847,26 @@
         "responses": { "200": { "description": "ICP version", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/IcpVersion" } } } } }
       }
     },
+    "/api/v1/icp-versions/{versionId}/discovery-runs": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/VersionId" }],
+      "post": { "operationId": "launchProspectDiscovery", "requestBody": { "required": false, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DiscoveryLaunchRequest" } } } }, "responses": { "201": { "description": "Discovery run" }, "404": { "description": "ICP version not found" } } }
+    },
+    "/api/v1/discovery-runs": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
+      "get": { "operationId": "listProspectDiscoveryRuns", "parameters": [{ "name": "icpVersionId", "in": "query", "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "Discovery runs" } } }
+    },
+    "/api/v1/discovery-runs/{runId}": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/RunId" }],
+      "get": { "operationId": "getProspectDiscoveryRun", "responses": { "200": { "description": "Discovery run and candidates" } } }
+    },
+    "/api/v1/discovery-runs/{runId}/actions/retry": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/RunId" }],
+      "post": { "operationId": "retryProspectDiscovery", "responses": { "200": { "description": "Retried discovery run" }, "409": { "description": "Retry unavailable" } } }
+    },
+    "/api/v1/discovery-runs/{runId}/candidates/{candidateId}/actions/import": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/RunId" }, { "$ref": "#/components/parameters/CandidateId" }],
+      "post": { "operationId": "importDiscoveredProspect", "responses": { "201": { "description": "Imported contact" }, "409": { "description": "Identity conflict or suppression" } } }
+    },
     "/api/v1/offers": {
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
       "get": { "operationId": "listOffers", "responses": { "200": { "description": "Offers" } } },
@@ -1068,6 +1088,10 @@
       },
       "CandidateId": {
         "name": "candidateId", "in": "path", "required": true,
+        "schema": { "type": "string", "format": "uuid" }
+      },
+      "VersionId": {
+        "name": "versionId", "in": "path", "required": true,
         "schema": { "type": "string", "format": "uuid" }
       }
     },
@@ -1750,6 +1774,15 @@
       },
       "AIPolicyDetail": {
         "allOf": [{ "$ref": "#/components/schemas/AIPolicy" }, { "type": "object", "required": ["versions"], "properties": { "versions": { "type": "array", "items": { "$ref": "#/components/schemas/AIPolicyVersion" } } } }]
+      },
+      "DiscoveryLaunchRequest": {
+        "type": "object", "additionalProperties": false, "properties": { "limit": { "type": "integer", "minimum": 1, "maximum": 100, "default": 25 } }
+      },
+      "ProspectDiscoveryCandidate": {
+        "type": "object", "required": ["id", "runId", "source", "fullName", "providerData", "icpFit"], "properties": { "id": { "type": "string", "format": "uuid" }, "runId": { "type": "string", "format": "uuid" }, "source": { "type": "string", "const": "discovery" }, "fullName": { "type": "string" }, "headline": { "type": ["string", "null"] }, "linkedinUrl": { "type": ["string", "null"] }, "location": { "type": ["string", "null"] }, "companyName": { "type": ["string", "null"] }, "providerData": { "type": "object" }, "icpFit": { "type": "object" }, "importedContactId": { "type": ["string", "null"], "format": "uuid" } }
+      },
+      "ProspectDiscoveryRun": {
+        "type": "object", "required": ["id", "workspaceId", "icpVersionId", "provider", "filters", "status", "candidateCount", "candidates"], "properties": { "id": { "type": "string", "format": "uuid" }, "workspaceId": { "type": "string", "format": "uuid" }, "icpVersionId": { "type": "string", "format": "uuid" }, "provider": { "type": "string" }, "filters": { "type": "object" }, "status": { "type": "string", "enum": ["running", "completed", "failed"] }, "errorCode": { "type": ["string", "null"] }, "errorMessage": { "type": ["string", "null"] }, "candidateCount": { "type": "integer" }, "candidates": { "type": "array", "items": { "$ref": "#/components/schemas/ProspectDiscoveryCandidate" } } }
       },
       "ProductResearchReport": {
         "type": "object",

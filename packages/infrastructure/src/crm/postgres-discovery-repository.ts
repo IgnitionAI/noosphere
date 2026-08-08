@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import type { Database } from "@outbound/infrastructure/database/client";
 import {
+  auditLogs,
   companies,
   icps,
   icpVersions,
@@ -108,7 +109,7 @@ export class PostgresDiscoveryRepository {
           .onConflictDoNothing()
           .returning({ id: prospectDiscoveryCandidates.id });
         if (inserted.length) {
-          await tx.insert(outboxEvents).values(inserted.map((candidate) => ({
+          const events = await tx.insert(outboxEvents).values(inserted.map((candidate) => ({
             workspaceId: input.workspaceId,
             aggregateType: "Prospect",
             aggregateId: candidate.id,
@@ -119,6 +120,15 @@ export class PostgresDiscoveryRepository {
               runId: input.runId,
               candidateId: candidate.id,
             },
+          }))).returning({ id: outboxEvents.id, aggregateId: outboxEvents.aggregateId, payload: outboxEvents.payload });
+          await tx.insert(auditLogs).values(events.map((event) => ({
+            workspaceId: input.workspaceId,
+            actorUserId: null,
+            action: "ProspectDiscovered",
+            subjectType: "Prospect",
+            subjectId: event.aggregateId,
+            changes: event.payload,
+            sourceEventId: event.id,
           })));
         }
       }

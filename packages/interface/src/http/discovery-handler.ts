@@ -155,7 +155,7 @@ export function createDiscoveryHttpHandler(dependencies: DiscoveryHttpDependenci
           runId: uuidSchema.parse(runMatch[1]),
         });
         if (!run) return problem(404, "DISCOVERY_RUN_NOT_FOUND", "Discovery run not found");
-        return json(run);
+        return json(normalizeDiscoveryRun(run));
       }
 
       const retryMatch = runRetryPath.exec(url.pathname);
@@ -404,7 +404,7 @@ async function importCandidate(
           employeeCountMax: null,
           location: null,
           linkedinUrl: null,
-          source: "provider",
+          source: "discovery",
         })
       ).id;
   }
@@ -413,7 +413,7 @@ async function importCandidate(
     workspaceId: input.workspaceId,
     firstName: firstName ?? candidate.fullName,
     lastName,
-    source: "provider",
+    source: "discovery",
     identities: candidate.linkedinNormalized
       ? [
           {
@@ -487,6 +487,13 @@ function normalizeVersion(input: unknown) {
     confidence: Number(version.confidence),
     publishedAt: version.publishedAt instanceof Date ? version.publishedAt.toISOString() : version.publishedAt,
     createdAt: version.createdAt instanceof Date ? version.createdAt.toISOString() : version.createdAt,
+  };
+}
+
+function normalizeDiscoveryRun(input: { candidates?: readonly Record<string, unknown>[]; [key: string]: unknown }) {
+  return {
+    ...input,
+    candidates: (input.candidates ?? []).map((candidate) => ({ ...candidate, source: "discovery" })),
   };
 }
 
