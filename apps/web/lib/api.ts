@@ -1014,6 +1014,35 @@ export interface CampaignPreflight {
   readonly warnings: readonly { code: string; message: string }[];
 }
 
+export type OutreachActionStatus = "planned" | "awaiting_approval" | "due" | "sending" | "sent" | "failed" | "cancelled" | "suspended";
+export interface OutreachAction {
+  readonly id: string;
+  readonly campaignId: string;
+  readonly enrollmentId: string;
+  readonly contactId: string;
+  readonly sequenceVersionId: string;
+  readonly approvalItemId: string | null;
+  readonly connectedAccountId: string | null;
+  readonly stepPosition: number;
+  readonly channel: string;
+  readonly recipient: string;
+  readonly subject: string | null;
+  readonly status: OutreachActionStatus;
+  readonly idempotencyKey: string;
+  readonly scheduledAt: string;
+  readonly attemptCount: number;
+  readonly maxAttempts: number;
+  readonly nextAttemptAt: string | null;
+  readonly lastErrorCode: string | null;
+  readonly lastErrorMessage: string | null;
+  readonly providerMessageId: string | null;
+  readonly sentAt: string | null;
+  readonly responseReceivedAt: string | null;
+  readonly cancelledAt: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
 export type ConnectedAccountStatus = "pending" | "connected" | "degraded" | "disconnected" | "unknown";
 export interface ConnectedAccount {
   readonly id: string;
@@ -1088,6 +1117,23 @@ export async function preflightCampaign(workspaceSlug: string, campaignId: strin
 }
 export async function campaignTransition(workspaceSlug: string, campaignId: string, transition: "activate" | "pause" | "resume" | "archive"): Promise<Campaign> {
   return crmFetch(workspaceSlug, `/api/v1/campaigns/${campaignId}/actions/${transition}`, { method: "POST", body: {} });
+}
+
+export async function listCampaignActions(workspaceSlug: string, campaignId: string, status?: OutreachActionStatus): Promise<{ data: OutreachAction[] }> {
+  const query = status ? `?status=${encodeURIComponent(status)}` : "";
+  return crmFetch(workspaceSlug, `/api/v1/campaigns/${campaignId}/actions${query}`);
+}
+
+export async function getOutreachAction(workspaceSlug: string, actionId: string): Promise<OutreachAction> {
+  return crmFetch(workspaceSlug, `/api/v1/actions/${actionId}`);
+}
+
+export async function cancelOutreachAction(workspaceSlug: string, actionId: string): Promise<OutreachAction> {
+  return crmFetch(workspaceSlug, `/api/v1/actions/${actionId}/actions/cancel`, { method: "POST", body: {} });
+}
+
+export async function retryOutreachAction(workspaceSlug: string, actionId: string): Promise<OutreachAction> {
+  return crmFetch(workspaceSlug, `/api/v1/actions/${actionId}/actions/retry`, { method: "POST", body: {} });
 }
 
 export async function listOffers(workspaceSlug: string): Promise<{ data: Offer[] }> {

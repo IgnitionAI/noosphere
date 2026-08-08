@@ -2,12 +2,13 @@ import { ArrowLeft, Archive, Pause, Play, Rocket } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { CrmPermissionState } from "@/components/crm-states";
-import { getCampaign, listWorkspaces, OutboundApiError } from "@/lib/api";
+import { getCampaign, listCampaignActions, listWorkspaces, OutboundApiError, type OutreachAction } from "@/lib/api";
 import { MutationForm } from "../../research/[runId]/report/mutation-form";
 import { lifecycleCampaignAction, activateCampaignAction, updateCampaignAction } from "../actions";
 import { loadPublishedOptions, type PublishedOption } from "../version-options";
 import { PreflightPanel } from "../preflight-panel";
 import { PopulationPanel } from "./population-panel";
+import { OutreachActionsPanel } from "./outreach-actions-panel";
 
 export const metadata = { title: "Campagne" };
 export const dynamic = "force-dynamic";
@@ -28,6 +29,13 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
   }
   const canEdit = ["operator", "admin", "owner"].includes(workspace.role);
   const canTransition = ["admin", "owner"].includes(workspace.role);
+  const canMutateActions = ["operator", "admin", "owner"].includes(workspace.role);
+  let campaignActions: OutreachAction[] = [];
+  let actionAccess = true;
+  try { campaignActions = (await listCampaignActions(workspaceSlug, campaign.id)).data; } catch (error) {
+    if (error instanceof OutboundApiError && (error.status === 401 || error.status === 403)) actionAccess = false;
+    else throw error;
+  }
   const options = campaign.status === "draft" && canEdit ? await loadPublishedOptions(workspaceSlug) : null;
   const update = updateCampaignAction.bind(null, workspaceSlug, campaign.id);
   const activate = activateCampaignAction.bind(null, workspaceSlug, campaign.id);
@@ -37,6 +45,7 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
     {campaign.status === "draft" && canEdit && options ? <MutationForm action={update} className="panel mb-5" successMessage="Brouillon mis à jour."><div className="panel-header"><h2 className="font-semibold">Builder</h2></div><div className="panel-body space-y-4"><label className="block text-xs font-semibold text-muted">Nom<input className="control mt-1 w-full" name="name" required defaultValue={campaign.name} /></label><label className="block text-xs font-semibold text-muted">Objectif<textarea className="control mt-1 min-h-20 w-full" name="objective" defaultValue={campaign.objective} /></label><div className="grid gap-3 md:grid-cols-2">{REF_FIELDS.map((field) => <Picker key={field} field={field} value={campaign[field]} options={optionsFor(field, options)} />)}</div><button className="button button-signal" type="submit">Enregistrer les références</button></div></MutationForm> : null}
     <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_360px]"><section className="panel"><div className="panel-header"><h2 className="font-semibold">Snapshot des versions</h2></div><div className="panel-body space-y-3">{REF_FIELDS.map((field) => <div className="flex flex-col gap-1 rounded-lg border border-line p-3 sm:flex-row sm:items-center sm:justify-between" key={field}><span className="text-xs font-semibold text-muted">{REF_LABELS[field]}</span><span className="font-mono text-xs text-navy">{campaign[field]}</span></div>)}<p className="text-[11px] leading-4 text-muted">Ces cinq références sont immuables après activation. Une évolution exige une nouvelle campagne.</p></div></section><div className="space-y-5"><PreflightPanel campaignId={campaign.id} workspaceSlug={workspaceSlug} />{campaign.status === "draft" && canTransition ? <MutationForm action={activate} confirmation="Activer la campagne ? Le snapshot des cinq versions sera figé." successMessage="Campagne activée."><button className="button button-signal w-full" type="submit"><Rocket size={14} /> Activer la campagne</button></MutationForm> : null}<LifecycleActions campaignId={campaign.id} status={campaign.status} workspaceSlug={workspaceSlug} canTransition={canTransition} /></div></div>
     <PopulationPanel campaignId={campaign.id} sequenceVersionId={campaign.sequenceVersionId} workspaceSlug={workspaceSlug} />
+    {actionAccess ? <OutreachActionsPanel actions={campaignActions} canMutate={canMutateActions} campaignId={campaign.id} workspaceSlug={workspaceSlug} /> : <section className="panel mt-5" id="actions"><div className="panel-body text-sm text-muted">Les actions de cette campagne ne sont pas accessibles avec vos droits.</div></section>}
   </>;
 }
 

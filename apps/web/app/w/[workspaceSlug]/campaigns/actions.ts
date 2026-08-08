@@ -4,9 +4,11 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import {
   campaignTransition,
+  cancelOutreachAction,
   createCampaign,
   OutboundApiError,
   preflightCampaign,
+  retryOutreachAction,
   updateCampaign,
 } from "@/lib/api";
 
@@ -56,6 +58,24 @@ export async function activateCampaignAction(workspaceSlug: string, campaignId: 
 export async function lifecycleCampaignAction(workspaceSlug: string, campaignId: string, transition: "pause" | "resume" | "archive", _formData: FormData) {
   try { await campaignTransition(workspaceSlug, campaignId, transition); }
   catch (error) { throw new Error(formatApiError(error)); }
+  revalidatePath(`${root(workspaceSlug)}/${campaignId}`);
+}
+
+export async function cancelOutreachActionAction(workspaceSlug: string, campaignId: string, actionId: string, _formData: FormData) {
+  try {
+    await cancelOutreachAction(workspaceSlug, actionId);
+  } catch (error) {
+    throw new Error(formatApiError(error));
+  }
+  revalidatePath(`${root(workspaceSlug)}/${campaignId}`);
+}
+
+export async function retryOutreachActionAction(workspaceSlug: string, campaignId: string, actionId: string, _formData: FormData) {
+  try {
+    await retryOutreachAction(workspaceSlug, actionId);
+  } catch (error) {
+    throw new Error(formatApiError(error));
+  }
   revalidatePath(`${root(workspaceSlug)}/${campaignId}`);
 }
 
