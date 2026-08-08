@@ -41,6 +41,7 @@ export class ResearchWorker {
     private readonly outboxDispatcher?: OutboxDispatcher,
     private readonly importProcessor?: { process(job: LeasedJob): Promise<void> },
     private readonly outreachProcessor?: OutreachSchedulerProcessor,
+    private readonly enrichmentProcessor?: { process(job: LeasedJob): Promise<void> },
   ) {}
 
   stop(): void {
@@ -76,6 +77,7 @@ export class ResearchWorker {
         ...(this.conversationCommandProcessor ? ["conversation.command.execute"] : []),
         ...(this.importProcessor ? ["crm.import.apply"] : []),
         ...(this.outreachProcessor ? ["outreach.action.execute"] : []),
+        ...(this.enrichmentProcessor ? ["crm.enrichment.execute"] : []),
       ],
       limit: this.options.batchSize,
       leaseMs: this.options.leaseMs,
@@ -118,6 +120,8 @@ export class ResearchWorker {
         if (typeof payload.actionId !== "string") throw new Error("OUTREACH_ACTION_JOB_INVALID");
         await this.outreachProcessor.execute({ workspaceId: job.workspaceId, actionId: payload.actionId, now: this.clock.now() });
         await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
+      } else if (job.type === "crm.enrichment.execute" && this.enrichmentProcessor) {
+        await this.enrichmentProcessor.process(job);
       } else {
         await this.orchestrator.process(job);
       }

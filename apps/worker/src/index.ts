@@ -55,6 +55,7 @@ import { UnipileChatSynchronizer } from "@outbound/infrastructure/campaigns/unip
 import { PostgresCalendarIntegration } from "@outbound/infrastructure/calendar/postgres-calendar-integration";
 import { PostgresUnipileChannelConnections } from "@outbound/infrastructure/channels/postgres-unipile-channel-connections";
 import { PostgresImportService } from "@outbound/infrastructure/crm/postgres-import-service";
+import { EnrichmentJobProcessor, PostgresEnrichmentRepository } from "@outbound/infrastructure/crm/postgres-enrichment-repository";
 import { PostgresOutboxDispatcher } from "@outbound/infrastructure/outbox/postgres-outbox-dispatcher";
 import { HttpUnipileClient, UnavailableUnipileClient } from "@outbound/infrastructure/integrations/unipile-client";
 import { PostgresOutreachScheduler } from "@outbound/infrastructure/scheduler/postgres-outreach-scheduler";
@@ -69,6 +70,7 @@ const unipileChannelConnections = process.env.UNIPILE_DSN && process.env.UNIPILE
   : null;
 const queue = new PostgresJobQueue(database.client);
 const importService = new PostgresImportService(database.db, queue);
+const enrichmentRepository = new PostgresEnrichmentRepository(database.db, new SystemClock());
 const outboxDispatcher = new PostgresOutboxDispatcher(database.client);
 const unipileDsn = process.env.UNIPILE_DSN ?? "";
 const unipileApiKey = process.env.UNIPILE_API_KEY ?? "";
@@ -130,6 +132,11 @@ const discoveryRunner = new ProspectDiscoveryRunner(
       },
     );
   },
+);
+const enrichmentProcessor = new EnrichmentJobProcessor(
+  enrichmentRepository,
+  new CrawlerProspectEnricher(discoveryCrawler),
+  queue,
 );
 const discoveryProcessor = new ProspectDiscoveryJobProcessor(
   database.db,
@@ -244,7 +251,7 @@ const worker = new ResearchWorker(queue, orchestrator, clock, {
   leaseMs: positiveIntegerEnvironment("JOB_LEASE_MS", 60_000),
   batchSize: positiveIntegerEnvironment("JOB_BATCH_SIZE", 4),
   pollIntervalMs: positiveIntegerEnvironment("JOB_POLL_INTERVAL_MS", 1_000),
-}, documentService, discoveryProcessor, channelAssessmentProcessor, campaignAutomationProcessor, campaignCompositionProcessor, outreachDispatchProcessor, inboundReplyProcessor, automatedReplySendProcessor, conversationCommandProcessor, maintenance, outboxDispatcher, importService, outreachScheduler);
+}, documentService, discoveryProcessor, channelAssessmentProcessor, campaignAutomationProcessor, campaignCompositionProcessor, outreachDispatchProcessor, inboundReplyProcessor, automatedReplySendProcessor, conversationCommandProcessor, maintenance, outboxDispatcher, importService, outreachScheduler, enrichmentProcessor);
 
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
   process.once(signal, () => {

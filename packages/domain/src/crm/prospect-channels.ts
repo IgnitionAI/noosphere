@@ -15,6 +15,8 @@ export interface ProspectChannel {
   readonly evidenceUrl?: string | null;
   readonly evidenceSnippet?: string | null;
   readonly observedAt?: string | null;
+  /** Explicit source classification; absence means the number is not classified. */
+  readonly phoneKind?: "public_company" | "personal" | null;
 }
 
 export interface ProspectChannels {

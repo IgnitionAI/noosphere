@@ -1083,6 +1083,36 @@
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/ContactId" }],
       "post": { "operationId": "changeContactEmployment", "responses": { "201": { "description": "Employment changed" } } }
     },
+    "/api/v1/contacts/{contactId}/actions/enrich": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/ContactId" }],
+      "post": {
+        "operationId": "enrichContact",
+        "summary": "Queue an idempotent, provenance-preserving enrichment job",
+        "requestBody": { "required": false, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EnrichmentRequest" } } } },
+        "responses": {
+          "202": { "description": "Enrichment job queued", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EnrichmentJob" } } } },
+          "403": { "$ref": "#/components/responses/WorkspaceForbidden" },
+          "409": { "description": "The request key is already running or the channel is suppressed" },
+          "422": { "description": "The contact has insufficient identity data" }
+        }
+      }
+    },
+    "/api/v1/enrichment-jobs/{jobId}": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/JobId" }],
+      "get": { "operationId": "getEnrichmentJob", "responses": { "200": { "description": "Job status and observations", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EnrichmentJobDetail" } } } }, "404": { "description": "Job not found" } } }
+    },
+    "/api/v1/enrichment-jobs/{jobId}/actions/retry": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/JobId" }],
+      "post": { "operationId": "retryEnrichmentJob", "responses": { "202": { "description": "Enrichment retry queued" }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" }, "404": { "description": "Job not found" } } }
+    },
+    "/api/v1/enrichment-coverage": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
+      "get": { "operationId": "getEnrichmentCoverage", "responses": { "200": { "description": "Enrichment coverage grouped by source and status" } } }
+    },
+    "/api/v1/contacts/{contactId}/enrichment": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/ContactId" }],
+      "get": { "operationId": "getContactEnrichment", "responses": { "200": { "description": "Field observations and provenance" }, "404": { "description": "Contact not found" } } }
+    },
     "/api/v1/contacts/{contactId}/actions/suppress": {
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/ContactId" }],
       "post": { "operationId": "suppressContact", "responses": { "204": { "description": "Contact suppressed" } } }
@@ -1214,6 +1244,10 @@
       },
       "ContactId": {
         "name": "contactId", "in": "path", "required": true,
+        "schema": { "type": "string", "format": "uuid" }
+      },
+      "JobId": {
+        "name": "jobId", "in": "path", "required": true,
         "schema": { "type": "string", "format": "uuid" }
       },
       "SuppressionId": {
@@ -2295,6 +2329,57 @@
           "displayName": { "type": ["string", "null"] },
           "accessToken": { "type": "string", "writeOnly": true }
         }
+      },
+      "EnrichmentRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": { "requestKey": { "type": "string", "minLength": 1, "maxLength": 500 } }
+      },
+      "EnrichmentObservation": {
+        "type": "object",
+        "required": ["id", "field", "value", "normalizedValue", "status", "confidence", "source", "observedAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "field": { "type": "string" },
+          "value": { "type": "string" },
+          "normalizedValue": { "type": "string" },
+          "status": { "type": "string", "enum": ["found", "probable", "verified", "invalid"] },
+          "confidence": { "type": "string", "enum": ["high", "medium", "low", "none"] },
+          "source": { "type": "string" },
+          "provider": { "type": ["string", "null"] },
+          "evidenceUrl": { "type": ["string", "null"], "format": "uri" },
+          "evidenceSnippet": { "type": ["string", "null"] },
+          "phoneKind": { "type": ["string", "null"], "enum": ["public_company", "personal", null] },
+          "observedAt": { "type": "string", "format": "date-time" },
+          "expiresAt": { "type": ["string", "null"], "format": "date-time" }
+        }
+      },
+      "EnrichmentJob": {
+        "type": "object",
+        "required": ["id", "entityType", "entityId", "requestKey", "status", "provider", "attempts", "maxAttempts", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "entityType": { "type": "string", "enum": ["contact", "company"] },
+          "entityId": { "type": "string", "format": "uuid" },
+          "requestKey": { "type": "string" },
+          "status": { "type": "string", "enum": ["queued", "running", "succeeded", "failed"] },
+          "provider": { "type": "string" },
+          "attempts": { "type": "integer" },
+          "maxAttempts": { "type": "integer" },
+          "errorCode": { "type": ["string", "null"] },
+          "errorMessage": { "type": ["string", "null"] },
+          "correlationId": { "type": "string" },
+          "startedAt": { "type": ["string", "null"], "format": "date-time" },
+          "completedAt": { "type": ["string", "null"], "format": "date-time" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "EnrichmentJobDetail": {
+        "allOf": [
+          { "$ref": "#/components/schemas/EnrichmentJob" },
+          { "type": "object", "required": ["observations"], "properties": { "observations": { "type": "array", "items": { "$ref": "#/components/schemas/EnrichmentObservation" } } } }
+        ]
       },
       "Problem": {
         "type": "object",

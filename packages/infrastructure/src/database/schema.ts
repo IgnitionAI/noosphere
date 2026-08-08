@@ -1014,6 +1014,25 @@ export const contactStatusEnum = pgEnum("contact_status", [
   "suppressed",
 ]);
 
+export const enrichmentJobStatusEnum = pgEnum("enrichment_job_status", [
+  "queued",
+  "running",
+  "succeeded",
+  "failed",
+]);
+
+export const enrichmentObservationStatusEnum = pgEnum("enrichment_observation_status", [
+  "found",
+  "probable",
+  "verified",
+  "invalid",
+]);
+
+export const enrichmentPhoneKindEnum = pgEnum("enrichment_phone_kind", [
+  "public_company",
+  "personal",
+]);
+
 export const suppressionChannelEnum = pgEnum("suppression_channel", [
   "global",
   "email",
@@ -1219,6 +1238,82 @@ export const contactSuppressions = pgTable(
     uniqueIndex("contact_suppressions_hmac_uq")
       .on(table.workspaceId, table.identityType, table.identityFingerprint)
       .where(sql`${table.identityFingerprint} is not null`),
+  ],
+);
+
+export const enrichmentJobs = pgTable(
+  "enrichment_jobs",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    entityType: varchar("entity_type", { length: 30 }).notNull(),
+    entityId: uuid("entity_id").notNull(),
+    requestKey: varchar("request_key", { length: 500 }).notNull(),
+    status: enrichmentJobStatusEnum("status").notNull().default("queued"),
+    provider: varchar("provider", { length: 120 }).notNull().default("crawler"),
+    attempts: integer("attempts").notNull().default(0),
+    maxAttempts: integer("max_attempts").notNull().default(3),
+    correlationId: varchar("correlation_id", { length: 200 }).notNull(),
+    errorCode: varchar("error_code", { length: 120 }),
+    errorMessage: text("error_message"),
+    requestedBy: uuid("requested_by").references(() => authUsers.id, { onDelete: "set null" }),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("enrichment_jobs_workspace_request_key_uq").on(table.workspaceId, table.requestKey),
+    index("enrichment_jobs_workspace_status_idx").on(table.workspaceId, table.status, table.createdAt),
+    index("enrichment_jobs_entity_idx").on(table.workspaceId, table.entityType, table.entityId),
+  ],
+);
+
+export const enrichmentObservations = pgTable(
+  "enrichment_observations",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    jobId: uuid("job_id")
+      .notNull()
+      .references(() => enrichmentJobs.id, { onDelete: "cascade" }),
+    entityType: varchar("entity_type", { length: 30 }).notNull(),
+    entityId: uuid("entity_id").notNull(),
+    contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "cascade" }),
+    companyId: uuid("company_id").references(() => companies.id, { onDelete: "cascade" }),
+    field: varchar("field", { length: 160 }).notNull(),
+    value: text("value").notNull(),
+    normalizedValue: text("normalized_value").notNull(),
+    status: enrichmentObservationStatusEnum("status").notNull(),
+    confidence: varchar("confidence", { length: 20 }).notNull().default("none"),
+    source: varchar("source", { length: 200 }).notNull(),
+    provider: varchar("provider", { length: 120 }),
+    evidenceUrl: text("evidence_url"),
+    evidenceSnippet: text("evidence_snippet"),
+    phoneKind: enrichmentPhoneKindEnum("phone_kind"),
+    observedAt: timestamp("observed_at", { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("enrichment_observations_contact_value_uq").on(
+      table.workspaceId,
+      table.contactId,
+      table.field,
+      table.normalizedValue,
+    ),
+    uniqueIndex("enrichment_observations_company_value_uq").on(
+      table.workspaceId,
+      table.companyId,
+      table.field,
+      table.normalizedValue,
+    ),
+    index("enrichment_observations_entity_idx").on(table.workspaceId, table.entityType, table.entityId, table.field),
+    index("enrichment_observations_job_idx").on(table.workspaceId, table.jobId),
   ],
 );
 
