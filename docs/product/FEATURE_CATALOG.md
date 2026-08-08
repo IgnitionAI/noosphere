@@ -413,6 +413,9 @@ explication, sélection manuelle, conflits et enrollment.
 **Dépendances** : F-023, F-026, F-031.  
 **Surface** : campagne builder, campagne détail, approvals.
 
+**Spécification** :
+[`F-032-POPULATION-ENROLLMENT.md`](features/F-032-POPULATION-ENROLLMENT.md).
+
 ### F-033 — File d’approbation (`P0`)
 
 **Valeur** : superviser efficacement les actions sensibles.
@@ -431,6 +434,9 @@ justification, filtres et permissions.
 **Dépendances** : F-031, F-032.  
 **Surface** : `/w/[workspaceSlug]/approvals`.
 
+**Spécification** :
+[`F-033-APPROVALS.md`](features/F-033-APPROVALS.md).
+
 ### F-034 — Scheduler et actions d’outreach (`P0`)
 
 **Valeur** : exécuter les séquences de façon fiable.
@@ -447,6 +453,9 @@ attempts, retries, idempotence, pause et annulation.
 - une action annulée ne peut plus être exécutée par un job déjà livré.
 
 **Dépendances** : F-003, F-026, F-033, F-035.
+
+**Spécification** :
+[`F-034-SCHEDULER.md`](features/F-034-SCHEDULER.md).
 
 ### F-035 — Comptes connectés et santé fournisseurs (`P0`)
 
@@ -465,6 +474,9 @@ capacités, quotas, erreurs, reconnexion et webhooks.
 
 **Dépendances** : F-002, F-003.  
 **Surface** : `/w/[workspaceSlug]/integrations`.
+
+**Spécification** :
+[`F-035-CONNECTED-ACCOUNTS.md`](features/F-035-CONNECTED-ACCOUNTS.md).
 
 ## Epic 5 — Inbox et revenu
 
