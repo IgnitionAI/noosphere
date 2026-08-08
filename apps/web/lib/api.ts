@@ -156,6 +156,7 @@ export class OutboundApiError extends Error {
     readonly status: number,
     readonly code: string,
     message: string,
+    readonly details: unknown = null,
   ) {
     super(message);
     this.name = "OutboundApiError";
@@ -767,6 +768,96 @@ export async function undoContactMerge(workspaceSlug: string, contactId: string)
   });
 }
 
+export type MessagingChannel = "linkedin" | "email" | "whatsapp";
+export interface MessagingTemplate {
+  readonly channel: MessagingChannel;
+  readonly body: string;
+  readonly subject?: string;
+  readonly maxLength?: number;
+  readonly cta?: string;
+  readonly constraints?: Readonly<Record<string, unknown>>;
+}
+export interface MessagingStrategyRules {
+  readonly tone: string;
+  readonly angle: string;
+  readonly templates: readonly MessagingTemplate[];
+  readonly allowedClaimIds: readonly string[];
+  readonly offerVersionId?: string;
+  readonly constraints?: Readonly<Record<string, unknown>>;
+}
+export interface MessagingStrategyVersion {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly strategyId: string;
+  readonly version: number;
+  readonly rules: MessagingStrategyRules;
+  readonly publishedBy: string | null;
+  readonly publishedAt: string;
+  readonly createdAt?: string;
+}
+export interface MessagingStrategy {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly name: string;
+  readonly currentVersion: number;
+  readonly draftRules: MessagingStrategyRules;
+  readonly deletedAt: string | null;
+  readonly versions?: readonly MessagingStrategyVersion[];
+}
+export interface AIPolicyRules {
+  readonly firstContactRequiresHumanApproval?: boolean;
+  readonly responsesRequireHumanApproval?: boolean;
+  readonly followUpsMayBeAutomated: boolean;
+  readonly escalationRules?: Readonly<Record<string, unknown>>;
+}
+export interface AIPolicyVersion {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly policyId: string;
+  readonly version: number;
+  readonly rules: AIPolicyRules;
+  readonly publishedBy: string | null;
+  readonly publishedAt: string;
+  readonly createdAt?: string;
+}
+export interface AIPolicy {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly name: string;
+  readonly currentVersion: number;
+  readonly draftRules: AIPolicyRules;
+  readonly deletedAt: string | null;
+  readonly versions?: readonly AIPolicyVersion[];
+}
+
+export async function listMessagingStrategies(workspaceSlug: string): Promise<{ data: MessagingStrategy[] }> {
+  return crmFetch(workspaceSlug, "/api/v1/messaging-strategies");
+}
+export async function createMessagingStrategy(workspaceSlug: string, input: { name: string; rules: MessagingStrategyRules }): Promise<MessagingStrategy> {
+  return crmFetch(workspaceSlug, "/api/v1/messaging-strategies", { method: "POST", body: input });
+}
+export async function getMessagingStrategy(workspaceSlug: string, strategyId: string): Promise<MessagingStrategy> {
+  return crmFetch(workspaceSlug, `/api/v1/messaging-strategies/${strategyId}`);
+}
+export async function updateMessagingStrategy(workspaceSlug: string, strategyId: string, input: { name?: string; rules?: MessagingStrategyRules }): Promise<MessagingStrategy> {
+  return crmFetch(workspaceSlug, `/api/v1/messaging-strategies/${strategyId}`, { method: "PATCH", body: input });
+}
+export async function publishMessagingStrategy(workspaceSlug: string, strategyId: string): Promise<MessagingStrategyVersion> {
+  return crmFetch(workspaceSlug, `/api/v1/messaging-strategies/${strategyId}/actions/publish`, { method: "POST", body: {} });
+}
+export async function listAIPolicies(workspaceSlug: string): Promise<{ data: AIPolicy[] }> {
+  return crmFetch(workspaceSlug, "/api/v1/ai-policies");
+}
+export async function createAIPolicy(workspaceSlug: string, input: { name: string; rules: AIPolicyRules }): Promise<AIPolicy> {
+  return crmFetch(workspaceSlug, "/api/v1/ai-policies", { method: "POST", body: input });
+}
+export async function updateAIPolicy(workspaceSlug: string, policyId: string, input: { name?: string; rules?: AIPolicyRules }): Promise<AIPolicy> {
+  return crmFetch(workspaceSlug, `/api/v1/ai-policies/${policyId}`, { method: "PATCH", body: input });
+}
+export async function publishAIPolicy(workspaceSlug: string, policyId: string): Promise<AIPolicyVersion> {
+  return crmFetch(workspaceSlug, `/api/v1/ai-policies/${policyId}/actions/publish`, { method: "POST", body: {} });
+}
+
 export type OfferClaimValidationStatus = "hypothesis" | "sourced" | "validated" | "invalidated";
 
 export interface OfferClaim {
@@ -1059,11 +1150,12 @@ async function apiFetch(
 
 async function throwApiError(response: Response): Promise<never> {
   const body = (await response.json().catch(() => null)) as
-    | { code?: string; detail?: string; message?: string }
+    | { code?: string; detail?: string; message?: string; errors?: unknown; blockedClaimIds?: unknown }
     | null;
   throw new OutboundApiError(
     response.status,
     body?.code ?? "UPSTREAM_ERROR",
     body?.detail ?? body?.message ?? "Le serveur n’a pas pu traiter la demande.",
+    body ? { errors: body.errors, blockedClaimIds: body.blockedClaimIds } : null,
   );
 }

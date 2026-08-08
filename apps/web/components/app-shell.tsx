@@ -11,6 +11,7 @@ import {
   Inbox,
   LayoutDashboard,
   Menu,
+  MessageSquareText,
   Package,
   Search,
   Send,
@@ -47,11 +48,13 @@ export function AppShell({
   const productReadingHref = `/w/${workspace.slug}/strategy/product-reading`;
   const icpsHref = `/w/${workspace.slug}/icps`;
   const offersHref = `/w/${workspace.slug}/offers`;
+  const messagingHref = `/w/${workspace.slug}/messaging`;
   const suppressionsHref = `/w/${workspace.slug}/suppressions`;
   const aiSettingsHref = `/w/${workspace.slug}/settings/ai`;
   const productReadingActive = pathname.startsWith(productReadingHref);
   const icpsActive = pathname.startsWith(icpsHref);
   const offersActive = pathname.startsWith(offersHref);
+  const messagingActive = pathname.startsWith(messagingHref);
   const crmNavigation = [
     [`/w/${workspace.slug}/prospects`, "Prospects", Users],
     [`/w/${workspace.slug}/companies`, "Entreprises", Building2],
@@ -167,6 +170,19 @@ export function AppShell({
           >
             <Package size={17} />
             Offres
+          </Link>
+          <Link
+            aria-current={messagingActive ? "page" : undefined}
+            className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium ${
+              messagingActive
+                ? "bg-white/10 text-white"
+                : "text-slate-300 hover:bg-white/5 hover:text-white"
+            }`}
+            href={messagingHref}
+            onClick={() => setOpen(false)}
+          >
+            <MessageSquareText size={17} />
+            Messages & supervision
           </Link>
           <div className="mb-2 mt-6 px-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">
             Prospection

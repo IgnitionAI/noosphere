@@ -98,7 +98,7 @@ export function MutationForm({
       {status === "error" ? (
         <p className="mt-2 flex items-start gap-2 rounded-lg border border-danger/30 bg-red-50 p-2 text-xs text-danger" role="alert">
           <TriangleAlert className="mt-0.5 shrink-0" size={13} />
-          <span>{message}</span>
+          <span className="whitespace-pre-line">{message}</span>
         </p>
       ) : null}
     </form>
