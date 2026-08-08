@@ -14,6 +14,11 @@ export interface OutboxDispatcher {
   dispatchBatch(): Promise<number>;
 }
 
+export interface OutreachSchedulerProcessor {
+  markDue(input: { now: Date; queue: JobQueue }): Promise<number>;
+  execute(input: { workspaceId: string; actionId: string; now: Date }): Promise<unknown>;
+}
+
 export class ResearchWorker {
   #stopping = false;
 
@@ -25,6 +30,7 @@ export class ResearchWorker {
     private readonly documentProcessor?: { process(job: LeasedJob): Promise<void> },
     private readonly outboxDispatcher?: OutboxDispatcher,
     private readonly importProcessor?: { process(job: LeasedJob): Promise<void> },
+    private readonly outreachProcessor?: OutreachSchedulerProcessor,
   ) {}
 
   stop(): void {
@@ -39,9 +45,10 @@ export class ResearchWorker {
   }
 
   async tick(): Promise<number> {
+    if (this.outreachProcessor) await this.outreachProcessor.markDue({ now: this.clock.now(), queue: this.queue });
     const jobs = await this.queue.lease({
       workerId: this.options.workerId,
-      types: ["research.stage.execute", "research.document.process", "crm.import.apply"],
+      types: ["research.stage.execute", "research.document.process", "crm.import.apply", "outreach.action.execute"],
       limit: this.options.batchSize,
       leaseMs: this.options.leaseMs,
       now: this.clock.now(),
@@ -62,6 +69,11 @@ export class ResearchWorker {
         await this.documentProcessor.process(job);
       } else if (job.type === "crm.import.apply" && this.importProcessor) {
         await this.importProcessor.process(job);
+      } else if (job.type === "outreach.action.execute" && this.outreachProcessor) {
+        const payload = job.payload as { actionId?: unknown };
+        if (typeof payload.actionId !== "string") throw new Error("OUTREACH_ACTION_JOB_INVALID");
+        await this.outreachProcessor.execute({ workspaceId: job.workspaceId, actionId: payload.actionId, now: this.clock.now() });
+        await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
       } else {
         await this.orchestrator.process(job);
       }

@@ -919,6 +919,22 @@
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/CampaignId" }],
       "post": { "operationId": "archiveCampaign", "responses": { "200": { "description": "Campaign archived" }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" } } }
     },
+    "/api/v1/campaigns/{campaignId}/actions": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/CampaignId" }],
+      "get": { "operationId": "listCampaignOutreachActions", "parameters": [{ "name": "status", "in": "query", "schema": { "type": "string", "enum": ["planned", "awaiting_approval", "due", "sending", "sent", "failed", "cancelled", "suspended"] } }], "responses": { "200": { "description": "Scheduled and executed outreach actions", "content": { "application/json": { "schema": { "type": "object", "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/OutreachAction" } } } } } } } } }
+    },
+    "/api/v1/actions/{actionId}": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/ActionId" }],
+      "get": { "operationId": "getOutreachAction", "responses": { "200": { "description": "Outreach action detail", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OutreachAction" } } } } } }
+    },
+    "/api/v1/actions/{actionId}/actions/cancel": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/ActionId" }],
+      "post": { "operationId": "cancelOutreachAction", "responses": { "200": { "description": "Outreach action cancelled" }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" } } }
+    },
+    "/api/v1/actions/{actionId}/actions/retry": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/ActionId" }],
+      "post": { "operationId": "retryOutreachAction", "responses": { "200": { "description": "Outreach action rescheduled" }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" } } }
+    },
     "/api/v1/campaigns/{campaignId}/prospects": {
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/CampaignId" }],
       "get": { "operationId": "listCampaignProspects", "responses": { "200": { "description": "Deterministically scored population with explanations", "content": { "application/json": { "schema": { "type": "object", "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/CampaignProspect" } } } } } } } } }
@@ -1222,6 +1238,10 @@
       },
       "ApprovalItemId": {
         "name": "approvalItemId", "in": "path", "required": true,
+        "schema": { "type": "string", "format": "uuid" }
+      },
+      "ActionId": {
+        "name": "actionId", "in": "path", "required": true,
         "schema": { "type": "string", "format": "uuid" }
       }
     },
@@ -1930,6 +1950,12 @@
       "SequenceStepsRequest": {
         "type": "object", "required": ["steps"], "additionalProperties": false,
         "properties": { "steps": { "type": "array", "maxItems": 30, "items": { "$ref": "#/components/schemas/SequenceStepDraft" } } }
+      },
+      "OutreachAction": {
+        "type": "object", "required": ["id", "campaignId", "enrollmentId", "contactId", "sequenceVersionId", "stepPosition", "channel", "recipient", "status", "idempotencyKey", "scheduledAt", "attemptCount", "maxAttempts", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" }, "campaignId": { "type": "string", "format": "uuid" }, "enrollmentId": { "type": "string", "format": "uuid" }, "contactId": { "type": "string", "format": "uuid" }, "sequenceVersionId": { "type": "string", "format": "uuid" }, "approvalItemId": { "type": ["string", "null"], "format": "uuid" }, "connectedAccountId": { "type": ["string", "null"], "format": "uuid" }, "stepPosition": { "type": "integer" }, "channel": { "type": "string", "const": "email" }, "recipient": { "type": "string" }, "subject": { "type": ["string", "null"] }, "status": { "type": "string", "enum": ["planned", "awaiting_approval", "due", "sending", "sent", "failed", "cancelled", "suspended"] }, "idempotencyKey": { "type": "string" }, "scheduledAt": { "type": "string", "format": "date-time" }, "attemptCount": { "type": "integer" }, "maxAttempts": { "type": "integer" }, "nextAttemptAt": { "type": ["string", "null"], "format": "date-time" }, "lastErrorCode": { "type": ["string", "null"] }, "lastErrorMessage": { "type": ["string", "null"] }, "providerMessageId": { "type": ["string", "null"] }, "sentAt": { "type": ["string", "null"], "format": "date-time" }, "responseReceivedAt": { "type": ["string", "null"], "format": "date-time" }, "cancelledAt": { "type": ["string", "null"], "format": "date-time" }, "createdAt": { "type": "string", "format": "date-time" }, "updatedAt": { "type": "string", "format": "date-time" }
+        }
       },
       "Campaign": {
         "type": "object", "required": ["id", "workspaceId", "name", "objective", "status", "offerVersionId", "icpVersionId", "messagingStrategyVersionId", "aiPolicyVersionId", "sequenceVersionId", "createdAt", "updatedAt"],

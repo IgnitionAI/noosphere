@@ -190,6 +190,20 @@
       "when": 1786183900000,
       "tag": "0026_approval_items",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1786184000000,
+      "tag": "0027_outreach_scheduler",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1786184100000,
+      "tag": "0028_outreach_responses",
+      "breakpoints": true
     }
   ]
 }

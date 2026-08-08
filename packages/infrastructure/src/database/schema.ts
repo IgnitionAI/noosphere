@@ -1331,6 +1331,86 @@ export const approvalItems = pgTable(
   ],
 );
 
+export const outreachActionStatusEnum = pgEnum("outreach_action_status", [
+  "planned",
+  "awaiting_approval",
+  "due",
+  "sending",
+  "sent",
+  "failed",
+  "cancelled",
+  "suspended",
+]);
+
+export const outreachAttemptStatusEnum = pgEnum("outreach_attempt_status", ["sending", "sent", "failed", "rate_limited"]);
+
+export const outreachActions = pgTable(
+  "outreach_actions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull(),
+    campaignId: uuid("campaign_id").notNull(),
+    enrollmentId: uuid("enrollment_id").notNull(),
+    contactId: uuid("contact_id").notNull(),
+    sequenceVersionId: uuid("sequence_version_id").notNull(),
+    approvalItemId: uuid("approval_item_id"),
+    connectedAccountId: uuid("connected_account_id"),
+    stepPosition: integer("step_position").notNull(),
+    channel: varchar("channel", { length: 40 }).notNull(),
+    recipient: varchar("recipient", { length: 600 }).notNull(),
+    subject: varchar("subject", { length: 300 }),
+    body: text("body").notNull(),
+    idempotencyKey: varchar("idempotency_key", { length: 500 }).notNull(),
+    scheduledAt: timestamp("scheduled_at", { withTimezone: true }).notNull(),
+    status: outreachActionStatusEnum("status").notNull().default("planned"),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    maxAttempts: integer("max_attempts").notNull().default(3),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
+    lastErrorCode: varchar("last_error_code", { length: 120 }),
+    lastErrorMessage: text("last_error_message"),
+    providerMessageId: varchar("provider_message_id", { length: 300 }),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    responseReceivedAt: timestamp("response_received_at", { withTimezone: true }),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({ columns: [table.workspaceId], foreignColumns: [workspaces.id], name: "outreach_actions_workspace_fk" }).onDelete("cascade"),
+    foreignKey({ columns: [table.workspaceId, table.campaignId], foreignColumns: [campaigns.workspaceId, campaigns.id], name: "outreach_actions_campaign_fk" }).onDelete("cascade"),
+    foreignKey({ columns: [table.workspaceId, table.enrollmentId], foreignColumns: [campaignEnrollments.workspaceId, campaignEnrollments.id], name: "outreach_actions_enrollment_fk" }).onDelete("cascade"),
+    foreignKey({ columns: [table.workspaceId, table.contactId], foreignColumns: [contacts.workspaceId, contacts.id], name: "outreach_actions_contact_fk" }).onDelete("cascade"),
+    foreignKey({ columns: [table.workspaceId, table.sequenceVersionId], foreignColumns: [sequenceVersions.workspaceId, sequenceVersions.id], name: "outreach_actions_sequence_version_fk" }).onDelete("restrict"),
+    foreignKey({ columns: [table.approvalItemId], foreignColumns: [approvalItems.id], name: "outreach_actions_approval_item_fk" }).onDelete("set null"),
+    foreignKey({ columns: [table.connectedAccountId], foreignColumns: [connectedAccounts.id], name: "outreach_actions_account_fk" }).onDelete("set null"),
+    unique("outreach_actions_workspace_id_uq").on(table.workspaceId, table.id),
+    uniqueIndex("outreach_actions_idempotency_uq").on(table.workspaceId, table.idempotencyKey),
+    index("outreach_actions_due_idx").on(table.workspaceId, table.status, table.scheduledAt),
+    index("outreach_actions_campaign_idx").on(table.workspaceId, table.campaignId, table.createdAt),
+  ],
+);
+
+export const outreachAttempts = pgTable(
+  "outreach_attempts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull(),
+    actionId: uuid("action_id").notNull(),
+    attempt: integer("attempt").notNull(),
+    status: outreachAttemptStatusEnum("status").notNull(),
+    providerMessageId: varchar("provider_message_id", { length: 300 }),
+    errorCode: varchar("error_code", { length: 120 }),
+    errorMessage: text("error_message"),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+  },
+  (table) => [
+    foreignKey({ columns: [table.workspaceId], foreignColumns: [workspaces.id], name: "outreach_attempts_workspace_fk" }).onDelete("cascade"),
+    foreignKey({ columns: [table.workspaceId, table.actionId], foreignColumns: [outreachActions.workspaceId, outreachActions.id], name: "outreach_attempts_action_fk" }).onDelete("cascade"),
+    unique("outreach_attempts_action_attempt_uq").on(table.workspaceId, table.actionId, table.attempt),
+  ],
+);
+
 export const jobs = pgTable(
   "jobs",
   {

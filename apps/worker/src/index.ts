@@ -17,12 +17,18 @@ import { PostgresResearchToolRunRecorder } from "@outbound/infrastructure/ai/pos
 import { PostgresWorkspaceAiSettingsRepository } from "@outbound/infrastructure/workspaces/postgres-workspace-ai-settings-repository";
 import { PostgresOutboxDispatcher } from "@outbound/infrastructure/outbox/postgres-outbox-dispatcher";
 import { PostgresImportService } from "@outbound/infrastructure/crm/postgres-import-service";
+import { PostgresOutreachScheduler } from "@outbound/infrastructure/scheduler/postgres-outreach-scheduler";
+import { HttpUnipileClient, UnavailableUnipileClient } from "@outbound/infrastructure/integrations/unipile-client";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
 const queue = new PostgresJobQueue(database.client);
 const importService = new PostgresImportService(database.db, queue);
 const outboxDispatcher = new PostgresOutboxDispatcher(database.client);
+const unipileDsn = process.env.UNIPILE_DSN ?? "";
+const unipileApiKey = process.env.UNIPILE_API_KEY ?? "";
+const unipileClient = unipileDsn && unipileApiKey ? new HttpUnipileClient({ dsn: unipileDsn, apiKey: unipileApiKey, timeoutMs: positiveIntegerEnvironment("UNIPILE_TIMEOUT_MS", 10_000) }) : new UnavailableUnipileClient();
+const outreachScheduler = new PostgresOutreachScheduler(database.db, unipileClient);
 const repository = new PostgresProductResearchRepository(database.db);
 const clock = new SystemClock();
 const ids = new CryptoIdGenerator();
@@ -58,7 +64,7 @@ const worker = new ResearchWorker(queue, orchestrator, clock, {
   leaseMs: positiveIntegerEnvironment("JOB_LEASE_MS", 60_000),
   batchSize: positiveIntegerEnvironment("JOB_BATCH_SIZE", 4),
   pollIntervalMs: positiveIntegerEnvironment("JOB_POLL_INTERVAL_MS", 1_000),
-}, documentService, outboxDispatcher, importService);
+}, documentService, outboxDispatcher, importService, outreachScheduler);
 
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
   process.once(signal, () => {

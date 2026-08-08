@@ -16,6 +16,7 @@ import { createMergeHttpHandler } from "@outbound/interface/http/merge-handler";
 import { createMessagingStrategyHttpHandler } from "@outbound/interface/http/messaging-strategy-handler";
 import { createConnectedAccountHttpHandler } from "@outbound/interface/http/connected-account-handler";
 import { createApprovalHttpHandler } from "@outbound/interface/http/approval-handler";
+import { createOutreachHttpHandler } from "@outbound/interface/http/outreach-handler";
 import {
   ProviderUnavailableError,
   UnipileProspectSource,
@@ -82,6 +83,9 @@ const crm = createCrmHttpHandler({
 });
 const unipileDsn = process.env.UNIPILE_DSN ?? "";
 const unipileApiKey = process.env.UNIPILE_API_KEY ?? "";
+const unipileClient = unipileDsn && unipileApiKey
+  ? new HttpUnipileClient({ dsn: unipileDsn, apiKey: unipileApiKey, timeoutMs: positiveIntegerEnvironment("UNIPILE_TIMEOUT_MS", 10_000) })
+  : new UnavailableUnipileClient();
 const discovery = createDiscoveryHttpHandler({
   database: database.db,
   contextResolver: auth.contextResolver,
@@ -119,11 +123,10 @@ const connectedAccounts = createConnectedAccountHttpHandler({
   database: database.db,
   contextResolver: auth.contextResolver,
   webhookSecret: process.env.UNIPILE_WEBHOOK_SECRET ?? "",
-  client: unipileDsn && unipileApiKey
-    ? new HttpUnipileClient({ dsn: unipileDsn, apiKey: unipileApiKey, timeoutMs: positiveIntegerEnvironment("UNIPILE_TIMEOUT_MS", 10_000) })
-    : new UnavailableUnipileClient(),
+  client: unipileClient,
 });
 const approvals = createApprovalHttpHandler({ database: database.db, contextResolver: auth.contextResolver });
+const outreach = createOutreachHttpHandler({ database: database.db, contextResolver: auth.contextResolver });
 const port = positiveIntegerEnvironment("PORT", 3000);
 const server = Bun.serve({
   port,
@@ -147,6 +150,7 @@ const server = Bun.serve({
     if (pathname.startsWith("/api/v1/sequences")) {
       return sequenceHandler(request);
     }
+    if (pathname.startsWith("/api/v1/campaigns/") && pathname.endsWith("/actions")) return outreach(request);
     if (pathname.startsWith("/api/v1/campaigns")) {
       return campaignHandler(request);
     }
@@ -157,6 +161,7 @@ const server = Bun.serve({
       return connectedAccounts(request);
     }
     if (pathname.startsWith("/api/v1/approval-items")) return approvals(request);
+    if (pathname.startsWith("/api/v1/actions/")) return outreach(request);
     if (pathname === "/health/live") return Response.json({ status: "ok" });
     if (pathname === "/health/ready") {
       try {
