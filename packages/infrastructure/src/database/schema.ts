@@ -1224,6 +1224,72 @@ export const campaigns = pgTable(
   ],
 );
 
+export const campaignProspectStatusEnum = pgEnum("campaign_prospect_status", [
+  "candidate",
+  "selected",
+  "excluded",
+  "enrolled",
+]);
+
+export const campaignEnrollmentStatusEnum = pgEnum("campaign_enrollment_status", [
+  "active",
+  "completed",
+  "cancelled",
+]);
+
+export const campaignProspects = pgTable(
+  "campaign_prospects",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull(),
+    campaignId: uuid("campaign_id").notNull(),
+    contactId: uuid("contact_id").notNull(),
+    status: campaignProspectStatusEnum("status").notNull().default("candidate"),
+    score: numeric("score", { precision: 7, scale: 4 }).notNull().default("0"),
+    explanation: jsonb("explanation").notNull().default({}),
+    exclusionReason: text("exclusion_reason"),
+    selectedAt: timestamp("selected_at", { withTimezone: true }),
+    excludedAt: timestamp("excluded_at", { withTimezone: true }),
+    enrolledAt: timestamp("enrolled_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({ columns: [table.workspaceId], foreignColumns: [workspaces.id], name: "campaign_prospects_workspace_fk" }).onDelete("cascade"),
+    foreignKey({ columns: [table.workspaceId, table.campaignId], foreignColumns: [campaigns.workspaceId, campaigns.id], name: "campaign_prospects_campaign_fk" }).onDelete("cascade"),
+    foreignKey({ columns: [table.workspaceId, table.contactId], foreignColumns: [contacts.workspaceId, contacts.id], name: "campaign_prospects_contact_fk" }).onDelete("cascade"),
+    unique("campaign_prospects_workspace_id_uq").on(table.workspaceId, table.id),
+    uniqueIndex("campaign_prospects_campaign_contact_uq").on(table.workspaceId, table.campaignId, table.contactId),
+    index("campaign_prospects_campaign_status_idx").on(table.workspaceId, table.campaignId, table.status, table.score),
+  ],
+);
+
+export const campaignEnrollments = pgTable(
+  "campaign_enrollments",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull(),
+    campaignId: uuid("campaign_id").notNull(),
+    contactId: uuid("contact_id").notNull(),
+    sequenceVersionId: uuid("sequence_version_id").notNull(),
+    status: campaignEnrollmentStatusEnum("status").notNull().default("active"),
+    enrolledBy: uuid("enrolled_by").references(() => authUsers.id, { onDelete: "set null" }),
+    enrolledAt: timestamp("enrolled_at", { withTimezone: true }).notNull().defaultNow(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({ columns: [table.workspaceId], foreignColumns: [workspaces.id], name: "campaign_enrollments_workspace_fk" }).onDelete("cascade"),
+    foreignKey({ columns: [table.workspaceId, table.campaignId], foreignColumns: [campaigns.workspaceId, campaigns.id], name: "campaign_enrollments_campaign_fk" }).onDelete("cascade"),
+    foreignKey({ columns: [table.workspaceId, table.contactId], foreignColumns: [contacts.workspaceId, contacts.id], name: "campaign_enrollments_contact_fk" }).onDelete("cascade"),
+    foreignKey({ columns: [table.workspaceId, table.sequenceVersionId], foreignColumns: [sequenceVersions.workspaceId, sequenceVersions.id], name: "campaign_enrollments_sequence_version_fk" }).onDelete("restrict"),
+    unique("campaign_enrollments_workspace_id_uq").on(table.workspaceId, table.id),
+    uniqueIndex("campaign_enrollments_campaign_contact_uq").on(table.workspaceId, table.campaignId, table.contactId),
+    uniqueIndex("campaign_enrollments_active_contact_uq").on(table.workspaceId, table.contactId).where(sql`${table.status} = 'active'`),
+    index("campaign_enrollments_campaign_idx").on(table.workspaceId, table.campaignId, table.createdAt),
+  ],
+);
+
 export const jobs = pgTable(
   "jobs",
   {

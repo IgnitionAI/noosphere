@@ -1,5 +1,6 @@
 import { z, ZodError } from "zod";
 import { PostgresCampaignRepository, CampaignPreflightError } from "@outbound/infrastructure/campaigns/postgres-campaign-repository";
+import { CampaignPopulationError, PostgresCampaignPopulationRepository } from "@outbound/infrastructure/campaigns/postgres-campaign-population-repository";
 import type { Database } from "@outbound/infrastructure/database/client";
 import {
   RequestAuthenticationError,
@@ -38,6 +39,12 @@ const campaignPatchSchema = z.object({
 const campaignPath = /^\/api\/v1\/campaigns\/([^/]+)$/;
 const preflightPath = /^\/api\/v1\/campaigns\/([^/]+)\/actions\/preflight$/;
 const transitionPath = /^\/api\/v1\/campaigns\/([^/]+)\/actions\/(activate|pause|resume|archive)$/;
+const prospectsPath = /^\/api\/v1\/campaigns\/([^/]+)\/prospects$/;
+const selectProspectsPath = /^\/api\/v1\/campaigns\/([^/]+)\/prospects\/select$/;
+const prospectActionPath = /^\/api\/v1\/campaigns\/([^/]+)\/prospects\/([^/]+)\/actions\/(enroll|exclude)$/;
+const explanationPath = /^\/api\/v1\/campaigns\/([^/]+)\/prospects\/([^/]+)\/explanation$/;
+const selectSchema = z.object({ contactIds: z.array(uuidSchema).min(1).max(500) }).strict();
+const excludeSchema = z.object({ reason: z.string().trim().min(1).max(1_000) }).strict();
 
 export interface CampaignHttpDependencies {
   readonly contextResolver: RequestContextResolver;
@@ -46,6 +53,7 @@ export interface CampaignHttpDependencies {
 
 export function createCampaignHttpHandler(dependencies: CampaignHttpDependencies) {
   const repository = new PostgresCampaignRepository(dependencies.database);
+  const population = new PostgresCampaignPopulationRepository(dependencies.database);
   return async function handle(request: Request): Promise<Response> {
     try {
       const url = new URL(request.url);
@@ -113,6 +121,37 @@ export function createCampaignHttpHandler(dependencies: CampaignHttpDependencies
         return json(campaign);
       }
 
+      const prospectsMatch = prospectsPath.exec(url.pathname);
+      if (prospectsMatch && request.method === "GET") {
+        requireViewer(context.role);
+        const data = await population.listPopulation({ workspaceId: context.workspaceId, campaignId: uuidSchema.parse(prospectsMatch[1]) });
+        return json({ data });
+      }
+      const selectMatch = selectProspectsPath.exec(url.pathname);
+      if (selectMatch && request.method === "POST") {
+        requireOperator(context.role);
+        const body = selectSchema.parse(await request.json());
+        const data = await population.select({ workspaceId: context.workspaceId, campaignId: uuidSchema.parse(selectMatch[1]), contactIds: body.contactIds, userId: context.userId });
+        return json({ data });
+      }
+      const explanationMatch = explanationPath.exec(url.pathname);
+      if (explanationMatch && request.method === "GET") {
+        requireViewer(context.role);
+        const data = await population.getExplanation({ workspaceId: context.workspaceId, campaignId: uuidSchema.parse(explanationMatch[1]), contactId: uuidSchema.parse(explanationMatch[2]) });
+        return json(data);
+      }
+      const prospectActionMatch = prospectActionPath.exec(url.pathname);
+      if (prospectActionMatch && request.method === "POST") {
+        requireOperator(context.role);
+        const campaignId = uuidSchema.parse(prospectActionMatch[1]);
+        const contactId = uuidSchema.parse(prospectActionMatch[2]);
+        if (prospectActionMatch[3] === "enroll") {
+          return json(await population.enroll({ workspaceId: context.workspaceId, campaignId, contactId, userId: context.userId }), 201);
+        }
+        const body = excludeSchema.parse(await request.json());
+        return json(await population.exclude({ workspaceId: context.workspaceId, campaignId, contactId, userId: context.userId, reason: body.reason }));
+      }
+
       const allowed = allowedMethods(url.pathname);
       if (allowed) return methodNotAllowed(allowed);
       return problem(404, "ROUTE_NOT_FOUND", "Route not found");
@@ -125,6 +164,12 @@ export function createCampaignHttpHandler(dependencies: CampaignHttpDependencies
       if (error instanceof WorkspaceContextRequiredError) return problem(400, "WORKSPACE_CONTEXT_REQUIRED", error.message);
       if (error instanceof WorkspaceAccessDeniedError) return problem(403, "WORKSPACE_FORBIDDEN", error.message);
       if (error instanceof CampaignPreflightError) return problem(422, "CAMPAIGN_PREFLIGHT_FAILED", "Campaign preflight failed", { ...error.result });
+      if (error instanceof CampaignPopulationError) {
+        const status = ["CAMPAIGN_NOT_FOUND", "CONTACT_NOT_FOUND", "PROSPECT_NOT_FOUND"].includes(error.code) ? 404
+          : ["SELECTION_EMPTY", "EXCLUSION_REASON_REQUIRED"].includes(error.code) ? 422
+            : ["CAMPAIGN_NOT_ACTIVE", "PROSPECT_NOT_SELECTED", "PROSPECT_EXCLUDED", "PROSPECT_ALREADY_ENROLLED", "ENROLLMENT_SUPPRESSED", "NO_VALID_CHANNEL", "ACTIVE_SEQUENCE_CONFLICT", "SEQUENCE_VERSION_NOT_FOUND"].includes(error.code) ? 409 : 400;
+        return problem(status, error.code, "Campaign prospect action is not allowed", error.details);
+      }
       const message = error instanceof Error ? error.message : "";
       if (message === "CAMPAIGN_NOT_FOUND") return problem(404, message, "Campaign not found");
       if (message === "CAMPAIGN_SNAPSHOT_IMMUTABLE" || message.endsWith("_CONFLICT")) return problem(409, message, "Campaign transition is not allowed");
@@ -161,6 +206,10 @@ function allowedMethods(pathname: string): string | null {
   if (campaignPath.test(pathname)) return "GET, PATCH";
   if (preflightPath.test(pathname)) return "POST";
   if (transitionPath.test(pathname)) return "POST";
+  if (prospectsPath.test(pathname)) return "GET";
+  if (selectProspectsPath.test(pathname)) return "POST";
+  if (prospectActionPath.test(pathname)) return "POST";
+  if (explanationPath.test(pathname)) return "GET";
   return null;
 }
 

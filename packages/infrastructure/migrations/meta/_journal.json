@@ -176,6 +176,13 @@
       "when": 1786183700000,
       "tag": "0024_connected_accounts",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1786183800000,
+      "tag": "0025_campaign_population",
+      "breakpoints": true
     }
   ]
 }
