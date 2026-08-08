@@ -616,6 +616,84 @@ export const icpCriterion = pgTable(
   ],
 );
 
+export const messagingStrategies = pgTable(
+  "messaging_strategies",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    name: varchar("name", { length: 500 }).notNull(),
+    currentVersion: integer("current_version").notNull().default(0),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    createdBy: uuid("created_by").references(() => authUsers.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({ columns: [table.workspaceId], foreignColumns: [workspaces.id], name: "messaging_strategies_workspace_fk" }).onDelete("cascade"),
+    unique("messaging_strategies_workspace_id_uq").on(table.workspaceId, table.id),
+    uniqueIndex("messaging_strategies_workspace_name_uq").on(table.workspaceId, sql`lower(${table.name})`).where(sql`${table.deletedAt} IS NULL`),
+  ],
+);
+
+export const messagingStrategyVersions = pgTable(
+  "messaging_strategy_versions",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    strategyId: uuid("strategy_id").notNull(),
+    version: integer("version").notNull(),
+    rules: jsonb("rules").notNull().default({}),
+    publishedBy: uuid("published_by").references(() => authUsers.id),
+    publishedAt: timestamp("published_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({ columns: [table.workspaceId, table.strategyId], foreignColumns: [messagingStrategies.workspaceId, messagingStrategies.id], name: "messaging_strategy_versions_workspace_strategy_fk" }).onDelete("restrict"),
+    unique("messaging_strategy_versions_workspace_id_uq").on(table.workspaceId, table.id),
+    uniqueIndex("messaging_strategy_versions_strategy_version_uq").on(table.workspaceId, table.strategyId, table.version),
+    index("messaging_strategy_versions_workspace_idx").on(table.workspaceId, table.publishedAt),
+  ],
+);
+
+export const aiPolicies = pgTable(
+  "ai_policies",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    name: varchar("name", { length: 500 }).notNull(),
+    currentVersion: integer("current_version").notNull().default(0),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    createdBy: uuid("created_by").references(() => authUsers.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({ columns: [table.workspaceId], foreignColumns: [workspaces.id], name: "ai_policies_workspace_fk" }).onDelete("cascade"),
+    unique("ai_policies_workspace_id_uq").on(table.workspaceId, table.id),
+    uniqueIndex("ai_policies_workspace_name_uq").on(table.workspaceId, sql`lower(${table.name})`).where(sql`${table.deletedAt} IS NULL`),
+  ],
+);
+
+export const aiPolicyVersions = pgTable(
+  "ai_policy_versions",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    policyId: uuid("policy_id").notNull(),
+    version: integer("version").notNull(),
+    rules: jsonb("rules").notNull().default({}),
+    publishedBy: uuid("published_by").references(() => authUsers.id),
+    publishedAt: timestamp("published_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({ columns: [table.workspaceId, table.policyId], foreignColumns: [aiPolicies.workspaceId, aiPolicies.id], name: "ai_policy_versions_workspace_policy_fk" }).onDelete("restrict"),
+    unique("ai_policy_versions_workspace_id_uq").on(table.workspaceId, table.id),
+    uniqueIndex("ai_policy_versions_policy_version_uq").on(table.workspaceId, table.policyId, table.version),
+    index("ai_policy_versions_workspace_idx").on(table.workspaceId, table.publishedAt),
+  ],
+);
+
 export const offers = pgTable(
   "offers",
   {
