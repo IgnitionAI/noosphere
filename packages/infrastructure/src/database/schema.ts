@@ -1155,7 +1155,7 @@ export const sequenceVersions = pgTable(
     workspaceId: uuid("workspace_id").notNull(),
     sequenceId: uuid("sequence_id")
       .notNull()
-      .references(() => sequences.id, { onDelete: "cascade" }),
+      .references(() => sequences.id, { onDelete: "restrict" }),
     version: integer("version").notNull(),
     steps: jsonb("steps").notNull(),
     publishedBy: uuid("published_by").references(() => authUsers.id),

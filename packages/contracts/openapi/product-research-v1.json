@@ -867,6 +867,28 @@
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/RunId" }, { "$ref": "#/components/parameters/CandidateId" }],
       "post": { "operationId": "importDiscoveredProspect", "responses": { "201": { "description": "Imported contact" }, "409": { "description": "Identity conflict or suppression" } } }
     },
+    "/api/v1/sequences": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
+      "get": { "operationId": "listSequences", "responses": { "200": { "description": "Sequences" } } },
+      "post": { "operationId": "createSequence", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SequenceCreateRequest" } } } }, "responses": { "201": { "description": "Sequence draft created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Sequence" } } } } } }
+    },
+    "/api/v1/sequences/{sequenceId}": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/SequenceId" }],
+      "get": { "operationId": "getSequence", "responses": { "200": { "description": "Sequence draft and steps", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SequenceDetail" } } } } } },
+      "patch": { "operationId": "updateSequence", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SequencePatchRequest" } } } }, "responses": { "200": { "description": "Sequence updated" } } }
+    },
+    "/api/v1/sequences/{sequenceId}/steps": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/SequenceId" }],
+      "put": { "operationId": "replaceSequenceSteps", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SequenceStepsRequest" } } } }, "responses": { "204": { "description": "Draft steps replaced" }, "400": { "$ref": "#/components/responses/InvalidRequest" } } }
+    },
+    "/api/v1/sequences/{sequenceId}/versions": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/SequenceId" }],
+      "get": { "operationId": "listSequenceVersions", "responses": { "200": { "description": "Immutable sequence versions" } } }
+    },
+    "/api/v1/sequences/{sequenceId}/actions/publish": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/SequenceId" }],
+      "post": { "operationId": "publishSequenceVersion", "summary": "Publish an immutable sequence version (admin or owner only)", "responses": { "201": { "description": "Sequence version published", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SequenceVersion" } } } }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" }, "422": { "description": "Sequence validation failed with errors localized by step", "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/Problem" } } } } } }
+    },
     "/api/v1/offers": {
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
       "get": { "operationId": "listOffers", "responses": { "200": { "description": "Offers" } } },
@@ -1068,6 +1090,10 @@
       },
       "OfferId": {
         "name": "offerId", "in": "path", "required": true,
+        "schema": { "type": "string", "format": "uuid" }
+      },
+      "SequenceId": {
+        "name": "sequenceId", "in": "path", "required": true,
         "schema": { "type": "string", "format": "uuid" }
       },
       "CompanyId": {
@@ -1735,6 +1761,71 @@
       },
       "OfferPatchRequest": {
         "type": "object", "properties": { "name": { "type": "string" }, "category": { "type": "string" }, "valueProposition": { "type": "string" }, "targetAudience": { "type": "string" }, "pricing": {}, "commercialRules": {}, "constraints": {}, "claims": { "type": "array", "items": { "$ref": "#/components/schemas/OfferClaim" } }, "objections": { "type": "array" } }
+      },
+      "SequenceStep": {
+        "type": "object", "required": ["position", "kind", "delayDays", "windowStart", "windowEnd", "subject", "body", "fallbackKind"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "position": { "type": "integer", "minimum": 1 },
+          "kind": { "type": "string", "enum": ["linkedin_invite", "linkedin_message", "email", "whatsapp", "manual_task"] },
+          "delayDays": { "type": "integer", "minimum": 0 },
+          "windowStart": { "type": ["string", "null"], "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$" },
+          "windowEnd": { "type": ["string", "null"], "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$" },
+          "subject": { "type": ["string", "null"] },
+          "body": { "type": "string" },
+          "fallbackKind": { "type": ["string", "null"], "enum": ["linkedin_invite", "linkedin_message", "email", "whatsapp", "manual_task", null] }
+        }
+      },
+      "SequenceStepDraft": {
+        "type": "object", "required": ["position", "kind"], "additionalProperties": false,
+        "properties": {
+          "position": { "type": "integer", "minimum": 1, "maximum": 100 },
+          "kind": { "type": "string", "enum": ["linkedin_invite", "linkedin_message", "email", "whatsapp", "manual_task"] },
+          "delayDays": { "type": "integer", "minimum": 0, "maximum": 365, "default": 0 },
+          "windowStart": { "type": ["string", "null"], "maxLength": 5 },
+          "windowEnd": { "type": ["string", "null"], "maxLength": 5 },
+          "subject": { "type": ["string", "null"], "maxLength": 300 },
+          "body": { "type": "string", "maxLength": 10000, "default": "" },
+          "fallbackKind": { "type": ["string", "null"], "enum": ["linkedin_invite", "linkedin_message", "email", "whatsapp", "manual_task", null] }
+        }
+      },
+      "Sequence": {
+        "type": "object", "required": ["id", "workspaceId", "name", "status", "updatedAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "workspaceId": { "type": "string", "format": "uuid" },
+          "name": { "type": "string" },
+          "description": { "type": ["string", "null"] },
+          "status": { "type": "string", "enum": ["draft", "published", "archived"] },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "SequenceDetail": {
+        "allOf": [{ "$ref": "#/components/schemas/Sequence" }, { "type": "object", "required": ["steps"], "properties": { "steps": { "type": "array", "items": { "$ref": "#/components/schemas/SequenceStep" } } } }]
+      },
+      "SequenceVersion": {
+        "type": "object", "required": ["id", "workspaceId", "sequenceId", "version", "steps", "publishedAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "workspaceId": { "type": "string", "format": "uuid" },
+          "sequenceId": { "type": "string", "format": "uuid" },
+          "version": { "type": "integer", "minimum": 1 },
+          "steps": { "type": "array", "items": { "$ref": "#/components/schemas/SequenceStep" } },
+          "publishedBy": { "type": ["string", "null"], "format": "uuid" },
+          "publishedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "SequenceCreateRequest": {
+        "type": "object", "required": ["name"], "additionalProperties": false,
+        "properties": { "name": { "type": "string", "minLength": 1, "maxLength": 300 }, "description": { "type": ["string", "null"], "maxLength": 2000 } }
+      },
+      "SequencePatchRequest": {
+        "type": "object", "additionalProperties": false,
+        "properties": { "name": { "type": "string", "minLength": 1, "maxLength": 300 }, "description": { "type": ["string", "null"], "maxLength": 2000 } }
+      },
+      "SequenceStepsRequest": {
+        "type": "object", "required": ["steps"], "additionalProperties": false,
+        "properties": { "steps": { "type": "array", "maxItems": 30, "items": { "$ref": "#/components/schemas/SequenceStepDraft" } } }
       },
       "MessagingTemplate": {
         "type": "object", "required": ["channel", "body"], "properties": { "channel": { "type": "string", "enum": ["linkedin", "email", "whatsapp"] }, "body": { "type": "string" }, "subject": { "type": "string" }, "maxLength": { "type": "integer" }, "cta": { "type": "string" }, "constraints": { "type": "object" } }

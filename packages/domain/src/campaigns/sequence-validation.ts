@@ -55,6 +55,7 @@ export function validateSequenceSteps(
 ): readonly SequenceValidationError[] {
   const errors: SequenceValidationError[] = [];
   const seenPositions = new Set<number>();
+  const fallbackEdges = new Map<SequenceStepKind, { readonly target: SequenceStepKind; readonly position: number }>();
   for (const step of steps) {
     if (seenPositions.has(step.position)) {
       errors.push({
@@ -128,6 +129,8 @@ export function validateSequenceSteps(
           position: step.position,
           message: "A fallback cannot reuse the step channel (double send risk)",
         });
+      } else {
+        fallbackEdges.set(step.kind, { target: step.fallbackKind, position: step.position });
       }
     }
     if (step.windowStart || step.windowEnd) {
@@ -144,6 +147,33 @@ export function validateSequenceSteps(
           message: "Sending window must be HH:MM–HH:MM with start before end",
         });
       }
+    }
+  }
+
+  // A fallback is a channel-to-channel edge. Reject cycles up front so a
+  // delivery worker can never bounce between fallbacks for one logical step.
+  const reportedFallbackLoops = new Set<string>();
+  for (const [start] of fallbackEdges) {
+    const path: SequenceStepKind[] = [];
+    const visited = new Set<SequenceStepKind>();
+    let current: SequenceStepKind | undefined = start;
+    while (current) {
+      if (visited.has(current)) {
+        const cycleStart = path.indexOf(current);
+        const cycleKey = path.slice(cycleStart).sort().join(",");
+        if (reportedFallbackLoops.has(cycleKey)) break;
+        reportedFallbackLoops.add(cycleKey);
+        const edge = fallbackEdges.get(current) ?? fallbackEdges.get(start);
+        errors.push({
+          code: "FALLBACK_LOOP",
+          position: edge?.position ?? 0,
+          message: "Fallback channels cannot form a loop",
+        });
+        break;
+      }
+      path.push(current);
+      visited.add(current);
+      current = fallbackEdges.get(current)?.target;
     }
   }
   return errors;

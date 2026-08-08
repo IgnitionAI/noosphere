@@ -28,6 +28,7 @@ databaseDescribe("F-030 multichannel sequences", () => {
     await migrate(database.db, {
       migrationsFolder: resolve(import.meta.dir, "../../packages/infrastructure/migrations"),
     });
+    await database.client`alter table sequence_versions enable trigger "sequence_versions_immutable_trg"`;
     await database.db.insert(workspaces).values([
       { id: workspaceId, slug: `f030-a-${workspaceId}`, name: "F-030 A" },
       { id: otherWorkspaceId, slug: `f030-b-${otherWorkspaceId}`, name: "F-030 B" },
@@ -40,12 +41,16 @@ databaseDescribe("F-030 multichannel sequences", () => {
   });
 
   afterAll(async () => {
-    await database.client`delete from sequence_versions where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
-    await database.client`delete from sequence_steps where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
-    await database.client`delete from sequences where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
-    await database.client`delete from outbox_events where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
-    await database.client`delete from auth_users where id = ${userId}`;
-    await database.client`delete from workspaces where id in (${workspaceId}, ${otherWorkspaceId})`;
+    await database.client.begin(async (sql) => {
+      await sql`alter table sequence_versions disable trigger "sequence_versions_immutable_trg"`;
+      await sql`delete from sequence_versions where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
+      await sql`delete from sequence_steps where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
+      await sql`delete from sequences where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
+      await sql`delete from outbox_events where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
+      await sql`delete from auth_users where id = ${userId}`;
+      await sql`delete from workspaces where id in (${workspaceId}, ${otherWorkspaceId})`;
+      await sql`alter table sequence_versions enable trigger "sequence_versions_immutable_trg"`;
+    });
     await database.close();
   });
 
@@ -71,8 +76,8 @@ databaseDescribe("F-030 multichannel sequences", () => {
     // Invalid steps: invitation too long + email without subject.
     const invalid = await send("PUT", `/api/v1/sequences/${sequence.id}/steps`, {
       steps: [
-        { position: 1, kind: "linkedin_invite", body: "x".repeat(301) },
-        { position: 2, kind: "email", delayDays: 3, body: "Corps" },
+        { position: 1, kind: "linkedin_invite", body: "x".repeat(301), fallbackKind: "email" },
+        { position: 2, kind: "email", delayDays: 3, body: "Corps", fallbackKind: "linkedin_invite" },
       ],
     });
     expect(invalid.status).toBe(204); // draft accepts anything, validation happens at publish
@@ -83,11 +88,12 @@ databaseDescribe("F-030 multichannel sequences", () => {
     );
     expect(publishInvalid.status).toBe(422);
     const problems = (await publishInvalid.json()) as {
-      errors: Array<{ code: string }>;
+      errors: Array<{ code: string; position: number }>;
     };
     expect(problems.errors.map((error) => error.code)).toEqual(
-      expect.arrayContaining(["STEP_BODY_TOO_LONG", "EMAIL_SUBJECT_REQUIRED"]),
+      expect.arrayContaining(["STEP_BODY_TOO_LONG", "EMAIL_SUBJECT_REQUIRED", "FALLBACK_LOOP"]),
     );
+    expect(problems.errors.every((error) => Number.isInteger(error.position))).toBe(true);
 
     // Fix the draft and publish v1.
     const valid = await send("PUT", `/api/v1/sequences/${sequence.id}/steps`, {
@@ -113,7 +119,7 @@ databaseDescribe("F-030 multichannel sequences", () => {
     expect(valid.status).toBe(204);
     const publishV1 = await send("POST", `/api/v1/sequences/${sequence.id}/actions/publish`, {});
     expect(publishV1.status).toBe(201);
-    const v1 = (await publishV1.json()) as { version: number; steps: unknown[] };
+    const v1 = (await publishV1.json()) as { id: string; version: number; steps: unknown[] };
     expect(v1.version).toBe(1);
     expect(v1.steps).toHaveLength(3);
 
@@ -132,6 +138,15 @@ databaseDescribe("F-030 multichannel sequences", () => {
     expect(versionList.data.map((version) => version.version)).toEqual([1, 2]);
     expect(versionList.data[0]!.steps).toHaveLength(3); // v1 untouched
     expect(versionList.data[1]!.steps).toHaveLength(1);
+
+    try {
+      await database.client.begin(async (sql) => {
+        await assertImmutable(sql, v1.id);
+        throw new Error("ROLLBACK_F030_TEST");
+      });
+    } catch (error) {
+      expect(String(error)).toContain("ROLLBACK_F030_TEST");
+    }
 
     // Workspace isolation.
     context.workspaceId = otherWorkspaceId;
@@ -155,3 +170,31 @@ databaseDescribe("F-030 multichannel sequences", () => {
     context.role = "admin";
   });
 });
+
+async function assertImmutable(
+  sql: {
+    (strings: TemplateStringsArray, ...values: unknown[]): unknown;
+    unsafe(query: string): unknown;
+  },
+  id: string,
+) {
+  await sql`savepoint sequence_immutable_update`;
+  let updateError: unknown;
+  try {
+    await sql`update sequence_versions set steps = ${JSON.stringify([{ position: 99 }])}::jsonb where id = ${id}`;
+  } catch (error) {
+    updateError = error;
+  }
+  expect(String(updateError)).toContain("SEQUENCE_VERSION_IMMUTABLE");
+  await sql`rollback to savepoint sequence_immutable_update`;
+
+  await sql`savepoint sequence_immutable_delete`;
+  let deleteError: unknown;
+  try {
+    await sql`delete from sequence_versions where id = ${id}`;
+  } catch (error) {
+    deleteError = error;
+  }
+  expect(String(deleteError)).toContain("SEQUENCE_VERSION_IMMUTABLE");
+  await sql`rollback to savepoint sequence_immutable_delete`;
+}
