@@ -58,7 +58,17 @@ export default async function DiscoverPage({
     }
     throw error;
   }
-  const selectedRun = runId ? await getDiscoveryRun(workspaceSlug, runId) : null;
+  let selectedRun = null;
+  if (runId) {
+    try {
+      selectedRun = await getDiscoveryRun(workspaceSlug, runId);
+    } catch (error) {
+      if (error instanceof OutboundApiError && (error.status === 401 || error.status === 403)) {
+        return <CrmPermissionState resource="les candidats de découverte" />;
+      }
+      throw error;
+    }
+  }
   const canMutate = ["operator", "admin", "owner"].includes(workspace.role);
   const hasRunningRun = runs.data.some((run) => run.status === "running") || selectedRun?.status === "running";
 
