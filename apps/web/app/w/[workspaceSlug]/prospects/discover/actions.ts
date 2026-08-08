@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import {
   importDiscoveryCandidate,
   launchDiscoveryRun,
@@ -16,8 +17,9 @@ export async function launchDiscoveryAction(
   formData: FormData,
 ) {
   const limit = Math.min(100, Math.max(1, Number(formData.get("limit") ?? 25) || 25));
-  await launchDiscoveryRun(workspaceSlug, versionId, limit);
+  const run = await launchDiscoveryRun(workspaceSlug, versionId, limit);
   revalidatePath(PAGE(workspaceSlug));
+  redirect(`${PAGE(workspaceSlug)}?versionId=${versionId}&runId=${run.id}`);
 }
 
 export async function retryDiscoveryAction(
@@ -25,8 +27,9 @@ export async function retryDiscoveryAction(
   runId: string,
   _formData: FormData,
 ) {
-  await retryDiscoveryRun(workspaceSlug, runId);
+  const run = await retryDiscoveryRun(workspaceSlug, runId);
   revalidatePath(PAGE(workspaceSlug));
+  redirect(`${PAGE(workspaceSlug)}?versionId=${run.icpVersionId}&runId=${run.id}`);
 }
 
 export async function importCandidateAction(

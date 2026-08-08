@@ -1375,7 +1375,16 @@
           "buyer_landscape_discovery",
           "segment_synthesis",
           "icp_synthesis",
-          "evidence_review"
+          "evidence_review",
+          "product_truth",
+          "problem_mapping",
+          "organization_discovery",
+          "market_investigation",
+          "buying_context",
+          "sourcing_validation",
+          "icp_composition",
+          "adversarial_review",
+          "objective_ranking"
         ]
       },
       "ProductResearchBrief": {
@@ -1472,10 +1481,18 @@
             "maxLength": 5000,
             "default": ""
           },
+          "researchObjective": {
+            "type": "string",
+            "enum": [
+              "qualified_conversations",
+              "fast_revenue",
+              "strategic_market"
+            ]
+          },
           "researchVersion": {
             "type": "integer",
-            "enum": [1, 2],
-            "default": 2
+            "enum": [1, 2, 3],
+            "default": 3
           }
         }
       },

@@ -1,4 +1,17 @@
 import { z } from "zod";
+import {
+  adversarialReviewOutputSchema,
+  buyingContextOutputSchema,
+  icpCompositionOutputSchema,
+  marketInvestigationOutputSchema,
+  objectiveRankingOutputSchema,
+  organizationDiscoveryOutputSchema,
+  problemMappingOutputSchema,
+  productTruthOutputSchema,
+  sourcingValidationOutputSchema,
+} from "./product-research-v3";
+
+export * from "./product-research-v3";
 
 export const researchStageSchema = z.enum([
   "product_analysis",
@@ -8,6 +21,15 @@ export const researchStageSchema = z.enum([
   "segment_synthesis",
   "icp_synthesis",
   "evidence_review",
+  "product_truth",
+  "problem_mapping",
+  "organization_discovery",
+  "market_investigation",
+  "buying_context",
+  "sourcing_validation",
+  "icp_composition",
+  "adversarial_review",
+  "objective_ranking",
 ]);
 
 export const productResearchBriefSchema = z
@@ -25,7 +47,10 @@ export const productResearchBriefSchema = z
       .enum(["end_customers", "channel_partners", "both"])
       .default("end_customers"),
     buyerConstraints: z.string().trim().max(5_000).default(""),
-    researchVersion: z.union([z.literal(1), z.literal(2)]).default(2),
+    researchObjective: z
+      .enum(["qualified_conversations", "fast_revenue", "strategic_market"])
+      .optional(),
+    researchVersion: z.union([z.literal(1), z.literal(2), z.literal(3)]).default(3),
   })
   .strict()
   .refine((brief) => Boolean(brief.productUrl || brief.description), {
@@ -37,6 +62,10 @@ export const researchStageJobPayloadSchema = z.object({
   workspaceId: z.string().uuid(),
   runId: z.string().uuid(),
   stage: researchStageSchema,
+  workItemKey: z.string().min(1).max(160).default("main"),
+  hypothesisId: z.string().min(1).max(100).nullable().default(null),
+  fanoutSize: z.number().int().min(1).max(4).nullable().default(null),
+  finalizeFanout: z.boolean().default(false),
 });
 
 export type ResearchStageJobPayload = z.infer<typeof researchStageJobPayloadSchema>;
@@ -70,6 +99,9 @@ const commonAgentInputSchema = z.object({
   brief: productResearchBriefSchema,
   previousOutputs: z.record(z.string(), z.unknown()),
   correlationId: z.string().min(1).max(200),
+  deadlineAt: z.string().datetime().nullable().default(null),
+  workItemKey: z.string().min(1).max(160).default("main"),
+  externalDlpTerms: z.array(z.string().min(8).max(1_000)).max(200).default([]),
 });
 
 export const productAnalystInputSchema = commonAgentInputSchema.extend({
@@ -256,6 +288,34 @@ export const evidenceReviewOutputSchema = z.object({
   executiveSummary: z.string().min(1).max(15_000),
 });
 
+export const productTruthInputSchema = commonAgentInputSchema.extend({
+  stage: z.literal("product_truth"),
+});
+export const problemMappingInputSchema = commonAgentInputSchema.extend({
+  stage: z.literal("problem_mapping"),
+});
+export const organizationDiscoveryInputSchema = commonAgentInputSchema.extend({
+  stage: z.literal("organization_discovery"),
+});
+export const marketInvestigationInputSchema = commonAgentInputSchema.extend({
+  stage: z.literal("market_investigation"),
+});
+export const buyingContextInputSchema = commonAgentInputSchema.extend({
+  stage: z.literal("buying_context"),
+});
+export const sourcingValidationInputSchema = commonAgentInputSchema.extend({
+  stage: z.literal("sourcing_validation"),
+});
+export const icpCompositionInputSchema = commonAgentInputSchema.extend({
+  stage: z.literal("icp_composition"),
+});
+export const adversarialReviewInputSchema = commonAgentInputSchema.extend({
+  stage: z.literal("adversarial_review"),
+});
+export const objectiveRankingInputSchema = commonAgentInputSchema.extend({
+  stage: z.literal("objective_ranking"),
+});
+
 export const agentContracts = {
   product_analysis: {
     role: "ProductAnalyst",
@@ -291,6 +351,51 @@ export const agentContracts = {
     role: "EvidenceReviewer",
     input: evidenceReviewInputSchema,
     output: evidenceReviewOutputSchema,
+  },
+  product_truth: {
+    role: "ProductInterpreter",
+    input: productTruthInputSchema,
+    output: productTruthOutputSchema,
+  },
+  problem_mapping: {
+    role: "ProblemMapper",
+    input: problemMappingInputSchema,
+    output: problemMappingOutputSchema,
+  },
+  organization_discovery: {
+    role: "OrganizationDiscoverer",
+    input: organizationDiscoveryInputSchema,
+    output: organizationDiscoveryOutputSchema,
+  },
+  market_investigation: {
+    role: "MarketInvestigator",
+    input: marketInvestigationInputSchema,
+    output: marketInvestigationOutputSchema,
+  },
+  buying_context: {
+    role: "BuyingContextAnalyst",
+    input: buyingContextInputSchema,
+    output: buyingContextOutputSchema,
+  },
+  sourcing_validation: {
+    role: "SourcingValidator",
+    input: sourcingValidationInputSchema,
+    output: sourcingValidationOutputSchema,
+  },
+  icp_composition: {
+    role: "ICPComposer",
+    input: icpCompositionInputSchema,
+    output: icpCompositionOutputSchema,
+  },
+  adversarial_review: {
+    role: "AdversarialReviewer",
+    input: adversarialReviewInputSchema,
+    output: adversarialReviewOutputSchema,
+  },
+  objective_ranking: {
+    role: "ObjectiveRanker",
+    input: objectiveRankingInputSchema,
+    output: objectiveRankingOutputSchema,
   },
 } as const;
 

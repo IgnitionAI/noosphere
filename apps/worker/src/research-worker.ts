@@ -21,6 +21,7 @@ export interface OutreachSchedulerProcessor {
 
 export class ResearchWorker {
   #stopping = false;
+  #lastMaintenanceAt = 0;
 
   constructor(
     private readonly queue: JobQueue,
@@ -28,6 +29,15 @@ export class ResearchWorker {
     private readonly clock: Clock,
     private readonly options: ResearchWorkerOptions,
     private readonly documentProcessor?: { process(job: LeasedJob): Promise<void> },
+    private readonly discoveryProcessor?: { process(job: LeasedJob): Promise<void> },
+    private readonly channelAssessmentProcessor?: { process(job: LeasedJob): Promise<void> },
+    private readonly campaignAutomationProcessor?: { process(job: LeasedJob): Promise<void> },
+    private readonly campaignCompositionProcessor?: { process(job: LeasedJob): Promise<void> },
+    private readonly outreachDispatchProcessor?: { process(job: LeasedJob): Promise<void> },
+    private readonly inboundReplyProcessor?: { process(job: LeasedJob): Promise<void> },
+    private readonly automatedReplySendProcessor?: { process(job: LeasedJob): Promise<void> },
+    private readonly conversationCommandProcessor?: { process(job: LeasedJob): Promise<void> },
+    private readonly maintenance?: { reconcile(): Promise<number> },
     private readonly outboxDispatcher?: OutboxDispatcher,
     private readonly importProcessor?: { process(job: LeasedJob): Promise<void> },
     private readonly outreachProcessor?: OutreachSchedulerProcessor,
@@ -45,10 +55,28 @@ export class ResearchWorker {
   }
 
   async tick(): Promise<number> {
-    if (this.outreachProcessor) await this.outreachProcessor.markDue({ now: this.clock.now(), queue: this.queue });
+    const now = this.clock.now();
+    if (this.maintenance && now.getTime() - this.#lastMaintenanceAt >= 60_000) {
+      this.#lastMaintenanceAt = now.getTime();
+      await this.maintenance.reconcile();
+    }
+    if (this.outreachProcessor) await this.outreachProcessor.markDue({ now, queue: this.queue });
     const jobs = await this.queue.lease({
       workerId: this.options.workerId,
-      types: ["research.stage.execute", "research.document.process", "crm.import.apply", "outreach.action.execute"],
+      types: [
+        "research.stage.execute",
+        "research.document.process",
+        ...(this.discoveryProcessor ? ["prospect.discovery.execute"] : []),
+        ...(this.channelAssessmentProcessor ? ["prospecting.channel.assess"] : []),
+        ...(this.campaignAutomationProcessor ? ["campaign.automation.advance"] : []),
+        ...(this.campaignCompositionProcessor ? ["campaign.messages.compose"] : []),
+        ...(this.outreachDispatchProcessor ? ["outreach.dispatch"] : []),
+        ...(this.inboundReplyProcessor ? ["inbound.reply.process"] : []),
+        ...(this.automatedReplySendProcessor ? ["inbound.reply.send"] : []),
+        ...(this.conversationCommandProcessor ? ["conversation.command.execute"] : []),
+        ...(this.importProcessor ? ["crm.import.apply"] : []),
+        ...(this.outreachProcessor ? ["outreach.action.execute"] : []),
+      ],
       limit: this.options.batchSize,
       leaseMs: this.options.leaseMs,
       now: this.clock.now(),
@@ -67,6 +95,22 @@ export class ResearchWorker {
     try {
       if (job.type === "research.document.process" && this.documentProcessor) {
         await this.documentProcessor.process(job);
+      } else if (job.type === "prospect.discovery.execute" && this.discoveryProcessor) {
+        await this.discoveryProcessor.process(job);
+      } else if (job.type === "prospecting.channel.assess" && this.channelAssessmentProcessor) {
+        await this.channelAssessmentProcessor.process(job);
+      } else if (job.type === "campaign.automation.advance" && this.campaignAutomationProcessor) {
+        await this.campaignAutomationProcessor.process(job);
+      } else if (job.type === "campaign.messages.compose" && this.campaignCompositionProcessor) {
+        await this.campaignCompositionProcessor.process(job);
+      } else if (job.type === "outreach.dispatch" && this.outreachDispatchProcessor) {
+        await this.outreachDispatchProcessor.process(job);
+      } else if (job.type === "inbound.reply.process" && this.inboundReplyProcessor) {
+        await this.inboundReplyProcessor.process(job);
+      } else if (job.type === "inbound.reply.send" && this.automatedReplySendProcessor) {
+        await this.automatedReplySendProcessor.process(job);
+      } else if (job.type === "conversation.command.execute" && this.conversationCommandProcessor) {
+        await this.conversationCommandProcessor.process(job);
       } else if (job.type === "crm.import.apply" && this.importProcessor) {
         await this.importProcessor.process(job);
       } else if (job.type === "outreach.action.execute" && this.outreachProcessor) {

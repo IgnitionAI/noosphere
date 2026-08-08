@@ -405,6 +405,65 @@ describe("F-009 HTTP routes", () => {
     expect(approved.status).toBe(204);
     expect(harness.backend.proposalReviews).toHaveLength(1);
   });
+
+  test("V3 exposes an automatic read-only report with no review links", async () => {
+    const harness = createHarness();
+    const createdResponse = await harness.handle(
+      new Request("http://localhost/api/v1/product-research-runs", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          productUrl: "https://example.com",
+          productName: "Example V3",
+          description: "",
+          geography: "France",
+          languages: ["fr"],
+          salesMotion: "saas",
+          knownCompetitors: [],
+          internalDocumentIds: [],
+          depth: "standard",
+          researchVersion: 3,
+        }),
+      }),
+    );
+    const created = (await createdResponse.json()) as { id: string };
+    await action(harness.handle, created.id, "start");
+    for (const _stage of [
+      "product_truth",
+      "problem_mapping",
+      "organization_discovery",
+      "market_investigation",
+      "market_investigation",
+      "buying_context",
+      "sourcing_validation",
+      "icp_composition",
+      "adversarial_review",
+      "objective_ranking",
+    ]) {
+      const [job] = await harness.backend.lease({
+        workerId: "http-v3-worker",
+        types: ["research.stage.execute"],
+        limit: 1,
+        leaseMs: 30_000,
+        now: harness.clock.now(),
+      });
+      await harness.orchestrator.process(job!);
+    }
+
+    harness.context.role = "viewer";
+    const response = await harness.handle(
+      new Request(`http://localhost/api/v1/product-research-runs/${created.id}/report`),
+    );
+    const report = (await response.json()) as {
+      run: { status: string };
+      proposals: unknown[];
+      links: Record<string, string>;
+    };
+    expect(response.status).toBe(200);
+    expect(report.run.status).toBe("completed");
+    expect(report.proposals).toHaveLength(1);
+    expect(report.links).toEqual({});
+  });
 });
 
 function createHarness() {
@@ -456,6 +515,7 @@ function createRun(handle: (request: Request) => Promise<Response>): Promise<Res
         knownCompetitors: [],
         internalDocumentIds: [],
         depth: "standard",
+        researchVersion: 2,
       }),
     }),
   );

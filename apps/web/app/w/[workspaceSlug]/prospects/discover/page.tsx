@@ -2,8 +2,9 @@ import {
   ArrowLeft,
   Check,
   ExternalLink,
+  Link2,
+  LoaderCircle,
   RotateCcw,
-  Search,
   Target,
   TriangleAlert,
   UserRoundPlus,
@@ -23,7 +24,8 @@ import {
   launchDiscoveryAction,
   retryDiscoveryAction,
 } from "./actions";
-import { DiscoveryRefresh } from "./refresh";
+import { DiscoveryRunAutoRefresh } from "./run-auto-refresh";
+import { DiscoveryLaunchForm } from "./discovery-launch-form";
 
 export const metadata = { title: "Découverte de prospects" };
 export const dynamic = "force-dynamic";
@@ -43,37 +45,29 @@ export default async function DiscoverPage({
 }) {
   const { workspaceSlug } = await params;
   const { versionId, runId } = await searchParams;
+  const [versions, allRuns] = await Promise.all([
+    listIcpVersions(workspaceSlug),
+    listDiscoveryRuns(workspaceSlug),
+  ]);
+  const runs = {
+    data: versionId
+      ? allRuns.data.filter((run) => run.icpVersionId === versionId)
+      : allRuns.data,
+  };
+  const selectedRun = runId ? await getDiscoveryRun(workspaceSlug, runId) : null;
   const workspace = (await listWorkspaces()).find((item) => item.slug === workspaceSlug);
   if (!workspace) return <CrmPermissionState resource="la découverte de prospects" />;
-  let versions;
-  let runs;
-  try {
-    [versions, runs] = await Promise.all([
-      listIcpVersions(workspaceSlug),
-      listDiscoveryRuns(workspaceSlug, versionId),
-    ]);
-  } catch (error) {
-    if (error instanceof OutboundApiError && (error.status === 401 || error.status === 403)) {
-      return <CrmPermissionState resource="la découverte de prospects" />;
-    }
-    throw error;
-  }
-  let selectedRun = null;
-  if (runId) {
-    try {
-      selectedRun = await getDiscoveryRun(workspaceSlug, runId);
-    } catch (error) {
-      if (error instanceof OutboundApiError && (error.status === 401 || error.status === 403)) {
-        return <CrmPermissionState resource="les candidats de découverte" />;
-      }
-      throw error;
-    }
-  }
   const canMutate = ["operator", "admin", "owner"].includes(workspace.role);
-  const hasRunningRun = runs.data.some((run) => run.status === "running") || selectedRun?.status === "running";
+  const hasRunningRun = allRuns.data.some((run) => run.status === "running") || selectedRun?.status === "running";
+  const activeRunByVersion = new Map(
+    allRuns.data
+      .filter((run) => run.status === "running")
+      .map((run) => [run.icpVersionId, run]),
+  );
 
   return (
     <>
+      <DiscoveryRunAutoRefresh active={allRuns.data.some((run) => run.status === "running")} />
       <header className="mb-6">
         <Link
           className="mb-4 inline-flex items-center gap-2 text-xs font-semibold text-muted"
@@ -84,17 +78,34 @@ export default async function DiscoverPage({
         </Link>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <span className="badge badge-signal">ICP publié → candidats LinkedIn</span>
+            <span className="badge badge-signal">ICP publié → profils LinkedIn</span>
             <h1 className="page-title mt-3">Découverte de prospects</h1>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-muted">
-              Seule une version ICP publiée peut lancer une recherche. Les filtres envoyés au
-              fournisseur sont enregistrés, et chaque candidat montre ses correspondances et
-              écarts avant import.
+              Seule une version ICP publiée peut lancer cette recherche LinkedIn. Les filtres
+              envoyés à Unipile sont enregistrés. Email et WhatsApp utilisent leurs propres
+              recherches entreprises depuis les campagnes correspondantes.
             </p>
           </div>
           <span className="badge">{versions.data.length} version{versions.data.length > 1 ? "s" : ""} publiée{versions.data.length > 1 ? "s" : ""}</span>
         </div>
       </header>
+
+      {selectedRun?.status === "running" ? (
+        <div
+          aria-live="polite"
+          className="mb-5 flex items-start gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-950"
+          data-testid="discovery-progress"
+          role="status"
+        >
+          <LoaderCircle className="mt-0.5 shrink-0 animate-spin text-brand-blue" size={18} />
+          <div>
+            <strong className="block">Recherche LinkedIn lancée</strong>
+            <span className="mt-1 block text-xs leading-5 text-blue-800">
+              Unipile recherche jusqu’à {Number(selectedRun.filters?.limit ?? 25)} profils. La page se met à jour automatiquement et vous pouvez la quitter sans perdre le job.
+            </span>
+          </div>
+        </div>
+      ) : null}
 
       <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <div className="min-w-0 space-y-4">
@@ -113,6 +124,7 @@ export default async function DiscoverPage({
               ) : (
                 versions.data.map((version) => {
                   const launch = launchDiscoveryAction.bind(null, workspaceSlug, version.id);
+                  const activeRun = activeRunByVersion.get(version.id);
                   return (
                     <article
                       className={`rounded-lg border p-4 ${versionId === version.id ? "border-brand-blue" : "border-line"}`}
@@ -129,27 +141,13 @@ export default async function DiscoverPage({
                           voir le rapport source
                         </Link> : <span>ICP canonique (sans rapport source)</span>}
                       </p>
-                      {canMutate ? <MutationForm action={launch} className="mt-3 flex flex-wrap items-center gap-2" confirmation="Lancer cette recherche LinkedIn avec les filtres ICP publiés ?" successMessage="Run lancé. Les candidats apparaîtront dès que le fournisseur aura répondu.">
-                        <input
-                          className="control w-24"
-                          name="limit"
-                          type="number"
-                          min={1}
-                          max={100}
-                          defaultValue={25}
-                          aria-label="Nombre de candidats"
-                        />
-                        <button className="button button-signal" type="submit">
-                          <Search size={14} />
-                          Lancer la recherche
-                        </button>
-                        <Link
-                          className="button"
-                          href={`/w/${workspaceSlug}/prospects/discover?versionId=${version.id}`}
-                        >
-                          Ses runs
-                        </Link>
-                      </MutationForm> : <p className="mt-3 text-xs text-muted">Votre rôle permet la lecture, mais pas le lancement d’une recherche.</p>}
+                      <DiscoveryLaunchForm
+                        action={launch}
+                        activeRunHref={activeRun
+                          ? `/w/${workspaceSlug}/prospects/discover?versionId=${version.id}&runId=${activeRun.id}`
+                          : null}
+                        runsHref={`/w/${workspaceSlug}/prospects/discover?versionId=${version.id}`}
+                      />
                     </article>
                   );
                 })
@@ -228,7 +226,9 @@ export default async function DiscoverPage({
               </div>
             ) : selectedRun.candidates.length === 0 ? (
               <p className="py-6 text-center text-sm text-muted">
-                Aucun candidat retourné par le fournisseur pour ces filtres.
+                {selectedRun.status === "running"
+                  ? "Recherche LinkedIn en cours. Vous pouvez quitter cette page : le job continue en arrière-plan."
+                  : "Aucun candidat retourné par le fournisseur pour ces filtres."}
               </p>
             ) : (
               selectedRun.candidates.map((candidate) => {
@@ -244,12 +244,27 @@ export default async function DiscoverPage({
                         <p className="mt-1 text-[11px] text-muted">
                           {[candidate.companyName, candidate.location].filter(Boolean).join(" · ") || "—"}
                         </p>
+                        {candidate.companyWebsite ? (
+                          <a
+                            className="mt-1 inline-flex items-center gap-1 text-[11px] font-semibold text-brand-blue"
+                            href={candidate.companyWebsite}
+                            rel="noreferrer"
+                            target="_blank"
+                          >
+                            {candidate.companyDomain ?? "Site de l’entreprise"}
+                            <ExternalLink size={10} />
+                          </a>
+                        ) : null}
                       </div>
-                      {candidate.linkedinUrl ? (
-                        <a className="badge hover:border-brand-blue" href={candidate.linkedinUrl} rel="noreferrer" target="_blank">
-                          LinkedIn <ExternalLink size={10} />
-                        </a>
-                      ) : null}
+                    </div>
+                    <div className="mt-3 grid gap-2">
+                      <ChannelCard
+                        href={candidate.linkedinUrl}
+                        icon={<Link2 size={13} />}
+                        label="LinkedIn"
+                        channel={candidate.channels.linkedin}
+                        external
+                      />
                     </div>
                     <div className="mt-3 space-y-1">
                       {(candidate.icpFit.matches ?? []).map((match) => (
@@ -290,7 +305,7 @@ export default async function DiscoverPage({
           </div>
         </section>
       </div>
-      <DiscoveryRefresh active={hasRunningRun} />
+      <DiscoveryRunAutoRefresh active={hasRunningRun} />
     </>
   );
 }
@@ -305,4 +320,69 @@ function formatFilters(filters: Readonly<Record<string, unknown>>): string {
   const entries = Object.entries(filters).filter(([, value]) => value !== null && value !== undefined && value !== "");
   if (!entries.length) return "aucun filtre";
   return entries.map(([key, value]) => `${key}=${Array.isArray(value) ? value.join(", ") : String(value)}`).join(" · ");
+}
+
+type CandidateChannel = {
+  readonly value: string | null;
+  readonly status: "verified" | "found" | "unverified" | "unavailable";
+  readonly evidenceUrl?: string | null;
+  readonly observedAt?: string | null;
+};
+
+const CHANNEL_STATUS: Record<CandidateChannel["status"], { label: string; className: string }> = {
+  verified: { label: "vérifié", className: "text-success" },
+  found: { label: "trouvé", className: "text-brand-blue" },
+  unverified: { label: "à vérifier", className: "text-warning" },
+  unavailable: { label: "indisponible", className: "text-muted" },
+};
+
+function ChannelCard({
+  channel,
+  href,
+  icon,
+  label,
+  external = false,
+}: {
+  channel: CandidateChannel;
+  href: string | null;
+  icon: React.ReactNode;
+  label: string;
+  external?: boolean;
+}) {
+  const status = CHANNEL_STATUS[channel.status];
+  const className = "min-w-0 rounded-lg border border-line bg-surface-soft p-2.5";
+  return (
+    <div className={className}>
+      <span className="flex items-center gap-1.5 text-[11px] font-semibold text-ink">
+        {icon} {label}
+      </span>
+      {href ? (
+        <a
+          className="mt-1 block truncate text-[11px] text-ink hover:text-brand-blue"
+          href={href}
+          rel={external ? "noreferrer" : undefined}
+          target={external ? "_blank" : undefined}
+        >
+          {channel.value}
+        </a>
+      ) : (
+        <span className={`mt-1 block truncate text-[11px] ${channel.value ? "text-ink" : "text-muted"}`}>
+          {channel.value ?? "Non trouvé"}
+        </span>
+      )}
+      <span className={`mt-1 block text-[10px] font-semibold ${status.className}`}>
+        {status.label}
+      </span>
+      {channel.evidenceUrl ? (
+        <a
+          className="mt-1 inline-flex items-center gap-1 text-[10px] text-brand-blue"
+          href={channel.evidenceUrl}
+          rel="noreferrer"
+          target="_blank"
+        >
+          Voir la preuve <ExternalLink size={9} />
+        </a>
+      ) : null}
+    </div>
+  );
 }

@@ -73,3 +73,36 @@ async def test_start_crawl_valid_url(client: TestClient, monkeypatch):
     # Cancel the job to clean up
     job_id = data["id"]
     client.delete(f"/crawl/{job_id}")
+
+
+@pytest.mark.asyncio
+async def test_selective_crawl_reuses_idempotency_key(client: TestClient, monkeypatch):
+    """The Bun orchestrator can safely replay a lost selective crawl request."""
+
+    async def fake_execute_selective_crawl(job, urls):
+        await asyncio.sleep(0.05)
+
+    monkeypatch.setattr(
+        "crawler_service.api.routes.execute_selective_crawl",
+        fake_execute_selective_crawl,
+    )
+    payload = {
+        "urls": ["https://example.com/a"],
+        "includeImages": False,
+        "idempotencyKey": "run-stage-page-example-a",
+    }
+    first = client.post("/crawl/pages", json=payload)
+    second = client.post("/crawl/pages", json=payload)
+    different = client.post(
+        "/crawl/pages",
+        json={**payload, "idempotencyKey": "run-stage-page-example-b"},
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert different.status_code == 200
+    assert first.json()["id"] == second.json()["id"]
+    assert different.json()["id"] != first.json()["id"]
+
+    client.delete(f"/crawl/{first.json()['id']}")
+    client.delete(f"/crawl/{different.json()['id']}")

@@ -1,39 +1,31 @@
 "use client";
 
 import {
-  BarChart3,
   Bell,
-  Building2,
+  CalendarDays,
   ChevronDown,
   FlaskConical,
   FileSpreadsheet,
   GitMerge,
   Inbox,
-  LayoutDashboard,
-  Menu,
-  MessageSquareText,
   Megaphone,
-  Package,
-  PlugZap,
+  Menu,
+  MessageCircle,
+  MessageSquareText,
+  Kanban,
   Search,
-  Send,
   Settings,
   ShieldAlert,
   Target,
-  Users,
+  UsersRound,
   X,
   Radar,
+  Package,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState, type ReactNode } from "react";
 import type { Session, Workspace } from "@/lib/api";
-
-const futureNavigation = [
-  ["Vue d’ensemble", LayoutDashboard],
-  ["Inbox", Inbox],
-  ["Analytics", BarChart3],
-] as const;
 
 export function AppShell({
   workspace,
@@ -52,26 +44,17 @@ export function AppShell({
   const icpsHref = `/w/${workspace.slug}/icps`;
   const offersHref = `/w/${workspace.slug}/offers`;
   const messagingHref = `/w/${workspace.slug}/messaging`;
-  const discoveryHref = `/w/${workspace.slug}/prospects/discover`;
-  const suppressionsHref = `/w/${workspace.slug}/suppressions`;
-  const approvalsHref = `/w/${workspace.slug}/approvals`;
+  const inboxHref = `/w/${workspace.slug}/inbox`;
+  const campaignsHref = `/w/${workspace.slug}/campaigns`;
+  const prospectsHref = `/w/${workspace.slug}/prospects`;
+  const pipelineHref = `/w/${workspace.slug}/pipeline`;
   const aiSettingsHref = `/w/${workspace.slug}/settings/ai`;
+  const calendarSettingsHref = `/w/${workspace.slug}/settings/calendar`;
+  const channelSettingsHref = `/w/${workspace.slug}/settings/channels`;
   const productReadingActive = pathname.startsWith(productReadingHref);
   const icpsActive = pathname.startsWith(icpsHref);
   const offersActive = pathname.startsWith(offersHref);
   const messagingActive = pathname.startsWith(messagingHref);
-  const crmNavigation = [
-    [`/w/${workspace.slug}/prospects`, "Prospects", Users],
-    [discoveryHref, "Découverte", Radar],
-    [`/w/${workspace.slug}/companies`, "Entreprises", Building2],
-    [`/w/${workspace.slug}/sequences`, "Séquences", Send],
-    [suppressionsHref, "Suppressions", ShieldAlert],
-    [`/w/${workspace.slug}/imports`, "Imports", FileSpreadsheet],
-    [`/w/${workspace.slug}/duplicates`, "Doublons", GitMerge],
-    [`/w/${workspace.slug}/campaigns`, "Campagnes", Megaphone],
-    [approvalsHref, "Approbations", Inbox],
-    [`/w/${workspace.slug}/integrations`, "Intégrations", PlugZap],
-  ] as const;
   const initials = session.user.name
     .split(/\s+/)
     .map((part) => part[0])
@@ -197,38 +180,90 @@ export function AppShell({
             Prospection
           </div>
           <div className="space-y-1">
-            {crmNavigation.filter(([href]) => (href !== `/w/${workspace.slug}/imports` || workspace.role !== "viewer") && (href !== approvalsHref || workspace.role !== "viewer")).map(([href, label, Icon]) => (
-              <Link
-                aria-current={pathname.startsWith(href) ? "page" : undefined}
-                className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium ${
-                  pathname.startsWith(href)
-                    ? "bg-white/10 text-white"
-                    : "text-slate-300 hover:bg-white/5 hover:text-white"
-                }`}
-                href={href}
-                key={label}
-                onClick={() => setOpen(false)}
-              >
-                <Icon size={17} />
-                {label}
-              </Link>
-            ))}
-            {futureNavigation.map(([label, Icon]) => (
-              <span
-                aria-disabled="true"
-                className="flex items-center gap-3 rounded-lg px-3 py-2 text-[13px] font-medium text-slate-500"
-                key={label}
-              >
-                <Icon size={17} />
-                {label}
-              </span>
-            ))}
+            <Link
+              aria-current={pathname.startsWith(inboxHref) ? "page" : undefined}
+              className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium ${
+                pathname.startsWith(inboxHref)
+                  ? "bg-white/10 text-white"
+                  : "text-slate-300 hover:bg-white/5 hover:text-white"
+              }`}
+              href={inboxHref}
+              onClick={() => setOpen(false)}
+            >
+              <Inbox size={17} />
+              Messagerie
+            </Link>
+            <Link
+              aria-current={pathname.startsWith(campaignsHref) ? "page" : undefined}
+              className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium ${
+                pathname.startsWith(campaignsHref)
+                  ? "bg-white/10 text-white"
+                  : "text-slate-300 hover:bg-white/5 hover:text-white"
+              }`}
+              href={campaignsHref}
+              onClick={() => setOpen(false)}
+            >
+              <Megaphone size={17} />
+              Campagnes
+            </Link>
+            <Link
+              aria-current={pathname.startsWith(prospectsHref) ? "page" : undefined}
+              className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium ${
+                pathname.startsWith(prospectsHref)
+                  ? "bg-white/10 text-white"
+                  : "text-slate-300 hover:bg-white/5 hover:text-white"
+              }`}
+              href={prospectsHref}
+              onClick={() => setOpen(false)}
+            >
+              <UsersRound size={17} />
+              Prospects
+            </Link>
+            <Link
+              aria-current={pathname.startsWith(pipelineHref) ? "page" : undefined}
+              className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium ${
+                pathname.startsWith(pipelineHref)
+                  ? "bg-white/10 text-white"
+                  : "text-slate-300 hover:bg-white/5 hover:text-white"
+              }`}
+              href={pipelineHref}
+              onClick={() => setOpen(false)}
+            >
+              <Kanban size={17} />
+              Pipeline
+            </Link>
           </div>
           {["admin", "owner"].includes(workspace.role) ? (
             <>
               <div className="mb-2 mt-6 px-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">
                 Workspace
               </div>
+              <Link
+                aria-current={pathname.startsWith(channelSettingsHref) ? "page" : undefined}
+                className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium ${
+                  pathname.startsWith(channelSettingsHref)
+                    ? "bg-white/10 text-white"
+                    : "text-slate-300 hover:bg-white/5 hover:text-white"
+                }`}
+                href={channelSettingsHref}
+                onClick={() => setOpen(false)}
+              >
+                <MessageCircle size={17} />
+                Canaux
+              </Link>
+              <Link
+                aria-current={pathname.startsWith(calendarSettingsHref) ? "page" : undefined}
+                className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium ${
+                  pathname.startsWith(calendarSettingsHref)
+                    ? "bg-white/10 text-white"
+                    : "text-slate-300 hover:bg-white/5 hover:text-white"
+                }`}
+                href={calendarSettingsHref}
+                onClick={() => setOpen(false)}
+              >
+                <CalendarDays size={17} />
+                Agenda
+              </Link>
               <Link
                 aria-current={pathname.startsWith(aiSettingsHref) ? "page" : undefined}
                 className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium ${
@@ -252,7 +287,7 @@ export function AppShell({
             Boucle actuelle
           </div>
           <p className="mt-2 text-[11px] leading-5 text-slate-400">
-            Produit → concurrents → propositions ICP sourcées.
+            ICP → campagnes → prospects → conversations → rendez-vous.
           </p>
         </div>
       </aside>

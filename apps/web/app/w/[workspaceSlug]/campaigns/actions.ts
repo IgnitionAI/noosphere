@@ -1,22 +1,23 @@
 "use server";
 
-import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import {
+  archiveChannelCampaign,
   campaignTransition,
   cancelOutreachAction,
   createCampaign,
+  enableProspectingChannel,
   OutboundApiError,
   preflightCampaign,
+  restartCampaignDiscovery,
   retryOutreachAction,
+  retryChannelAssessment,
   updateCampaign,
 } from "@/lib/api";
 
 const root = (workspaceSlug: string) => `/w/${workspaceSlug}/campaigns`;
-
-function text(formData: FormData, key: string): string {
-  return String(formData.get(key) ?? "").trim();
-}
+const text = (formData: FormData, key: string) => String(formData.get(key) ?? "").trim();
 
 export async function createCampaignAction(workspaceSlug: string, formData: FormData) {
   const name = text(formData, "name");
@@ -39,52 +40,70 @@ export async function updateCampaignAction(workspaceSlug: string, campaignId: st
 }
 
 export async function preflightCampaignAction(workspaceSlug: string, campaignId: string, _formData: FormData) {
-  try {
-    const result = await preflightCampaign(workspaceSlug, campaignId);
-    revalidatePath(`${root(workspaceSlug)}/${campaignId}`);
-    return result;
-  } catch (error) {
-    if (error instanceof OutboundApiError) throw new Error(`${error.code}: ${error.message}`);
-    throw error;
-  }
+  return preflightCampaign(workspaceSlug, campaignId);
 }
 
 export async function activateCampaignAction(workspaceSlug: string, campaignId: string, _formData: FormData) {
-  try { await campaignTransition(workspaceSlug, campaignId, "activate"); }
-  catch (error) { throw new Error(formatApiError(error)); }
+  await campaignTransition(workspaceSlug, campaignId, "activate");
   revalidatePath(`${root(workspaceSlug)}/${campaignId}`);
 }
 
 export async function lifecycleCampaignAction(workspaceSlug: string, campaignId: string, transition: "pause" | "resume" | "archive", _formData: FormData) {
-  try { await campaignTransition(workspaceSlug, campaignId, transition); }
-  catch (error) { throw new Error(formatApiError(error)); }
+  await campaignTransition(workspaceSlug, campaignId, transition);
   revalidatePath(`${root(workspaceSlug)}/${campaignId}`);
 }
 
 export async function cancelOutreachActionAction(workspaceSlug: string, campaignId: string, actionId: string, _formData: FormData) {
-  try {
-    await cancelOutreachAction(workspaceSlug, actionId);
-  } catch (error) {
-    throw new Error(formatApiError(error));
-  }
+  try { await cancelOutreachAction(workspaceSlug, actionId); }
+  catch (error) { throw new Error(formatApiError(error)); }
   revalidatePath(`${root(workspaceSlug)}/${campaignId}`);
 }
 
 export async function retryOutreachActionAction(workspaceSlug: string, campaignId: string, actionId: string, _formData: FormData) {
-  try {
-    await retryOutreachAction(workspaceSlug, actionId);
-  } catch (error) {
-    throw new Error(formatApiError(error));
-  }
+  try { await retryOutreachAction(workspaceSlug, actionId); }
+  catch (error) { throw new Error(formatApiError(error)); }
   revalidatePath(`${root(workspaceSlug)}/${campaignId}`);
 }
 
 function formatApiError(error: unknown): string {
-  if (!(error instanceof OutboundApiError)) return error instanceof Error ? error.message : "La transition a échoué.";
-  const details = error.details as { blockers?: unknown[]; warnings?: unknown[] } | null;
-  const blockers = Array.isArray(details?.blockers) ? details.blockers : [];
-  return blockers.length ? `${error.code}: ${error.message}\n${blockers.map((item) => {
-    const blocker = item as { reference?: string; message?: string };
-    return `${blocker.reference ?? "référence"}: ${blocker.message ?? error.message}`;
-  }).join("\n")}` : `${error.code}: ${error.message}`;
+  return error instanceof OutboundApiError ? `${error.code}: ${error.message}` : error instanceof Error ? error.message : "La transition a échoué.";
+}
+
+export async function restartCampaignDiscoveryAction(
+  workspaceSlug: string,
+  campaignId: string,
+): Promise<void> {
+  await restartCampaignDiscovery(workspaceSlug, campaignId);
+  revalidatePath(`/w/${workspaceSlug}/campaigns`);
+  revalidatePath(`/w/${workspaceSlug}/campaigns/${campaignId}`);
+}
+
+export async function enableProspectingChannelAction(
+  workspaceSlug: string,
+  planId: string,
+  channel: "linkedin" | "email" | "whatsapp",
+): Promise<void> {
+  await enableProspectingChannel(workspaceSlug, planId, channel);
+  revalidatePath(`/w/${workspaceSlug}/campaigns`);
+  revalidatePath(`/w/${workspaceSlug}/campaigns/plans/${planId}`);
+}
+
+export async function retryChannelAssessmentAction(
+  workspaceSlug: string,
+  planId: string,
+  assessmentId: string,
+): Promise<void> {
+  await retryChannelAssessment(workspaceSlug, assessmentId);
+  revalidatePath(`/w/${workspaceSlug}/campaigns`);
+  revalidatePath(`/w/${workspaceSlug}/campaigns/plans/${planId}`);
+}
+
+export async function archiveChannelCampaignAction(
+  workspaceSlug: string,
+  planId: string,
+  campaignId: string,
+): Promise<void> {
+  await archiveChannelCampaign(workspaceSlug, campaignId);
+  revalidatePath(`/w/${workspaceSlug}/campaigns`);
+  revalidatePath(`/w/${workspaceSlug}/campaigns/plans/${planId}`);
 }

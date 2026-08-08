@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, inArray, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, ne, notInArray, or, sql } from "drizzle-orm";
 import {
   ProductResearchRun,
   type ProductResearchBrief,
@@ -8,18 +8,21 @@ import {
   type ResearchStage,
 } from "@outbound/domain/gtm/product-research";
 import type { NewJob } from "@outbound/application/jobs/job-queue";
+import { PROSPECTING_CHANNELS } from "@outbound/domain/campaigns/prospecting-plan";
 import type {
   ProductResearchRepository,
   ProductResearchViewRepository,
   MarketEvidenceView,
   ResearchStageRunView,
   ResearchAIRun,
+  ResearchWorkItem,
   IcpVersionView,
 } from "@outbound/application/gtm/product-research-ports";
 import type { Database } from "@outbound/infrastructure/database/client";
 import {
   aiRuns,
   auditLogs,
+  channelAssessments,
   competitorCandidates,
   icpProposals,
   icpCriterion,
@@ -30,14 +33,22 @@ import {
   outboxEvents,
   productResearchRunDocuments,
   productResearchRuns,
+  prospectingPlans,
   researchDocuments,
   researchFindingEvidence,
   researchFindings,
   researchStageRuns,
+  researchWorkItems,
 } from "@outbound/infrastructure/database/schema";
+import { CHANNEL_ASSESSMENT_JOB_TYPE } from "@outbound/infrastructure/campaigns/channel-assessment-runner";
 import { projectResearchStage } from "@outbound/infrastructure/gtm/research-stage-projection";
+import {
+  projectV3ReportProposals,
+  resolveV3ReportRanking,
+} from "@outbound/application/gtm/v3-report-projection";
 
 type DbExecutor = Pick<Database, "insert" | "update">;
+type ReadWriteExecutor = Pick<Database, "select" | "insert" | "update">;
 
 export class PostgresProductResearchRepository
   implements ProductResearchRepository, ProductResearchViewRepository
@@ -112,7 +123,9 @@ export class PostgresProductResearchRepository
           eq(researchStageRuns.workspaceId, workspaceId),
           eq(researchStageRuns.runId, runId),
           eq(researchStageRuns.stage, stage),
+          eq(researchStageRuns.workItemKey, "main"),
           eq(researchStageRuns.status, "completed"),
+          eq(researchStageRuns.workItemKey, "main"),
         ),
       )
       .orderBy(desc(researchStageRuns.attempt))
@@ -142,6 +155,7 @@ export class PostgresProductResearchRepository
     workspaceId: string,
     runId: string,
     stage: ResearchStage,
+    workItemKey = "main",
   ): Promise<number> {
     const rows = await this.db
       .select({ attempt: researchStageRuns.attempt })
@@ -151,11 +165,33 @@ export class PostgresProductResearchRepository
           eq(researchStageRuns.workspaceId, workspaceId),
           eq(researchStageRuns.runId, runId),
           eq(researchStageRuns.stage, stage),
+          eq(researchStageRuns.workItemKey, workItemKey),
         ),
       )
       .orderBy(desc(researchStageRuns.attempt))
       .limit(1);
     return (rows[0]?.attempt ?? 0) + 1;
+  }
+
+  async listFanoutCheckpoints(
+    workspaceId: string,
+    runId: string,
+    stage: "market_investigation",
+  ): Promise<readonly ResearchCheckpoint[]> {
+    const rows = await this.db
+      .select()
+      .from(researchStageRuns)
+      .where(
+        and(
+          eq(researchStageRuns.workspaceId, workspaceId),
+          eq(researchStageRuns.runId, runId),
+          eq(researchStageRuns.stage, stage),
+          ne(researchStageRuns.workItemKey, "main"),
+          eq(researchStageRuns.status, "completed"),
+        ),
+      )
+      .orderBy(asc(researchStageRuns.startedAt));
+    return rows.map(toCheckpoint);
   }
 
   async commitRunTransition(
@@ -189,12 +225,25 @@ export class PostgresProductResearchRepository
             eq(researchStageRuns.workspaceId, checkpoint.workspaceId),
             eq(researchStageRuns.runId, checkpoint.runId),
             eq(researchStageRuns.stage, checkpoint.stage),
+            eq(researchStageRuns.workItemKey, checkpoint.workItemKey ?? "main"),
             eq(researchStageRuns.status, "running"),
             eq(researchStageRuns.review, "machine"),
             ne(researchStageRuns.id, checkpoint.id),
           ),
         );
       await tx.insert(researchStageRuns).values(toCheckpointRow(checkpoint)).onConflictDoNothing();
+      if ((checkpoint.workItemKey ?? "main") !== "main") {
+        await tx
+          .update(researchWorkItems)
+          .set({ status: "running", updatedAt: checkpoint.startedAt })
+          .where(
+            and(
+              eq(researchWorkItems.workspaceId, checkpoint.workspaceId),
+              eq(researchWorkItems.runId, checkpoint.runId),
+              eq(researchWorkItems.workItemKey, checkpoint.workItemKey ?? "main"),
+            ),
+          );
+      }
       await insertEvents(tx, events);
     });
   }
@@ -205,6 +254,10 @@ export class PostgresProductResearchRepository
     aiRun: ResearchAIRun;
     nextJob: NewJob | null;
     events: readonly ProductResearchEvent[];
+    fanout?: {
+      readonly items: readonly ResearchWorkItem[];
+      readonly jobs: readonly NewJob[];
+    };
   }): Promise<void> {
     await this.db.transaction(async (tx) => {
       await updateRun(tx, input.run);
@@ -228,8 +281,100 @@ export class PostgresProductResearchRepository
         stage: input.checkpoint.stage,
         output: input.checkpoint.output,
       });
+      if (
+        input.run.snapshot.brief.researchVersion === 3 &&
+        input.checkpoint.stage === "objective_ranking"
+      ) {
+        await autoCreateV3ProspectingPlans(tx, {
+          workspaceId: input.checkpoint.workspaceId,
+          runId: input.checkpoint.runId,
+          publishedAt: input.checkpoint.completedAt ?? new Date(),
+        });
+      }
+      if (input.fanout) {
+        await tx
+          .insert(researchWorkItems)
+          .values(input.fanout.items.map(toWorkItemRow))
+          .onConflictDoUpdate({
+            target: [
+              researchWorkItems.workspaceId,
+              researchWorkItems.runId,
+              researchWorkItems.stage,
+              researchWorkItems.workItemKey,
+            ],
+            set: { status: "pending", errorCode: null, updatedAt: new Date() },
+          });
+        for (const job of input.fanout.jobs) await insertJob(tx, job);
+      }
       if (input.nextJob) await insertJob(tx, input.nextJob);
       await insertEvents(tx, input.events);
+    });
+  }
+
+  async commitFanoutItemCompleted(input: {
+    checkpoint: ResearchCheckpoint;
+    aiRun: ResearchAIRun;
+    finalizerJob: NewJob;
+  }): Promise<void> {
+    await this.#commitFanoutTerminal({ ...input, status: "completed", errorCode: null });
+  }
+
+  async commitFanoutItemFailed(input: {
+    checkpoint: ResearchCheckpoint;
+    finalizerJob: NewJob;
+  }): Promise<void> {
+    await this.#commitFanoutTerminal({
+      ...input,
+      aiRun: null,
+      status: "failed",
+      errorCode: input.checkpoint.errorCode ?? "FANOUT_ITEM_FAILED",
+    });
+  }
+
+  async #commitFanoutTerminal(input: {
+    checkpoint: ResearchCheckpoint;
+    aiRun: ResearchAIRun | null;
+    finalizerJob: NewJob;
+    status: "completed" | "failed";
+    errorCode: string | null;
+  }): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      const updated = await tx
+        .update(researchStageRuns)
+        .set(toCheckpointUpdate(input.checkpoint))
+        .where(
+          and(
+            eq(researchStageRuns.workspaceId, input.checkpoint.workspaceId),
+            eq(researchStageRuns.id, input.checkpoint.id),
+            ne(researchStageRuns.review, "human_reviewed"),
+          ),
+        )
+        .returning({ id: researchStageRuns.id });
+      if (updated.length !== 1) throw new Error("CHECKPOINT_HUMAN_REVIEW_LOCKED");
+      if (input.aiRun) await tx.insert(aiRuns).values(toAIRunRow(input.aiRun));
+      await tx
+        .update(researchWorkItems)
+        .set({ status: input.status, errorCode: input.errorCode, updatedAt: new Date() })
+        .where(
+          and(
+            eq(researchWorkItems.workspaceId, input.checkpoint.workspaceId),
+            eq(researchWorkItems.runId, input.checkpoint.runId),
+            eq(researchWorkItems.workItemKey, input.checkpoint.workItemKey ?? "main"),
+          ),
+        );
+      const remaining = await tx
+        .select({ id: researchWorkItems.id })
+        .from(researchWorkItems)
+        .where(
+          and(
+            eq(researchWorkItems.workspaceId, input.checkpoint.workspaceId),
+            eq(researchWorkItems.runId, input.checkpoint.runId),
+            eq(researchWorkItems.stage, "market_investigation"),
+            notInArray(researchWorkItems.status, ["completed", "failed"]),
+          ),
+        )
+        .limit(1);
+      if (remaining.length === 0) await insertJob(tx, input.finalizerJob);
     });
   }
 
@@ -266,6 +411,15 @@ export class PostgresProductResearchRepository
     const workflowStages = input.run.workflowStages();
     const stagesToInvalidate = workflowStages.slice(workflowStages.indexOf(input.fromStage));
     await this.db.transaction(async (tx) => {
+      await tx
+        .delete(researchWorkItems)
+        .where(
+          and(
+            eq(researchWorkItems.workspaceId, input.run.snapshot.workspaceId),
+            eq(researchWorkItems.runId, input.run.snapshot.id),
+            inArray(researchWorkItems.stage, stagesToInvalidate),
+          ),
+        );
       await tx
         .update(researchStageRuns)
         .set({ status: "invalidated" })
@@ -668,7 +822,17 @@ export class PostgresProductResearchRepository
   }
 
   async getReport(workspaceId: string, runId: string) {
-    const [stages, evidence, competitors, findings, proposals, versions] = await Promise.all([
+    const [runs, stages, evidence, competitors, findings, proposals, versions] = await Promise.all([
+      this.db
+        .select({ status: productResearchRuns.status, brief: productResearchRuns.brief })
+        .from(productResearchRuns)
+        .where(
+          and(
+            eq(productResearchRuns.workspaceId, workspaceId),
+            eq(productResearchRuns.id, runId),
+          ),
+        )
+        .limit(1),
       this.db
         .select({ stage: researchStageRuns.stage, output: researchStageRuns.output })
         .from(researchStageRuns)
@@ -725,15 +889,26 @@ export class PostgresProductResearchRepository
       list.push(link.evidenceId);
       evidenceByFinding.set(link.findingId, list);
     }
+    const stageOutputs = Object.fromEntries(stages.map((stage) => [stage.stage, stage.output]));
+    const run = runs[0];
+    const brief = run?.brief as { researchVersion?: unknown } | undefined;
+    const v3Ranking = resolveV3ReportRanking(
+      stageOutputs,
+      run?.status === "partial" && brief?.researchVersion === 3,
+    );
+    const reportStageOutputs = v3Ranking
+      ? { ...stageOutputs, objective_ranking: v3Ranking }
+      : stageOutputs;
+    const v3Proposals = projectV3ReportProposals(v3Ranking);
     return {
-      stageOutputs: Object.fromEntries(stages.map((stage) => [stage.stage, stage.output])),
+      stageOutputs: reportStageOutputs,
       evidence,
       competitors,
       findings: findings.map((finding) => ({
         ...finding,
         evidenceIds: evidenceByFinding.get(finding.id) ?? [],
       })),
-      proposals,
+      proposals: v3Proposals ?? proposals,
       versions,
     };
   }
@@ -769,6 +944,8 @@ function toRunRow(run: ProductResearchRun): typeof productResearchRuns.$inferIns
     activeStage: snapshot.activeStage,
     completedStages: snapshot.completedStages,
     version: snapshot.version,
+    executionStartedAt: snapshot.executionStartedAt,
+    deadlineAt: snapshot.deadlineAt,
     createdAt: snapshot.createdAt,
     updatedAt: snapshot.updatedAt,
   };
@@ -783,6 +960,8 @@ function toRunSnapshot(row: typeof productResearchRuns.$inferSelect): ProductRes
     activeStage: row.activeStage,
     completedStages: row.completedStages as ResearchStage[],
     version: row.version,
+    executionStartedAt: row.executionStartedAt,
+    deadlineAt: row.deadlineAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -794,6 +973,7 @@ function toCheckpoint(row: typeof researchStageRuns.$inferSelect): ResearchCheck
     workspaceId: row.workspaceId,
     runId: row.runId,
     stage: row.stage,
+    workItemKey: row.workItemKey,
     attempt: row.attempt,
     status: row.status,
     review: row.review,
@@ -812,6 +992,7 @@ function toCheckpointRow(checkpoint: ResearchCheckpoint): typeof researchStageRu
     workspaceId: checkpoint.workspaceId,
     runId: checkpoint.runId,
     stage: checkpoint.stage,
+    workItemKey: checkpoint.workItemKey ?? "main",
     attempt: checkpoint.attempt,
     status: checkpoint.status,
     review: checkpoint.review,
@@ -821,6 +1002,21 @@ function toCheckpointRow(checkpoint: ResearchCheckpoint): typeof researchStageRu
     errorCode: checkpoint.errorCode,
     startedAt: checkpoint.startedAt,
     completedAt: checkpoint.completedAt,
+  };
+}
+
+function toWorkItemRow(item: ResearchWorkItem): typeof researchWorkItems.$inferInsert {
+  return {
+    id: item.id,
+    workspaceId: item.workspaceId,
+    runId: item.runId,
+    stage: item.stage,
+    workItemKey: item.workItemKey,
+    subjectArtifactKey: item.subjectArtifactKey,
+    ordinal: item.ordinal,
+    status: item.status,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
   };
 }
 
@@ -835,6 +1031,171 @@ function toCheckpointUpdate(checkpoint: ResearchCheckpoint) {
   };
 }
 
+async function autoCreateV3ProspectingPlans(
+  executor: ReadWriteExecutor,
+  input: { workspaceId: string; runId: string; publishedAt: Date },
+): Promise<void> {
+  const proposals = await executor
+    .select()
+    .from(icpProposals)
+    .where(
+      and(
+        eq(icpProposals.workspaceId, input.workspaceId),
+        eq(icpProposals.runId, input.runId),
+      ),
+    )
+    .orderBy(asc(icpProposals.rank));
+  if (!proposals.length) return;
+
+  const [current] = await executor
+    .select({ version: icpVersions.version })
+    .from(icpVersions)
+    .where(eq(icpVersions.workspaceId, input.workspaceId))
+    .orderBy(desc(icpVersions.version))
+    .limit(1);
+  const [review] = await executor
+    .select({ output: researchStageRuns.output })
+    .from(researchStageRuns)
+    .where(
+      and(
+        eq(researchStageRuns.workspaceId, input.workspaceId),
+        eq(researchStageRuns.runId, input.runId),
+        eq(researchStageRuns.stage, "adversarial_review"),
+        eq(researchStageRuns.status, "completed"),
+      ),
+    )
+    .orderBy(desc(researchStageRuns.startedAt))
+    .limit(1);
+  const reviewOutput = review?.output;
+  const unresolvedContradictions =
+    reviewOutput &&
+    typeof reviewOutput === "object" &&
+    "unresolvedContradictions" in reviewOutput &&
+    Array.isArray(reviewOutput.unresolvedContradictions)
+      ? reviewOutput.unresolvedContradictions
+      : [];
+  let nextVersion = (current?.version ?? 0) + 1;
+
+  for (const proposal of proposals) {
+    const [existingVersion] = await executor
+      .select()
+      .from(icpVersions)
+      .where(
+        and(
+          eq(icpVersions.workspaceId, input.workspaceId),
+          eq(icpVersions.proposalId, proposal.id),
+        ),
+      )
+      .limit(1);
+
+    let versionRow = existingVersion;
+    if (!versionRow) {
+      const versionId = crypto.randomUUID();
+      const icpId = crypto.randomUUID();
+      await executor.insert(icps).values({
+        id: icpId,
+        workspaceId: input.workspaceId,
+        name: proposal.name,
+        currentVersion: 1,
+      });
+      const [created] = await executor
+        .insert(icpVersions)
+        .values({
+          id: versionId,
+          workspaceId: input.workspaceId,
+          icpId,
+          runId: input.runId,
+          proposalId: proposal.id,
+          version: nextVersion,
+          name: proposal.name,
+          confidence: proposal.confidence,
+          criteria: proposal.criteria,
+          buyingCommittee: proposal.buyingCommittee,
+          problems: proposal.problems,
+          signals: proposal.signals,
+          exclusions: proposal.exclusions,
+          unknowns: proposal.unknowns,
+          unresolvedContradictions,
+          blockedFindings: [],
+          publishedBy: null,
+          publishedAt: input.publishedAt,
+        })
+        .returning();
+      versionRow = created;
+      await insertEvents(executor, [
+        {
+          type: "ICPVersionPublished",
+          runId: input.runId,
+          workspaceId: input.workspaceId,
+          icpId,
+          actorUserId: null,
+          versionId,
+          proposalId: proposal.id,
+          version: nextVersion,
+        },
+      ]);
+      nextVersion += 1;
+    }
+    if (!versionRow) continue;
+
+    const [existingPlan] = await executor
+      .select({ id: prospectingPlans.id })
+      .from(prospectingPlans)
+      .where(
+        and(
+          eq(prospectingPlans.workspaceId, input.workspaceId),
+          eq(prospectingPlans.icpVersionId, versionRow.id),
+        ),
+      )
+      .limit(1);
+    if (existingPlan) continue;
+
+    const planId = crypto.randomUUID();
+    await executor.insert(prospectingPlans).values({
+      id: planId,
+      workspaceId: input.workspaceId,
+      icpVersionId: versionRow.id,
+      name: `Plan — ${proposal.name}`.slice(0, 300),
+      status: "assessing",
+      createdAt: input.publishedAt,
+      updatedAt: input.publishedAt,
+    });
+    for (const channel of PROSPECTING_CHANNELS) {
+      const assessmentId = crypto.randomUUID();
+      await executor.insert(channelAssessments).values({
+        id: assessmentId,
+        workspaceId: input.workspaceId,
+        planId,
+        channel,
+        status: "pending",
+        createdAt: input.publishedAt,
+        updatedAt: input.publishedAt,
+      });
+      await insertJob(executor, {
+        id: crypto.randomUUID(),
+        workspaceId: input.workspaceId,
+        type: CHANNEL_ASSESSMENT_JOB_TYPE,
+        payload: { workspaceId: input.workspaceId, assessmentId },
+        idempotencyKey: `${assessmentId}:initial`,
+        correlationId: `prospecting-plan:${planId}`,
+        maxAttempts: 3,
+        availableAt: input.publishedAt,
+      });
+    }
+    await executor.insert(outboxEvents).values({
+      workspaceId: input.workspaceId,
+      aggregateType: "ProspectingPlan",
+      aggregateId: planId,
+      eventType: "ProspectingPlanAssessmentStarted",
+      payload: {
+        planId,
+        icpVersionId: versionRow.id,
+        channels: PROSPECTING_CHANNELS,
+      },
+    });
+  }
+}
+
 async function updateRun(executor: DbExecutor, run: ProductResearchRun): Promise<void> {
   const snapshot = run.snapshot;
   await executor
@@ -844,6 +1205,8 @@ async function updateRun(executor: DbExecutor, run: ProductResearchRun): Promise
       activeStage: snapshot.activeStage,
       completedStages: snapshot.completedStages,
       version: snapshot.version,
+      executionStartedAt: snapshot.executionStartedAt,
+      deadlineAt: snapshot.deadlineAt,
       updatedAt: snapshot.updatedAt,
     })
     .where(

@@ -9,6 +9,7 @@ import {
   contactSuppressions,
   outboxEvents,
 } from "@outbound/infrastructure/database/schema";
+import { suppressionFingerprint } from "./suppression-fingerprint";
 
 export interface CompanyListCursor {
   readonly createdAt: Date;
@@ -504,7 +505,12 @@ export class PostgresCrmRepository {
               contactId: input.contactId,
               channel: input.channel,
               identityType: identity.type,
-              normalizedValue: identity.normalizedValue,
+              normalizedValue: null,
+              identityFingerprint: suppressionFingerprint({
+                workspaceId: input.workspaceId,
+                identityType: identity.type,
+                normalizedValue: identity.normalizedValue,
+              }),
               reason: input.reason,
               createdBy: input.userId,
             })),
@@ -715,6 +721,11 @@ export class PostgresCrmRepository {
     identities: readonly { type: string; normalizedValue: string }[],
   ): Promise<void> {
     for (const identity of identities) {
+      const fingerprint = suppressionFingerprint({
+        workspaceId,
+        identityType: identity.type,
+        normalizedValue: identity.normalizedValue,
+      });
       const matches = await tx
         .select({ id: contactSuppressions.id })
         .from(contactSuppressions)
@@ -722,9 +733,10 @@ export class PostgresCrmRepository {
           and(
             eq(contactSuppressions.workspaceId, workspaceId),
             eq(contactSuppressions.identityType, identity.type as never),
-            eq(contactSuppressions.normalizedValue, identity.normalizedValue),
-            isNull(contactSuppressions.liftedAt),
-            eq(contactSuppressions.channel, "global"),
+            or(
+              eq(contactSuppressions.identityFingerprint, fingerprint),
+              eq(contactSuppressions.normalizedValue, identity.normalizedValue),
+            ),
           ),
         )
         .limit(1);

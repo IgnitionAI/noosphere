@@ -171,6 +171,16 @@ export function BriefForm({ workspaceSlug }: { workspaceSlug: string }) {
               </label>
               <label>
                 <span className="mb-2 block text-xs font-semibold text-slate-700">
+                  Objectif de l’étude
+                </span>
+                <select className="control" defaultValue="qualified_conversations" name="researchObjective">
+                  <option value="qualified_conversations">Conversations qualifiées</option>
+                  <option value="fast_revenue">Revenu le plus rapide</option>
+                  <option value="strategic_market">Marché stratégique</option>
+                </select>
+              </label>
+              <label>
+                <span className="mb-2 block text-xs font-semibold text-slate-700">
                   Acheteurs recherchés
                 </span>
                 <select

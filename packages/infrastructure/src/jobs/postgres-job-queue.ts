@@ -25,13 +25,13 @@ export class PostgresJobQueue implements JobQueue {
   constructor(private readonly sql: SqlClient) {}
 
   async enqueue(job: NewJob): Promise<{ inserted: boolean }> {
-    const payload = JSON.stringify(job.payload);
+    const payload = this.sql.json(job.payload as never);
     const rows = await this.sql`
       insert into jobs (
         id, workspace_id, type, payload, idempotency_key, correlation_id,
         max_attempts, available_at
       ) values (
-        ${job.id}, ${job.workspaceId}, ${job.type}, ${payload}::jsonb,
+        ${job.id}, ${job.workspaceId}, ${job.type}, ${payload},
         ${job.idempotencyKey}, ${job.correlationId}, ${job.maxAttempts}, ${job.availableAt}
       )
       on conflict (workspace_id, type, idempotency_key) do nothing
@@ -49,8 +49,15 @@ export class PostgresJobQueue implements JobQueue {
     const lockedUntil = new Date(request.now.getTime() + request.leaseMs);
     const rows = await this.sql.begin(async (transaction) => {
       return transaction<JobRow[]>`
-        with candidates as (
-          select id
+        with ranked as (
+          select id,
+                 workspace_id,
+                 available_at,
+                 created_at,
+                 row_number() over (
+                   partition by workspace_id
+                   order by available_at asc, created_at asc, id asc
+                 ) as workspace_rank
           from jobs
           where type = any(${typeArrayLiteral}::text[])
             and attempts < max_attempts
@@ -58,8 +65,15 @@ export class PostgresJobQueue implements JobQueue {
               (status in ('pending', 'retry') and available_at <= ${request.now})
               or (status = 'running' and locked_until <= ${request.now})
             )
-          order by available_at asc, created_at asc, id asc
-          for update skip locked
+        ), candidates as (
+          select jobs.id
+          from jobs
+          join ranked on ranked.id = jobs.id
+          order by ranked.workspace_rank asc,
+                   ranked.available_at asc,
+                   ranked.created_at asc,
+                   jobs.id asc
+          for update of jobs skip locked
           limit ${request.limit}
         )
         update jobs

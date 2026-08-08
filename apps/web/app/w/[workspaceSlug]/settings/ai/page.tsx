@@ -7,22 +7,12 @@ const models = [
   {
     id: "k3",
     label: "Kimi K3",
-    description: "Recherche profonde et raisonnement long.",
-  },
-  {
-    id: "kimi-for-coding",
-    label: "Kimi K2.7 Code",
-    description: "Choix stable et disponible pour tous les abonnements.",
-  },
-  {
-    id: "kimi-for-coding-highspeed",
-    label: "Kimi K2.7 HighSpeed",
-    description: "Réponses plus rapides avec une consommation de quota supérieure.",
+    description: "Agent principal, contexte long et réflexion maximale.",
   },
   {
     id: "k3-256k",
     label: "Kimi K3 256k",
-    description: "Alias disponible sur certains comptes Kimi Code.",
+    description: "Exécutants bornés, réflexion minimale et quota réduit.",
   },
 ] as const;
 
@@ -51,8 +41,8 @@ export default async function WorkspaceAiSettingsPage({
             Modèles Kimi du workspace
           </h1>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-muted">
-            Le premier modèle est prioritaire. Les suivants sont utilisés uniquement
-            lorsqu’un modèle est explicitement indisponible pour le compte.
+            K3 réfléchit au maximum sur les décisions stratégiques. Les tâches
+            d’exécution utilisent K3 256k avec un effort minimal.
           </p>
         </div>
         <div className="badge">
@@ -62,18 +52,18 @@ export default async function WorkspaceAiSettingsPage({
 
       <form action={save} className="mt-6 space-y-6">
         <ModelPolicyCard
-          description="Analyse produit, découverte concurrentielle et audit des preuves."
+          description="Problèmes, organisations, contexte d’achat, composition ICP et revue avec reasoning_effort=max."
           icon={<Cpu size={18} />}
           models={settings.researchModels}
           name="researchModel"
-          title="Recherche approfondie"
+          title="Agent principal — intelligence maximale"
         />
         <ModelPolicyCard
-          description="Synthèse des segments et classement des propositions ICP."
+          description="Extraction, investigations parallèles et transformations avec reasoning_effort=low."
           icon={<Gauge size={18} />}
           models={settings.synthesisModels}
           name="synthesisModel"
-          title="Synthèse structurée"
+          title="Agents exécutants — effort minimal"
         />
 
         <div className="flex flex-col gap-3 rounded-xl border border-line bg-white p-4 sm:flex-row sm:items-center sm:justify-between">

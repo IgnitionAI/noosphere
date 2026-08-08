@@ -1,0 +1,1 @@
+ALTER TABLE "campaigns" ALTER COLUMN "channel" DROP NOT NULL;

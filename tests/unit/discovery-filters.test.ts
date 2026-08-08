@@ -18,6 +18,7 @@ describe("buildFilters", () => {
       category: "people",
       keywords: "conseil juridique Associé",
       limit: 25,
+      enrichContacts: false,
     });
   });
 

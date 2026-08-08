@@ -109,6 +109,7 @@ export class PostgresCampaignPopulationRepository {
       const campaign = campaignRows[0];
       if (!campaign) throw new CampaignPopulationError("CAMPAIGN_NOT_FOUND");
       if (campaign.status !== "active") throw new CampaignPopulationError("CAMPAIGN_NOT_ACTIVE");
+      if (!campaign.sequenceVersionId) throw new CampaignPopulationError("SEQUENCE_VERSION_NOT_FOUND");
       const prospectRows = await tx.select().from(campaignProspects).where(and(
         eq(campaignProspects.workspaceId, input.workspaceId), eq(campaignProspects.campaignId, input.campaignId), eq(campaignProspects.contactId, input.contactId),
       )).limit(1);
@@ -197,10 +198,10 @@ export class PostgresCampaignPopulationRepository {
     const status = score.eligible ? "candidate" as const : "excluded" as const;
     const exclusionReason = score.eligible ? null : (score.explanation.exclusions[0]?.reason ?? "ICP criteria not met");
     if (!existing) {
-      const rows = await this.db.insert(campaignProspects).values({ workspaceId: input.workspaceId, campaignId: input.campaignId, contactId, status, score: score.score.toFixed(4), explanation: score.explanation, exclusionReason, excludedAt: status === "excluded" ? new Date() : null }).returning();
+      const rows = await this.db.insert(campaignProspects).values({ workspaceId: input.workspaceId, campaignId: input.campaignId, contactId, status, score: score.score, explanation: score.explanation, exclusionReason, excludedAt: status === "excluded" ? new Date() : null }).returning();
       return rows[0]!;
     }
-    const rows = await this.db.update(campaignProspects).set({ status, score: score.score.toFixed(4), explanation: score.explanation, exclusionReason, updatedAt: new Date(), ...(status === "excluded" ? { excludedAt: existing.excludedAt ?? new Date() } : {}) }).where(eq(campaignProspects.id, existing.id)).returning();
+    const rows = await this.db.update(campaignProspects).set({ status, score: score.score, explanation: score.explanation, exclusionReason, updatedAt: new Date(), ...(status === "excluded" ? { excludedAt: existing.excludedAt ?? new Date() } : {}) }).where(eq(campaignProspects.id, existing.id)).returning();
     return rows[0]!;
   }
 

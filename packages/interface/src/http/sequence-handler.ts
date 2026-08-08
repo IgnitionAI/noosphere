@@ -5,6 +5,7 @@ import {
 } from "@outbound/domain/campaigns/sequence-validation";
 import type { Database } from "@outbound/infrastructure/database/client";
 import { PostgresSequenceRepository } from "@outbound/infrastructure/campaigns/postgres-sequence-repository";
+import { postgresUuidSchema } from "@outbound/interface/http/http-schemas";
 import {
   RequestAuthenticationError,
   WorkspaceAccessDeniedError,
@@ -12,10 +13,10 @@ import {
   type RequestContextResolver,
 } from "@outbound/interface/http/request-context";
 
-const uuidSchema = z.string().uuid();
+const identityUuidSchema = z.string().uuid();
 const requestContextSchema = z.object({
-  userId: uuidSchema,
-  workspaceId: uuidSchema,
+  userId: identityUuidSchema,
+  workspaceId: identityUuidSchema,
   role: z.enum(["viewer", "operator", "reviewer", "admin", "owner"]),
 });
 const sequenceCreateSchema = z
@@ -103,7 +104,7 @@ export function createSequenceHttpHandler(dependencies: SequenceHttpDependencies
         requireViewer(context.role);
         const detail = await repository.getSequence({
           workspaceId: context.workspaceId,
-          sequenceId: uuidSchema.parse(sequenceMatch[1]),
+          sequenceId: postgresUuidSchema.parse(sequenceMatch[1]),
         });
         if (!detail) return problem(404, "SEQUENCE_NOT_FOUND", "Sequence not found");
         return json(detail);
@@ -113,7 +114,7 @@ export function createSequenceHttpHandler(dependencies: SequenceHttpDependencies
         const body = sequencePatchSchema.parse(await request.json());
         const updated = await repository.updateSequence({
           workspaceId: context.workspaceId,
-          sequenceId: uuidSchema.parse(sequenceMatch[1]),
+          sequenceId: postgresUuidSchema.parse(sequenceMatch[1]),
           ...(body.name !== undefined ? { name: body.name } : {}),
           ...(body.description !== undefined ? { description: body.description } : {}),
         });
@@ -123,7 +124,7 @@ export function createSequenceHttpHandler(dependencies: SequenceHttpDependencies
       const stepsMatch = sequenceStepsPath.exec(url.pathname);
       if (stepsMatch && request.method === "PUT") {
         requireOperator(context.role);
-        const sequenceId = uuidSchema.parse(stepsMatch[1]);
+        const sequenceId = postgresUuidSchema.parse(stepsMatch[1]);
         const body = stepsReplaceSchema.parse(await request.json());
         await repository.replaceSteps({
           workspaceId: context.workspaceId,
@@ -148,7 +149,7 @@ export function createSequenceHttpHandler(dependencies: SequenceHttpDependencies
         requireViewer(context.role);
         const data = await repository.listVersions({
           workspaceId: context.workspaceId,
-          sequenceId: uuidSchema.parse(versionsMatch[1]),
+          sequenceId: postgresUuidSchema.parse(versionsMatch[1]),
         });
         return json({ data });
       }
@@ -156,7 +157,7 @@ export function createSequenceHttpHandler(dependencies: SequenceHttpDependencies
       const publishMatch = sequencePublishPath.exec(url.pathname);
       if (publishMatch && request.method === "POST") {
         requireAdmin(context.role);
-        const sequenceId = uuidSchema.parse(publishMatch[1]);
+        const sequenceId = postgresUuidSchema.parse(publishMatch[1]);
         const detail = await repository.getSequence({
           workspaceId: context.workspaceId,
           sequenceId,

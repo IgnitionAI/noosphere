@@ -89,120 +89,232 @@
     {
       "idx": 12,
       "version": "7",
-      "when": 1786104500000,
-      "tag": "0012_immutable_icp_versions",
+      "when": 1785656775946,
+      "tag": "0012_numerous_microbe",
       "breakpoints": true
     },
     {
       "idx": 13,
       "version": "7",
-      "when": 1786104600000,
-      "tag": "0013_offers",
+      "when": 1785658319543,
+      "tag": "0013_third_lilith",
       "breakpoints": true
     },
     {
       "idx": 14,
       "version": "7",
-      "when": 1786104700000,
-      "tag": "0014_audit_logs",
+      "when": 1785659563741,
+      "tag": "0014_big_doctor_faustus",
       "breakpoints": true
     },
     {
       "idx": 15,
       "version": "7",
-      "when": 1786104800000,
-      "tag": "0015_suppression_lifts",
+      "when": 1785660339257,
+      "tag": "0015_slippery_selene",
       "breakpoints": true
     },
     {
       "idx": 16,
       "version": "7",
-      "when": 1786104900000,
-      "tag": "0016_csv_imports",
+      "when": 1785661364095,
+      "tag": "0016_medical_saracen",
       "breakpoints": true
     },
     {
       "idx": 17,
       "version": "7",
-      "when": 1786105000000,
-      "tag": "0017_contact_merges",
+      "when": 1785676629428,
+      "tag": "0017_v3_budget_partial_recovery",
       "breakpoints": true
     },
     {
       "idx": 18,
       "version": "7",
-      "when": 1786183153000,
-      "tag": "0018_messaging_strategy_policy",
+      "when": 1785682562626,
+      "tag": "0018_superb_clea",
       "breakpoints": true
     },
     {
       "idx": 19,
       "version": "7",
-      "when": 1786183200000,
-      "tag": "0019_messaging_draft_rules",
+      "when": 1785684545916,
+      "tag": "0019_cloudy_gressill",
       "breakpoints": true
     },
     {
       "idx": 20,
       "version": "7",
-      "when": 1786183300000,
-      "tag": "0020_discovery_retry_count",
+      "when": 1785690413447,
+      "tag": "0020_cultured_kylun",
       "breakpoints": true
     },
     {
       "idx": 21,
       "version": "7",
-      "when": 1786183400000,
-      "tag": "0021_discovery_crm_source",
+      "when": 1785690717543,
+      "tag": "0021_campaign-backfill",
       "breakpoints": true
     },
     {
       "idx": 22,
       "version": "7",
-      "when": 1786183500000,
-      "tag": "0022_sequence_versions_immutable",
+      "when": 1785690787231,
+      "tag": "0022_ranked-icp-campaign-backfill",
       "breakpoints": true
     },
     {
       "idx": 23,
       "version": "7",
-      "when": 1786183600000,
-      "tag": "0023_campaigns",
+      "when": 1785695132771,
+      "tag": "0023_serious_doctor_strange",
       "breakpoints": true
     },
     {
       "idx": 24,
       "version": "7",
-      "when": 1786183700000,
-      "tag": "0024_connected_accounts",
+      "when": 1785695779445,
+      "tag": "0024_close-poisoned-discovery-runs",
       "breakpoints": true
     },
     {
       "idx": 25,
       "version": "7",
-      "when": 1786183800000,
-      "tag": "0025_campaign_population",
+      "when": 1785698319404,
+      "tag": "0025_lovely_silvermane",
       "breakpoints": true
     },
     {
       "idx": 26,
       "version": "7",
-      "when": 1786183900000,
-      "tag": "0026_approval_items",
+      "when": 1785699372641,
+      "tag": "0026_autonomous_campaign_sourcing",
       "breakpoints": true
     },
     {
       "idx": 27,
       "version": "7",
-      "when": 1786184000000,
-      "tag": "0027_outreach_scheduler",
+      "when": 1785699857556,
+      "tag": "0027_autonomous_campaign_scoring",
       "breakpoints": true
     },
     {
       "idx": 28,
       "version": "7",
-      "when": 1786184100000,
-      "tag": "0028_outreach_responses",
+      "when": 1785700215142,
+      "tag": "0028_autonomous_campaign_execution",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1785700943289,
+      "tag": "0029_autonomous_inbound_replies",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1785794400000,
+      "tag": "0030_campaign_autopilot_policy",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1785880800000,
+      "tag": "0031_daily_prospecting_and_commands",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1785967200000,
+      "tag": "0032_flashy_rick_jones",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1786053600000,
+      "tag": "0033_third_black_widow",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1786140000000,
+      "tag": "0034_opportunity-history-backfill",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1786226400000,
+      "tag": "0035_calcom_agent_scheduling",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1786312800000,
+      "tag": "0036_meeting_proposals",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1786399200000,
+      "tag": "0037_linkedin_inbox_unread",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1786485600000,
+      "tag": "0038_lean_stingray",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1786572000000,
+      "tag": "0039_elite_giant_girl",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1786658400000,
+      "tag": "0040_outbound_enum_expansion",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1786744800000,
+      "tag": "0041_whole_nomad",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1786831200000,
+      "tag": "0042_restore_immutable_guards",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1786917600000,
+      "tag": "0043_legacy_campaign_compatibility",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1787004000000,
+      "tag": "0044_legacy_campaign_channel_compatibility",
       "breakpoints": true
     }
   ]

@@ -33,21 +33,20 @@
 | GET/POST | `/sequences` | gérer les playbooks | operator |
 | POST | `/sequences/:id/actions/publish` | figer une version | admin |
 | GET/POST | `/campaigns` | gérer les campagnes | operator |
-| POST | `/campaigns/:id/actions/discover` | lancer la recherche | operator |
-| POST | `/campaigns/:id/actions/approve` | approuver population/séquence | reviewer |
-| POST | `/campaigns/:id/actions/activate` | activer | admin |
+| POST | `/campaigns/:id/actions/discover` | reprise manuelle d’exception legacy | operator |
 | POST | `/campaigns/:id/actions/pause` | suspendre | operator |
 | GET | `/campaigns/:id/prospects` | examiner scores et preuves | viewer |
-| GET | `/inbox/conversations` | inbox unifiée | viewer |
-| GET | `/inbox/conversations/:id/messages` | historique | viewer |
-| POST | `/reply-drafts/:id/actions/approve` | approuver et envoyer | reviewer |
-| POST | `/reply-drafts/:id/actions/reject` | rejeter avec feedback | reviewer |
-| GET/POST | `/opportunities` | gérer le pipeline | operator |
+| GET | `/campaigns/:campaignId/conversations` | compteurs et projection des prospects engagés | viewer |
+| GET | `/campaigns/:campaignId/conversations/:conversationId` | historique, décision K3, réponse et opportunité | viewer |
+| GET/PATCH | `/campaigns/:campaignId/autopilot-policy` | lire ou configurer la politique avant planification | viewer/operator |
+| POST | `/webhooks/unipile` | persister un événement entrant signé | Unipile |
+| GET | `/opportunities` | lire le pipeline automatiquement alimenté | viewer |
 | POST | `/opportunities/:id/actions/change-stage` | changer d’étape | operator |
 | GET | `/analytics/campaigns` | performance campagne | viewer |
 | GET | `/analytics/pipeline` | pipeline et revenu | viewer |
 | GET/POST | `/connected-accounts` | comptes expéditeurs | admin |
 | POST | `/connected-accounts/:id/actions/check` | vérifier la santé | admin |
+| GET/PUT/DELETE | `/calendar-connection` | résoudre l’événement public ou valider une clé Cal.com chiffrée | admin |
 | POST | `/product-research-runs` | créer une mission de recherche ICP | operator |
 | POST | `/product-research-runs/:id/actions/start` | lancer la mission | operator |
 | GET | `/product-research-runs/:id` | lire état, étapes et tentatives | viewer |
@@ -61,7 +60,7 @@
 | Méthode | Route | Contrat |
 |---|---|---|
 | POST | `/webhooks/unipile` | vérifier signature, persister, répondre 202 |
-| POST | `/webhooks/calendar/:provider` | persister et réconcilier l’événement |
+| POST | `/webhooks/calendar/:provider?connection=:id` | vérifier, persister et réconcilier l’événement |
 | POST | `/webhooks/enrichment/:provider` | persister les résultats asynchrones |
 | GET | `/health/live` | processus vivant, sans dépendances |
 | GET | `/health/ready` | DB et dépendances critiques disponibles |
@@ -73,6 +72,10 @@
 | `WORKSPACE_FORBIDDEN` | 403 | membre absent ou rôle insuffisant |
 | `VERSION_NOT_PUBLISHED` | 409 | version de travail utilisée |
 | `CAMPAIGN_IMMUTABLE` | 409 | modification interdite après activation |
+| `CAMPAIGN_AUTOPILOT_POLICY_LOCKED` | 409 | politique déjà engagée dans une planification |
+| `CALCOM_AUTHENTICATION_FAILED` | 401/403 | clé Cal.com invalide ou révoquée |
+| `CALCOM_EVENT_TYPE_NOT_FOUND` | 422 | le lien public ne correspond à aucun type d’événement du compte |
+| `CALCOM_SLOT_UNAVAILABLE` | 409 | le créneau choisi n’est plus disponible |
 | `CONTACT_ALREADY_ACTIVE` | 409 | autre séquence active |
 | `APPROVAL_REQUIRED` | 409 | action non approuvée |
 | `SUPPRESSED` | 409 | contact ou identité bloquée |

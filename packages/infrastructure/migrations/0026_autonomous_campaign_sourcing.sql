@@ -1,0 +1,3 @@
+DROP INDEX "prospect_discovery_runs_active_version_uq";--> statement-breakpoint
+ALTER TABLE "prospect_discovery_runs" ADD COLUMN "channel" "prospecting_channel" DEFAULT 'linkedin' NOT NULL;--> statement-breakpoint
+CREATE UNIQUE INDEX "prospect_discovery_runs_active_version_uq" ON "prospect_discovery_runs" USING btree ("workspace_id","icp_version_id","channel") WHERE "prospect_discovery_runs"."status" = 'running';

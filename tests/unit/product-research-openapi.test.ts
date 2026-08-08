@@ -106,6 +106,30 @@ test("the OpenAPI contract declares every F-009 HTTP route", () => {
   expect(document.paths["/api/v1/product-research-runs"]?.post).toBeDefined();
 });
 
+test("the OpenAPI contract documents the V3 workflow", () => {
+  const document = JSON.parse(
+    readFileSync(
+      resolve(import.meta.dir, "../../packages/contracts/openapi/product-research-v1.json"),
+      "utf8",
+    ),
+  ) as {
+    components: {
+      schemas: {
+        ProductResearchBrief: { properties: { researchVersion: unknown } };
+        ResearchStage: { enum: string[] };
+      };
+    };
+  };
+  expect(document.components.schemas.ProductResearchBrief.properties.researchVersion).toEqual({
+    type: "integer",
+    enum: [1, 2, 3],
+    default: 3,
+  });
+  expect(document.components.schemas.ResearchStage.enum).toEqual(
+    expect.arrayContaining(["product_truth", "sourcing_validation", "objective_ranking"]),
+  );
+});
+
 test("every F-009 operation requires authenticated workspace route context", () => {
   const document = JSON.parse(
     readFileSync(

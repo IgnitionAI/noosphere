@@ -1,5 +1,11 @@
 import { and, eq, notInArray } from "drizzle-orm";
-import { parseAgentOutput, type AgentStageOutput } from "@outbound/contracts/product-research";
+import {
+  parseAgentOutput,
+  type AgentStageOutput,
+  type CompetitorDiscoveryOutput,
+  type IcpSynthesisOutput,
+} from "@outbound/contracts/product-research";
+import type { ObjectiveRankingOutput } from "@outbound/contracts/product-research-v3";
 import type { ResearchStage } from "@outbound/domain/gtm/product-research";
 import type { Database } from "@outbound/infrastructure/database/client";
 import {
@@ -30,7 +36,7 @@ export async function projectResearchStage(input: {
   const evidenceMap = await loadEvidenceMap(input.executor, input.workspaceId, input.runId);
 
   if (input.stage === "competitor_discovery") {
-    const discovery = output as Extract<AgentStageOutput, { candidates: unknown }>;
+    const discovery = output as CompetitorDiscoveryOutput;
     await input.executor
       .delete(competitorCandidates)
       .where(
@@ -67,7 +73,7 @@ export async function projectResearchStage(input: {
   }
 
   if (input.stage === "icp_synthesis") {
-    const synthesis = output as Extract<AgentStageOutput, { proposals: unknown }>;
+    const synthesis = output as IcpSynthesisOutput;
     await input.executor
       .delete(icpProposals)
       .where(
@@ -128,6 +134,15 @@ export async function projectResearchStage(input: {
     }
   }
 
+  if (input.stage === "objective_ranking") {
+    await projectV3IcpProposals(
+      input.executor,
+      input.workspaceId,
+      input.runId,
+      output as ObjectiveRankingOutput,
+    );
+  }
+
   if (input.stage === "evidence_review") {
     const review = output as Extract<AgentStageOutput, { reviewedFindings: unknown }>;
     for (const item of review.reviewedFindings) {
@@ -148,6 +163,88 @@ export async function projectResearchStage(input: {
         );
     }
   }
+}
+
+async function projectV3IcpProposals(
+  executor: ProjectionExecutor,
+  workspaceId: string,
+  runId: string,
+  ranking: ObjectiveRankingOutput,
+): Promise<void> {
+  const ranks = ranking.proposals.map((proposal) => proposal.rank);
+  const removable = and(
+    eq(icpProposals.workspaceId, workspaceId),
+    eq(icpProposals.runId, runId),
+    eq(icpProposals.humanEdited, false),
+  );
+  await executor
+    .delete(icpProposals)
+    .where(ranks.length ? and(removable, notInArray(icpProposals.rank, ranks)) : removable);
+
+  for (const proposal of ranking.proposals) {
+    await executor
+      .insert(icpProposals)
+      .values({
+        id: crypto.randomUUID(),
+        workspaceId,
+        runId,
+        name: proposal.name,
+        rank: proposal.rank,
+        confidence: String(proposal.confidence),
+        criteria: v3ProposalCriteria(proposal),
+        buyingCommittee: proposal.buyingCommittee,
+        problems: proposal.problems,
+        signals: proposal.signals,
+        exclusions: proposal.exclusions,
+        unknowns: proposal.unknowns,
+        reviewStatus: "approved",
+        reviewReason: "Automatically ranked by ICP V3",
+        reviewedAt: new Date(),
+      })
+      .onConflictDoUpdate({
+        target: [icpProposals.workspaceId, icpProposals.runId, icpProposals.rank],
+        set: {
+          name: proposal.name,
+          confidence: String(proposal.confidence),
+          criteria: v3ProposalCriteria(proposal),
+          buyingCommittee: proposal.buyingCommittee,
+          problems: proposal.problems,
+          signals: proposal.signals,
+          exclusions: proposal.exclusions,
+          unknowns: proposal.unknowns,
+          reviewStatus: "approved",
+          reviewReason: "Automatically ranked by ICP V3",
+          reviewedBy: null,
+          reviewedAt: new Date(),
+          updatedAt: new Date(),
+        },
+      });
+  }
+}
+
+function v3ProposalCriteria(
+  proposal: ObjectiveRankingOutput["proposals"][number],
+): Readonly<Record<string, unknown>> {
+  return {
+    buyerType: "end_customer",
+    candidateId: proposal.candidateId,
+    organizationType: proposal.organizationType,
+    useCase: proposal.useCase,
+    state: proposal.state,
+    origin: proposal.origin,
+    sourcingStatus: proposal.sourcingStatus,
+    prospecting: proposal.prospecting,
+    industries: proposal.prospecting.industries,
+    naceCodes: proposal.prospecting.naceCodes,
+    companySizes: proposal.prospecting.companySizes,
+    geography: proposal.prospecting.geographies[0] ?? null,
+    geographies: proposal.prospecting.geographies,
+    searchKeywords: proposal.prospecting.searchKeywords,
+    attractiveness: proposal.attractiveness,
+    executability: proposal.executability,
+    researchConfidence: proposal.researchConfidence,
+    evidenceIds: proposal.evidenceIds,
+  };
 }
 
 async function projectEvidence(
@@ -171,7 +268,7 @@ async function projectEvidence(
         excerpt: source.excerpt,
         contentHash: source.contentHash,
         observedAt: new Date(source.observedAt),
-        metadata: { sourceKey: source.evidenceId, stage },
+        metadata: evidenceMetadata(source, stage),
       })
       .onConflictDoUpdate({
         target: [marketEvidence.workspaceId, marketEvidence.runId, marketEvidence.contentHash],
@@ -179,10 +276,30 @@ async function projectEvidence(
           title: source.title,
           excerpt: source.excerpt,
           observedAt: new Date(source.observedAt),
-          metadata: { sourceKey: source.evidenceId, stage },
+          metadata: evidenceMetadata(source, stage),
         },
       });
   }
+}
+
+function evidenceMetadata(
+  source: Record<string, unknown>,
+  stage: ResearchStage,
+): Readonly<Record<string, unknown>> {
+  return {
+    sourceKey: source.evidenceId,
+    stage,
+    ...(typeof source.sourceRelation === "string"
+      ? { sourceRelation: source.sourceRelation }
+      : {}),
+    ...(typeof source.evidenceKind === "string"
+      ? { evidenceKind: source.evidenceKind }
+      : {}),
+    ...(typeof source.originFamily === "string"
+      ? { originFamily: source.originFamily }
+      : {}),
+    ...(typeof source.context === "string" ? { context: source.context } : {}),
+  };
 }
 
 async function loadEvidenceMap(
@@ -219,7 +336,7 @@ function extractFindings(
     }));
   }
   if (stage === "competitor_discovery" && "candidates" in output) {
-    return output.candidates.map((candidate, index) => ({
+    return (output as CompetitorDiscoveryOutput).candidates.map((candidate, index) => ({
       path: `competitor_discovery.candidates.${index}.rationale`,
       claim: {
         statement: candidate.rationale,
@@ -261,7 +378,7 @@ function extractFindings(
 }
 
 function proposalCriteria(
-  proposal: Extract<AgentStageOutput, { proposals: unknown }>["proposals"][number],
+  proposal: IcpSynthesisOutput["proposals"][number],
 ): Readonly<Record<string, unknown>> {
   return {
     ...proposal.companyCriteria,

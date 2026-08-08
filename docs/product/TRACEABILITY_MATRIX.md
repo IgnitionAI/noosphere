@@ -62,8 +62,8 @@ Elle ne remplace pas les DTO OpenAPI à écrire avant chaque vertical slice.
 | F-040 | inbox conversations/messages | assign, read state et reconcile |
 | F-041 | Unipile webhook | suspension et explicit resume |
 | F-042 | reply draft approve/reject | create et edit draft |
-| F-043 | calendar webhook | meetings et booking actions |
-| F-044 | opportunities, change stage | history et close actions |
+| F-043 | `GET/PUT/DELETE /calendar-connection`, API slots/bookings et webhook Cal.com signé | proposition de créneaux, réservation Setter, annulation et no-show |
+| F-044 | `GET /opportunities`, `POST /opportunities/:id/actions/change-stage` | projection pipeline et historique immuable |
 | F-050 | — | sources, documents et claims |
 | F-051 | campaign/pipeline analytics | export et metric definitions |
 | F-052 | endpoints métier existants | onboarding progress |

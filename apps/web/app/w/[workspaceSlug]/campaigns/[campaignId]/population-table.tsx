@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Check, ChevronDown, UserRoundCheck, UserRoundX } from "lucide-react";
-import type { CampaignProspect } from "@/lib/api";
+import type { ManagedCampaignProspect as CampaignProspect } from "@/lib/api";
 import { MutationForm } from "../../research/[runId]/report/mutation-form";
 import { enrollProspectAction, excludeProspectAction, selectProspectsAction } from "./population-actions";
 

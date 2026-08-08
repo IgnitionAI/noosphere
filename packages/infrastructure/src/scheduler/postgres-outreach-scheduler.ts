@@ -93,7 +93,7 @@ export class PostgresOutreachScheduler {
         }
         const values = {
           id: crypto.randomUUID(), workspaceId: input.workspaceId, campaignId: source.enrollment.campaignId, enrollmentId: input.enrollmentId,
-          contactId: contact.id, sequenceVersionId: source.enrollment.sequenceVersionId, approvalItemId, stepPosition: position, channel: "email", recipient,
+          contactId: contact.id, sequenceVersionId: source.enrollment.sequenceVersionId, approvalItemId, stepPosition: position, channel: "email" as const, recipient,
           subject: typeof step.subject === "string" ? step.subject : null, body: typeof step.body === "string" ? step.body : "",
           idempotencyKey, scheduledAt, status: position === 1 ? "awaiting_approval" as const : "planned" as const,
         };
@@ -234,5 +234,6 @@ function hasEmailCapability(value: unknown): boolean {
 }
 
 function toView(row: typeof outreachActions.$inferSelect): OutreachActionView {
+  if (!row.sequenceVersionId) throw new OutreachSchedulerError("SEQUENCE_VERSION_NOT_FOUND");
   return { id: row.id, campaignId: row.campaignId, enrollmentId: row.enrollmentId, contactId: row.contactId, sequenceVersionId: row.sequenceVersionId, approvalItemId: row.approvalItemId, connectedAccountId: row.connectedAccountId, stepPosition: row.stepPosition, channel: row.channel, recipient: row.recipient, subject: row.subject, status: row.status, idempotencyKey: row.idempotencyKey, scheduledAt: row.scheduledAt, attemptCount: row.attemptCount, maxAttempts: row.maxAttempts, nextAttemptAt: row.nextAttemptAt, lastErrorCode: row.lastErrorCode, lastErrorMessage: row.lastErrorMessage, providerMessageId: row.providerMessageId, sentAt: row.sentAt, responseReceivedAt: row.responseReceivedAt, cancelledAt: row.cancelledAt, createdAt: row.createdAt, updatedAt: row.updatedAt };
 }

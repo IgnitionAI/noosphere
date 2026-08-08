@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { CrmPermissionState } from "@/components/crm-states";
 import { getContact, listCompanies, listContactMerges, listWorkspaces, OutboundApiError } from "@/lib/api";
 import { MutationForm } from "../../research/[runId]/report/mutation-form";
+import { resolveProspectReturn } from "@/lib/prospect-navigation";
 import { addEmploymentAction, addIdentityAction, suppressContactAction, undoContactMergeAction, updateContactAction } from "../actions";
 
 export const metadata = { title: "Prospect" };
@@ -24,10 +25,14 @@ const VERIFICATION_BADGE: Record<string, { label: string; className: string }> =
 
 export default async function ContactDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ workspaceSlug: string; contactId: string }>;
+  searchParams: Promise<{ returnTo?: string }>;
 }) {
   const { workspaceSlug, contactId } = await params;
+  const { returnTo } = await searchParams;
+  const returnLink = resolveProspectReturn(workspaceSlug, returnTo);
   let contact;
   try {
     [contact] = await Promise.all([getContact(workspaceSlug, contactId)]);
@@ -71,10 +76,10 @@ export default async function ContactDetailPage({
       <header className="mb-6">
         <Link
           className="mb-4 inline-flex items-center gap-2 text-xs font-semibold text-muted"
-          href={`/w/${workspaceSlug}/prospects`}
+          href={returnLink.href}
         >
           <ArrowLeft size={14} />
-          Retour aux prospects
+          {returnLink.label}
         </Link>
         <div className="flex flex-wrap items-center gap-3">
           <span className="grid h-11 w-11 place-items-center rounded-xl bg-slate-100 text-navy">
@@ -214,14 +219,14 @@ export default async function ContactDetailPage({
             </div>
             <div className="panel-body">
               <p className="text-xs leading-5 text-muted">
-                La suppression marque toutes les coordonnées de ce contact comme inéligibles,
-                de façon persistante, y compris face à un futur réimport.
+                Cette action bloque durablement toutes les coordonnées de ce contact, notamment
+                son numéro WhatsApp. La recherche automatique ne pourra pas le réimporter dans ce workspace.
               </p>
               <MutationForm action={suppress} className="mt-3 space-y-2" confirmation="Confirmer la suppression persistante de ce contact ?" successMessage="Le contact a été supprimé.">
                 <input className="control w-full" name="reason" placeholder="Motif (opposition, demande RGPD…)" />
                 <button className="button w-full" type="submit">
                   <Ban size={14} />
-                  Supprimer ce contact
+                  Ne plus contacter ce prospect
                 </button>
               </MutationForm>
             </div>

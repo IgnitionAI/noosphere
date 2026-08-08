@@ -7,6 +7,7 @@ import {
 } from "@outbound/domain/crm/normalization";
 import type { Database } from "@outbound/infrastructure/database/client";
 import { PostgresCrmRepository } from "@outbound/infrastructure/crm/postgres-crm-repository";
+import { PostgresProspectViewRepository } from "@outbound/infrastructure/crm/postgres-prospect-view-repository";
 import {
   RequestAuthenticationError,
   WorkspaceAccessDeniedError,
@@ -15,11 +16,15 @@ import {
 } from "@outbound/interface/http/request-context";
 
 const uuidSchema = z.string().uuid();
+const postgresUuidSchema = z.string().regex(
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+);
 const requestContextSchema = z.object({
   userId: uuidSchema,
   workspaceId: uuidSchema,
   role: z.enum(["viewer", "operator", "reviewer", "admin", "owner"]),
 });
+const suppressionLiftPath = /^\/api\/v1\/suppressions\/([^/]+)\/actions\/lift$/;
 
 const companyCreateSchema = z
   .object({
@@ -108,7 +113,7 @@ const contactPath = /^\/api\/v1\/contacts\/([^/]+)$/;
 const contactIdentitiesPath = /^\/api\/v1\/contacts\/([^/]+)\/identities$/;
 const contactEmploymentsPath = /^\/api\/v1\/contacts\/([^/]+)\/employments$/;
 const contactSuppressPath = /^\/api\/v1\/contacts\/([^/]+)\/actions\/suppress$/;
-const suppressionLiftPath = /^\/api\/v1\/suppressions\/([^/]+)\/actions\/lift$/;
+const prospectPath = /^\/api\/v1\/prospects\/([^/]+)$/;
 
 export interface CrmHttpDependencies {
   readonly contextResolver: RequestContextResolver;
@@ -117,6 +122,7 @@ export interface CrmHttpDependencies {
 
 export function createCrmHttpHandler(dependencies: CrmHttpDependencies) {
   const repository = new PostgresCrmRepository(dependencies.database);
+  const prospectViews = new PostgresProspectViewRepository(dependencies.database);
   return async function handle(request: Request): Promise<Response> {
     try {
       const url = new URL(request.url);
@@ -140,35 +146,29 @@ export function createCrmHttpHandler(dependencies: CrmHttpDependencies) {
         }
         if (request.method === "GET") {
           requireViewer(context.role);
-          const channel = url.searchParams.get("channel");
-          const parsedChannel = channel && ["global", "email", "linkedin", "whatsapp"].includes(channel)
-            ? channel as "global" | "email" | "linkedin" | "whatsapp"
-            : undefined;
-          if (channel && !parsedChannel) throw new Error("INVALID_CHANNEL");
+          const rawChannel = url.searchParams.get("channel");
+          const channel = rawChannel && ["global", "email", "linkedin", "whatsapp"].includes(rawChannel)
+            ? rawChannel as "global" | "email" | "linkedin" | "whatsapp" : undefined;
+          if (rawChannel && !channel) throw new Error("INVALID_CHANNEL");
           const { data, nextCursor } = await repository.listSuppressions({
             workspaceId: context.workspaceId,
-            ...(parsedChannel ? { channel: parsedChannel } : {}),
+            ...(channel ? { channel } : {}),
             ...(url.searchParams.get("cursor") ? { cursor: decodeCursor(url.searchParams.get("cursor"))! } : {}),
             limit: parseLimit(url.searchParams.get("limit")),
           });
-          return json({
-            data: data.map((suppression) => serializeSuppression(suppression, context.role)),
-            nextCursor: encodeCursor(nextCursor),
-          });
+          return json({ data: data.map((item) => serializeSuppression(item, context.role)), nextCursor: encodeCursor(nextCursor) });
         }
       }
 
       if (url.pathname === "/api/v1/suppressions/check" && request.method === "POST") {
         requireViewer(context.role);
         const body = suppressionFingerprintSchema.parse(await request.json());
-        const normalizedValue = body.normalizedValue ?? normalizeIdentity(body.identityType, body.value!);
-        const result = await repository.checkSuppression({
+        return json(await repository.checkSuppression({
           workspaceId: context.workspaceId,
           identityType: body.identityType,
-          normalizedValue,
+          normalizedValue: body.normalizedValue ?? normalizeIdentity(body.identityType, body.value!),
           channel: body.channel,
-        });
-        return json(result);
+        }));
       }
 
       const suppressionLiftMatch = suppressionLiftPath.exec(url.pathname);
@@ -182,6 +182,36 @@ export function createCrmHttpHandler(dependencies: CrmHttpDependencies) {
           justification: body.justification,
         });
         return json(serializeSuppression(suppression, context.role));
+      }
+
+      if (url.pathname === "/api/v1/prospects" && request.method === "GET") {
+        requireViewer(context.role);
+        const channel = url.searchParams.get("channel");
+        const result = await prospectViews.list({
+          workspaceId: context.workspaceId,
+          ...(url.searchParams.get("search")?.trim()
+            ? { search: url.searchParams.get("search")!.trim() }
+            : {}),
+          ...(url.searchParams.get("icpVersionId")
+            ? { icpVersionId: postgresUuidSchema.parse(url.searchParams.get("icpVersionId")) }
+            : {}),
+          ...(channel
+            ? { channel: z.enum(["linkedin", "email", "whatsapp"]).parse(channel) }
+            : {}),
+          limit: parseLimit(url.searchParams.get("limit")),
+        });
+        return json(result);
+      }
+
+      const prospectMatch = prospectPath.exec(url.pathname);
+      if (prospectMatch && request.method === "GET") {
+        requireViewer(context.role);
+        const prospect = await prospectViews.get({
+          workspaceId: context.workspaceId,
+          contactId: uuidSchema.parse(prospectMatch[1]),
+        });
+        if (!prospect) return problem(404, "PROSPECT_NOT_FOUND", "Prospect not found");
+        return json(prospect);
       }
 
       if (url.pathname === "/api/v1/companies") {
@@ -521,6 +551,7 @@ function decodeCursor(raw: string | null): { createdAt: Date; id: string } | und
 }
 
 function allowedMethods(pathname: string): string | null {
+  if (pathname === "/api/v1/prospects" || prospectPath.test(pathname)) return "GET";
   if (pathname === "/api/v1/companies" || pathname === "/api/v1/contacts") return "GET, POST";
   if (companyPath.test(pathname) || contactPath.test(pathname)) return "GET, PATCH";
   if (

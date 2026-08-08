@@ -355,16 +355,22 @@ source, date d’observation, expiration et niveau de confiance.
 
 **Valeur** : composer un playbook reproductible.
 
-**Périmètre** : étapes linéaires, LinkedIn/email/WhatsApp/tâche manuelle, délais,
-conditions, fenêtres, fallback, templates, validation et publication.
+**Périmètre** : étapes linéaires, LinkedIn/email/WhatsApp, politique
+d’autopilote par campagne, délais en jours ouvrés, fuseau destinataire,
+conditions, fenêtres, fallback, personnalisation juste-à-temps, validation et
+publication.
 
 **Critères d’acceptation**
 
 - une séquence brouillon est modifiable et prévisualisable ;
 - une publication crée une SequenceVersion immuable ;
 - chaque étape possède au moins un canal éligible ou une tâche manuelle ;
-- une séquence invalide ou non approuvée ne peut pas être activée ;
+- une séquence invalide ne peut pas être activée par l’autopilote ;
 - les fallbacks n’entraînent jamais deux envois pour la même étape logique.
+- une relance n’est rédigée qu’au moment où elle devient exécutable ;
+- une étape attend la livraison des étapes précédentes ;
+- la fenêtre d’envoi est recalculée juste avant le transport ;
+- une réponse ou activité humaine annule les réponses automatiques concurrentes.
 
 **Dépendances** : F-012, F-026.  
 **Surface** : séquences.
@@ -383,7 +389,7 @@ archivage.
 **Critères d’acceptation**
 
 - le builder n’accepte que des versions publiées ;
-- le préflight vérifie population, canaux, comptes, suppressions et approbation ;
+- le preflight automatique vérifie population, canaux, comptes et suppressions ;
 - l’activation fige toutes les références de versions ;
 - une campagne active ne peut pas être modifiée rétroactivement ;
 - pause et reprise ne recréent pas les actions déjà exécutées.
@@ -400,7 +406,7 @@ archivage.
 campagne.
 
 **Périmètre initial** : filtres déterministes, score pondéré par critères ICP,
-explication, sélection manuelle, conflits et enrollment.
+explication, sélection automatique, conflits et enrollment.
 
 **Critères d’acceptation**
 
@@ -413,23 +419,21 @@ explication, sélection manuelle, conflits et enrollment.
 **Dépendances** : F-023, F-026, F-031.  
 **Surface** : campagne builder, campagne détail, approvals.
 
-**Spécification** :
-[`F-032-POPULATION-ENROLLMENT.md`](features/F-032-POPULATION-ENROLLMENT.md).
+### F-033 — File d’exceptions autopilote (`P0`)
 
-### F-033 — File d’approbation (`P0`)
+**Valeur** : rendre visibles les rares actions que l’autopilote ne peut pas
+terminer sans inventer un résultat.
 
-**Valeur** : superviser efficacement les actions sensibles.
-
-**Périmètre** : lots, aperçu contextualisé, édition, validation, rejet,
-justification, filtres et permissions.
+**Périmètre** : compte déconnecté, identité ambiguë, livraison inconnue, quota
+persistant, aperçu contextualisé, reprise et arrêt global.
 
 **Critères d’acceptation**
 
-- chaque item montre prospect, entreprise, canal, étape, contenu et preuves ;
-- un reviewer peut modifier puis approuver un item ;
-- un contenu obsolète après changement de données retourne en revue ;
-- les décisions en lot ne masquent pas les items devenus invalides ;
-- chaque décision est auditée.
+- le chemin normal ne crée aucun item ;
+- chaque exception montre prospect, entreprise, canal, étape et erreur ;
+- une livraison de statut inconnu n’est jamais rejouée automatiquement ;
+- une reconnexion permet une reprise idempotente ;
+- chaque transition est auditée.
 
 **Dépendances** : F-031, F-032.  
 **Surface** : `/w/[workspaceSlug]/approvals`.
@@ -446,7 +450,7 @@ attempts, retries, idempotence, pause et annulation.
 
 **Critères d’acceptation**
 
-- aucune action n’est envoyée sans approbation requise ;
+- aucune action n’est envoyée sans preflight et snapshot immuable ;
 - suppression, réponse et santé du compte sont revérifiées avant exécution ;
 - une clé d’idempotence protège chaque action logique ;
 - un rate limit décale l’action sans la dupliquer ;
@@ -475,28 +479,35 @@ capacités, quotas, erreurs, reconnexion et webhooks.
 **Dépendances** : F-002, F-003.  
 **Surface** : `/w/[workspaceSlug]/integrations`.
 
-**Spécification** :
-[`F-035-CONNECTED-ACCOUNTS.md`](features/F-035-CONNECTED-ACCOUNTS.md).
+## Epic 5 — Conversations et revenu
 
-## Epic 5 — Inbox et revenu
+### F-040 — Conversations contextualisées dans la campagne (`P0`)
 
-### F-040 — Inbox unifiée (`P1`)
+**Valeur** : observer chaque conversation et sa décision IA sans quitter la
+campagne qui l’a produite.
 
-**Valeur** : traiter les conversations multicanales depuis un seul écran.
-
-**Périmètre** : conversations par canal/compte, vue regroupée par contact,
-messages entrants/sortants, filtres, unread et assignation.
+**Périmètre initial** : projection PostgreSQL regroupée par contact, compteurs
+de campagne, dernier message, messages entrants/sortants, décision K3, réponse
+automatique, relances annulées et opportunité.
 
 **Critères d’acceptation**
 
 - les threads fournisseurs restent identifiables et ordonnés ;
 - les événements reçus deux fois ne créent pas deux messages ;
-- une conversation affiche la campagne et le prospect liés ;
+- un clic prospect ouvre un panneau latéral sans quitter la campagne ;
+- les cinq compteurs sont calculés depuis la projection persistée et dédupliqués
+  entre les campagnes techniques mono-canal ;
+- l’état et la dernière activité sont visibles dans la liste des prospects ;
+- la décision K3, sa confiance, le modèle, la réponse automatique et
+  l’annulation des relances sont auditables dans le panneau ;
 - un message non rattaché est conservé dans une file de réconciliation ;
 - les permissions workspace s’appliquent aux recherches et compteurs.
 
 **Dépendances** : F-021, F-035.  
-**Surface** : `/w/[workspaceSlug]/inbox`.
+**Surface** : `/w/[workspaceSlug]/campaigns/plans/[planId]?prospect=[contactId]`.
+
+Une Inbox globale, les unread et l’assignation d’équipe sont différés jusqu’à
+ce que le volume multi-campagnes les rende nécessaires.
 
 ### F-041 — Suspension immédiate sur réponse (`P0`)
 
@@ -512,24 +523,25 @@ annulation des actions futures et résolution de course.
 - une action concurrente revérifie la suspension dans la transaction finale ;
 - les actions futures sont annulées de manière idempotente ;
 - l’opérateur voit la cause et l’heure de suspension ;
-- la reprise exige une action humaine explicite.
+- la reprise est automatique après une réponse de suivi ; une opposition reste
+  irréversible sans levée explicite de suppression.
 
 **Dépendances** : F-003, F-034, F-040.
 
-### F-042 — Réponse humaine et brouillons (`P1`)
+### F-042 — Qualification et réponse autonomes (`P1`)
 
-**Valeur** : répondre vite tout en gardant le contrôle.
+**Valeur** : qualifier et faire avancer une conversation sans intervention.
 
-**Périmètre initial** : rédaction manuelle, brouillons, édition, approbation,
-envoi idempotent, notes et feedback. La génération IA est différée.
+**Périmètre initial** : classification K3 avec contexte, arrêt, réponse courte,
+proposition de réservation, envoi idempotent et opportunité.
 
 **Critères d’acceptation**
 
-- un brouillon n’est jamais envoyé sans action explicite du reviewer ;
-- le contexte de conversation complet est visible pendant la rédaction ;
-- une nouvelle réponse entrante invalide un brouillon devenu obsolète ;
+- une opposition ou un refus bloque les relances avant tout appel IA ;
+- le contexte de conversation complet est fourni à l’agent ;
+- une réponse automatique est liée au message entrant qui l’a déclenchée ;
 - l’envoi utilise le même thread et compte lorsque le fournisseur le permet ;
-- rejet, édition et approbation sont audités.
+- la décision, le modèle et l’envoi sont audités.
 
 **Dépendances** : F-033, F-034, F-040, F-041.
 
@@ -550,6 +562,18 @@ meeting, participants, statut et rattachement.
 
 **Dépendances** : F-003, F-040.
 
+**Implémentation actuelle** : connexion Cal.com par workspace, résolution du
+type d’événement depuis le lien public et lecture native des disponibilités.
+Pour un événement public, le Setter fonctionne immédiatement sans secret ; une
+clé API optionnelle est validée puis chiffrée pour les événements privés et
+l’enregistrement automatique du webhook. K3 propose trois créneaux réels et ne
+réserve qu’après un choix explicite, avec le lien signé en secours. Les
+événements sont dédupliqués, les annulations/no-shows sont réconciliés, les
+relances s’arrêtent et l’opportunité passe à `meeting_booked`. L’OAuth Cal.com
+reste une extension produit.
+
+**Surface** : `/w/[workspaceSlug]/settings/calendar` et fiche prospect.
+
 ### F-044 — Pipeline et opportunités (`P1`)
 
 **Valeur** : suivre la prospection jusqu’au revenu gagné ou perdu.
@@ -567,6 +591,12 @@ action, clôture, motif de perte et historique.
 
 **Dépendances** : F-020, F-021, F-040, F-043.  
 **Surface** : `/w/[workspaceSlug]/pipeline`.
+
+**Implémentation actuelle** : vue workspace en quatre colonnes, métriques,
+rattachement prospect/campagne/ICP/rendez-vous, transitions automatiques depuis
+le Setter et le calendrier, historique immuable et action explicite de
+changement d’étape. Montants, probabilités, ownership et clôture financière
+restent hors du lot initial.
 
 ## Epic 6 — Pilotage et administration
 

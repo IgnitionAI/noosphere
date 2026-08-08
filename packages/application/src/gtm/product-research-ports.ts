@@ -17,7 +17,17 @@ export interface ProductResearchRepository {
     stage: ResearchStage,
   ): Promise<ResearchCheckpoint | null>;
   listCompletedCheckpoints(workspaceId: string, runId: string): Promise<readonly ResearchCheckpoint[]>;
-  nextStageAttempt(workspaceId: string, runId: string, stage: ResearchStage): Promise<number>;
+  nextStageAttempt(
+    workspaceId: string,
+    runId: string,
+    stage: ResearchStage,
+    workItemKey?: string,
+  ): Promise<number>;
+  listFanoutCheckpoints(
+    workspaceId: string,
+    runId: string,
+    stage: "market_investigation",
+  ): Promise<readonly ResearchCheckpoint[]>;
   commitRunTransition(
     run: ProductResearchRun,
     job: NewJob | null,
@@ -34,6 +44,19 @@ export interface ProductResearchRepository {
     aiRun: ResearchAIRun;
     nextJob: NewJob | null;
     events: readonly ProductResearchEvent[];
+    fanout?: {
+      readonly items: readonly ResearchWorkItem[];
+      readonly jobs: readonly NewJob[];
+    };
+  }): Promise<void>;
+  commitFanoutItemCompleted(input: {
+    checkpoint: ResearchCheckpoint;
+    aiRun: ResearchAIRun;
+    finalizerJob: NewJob;
+  }): Promise<void>;
+  commitFanoutItemFailed(input: {
+    checkpoint: ResearchCheckpoint;
+    finalizerJob: NewJob;
   }): Promise<void>;
   commitStageFailed(
     run: ProductResearchRun,
@@ -115,6 +138,19 @@ export interface IcpVersionView {
   readonly createdAt: Date;
 }
 
+export interface ResearchWorkItem {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly runId: string;
+  readonly stage: "market_investigation";
+  readonly workItemKey: string;
+  readonly subjectArtifactKey: string;
+  readonly ordinal: number;
+  readonly status: "pending" | "running" | "completed" | "failed";
+  readonly createdAt: Date;
+  readonly updatedAt: Date;
+}
+
 export interface ProductResearchViewRepository {
   listStageRuns(
     workspaceId: string,
@@ -164,6 +200,43 @@ export interface MarketEvidenceView {
 
 export interface ResearchAgentExecutor {
   execute(stage: ResearchStage, input: AgentStageInput): Promise<AgentExecutionResult>;
+}
+
+export type ResearchToolRequestClaim =
+  | { readonly kind: "execute"; readonly leaseToken: string }
+  | { readonly kind: "cache_hit"; readonly output: string; readonly contentHash: string }
+  | { readonly kind: "in_progress"; readonly retryAt: Date };
+
+export interface ResearchToolRequestRegistry {
+  claim(input: {
+    workspaceId: string;
+    runId: string;
+    toolName: string;
+    normalizedInputHash: string;
+    normalizedInput: Readonly<Record<string, unknown>>;
+    now: Date;
+    leaseMs: number;
+  }): Promise<ResearchToolRequestClaim>;
+  complete(input: {
+    leaseToken: string;
+    output: string;
+    contentHash: string;
+    now: Date;
+  }): Promise<void>;
+  fail(input: {
+    leaseToken: string;
+    retryable: boolean;
+    errorCode: string;
+    now: Date;
+  }): Promise<void>;
+}
+
+export interface ExternalQueryGuard {
+  authorize(input: {
+    channel: "web" | "unipile";
+    payload: Readonly<Record<string, unknown>>;
+    sensitiveTerms: readonly string[];
+  }): Promise<{ allowed: true } | { allowed: false; reason: string }>;
 }
 
 export interface ResearchAIRun {

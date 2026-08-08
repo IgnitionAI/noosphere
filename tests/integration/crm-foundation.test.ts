@@ -2,7 +2,8 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { createDatabase } from "@outbound/infrastructure/database/client";
-import { authUsers, workspaces } from "@outbound/infrastructure/database/schema";
+import { authUsers, contactSuppressions, workspaces } from "@outbound/infrastructure/database/schema";
+import { eq } from "drizzle-orm";
 import { createCrmHttpHandler } from "@outbound/interface/http/crm-handler";
 
 const databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
@@ -140,6 +141,17 @@ databaseDescribe("F-020/F-021 CRM foundation", () => {
     context.role = "operator";
   });
 
+  test("prospects: accepts PostgreSQL UUID values used by deterministic ICP versions", async () => {
+    const response = await handle(
+      new Request(
+        "http://localhost/api/v1/prospects?limit=100&icpVersionId=b1c82cfa-dacb-85de-6d89-8b263f6ba619",
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ data: [], filters: { icps: [] } });
+  });
+
   test("contacts: employment history, identity uniqueness, persistent suppression", async () => {
     const companyA = (await (
       await postJson("/api/v1/companies", { name: "Cabinet A", domain: "cabinet-a.fr" })
@@ -201,6 +213,12 @@ databaseDescribe("F-020/F-021 CRM foundation", () => {
       reason: "Opposition au démarchage",
     });
     expect(suppress.status).toBe(204);
+    const [storedSuppression] = await database.db
+      .select()
+      .from(contactSuppressions)
+      .where(eq(contactSuppressions.contactId, contact.id));
+    expect(storedSuppression?.normalizedValue).toBeNull();
+    expect(storedSuppression?.identityFingerprint).toMatch(/^[a-f0-9]{64}$/);
     const reimport = await postJson("/api/v1/contacts", {
       firstName: "Jean",
       lastName: "Dupont",

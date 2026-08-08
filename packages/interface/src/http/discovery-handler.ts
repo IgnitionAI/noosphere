@@ -1,14 +1,26 @@
 import { z, ZodError } from "zod";
+import type { ProspectEnricher } from "@outbound/application/crm/prospect-enrichment-ports";
 import {
-  ProviderUnavailableError,
-  type ProspectSource,
-  type ProspectSourceCandidate,
-} from "@outbound/application/crm/prospect-source";
-import { normalizeLinkedinUrl } from "@outbound/domain/crm/normalization";
+  buildProspectSearchFilters,
+  computeProspectIcpFit,
+} from "@outbound/application/crm/prospect-discovery-policy";
+import type { JobQueue } from "@outbound/application/jobs/job-queue";
+import type { ProspectChannels } from "@outbound/domain/crm/prospect-channels";
+import {
+  normalizeEmail,
+  normalizePhone,
+} from "@outbound/domain/crm/normalization";
 import type { Database } from "@outbound/infrastructure/database/client";
 import { PostgresCrmRepository } from "@outbound/infrastructure/crm/postgres-crm-repository";
 import { PostgresDiscoveryRepository } from "@outbound/infrastructure/crm/postgres-discovery-repository";
 import { PostgresProductResearchRepository } from "@outbound/infrastructure/gtm/postgres-product-research-repository";
+import {
+  PROSPECT_DISCOVERY_JOB_TYPE,
+  ProspectDiscoveryRunner,
+} from "@outbound/infrastructure/crm/prospect-discovery-runner";
+import {
+  type ProspectSource,
+} from "@outbound/infrastructure/crm/unipile-prospect-source";
 import { createCrmHttpHandler } from "@outbound/interface/http/crm-handler";
 import {
   RequestAuthenticationError,
@@ -16,11 +28,13 @@ import {
   WorkspaceContextRequiredError,
   type RequestContextResolver,
 } from "@outbound/interface/http/request-context";
+import { postgresUuidSchema } from "@outbound/interface/http/http-schemas";
 
-const uuidSchema = z.string().uuid();
+const identityUuidSchema = z.string().uuid();
+const uuidSchema = identityUuidSchema;
 const requestContextSchema = z.object({
-  userId: uuidSchema,
-  workspaceId: uuidSchema,
+  userId: identityUuidSchema,
+  workspaceId: identityUuidSchema,
   role: z.enum(["viewer", "operator", "reviewer", "admin", "owner"]),
 });
 const launchSchema = z
@@ -40,8 +54,13 @@ const icpPublishPath = /^\/api\/v1\/icps\/([^/]+)\/actions\/publish$/;
 export interface DiscoveryHttpDependencies {
   readonly contextResolver: RequestContextResolver;
   readonly database: Database;
-  readonly prospectSource: () => ProspectSource;
+  readonly prospectSource: (workspaceId: string) => ProspectSource;
+  readonly prospectEnricher?: () => ProspectEnricher | null;
+  readonly jobQueue?: JobQueue;
 }
+
+export const buildFilters = buildProspectSearchFilters;
+export const computeIcpFit = computeProspectIcpFit;
 
 export function createDiscoveryHttpHandler(dependencies: DiscoveryHttpDependencies) {
   const repository = new PostgresDiscoveryRepository(dependencies.database);
@@ -51,6 +70,11 @@ export function createDiscoveryHttpHandler(dependencies: DiscoveryHttpDependenci
     database: dependencies.database,
   });
   const crmRepository = new PostgresCrmRepository(dependencies.database);
+  const runner = new ProspectDiscoveryRunner(
+    dependencies.database,
+    dependencies.prospectSource,
+    dependencies.prospectEnricher,
+  );
 
   return async function handle(request: Request): Promise<Response> {
     try {
@@ -112,7 +136,7 @@ export function createDiscoveryHttpHandler(dependencies: DiscoveryHttpDependenci
       const launchMatch = versionDiscoveryPath.exec(url.pathname);
       if (request.method === "POST" && launchMatch) {
         requireOperator(context.role);
-        const versionId = uuidSchema.parse(launchMatch[1]);
+        const versionId = postgresUuidSchema.parse(launchMatch[1]);
         const body = launchSchema.parse(await request.json().catch(() => ({})));
         const version = await repository.getIcpVersion({
           workspaceId: context.workspaceId,
@@ -120,14 +144,24 @@ export function createDiscoveryHttpHandler(dependencies: DiscoveryHttpDependenci
         });
         if (!version) return problem(404, "ICP_VERSION_NOT_FOUND", "Published ICP version not found");
         const filters = buildFilters(version, body.limit);
-        const run = await repository.createRun({
+        const createdRun = await repository.createRun({
           id: crypto.randomUUID(),
           workspaceId: context.workspaceId,
           icpVersionId: versionId,
           filters,
           createdBy: context.userId,
         });
-        const completed = await executeSearch(dependencies, repository, {
+        const { run } = createdRun;
+        if (!createdRun.created) return json(run, 200);
+        if (dependencies.jobQueue) {
+          await enqueueDiscovery(dependencies.jobQueue, {
+            workspaceId: context.workspaceId,
+            runId: run.id,
+            attempt: "initial",
+          });
+          return json(run, 202);
+        }
+        const completed = await runner.execute({
           workspaceId: context.workspaceId,
           runId: run.id,
           version,
@@ -141,7 +175,7 @@ export function createDiscoveryHttpHandler(dependencies: DiscoveryHttpDependenci
         const runs = await repository.listRuns({
           workspaceId: context.workspaceId,
           ...(url.searchParams.get("icpVersionId")
-            ? { icpVersionId: uuidSchema.parse(url.searchParams.get("icpVersionId")) }
+            ? { icpVersionId: postgresUuidSchema.parse(url.searchParams.get("icpVersionId")) }
             : {}),
         });
         return json({ data: runs });
@@ -152,7 +186,7 @@ export function createDiscoveryHttpHandler(dependencies: DiscoveryHttpDependenci
         requireViewer(context.role);
         const run = await repository.getRun({
           workspaceId: context.workspaceId,
-          runId: uuidSchema.parse(runMatch[1]),
+          runId: postgresUuidSchema.parse(runMatch[1]),
         });
         if (!run) return problem(404, "DISCOVERY_RUN_NOT_FOUND", "Discovery run not found");
         return json(normalizeDiscoveryRun(run));
@@ -161,7 +195,7 @@ export function createDiscoveryHttpHandler(dependencies: DiscoveryHttpDependenci
       const retryMatch = runRetryPath.exec(url.pathname);
       if (request.method === "POST" && retryMatch) {
         requireOperator(context.role);
-        const runId = uuidSchema.parse(retryMatch[1]);
+        const runId = postgresUuidSchema.parse(retryMatch[1]);
         const run = await repository.getRun({ workspaceId: context.workspaceId, runId });
         if (!run) return problem(404, "DISCOVERY_RUN_NOT_FOUND", "Discovery run not found");
         if (run.status !== "failed") {
@@ -172,8 +206,19 @@ export function createDiscoveryHttpHandler(dependencies: DiscoveryHttpDependenci
           versionId: run.icpVersionId,
         });
         if (!version) return problem(404, "ICP_VERSION_NOT_FOUND", "Published ICP version not found");
-        await repository.beginRetry({ workspaceId: context.workspaceId, runId, maxRetries: 3 });
-        const retried = await executeSearch(dependencies, repository, {
+        if (dependencies.jobQueue) {
+          const restarted = await repository.restartRun({
+            workspaceId: context.workspaceId,
+            runId: run.id,
+          });
+          await enqueueDiscovery(dependencies.jobQueue, {
+            workspaceId: context.workspaceId,
+            runId: run.id,
+            attempt: run.completedAt?.toISOString() ?? "retry",
+          });
+          return json(restarted);
+        }
+        const retried = await runner.execute({
           workspaceId: context.workspaceId,
           runId: run.id,
           version,
@@ -185,8 +230,8 @@ export function createDiscoveryHttpHandler(dependencies: DiscoveryHttpDependenci
       const importMatch = candidateImportPath.exec(url.pathname);
       if (request.method === "POST" && importMatch) {
         requireOperator(context.role);
-        const runId = uuidSchema.parse(importMatch[1]);
-        const candidateId = uuidSchema.parse(importMatch[2]);
+        const runId = postgresUuidSchema.parse(importMatch[1]);
+        const candidateId = postgresUuidSchema.parse(importMatch[2]);
         const candidate = await repository.getCandidate({
           workspaceId: context.workspaceId,
           runId,
@@ -261,112 +306,6 @@ export function createDiscoveryHttpHandler(dependencies: DiscoveryHttpDependenci
   };
 }
 
-async function executeSearch(
-  dependencies: DiscoveryHttpDependencies,
-  repository: PostgresDiscoveryRepository,
-  input: {
-    workspaceId: string;
-    runId: string;
-    version: {
-      criteria: unknown;
-      buyingCommittee: unknown;
-    };
-    filters: ReturnType<typeof buildFilters>;
-  },
-) {
-  try {
-    const found = await dependencies.prospectSource().searchPeople(input.filters);
-    const candidates = found.map((candidate) => ({
-      id: crypto.randomUUID(),
-      fullName: candidate.fullName,
-      headline: candidate.headline,
-      linkedinUrl: candidate.linkedinUrl,
-      linkedinNormalized: normalizeLinkedin(candidate.linkedinUrl),
-      location: candidate.location,
-      companyName: candidate.companyName,
-      providerData: candidate.providerData,
-      icpFit: computeIcpFit(input.version, candidate),
-    }));
-    return await repository.completeRun({
-      workspaceId: input.workspaceId,
-      runId: input.runId,
-      candidates,
-    });
-  } catch (error) {
-    if (error instanceof ProviderUnavailableError) {
-      return await repository.failRun({
-        workspaceId: input.workspaceId,
-        runId: input.runId,
-        errorCode: "PROVIDER_UNAVAILABLE",
-        errorMessage: error.message,
-      });
-    }
-    throw error;
-  }
-}
-
-export function buildFilters(
-  version: { criteria: unknown; buyingCommittee: unknown },
-  limit: number,
-): {
-  api: "classic";
-  category: "people";
-  keywords: string;
-  limit: number;
-} {
-  const criteria = objectRecord(version.criteria);
-  const industries = [...stringArray(criteria.sectors), ...stringArray(criteria.industries)];
-  const committee = stringArray(version.buyingCommittee);
-  // LinkedIn classic keyword search ANDs every term: long multi-word queries
-  // return nothing. Keep it to the first industry + the first committee role,
-  // cleaned of slashes and limited to two words each.
-  const industry = (industries[0] ?? "").split("/")[0]!.trim().split(/\s+/).slice(0, 2).join(" ");
-  const role = (committee[0] ?? "").split("/")[0]!.trim().split(/\s+/).slice(0, 2).join(" ");
-  const keywords = [industry, role].filter(Boolean).join(" ").trim();
-  return { api: "classic", category: "people", keywords, limit };
-}
-
-export function computeIcpFit(
-  version: { criteria: unknown; buyingCommittee: unknown },
-  candidate: ProspectSourceCandidate,
-): { matches: string[]; gaps: string[] } {
-  const criteria = objectRecord(version.criteria);
-  const matches: string[] = [];
-  const gaps: string[] = [];
-  const haystack = `${candidate.headline ?? ""} ${candidate.companyName ?? ""}`.toLowerCase();
-  const geography = typeof criteria.geography === "string" ? criteria.geography : null;
-  if (geography) {
-    const location = (candidate.location ?? "").toLowerCase();
-    if (location && location.includes(geography.toLowerCase())) {
-      matches.push(`Géographie : ${geography}`);
-    } else {
-      gaps.push(
-        candidate.location
-          ? `Géographie à vérifier : ${candidate.location} (critère ${geography})`
-          : "Géographie inconnue",
-      );
-    }
-  }
-  const industries = [...stringArray(criteria.sectors), ...stringArray(criteria.industries)];
-  const matchedSectors = industries.filter((sector) => haystack.includes(sector.toLowerCase()));
-  if (matchedSectors.length) {
-    matches.push(`Secteur : ${matchedSectors.join(", ")}`);
-  } else if (industries.length) {
-    gaps.push("Secteur non confirmé par le profil");
-  }
-  const committee = stringArray(version.buyingCommittee);
-  const matchedRole = committee.find((role) => {
-    const cleaned = role.split("/")[0]!.trim().toLowerCase();
-    return cleaned.length > 0 && haystack.includes(cleaned);
-  });
-  if (matchedRole) {
-    matches.push(`Rôle : ${matchedRole.split("/")[0]!.trim()}`);
-  } else if (committee.length) {
-    gaps.push("Rôle non confirmé par le profil");
-  }
-  return { matches, gaps };
-}
-
 async function importCandidate(
   crmRepository: PostgresCrmRepository,
   repository: PostgresDiscoveryRepository,
@@ -379,6 +318,9 @@ async function importCandidate(
       linkedinUrl: string | null;
       linkedinNormalized: string | null;
       companyName: string | null;
+      companyDomain: string | null;
+      location: string | null;
+      channels: ProspectChannels;
     };
   },
 ) {
@@ -387,10 +329,17 @@ async function importCandidate(
   const lastName = rest.join(" ") || "—";
   let companyId: string | null = null;
   if (candidate.companyName) {
-    const existing = await repository.findCompanyByName({
+    const existingByDomain = candidate.companyDomain
+      ? await repository.findCompanyByDomain({
+          workspaceId: input.workspaceId,
+          normalizedDomain: candidate.companyDomain,
+        })
+      : null;
+    const existingByName = await repository.findCompanyByName({
       workspaceId: input.workspaceId,
       name: candidate.companyName,
     });
+    const existing = existingByDomain ?? existingByName;
     companyId =
       existing?.id ??
       (
@@ -398,32 +347,24 @@ async function importCandidate(
           id: crypto.randomUUID(),
           workspaceId: input.workspaceId,
           name: candidate.companyName,
-          normalizedDomain: null,
+          normalizedDomain: candidate.companyDomain,
           sector: null,
           employeeCountMin: null,
           employeeCountMax: null,
-          location: null,
+          location: candidate.location,
           linkedinUrl: null,
           source: "discovery",
         })
       ).id;
   }
+  const identities = candidateIdentities(candidate);
   const contact = await crmRepository.createContact({
     id: crypto.randomUUID(),
     workspaceId: input.workspaceId,
     firstName: firstName ?? candidate.fullName,
     lastName,
-    source: "discovery",
-    identities: candidate.linkedinNormalized
-      ? [
-          {
-            id: crypto.randomUUID(),
-            type: "linkedin",
-            value: candidate.linkedinUrl ?? candidate.linkedinNormalized,
-            normalizedValue: candidate.linkedinNormalized,
-          },
-        ]
-      : [],
+    source: "provider",
+    identities,
     employment: companyId
       ? {
           id: crypto.randomUUID(),
@@ -441,25 +382,68 @@ async function importCandidate(
   return contact;
 }
 
-function normalizeLinkedin(url: string | null): string | null {
-  if (!url) return null;
-  try {
-    return normalizeLinkedinUrl(url);
-  } catch {
-    return null;
+function candidateIdentities(candidate: {
+  linkedinUrl: string | null;
+  linkedinNormalized: string | null;
+  channels: ProspectChannels;
+}) {
+  const identities: Array<{
+    id: string;
+    type: "email" | "linkedin" | "phone" | "whatsapp";
+    value: string;
+    normalizedValue: string;
+  }> = [];
+  if (candidate.linkedinNormalized) {
+    identities.push({
+      id: crypto.randomUUID(),
+      type: "linkedin",
+      value: candidate.linkedinUrl ?? candidate.linkedinNormalized,
+      normalizedValue: candidate.linkedinNormalized,
+    });
   }
+  const email = candidate.channels.email;
+  if (email.value && email.status !== "unavailable") {
+    try {
+      identities.push({
+        id: crypto.randomUUID(),
+        type: "email",
+        value: email.value,
+        normalizedValue: email.normalizedValue ?? normalizeEmail(email.value),
+      });
+    } catch {
+      // Invalid provider values are not imported into the CRM.
+    }
+  }
+  const whatsapp = candidate.channels.whatsapp;
+  if (whatsapp.value && whatsapp.status !== "unavailable") {
+    try {
+      identities.push({
+        id: crypto.randomUUID(),
+        type: whatsapp.status === "verified" ? "whatsapp" : "phone",
+        value: whatsapp.value,
+        normalizedValue: whatsapp.normalizedValue ?? normalizePhone(whatsapp.value),
+      });
+    } catch {
+      // Invalid provider values are not imported into the CRM.
+    }
+  }
+  return identities;
 }
 
-function objectRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
-function stringArray(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === "string" && item.length > 0)
-    : [];
+async function enqueueDiscovery(
+  queue: JobQueue,
+  input: { workspaceId: string; runId: string; attempt: string },
+): Promise<void> {
+  await queue.enqueue({
+    id: crypto.randomUUID(),
+    workspaceId: input.workspaceId,
+    type: PROSPECT_DISCOVERY_JOB_TYPE,
+    payload: { workspaceId: input.workspaceId, runId: input.runId },
+    idempotencyKey: `${input.runId}:${input.attempt}`,
+    correlationId: `prospect:${input.runId}`,
+    maxAttempts: 3,
+    availableAt: new Date(),
+  });
 }
 
 class WorkspacePermissionError extends Error {}

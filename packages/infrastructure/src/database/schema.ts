@@ -1,5 +1,10 @@
 import { sql } from "drizzle-orm";
 import {
+  emptyProspectChannels,
+  type ProspectChannels,
+} from "@outbound/domain/crm/prospect-channels";
+import {
+  type AnyPgColumn,
   boolean,
   foreignKey,
   index,
@@ -24,6 +29,9 @@ export const productResearchStatusEnum = pgEnum("product_research_status", [
   "running",
   "paused",
   "ready_for_review",
+  "completed",
+  "partial",
+  "interrupted",
   "failed",
 ]);
 export const researchStageEnum = pgEnum("research_stage", [
@@ -34,6 +42,15 @@ export const researchStageEnum = pgEnum("research_stage", [
   "segment_synthesis",
   "icp_synthesis",
   "evidence_review",
+  "product_truth",
+  "problem_mapping",
+  "organization_discovery",
+  "market_investigation",
+  "buying_context",
+  "sourcing_validation",
+  "icp_composition",
+  "adversarial_review",
+  "objective_ranking",
 ]);
 export const researchStageStatusEnum = pgEnum("research_stage_status", [
   "running",
@@ -202,6 +219,125 @@ export const workspaceAiSettings = pgTable("workspace_ai_settings", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const dailyProspectingSchedules = pgTable(
+  "daily_prospecting_schedules",
+  {
+    workspaceId: uuid("workspace_id")
+      .primaryKey()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    enabled: boolean("enabled").notNull().default(true),
+    localTime: varchar("local_time", { length: 5 }).notNull().default("06:00"),
+    timezone: varchar("timezone", { length: 120 }).notNull().default("Europe/Paris"),
+    nextRunAt: timestamp("next_run_at", { withTimezone: true }).notNull(),
+    lastScheduledDate: varchar("last_scheduled_date", { length: 10 }),
+    lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("daily_prospecting_schedules_due_idx").on(table.enabled, table.nextRunAt)],
+);
+
+export const dailySourcingCycleStatusEnum = pgEnum("daily_sourcing_cycle_status", [
+  "scheduled",
+  "running",
+  "completed",
+  "partial",
+  "failed",
+  "action_required",
+]);
+
+export const sourcingFrontierStatusEnum = pgEnum("sourcing_frontier_status", [
+  "active",
+  "saturated",
+  "paused",
+]);
+
+export const dailySourcingCycles = pgTable(
+  "daily_sourcing_cycles",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    localDate: varchar("local_date", { length: 10 }).notNull(),
+    timezone: varchar("timezone", { length: 120 }).notNull().default("Europe/Paris"),
+    status: dailySourcingCycleStatusEnum("status").notNull().default("scheduled"),
+    deadlineAt: timestamp("deadline_at", { withTimezone: true }).notNull(),
+    pageLimit: integer("page_limit").notNull().default(150),
+    pageAttempts: integer("page_attempts").notNull().default(0),
+    verificationLimit: integer("verification_limit").notNull().default(60),
+    verificationAttempts: integer("verification_attempts").notNull().default(0),
+    maxPagesPerCompany: integer("max_pages_per_company").notNull().default(4),
+    maxConcurrentPerDomain: integer("max_concurrent_per_domain").notNull().default(2),
+    activeIcpCount: integer("active_icp_count").notNull().default(0),
+    scheduledRunCount: integer("scheduled_run_count").notNull().default(0),
+    summary: jsonb("summary").notNull().default({}),
+    errorCode: varchar("error_code", { length: 120 }),
+    errorMessage: text("error_message"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("daily_sourcing_cycles_workspace_date_uq").on(
+      table.workspaceId,
+      table.localDate,
+    ),
+    index("daily_sourcing_cycles_workspace_status_idx").on(
+      table.workspaceId,
+      table.status,
+      table.createdAt,
+    ),
+  ],
+);
+
+export const sourcingFrontiers = pgTable(
+  "sourcing_frontiers",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    icpVersionId: uuid("icp_version_id")
+      .notNull()
+      .references(() => icpVersions.id, { onDelete: "cascade" }),
+    channel: varchar("channel", { length: 40 }).notNull().default("whatsapp"),
+    sourceKind: varchar("source_kind", { length: 80 }).notNull().default("web"),
+    regionKey: varchar("region_key", { length: 120 }).notNull().default("fr-metropolitan"),
+    querySeed: text("query_seed").notNull(),
+    queryFingerprint: varchar("query_fingerprint", { length: 128 }).notNull(),
+    status: sourcingFrontierStatusEnum("status").notNull().default("active"),
+    rotationOrdinal: integer("rotation_ordinal").notNull().default(0),
+    consecutiveEmptyRuns: integer("consecutive_empty_runs").notNull().default(0),
+    pageAttempts: integer("page_attempts").notNull().default(0),
+    verifiedFound: integer("verified_found").notNull().default(0),
+    yieldEma: numeric("yield_ema", { precision: 10, scale: 6 }).notNull().default("0"),
+    nextEligibleAt: timestamp("next_eligible_at", { withTimezone: true }).notNull(),
+    lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+    lastYieldAt: timestamp("last_yield_at", { withTimezone: true }),
+    metadata: jsonb("metadata").notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("sourcing_frontiers_logical_uq").on(
+      table.workspaceId,
+      table.icpVersionId,
+      table.channel,
+      table.sourceKind,
+      table.regionKey,
+      table.queryFingerprint,
+    ),
+    index("sourcing_frontiers_due_idx").on(
+      table.workspaceId,
+      table.channel,
+      table.status,
+      table.nextEligibleAt,
+    ),
+  ],
+);
+
 export const productResearchRuns = pgTable(
   "product_research_runs",
   {
@@ -214,12 +350,17 @@ export const productResearchRuns = pgTable(
     activeStage: researchStageEnum("active_stage"),
     completedStages: jsonb("completed_stages").notNull().default(sql`'[]'::jsonb`),
     version: integer("version").notNull().default(0),
+    executionStartedAt: timestamp("execution_started_at", { withTimezone: true }),
+    deadlineAt: timestamp("deadline_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
   },
   (table) => [
     unique("product_research_runs_workspace_id_id_uq").on(table.workspaceId, table.id),
     index("product_research_runs_workspace_status_idx").on(table.workspaceId, table.status),
+    uniqueIndex("product_research_runs_one_active_workspace_uq")
+      .on(table.workspaceId)
+      .where(sql`${table.status} in ('queued', 'running', 'paused')`),
   ],
 );
 
@@ -230,6 +371,7 @@ export const researchStageRuns = pgTable(
     workspaceId: uuid("workspace_id").notNull(),
     runId: uuid("run_id").notNull(),
     stage: researchStageEnum("stage").notNull(),
+    workItemKey: varchar("work_item_key", { length: 160 }).notNull().default("main"),
     attempt: integer("attempt").notNull(),
     status: researchStageStatusEnum("status").notNull(),
     review: researchCheckpointReviewEnum("review").notNull().default("machine"),
@@ -250,6 +392,7 @@ export const researchStageRuns = pgTable(
       table.workspaceId,
       table.runId,
       table.stage,
+      table.workItemKey,
       table.attempt,
     ),
     unique("research_stage_runs_workspace_id_uq").on(table.workspaceId, table.id),
@@ -259,6 +402,77 @@ export const researchStageRuns = pgTable(
       table.stage,
       table.status,
     ),
+  ],
+);
+
+export const researchWorkItems = pgTable(
+  "research_work_items",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    runId: uuid("run_id").notNull(),
+    stage: researchStageEnum("stage").notNull(),
+    workItemKey: varchar("work_item_key", { length: 160 }).notNull(),
+    subjectArtifactKey: varchar("subject_artifact_key", { length: 160 }).notNull(),
+    ordinal: integer("ordinal").notNull(),
+    status: varchar("status", { length: 30 }).notNull().default("pending"),
+    errorCode: varchar("error_code", { length: 120 }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.workspaceId, table.runId],
+      foreignColumns: [productResearchRuns.workspaceId, productResearchRuns.id],
+      name: "research_work_items_workspace_run_fk",
+    }).onDelete("cascade"),
+    uniqueIndex("research_work_items_key_uq").on(
+      table.workspaceId,
+      table.runId,
+      table.stage,
+      table.workItemKey,
+    ),
+    index("research_work_items_join_idx").on(
+      table.workspaceId,
+      table.runId,
+      table.stage,
+      table.status,
+    ),
+  ],
+);
+
+export const researchToolRequests = pgTable(
+  "research_tool_requests",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull(),
+    runId: uuid("run_id").notNull(),
+    toolName: varchar("tool_name", { length: 120 }).notNull(),
+    normalizedInputHash: varchar("normalized_input_hash", { length: 128 }).notNull(),
+    normalizedInput: jsonb("normalized_input").notNull(),
+    status: varchar("status", { length: 30 }).notNull(),
+    leaseToken: uuid("lease_token"),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    output: text("output"),
+    contentHash: varchar("content_hash", { length: 128 }),
+    retryable: boolean("retryable").notNull().default(true),
+    lastErrorCode: varchar("last_error_code", { length: 120 }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.workspaceId, table.runId],
+      foreignColumns: [productResearchRuns.workspaceId, productResearchRuns.id],
+      name: "research_tool_requests_workspace_run_fk",
+    }).onDelete("cascade"),
+    uniqueIndex("research_tool_requests_input_uq").on(
+      table.workspaceId,
+      table.runId,
+      table.toolName,
+      table.normalizedInputHash,
+    ),
+    index("research_tool_requests_lease_idx").on(table.status, table.leaseExpiresAt),
   ],
 );
 
@@ -807,6 +1021,34 @@ export const suppressionChannelEnum = pgEnum("suppression_channel", [
   "whatsapp",
 ]);
 
+export const prospectingChannelEnum = pgEnum("prospecting_channel", [
+  "linkedin",
+  "email",
+  "whatsapp",
+]);
+
+export const workspaceChannelAccounts = pgTable(
+  "workspace_channel_accounts",
+  {
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    channel: prospectingChannelEnum("channel").notNull(),
+    provider: varchar("provider", { length: 40 }).notNull().default("unipile"),
+    providerAccountId: text("provider_account_id").notNull(),
+    displayName: varchar("display_name", { length: 320 }).notNull(),
+    selectedBy: uuid("selected_by")
+      .notNull()
+      .references(() => authUsers.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.workspaceId, table.channel] }),
+    index("workspace_channel_accounts_provider_idx").on(table.provider, table.providerAccountId),
+  ],
+);
+
 export const companies = pgTable(
   "companies",
   {
@@ -957,6 +1199,7 @@ export const contactSuppressions = pgTable(
     channel: suppressionChannelEnum("channel").notNull(),
     identityType: contactIdentityTypeEnum("identity_type"),
     normalizedValue: varchar("normalized_value", { length: 600 }),
+    identityFingerprint: varchar("identity_fingerprint", { length: 128 }),
     reason: text("reason"),
     createdBy: uuid("created_by").references(() => authUsers.id),
     liftedAt: timestamp("lifted_at", { withTimezone: true }),
@@ -973,6 +1216,9 @@ export const contactSuppressions = pgTable(
     uniqueIndex("contact_suppressions_fingerprint_uq")
       .on(table.workspaceId, table.identityType, table.normalizedValue, table.channel)
       .where(sql`${table.normalizedValue} is not null`),
+    uniqueIndex("contact_suppressions_hmac_uq")
+      .on(table.workspaceId, table.identityType, table.identityFingerprint)
+      .where(sql`${table.identityFingerprint} is not null`),
   ],
 );
 
@@ -1038,7 +1284,18 @@ export const prospectDiscoveryRuns = pgTable(
     icpVersionId: uuid("icp_version_id")
       .notNull()
       .references(() => icpVersions.id, { onDelete: "cascade" }),
+    campaignId: uuid("campaign_id").references((): AnyPgColumn => campaigns.id, {
+      onDelete: "cascade",
+    }),
+    sourcingCycleId: uuid("sourcing_cycle_id").references(() => dailySourcingCycles.id, {
+      onDelete: "set null",
+    }),
+    sourcingFrontierId: uuid("sourcing_frontier_id").references(() => sourcingFrontiers.id, {
+      onDelete: "set null",
+    }),
+    trigger: varchar("trigger", { length: 40 }).notNull().default("manual"),
     provider: varchar("provider", { length: 80 }).notNull().default("unipile"),
+    channel: prospectingChannelEnum("channel").notNull().default("linkedin"),
     filters: jsonb("filters").notNull(),
     status: discoveryRunStatusEnum("status").notNull().default("running"),
     errorCode: varchar("error_code", { length: 120 }),
@@ -1056,6 +1313,10 @@ export const prospectDiscoveryRuns = pgTable(
       name: "prospect_discovery_runs_workspace_fk",
     }).onDelete("cascade"),
     index("prospect_discovery_runs_version_idx").on(table.workspaceId, table.icpVersionId),
+    index("prospect_discovery_runs_cycle_idx").on(table.workspaceId, table.sourcingCycleId),
+    uniqueIndex("prospect_discovery_runs_active_version_uq")
+      .on(table.workspaceId, table.icpVersionId, table.channel)
+      .where(sql`${table.status} = 'running'`),
   ],
 );
 
@@ -1073,6 +1334,12 @@ export const prospectDiscoveryCandidates = pgTable(
     linkedinNormalized: varchar("linkedin_normalized", { length: 600 }),
     location: varchar("location", { length: 300 }),
     companyName: varchar("company_name", { length: 300 }),
+    companyWebsite: varchar("company_website", { length: 600 }),
+    companyDomain: varchar("company_domain", { length: 300 }),
+    channels: jsonb("channels")
+      .$type<ProspectChannels>()
+      .notNull()
+      .default(emptyProspectChannels()),
     providerData: jsonb("provider_data").notNull().default({}),
     icpFit: jsonb("icp_fit").notNull().default({ matches: [], gaps: [] }),
     importedContactId: uuid("imported_contact_id"),
@@ -1090,12 +1357,143 @@ export const prospectDiscoveryCandidates = pgTable(
   ],
 );
 
+export const phoneAttributionStatusEnum = pgEnum("phone_attribution_status", [
+  "strong",
+  "weak",
+  "conflict",
+  "rejected",
+]);
+
+export const phoneEndpointKindEnum = pgEnum("phone_endpoint_kind", [
+  "person",
+  "company",
+]);
+
+export const whatsappReachabilityStatusEnum = pgEnum("whatsapp_reachability_status", [
+  "verified",
+  "not_registered",
+  "unknown",
+]);
+
+export const phoneObservations = pgTable(
+  "phone_observations",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    runId: uuid("run_id")
+      .notNull()
+      .references(() => prospectDiscoveryRuns.id, { onDelete: "cascade" }),
+    sourcingCycleId: uuid("sourcing_cycle_id").references(() => dailySourcingCycles.id, {
+      onDelete: "set null",
+    }),
+    sourcingFrontierId: uuid("sourcing_frontier_id").references(() => sourcingFrontiers.id, {
+      onDelete: "set null",
+    }),
+    logicalFingerprint: varchar("logical_fingerprint", { length: 128 }).notNull(),
+    e164: varchar("e164", { length: 32 }),
+    rawValue: varchar("raw_value", { length: 120 }),
+    endpointKind: phoneEndpointKindEnum("endpoint_kind").notNull(),
+    companyName: varchar("company_name", { length: 300 }).notNull(),
+    companyDomain: varchar("company_domain", { length: 300 }),
+    companyFingerprint: varchar("company_fingerprint", { length: 128 }).notNull(),
+    personName: varchar("person_name", { length: 300 }),
+    personRole: varchar("person_role", { length: 300 }),
+    attributionStatus: phoneAttributionStatusEnum("attribution_status").notNull(),
+    attributionReason: text("attribution_reason").notNull(),
+    sourceKind: varchar("source_kind", { length: 80 }).notNull(),
+    sourceUrl: varchar("source_url", { length: 1200 }).notNull(),
+    evidenceSnippet: text("evidence_snippet").notNull(),
+    contentHash: varchar("content_hash", { length: 128 }),
+    reachabilityStatus: whatsappReachabilityStatusEnum("reachability_status")
+      .notNull()
+      .default("unknown"),
+    providerAccountId: text("provider_account_id"),
+    reachabilityCheckedAt: timestamp("reachability_checked_at", { withTimezone: true }),
+    reachabilityExpiresAt: timestamp("reachability_expires_at", { withTimezone: true }),
+    rejectionReason: varchar("rejection_reason", { length: 160 }),
+    firstObservedAt: timestamp("first_observed_at", { withTimezone: true }).notNull(),
+    lastObservedAt: timestamp("last_observed_at", { withTimezone: true }).notNull(),
+    contradictedAt: timestamp("contradicted_at", { withTimezone: true }),
+    rawRetainUntil: timestamp("raw_retain_until", { withTimezone: true }),
+    metadata: jsonb("metadata").notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("phone_observations_logical_uq").on(
+      table.workspaceId,
+      table.logicalFingerprint,
+    ),
+    index("phone_observations_e164_idx").on(
+      table.workspaceId,
+      table.e164,
+      table.attributionStatus,
+    ),
+    index("phone_observations_cycle_idx").on(table.workspaceId, table.sourcingCycleId),
+  ],
+);
+
+export const whatsappReachabilityChecks = pgTable(
+  "whatsapp_reachability_checks",
+  {
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    providerAccountId: text("provider_account_id").notNull(),
+    e164: varchar("e164", { length: 32 }).notNull(),
+    status: whatsappReachabilityStatusEnum("status").notNull(),
+    source: varchar("source", { length: 120 }).notNull().default("unipile"),
+    checkedAt: timestamp("checked_at", { withTimezone: true }).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    lastErrorCode: varchar("last_error_code", { length: 120 }),
+    responseHash: varchar("response_hash", { length: 128 }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.workspaceId, table.providerAccountId, table.e164] }),
+    index("whatsapp_reachability_expiry_idx").on(table.workspaceId, table.expiresAt),
+  ],
+);
+
 export const sequenceStatusEnum = pgEnum("sequence_status", [
   "draft",
   "published",
   "archived",
 ]);
 
+export const prospectingPlanStatusEnum = pgEnum("prospecting_plan_status", [
+  "assessing",
+  "ready",
+  "archived",
+]);
+
+export const channelAssessmentStatusEnum = pgEnum("channel_assessment_status", [
+  "pending",
+  "running",
+  "completed",
+  "failed",
+]);
+
+export const channelRecommendationEnum = pgEnum("channel_recommendation", [
+  "recommended",
+  "optional",
+  "unsuitable",
+]);
+
+export const campaignProspectStateEnum = pgEnum("campaign_prospect_state", [
+  "candidate",
+  "imported",
+  "excluded",
+]);
+export const sequenceEnrollmentStatusEnum = pgEnum("sequence_enrollment_status", [
+  "active",
+  "suspended",
+  "completed",
+  "cancelled",
+]);
 export const sequenceStepKindEnum = pgEnum("sequence_step_kind", [
   "linkedin_invite",
   "linkedin_message",
@@ -1188,6 +1586,7 @@ export const campaignStatusEnum = pgEnum("campaign_status", [
   "draft",
   "active",
   "paused",
+  "completed",
   "archived",
 ]);
 
@@ -1199,11 +1598,24 @@ export const campaigns = pgTable(
     name: varchar("name", { length: 300 }).notNull(),
     objective: text("objective").notNull().default(""),
     status: campaignStatusEnum("status").notNull().default("draft"),
-    offerVersionId: uuid("offer_version_id").notNull(),
+    offerVersionId: uuid("offer_version_id"),
     icpVersionId: uuid("icp_version_id").notNull(),
-    messagingStrategyVersionId: uuid("messaging_strategy_version_id").notNull(),
-    aiPolicyVersionId: uuid("ai_policy_version_id").notNull(),
-    sequenceVersionId: uuid("sequence_version_id").notNull(),
+    messagingStrategyVersionId: uuid("messaging_strategy_version_id"),
+    aiPolicyVersionId: uuid("ai_policy_version_id"),
+    sequenceVersionId: uuid("sequence_version_id"),
+    planId: uuid("plan_id"),
+    assessmentId: uuid("assessment_id"),
+    channel: prospectingChannelEnum("channel").notNull(),
+    // Kept non-null in the application contract; migration 0043 only relaxes the
+    // physical column for legacy campaign rows created before channel sequences.
+    sequenceId: uuid("sequence_id").notNull(),
+    discoveryRunId: uuid("discovery_run_id"),
+    legacyReason: varchar("legacy_reason", { length: 120 }),
+    prospectCount: integer("prospect_count").notNull().default(0),
+    autopilotPolicy: jsonb("autopilot_policy").notNull().default({}),
+    automationStage: varchar("automation_stage", { length: 40 }).notNull().default("sourcing"),
+    automationErrorCode: varchar("automation_error_code", { length: 120 }),
+    automationErrorMessage: text("automation_error_message"),
     createdBy: uuid("created_by").references(() => authUsers.id, { onDelete: "set null" }),
     activatedBy: uuid("activated_by").references(() => authUsers.id, { onDelete: "set null" }),
     activatedAt: timestamp("activated_at", { withTimezone: true }),
@@ -1243,10 +1655,17 @@ export const campaignProspects = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     workspaceId: uuid("workspace_id").notNull(),
     campaignId: uuid("campaign_id").notNull(),
-    contactId: uuid("contact_id").notNull(),
+    candidateId: uuid("candidate_id").notNull().defaultRandom(),
+    contactId: uuid("contact_id"),
     status: campaignProspectStatusEnum("status").notNull().default("candidate"),
-    score: numeric("score", { precision: 7, scale: 4 }).notNull().default("0"),
+    state: campaignProspectStateEnum("state").notNull().default("candidate"),
+    score: numeric("score", { precision: 7, scale: 4, mode: "number" }).default(0),
     explanation: jsonb("explanation").notNull().default({}),
+    scoreVersion: varchar("score_version", { length: 80 }),
+    scoreExplanation: jsonb("score_explanation").notNull().default([]),
+    aiAssessment: jsonb("ai_assessment").notNull().default({}),
+    eligible: boolean("eligible").notNull().default(false),
+    personalizedSteps: jsonb("personalized_steps").notNull().default([]),
     exclusionReason: text("exclusion_reason"),
     selectedAt: timestamp("selected_at", { withTimezone: true }),
     excludedAt: timestamp("excluded_at", { withTimezone: true }),
@@ -1336,13 +1755,24 @@ export const outreachActionStatusEnum = pgEnum("outreach_action_status", [
   "awaiting_approval",
   "due",
   "sending",
+  "scheduled",
+  "executing",
   "sent",
   "failed",
+  "skipped",
   "cancelled",
   "suspended",
 ]);
 
-export const outreachAttemptStatusEnum = pgEnum("outreach_attempt_status", ["sending", "sent", "failed", "rate_limited"]);
+export const outreachAttemptStatusEnum = pgEnum("outreach_attempt_status", [
+  "sending",
+  "executing",
+  "sent",
+  "failed",
+  "rate_limited",
+  "retry",
+  "unknown",
+]);
 
 export const outreachActions = pgTable(
   "outreach_actions",
@@ -1351,17 +1781,27 @@ export const outreachActions = pgTable(
     workspaceId: uuid("workspace_id").notNull(),
     campaignId: uuid("campaign_id").notNull(),
     enrollmentId: uuid("enrollment_id").notNull(),
+    candidateId: uuid("candidate_id").notNull().defaultRandom(),
     contactId: uuid("contact_id").notNull(),
-    sequenceVersionId: uuid("sequence_version_id").notNull(),
+    sequenceVersionId: uuid("sequence_version_id"),
     approvalItemId: uuid("approval_item_id"),
     connectedAccountId: uuid("connected_account_id"),
     stepPosition: integer("step_position").notNull(),
-    channel: varchar("channel", { length: 40 }).notNull(),
-    recipient: varchar("recipient", { length: 600 }).notNull(),
+    stepKind: sequenceStepKindEnum("step_kind").notNull().default("email"),
+    provider: varchar("provider", { length: 40 }).notNull().default("unipile"),
+    providerAccountId: varchar("provider_account_id", { length: 300 }).notNull().default(""),
+    channel: prospectingChannelEnum("channel").notNull(),
+    recipient: varchar("recipient", { length: 600 }).notNull().default(""),
     subject: varchar("subject", { length: 300 }),
-    body: text("body").notNull(),
+    body: text("body").notNull().default(""),
     idempotencyKey: varchar("idempotency_key", { length: 500 }).notNull(),
-    scheduledAt: timestamp("scheduled_at", { withTimezone: true }).notNull(),
+    scheduledAt: timestamp("scheduled_at", { withTimezone: true }).notNull().defaultNow(),
+    dueAt: timestamp("due_at", { withTimezone: true }).notNull().defaultNow(),
+    contentSnapshot: jsonb("content_snapshot").notNull().default({}),
+    lockedAt: timestamp("locked_at", { withTimezone: true }),
+    lockedUntil: timestamp("locked_until", { withTimezone: true }),
+    lockedBy: varchar("locked_by", { length: 160 }),
+    providerRequestId: varchar("provider_request_id", { length: 300 }),
     status: outreachActionStatusEnum("status").notNull().default("planned"),
     attemptCount: integer("attempt_count").notNull().default(0),
     maxAttempts: integer("max_attempts").notNull().default(3),
@@ -1395,19 +1835,500 @@ export const outreachAttempts = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     workspaceId: uuid("workspace_id").notNull(),
-    actionId: uuid("action_id").notNull(),
-    attempt: integer("attempt").notNull(),
+    actionId: uuid("action_id"),
+    outreachActionId: uuid("outreach_action_id"),
+    attempt: integer("attempt"),
+    attemptNumber: integer("attempt_number"),
     status: outreachAttemptStatusEnum("status").notNull(),
+    providerRequestId: varchar("provider_request_id", { length: 300 }),
     providerMessageId: varchar("provider_message_id", { length: 300 }),
     errorCode: varchar("error_code", { length: 120 }),
     errorMessage: text("error_message"),
     startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
     completedAt: timestamp("completed_at", { withTimezone: true }),
+    attemptedAt: timestamp("attempted_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
     foreignKey({ columns: [table.workspaceId], foreignColumns: [workspaces.id], name: "outreach_attempts_workspace_fk" }).onDelete("cascade"),
     foreignKey({ columns: [table.workspaceId, table.actionId], foreignColumns: [outreachActions.workspaceId, outreachActions.id], name: "outreach_attempts_action_fk" }).onDelete("cascade"),
     unique("outreach_attempts_action_attempt_uq").on(table.workspaceId, table.actionId, table.attempt),
+  ],
+);
+
+export const prospectingPlans = pgTable(
+  "prospecting_plans",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    icpVersionId: uuid("icp_version_id")
+      .notNull()
+      .references(() => icpVersions.id, { onDelete: "cascade" }),
+    name: varchar("name", { length: 300 }).notNull(),
+    status: prospectingPlanStatusEnum("status").notNull().default("assessing"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.workspaceId],
+      foreignColumns: [workspaces.id],
+      name: "prospecting_plans_workspace_fk",
+    }).onDelete("cascade"),
+    unique("prospecting_plans_workspace_id_uq").on(table.workspaceId, table.id),
+    uniqueIndex("prospecting_plans_icp_version_uq").on(table.workspaceId, table.icpVersionId),
+    index("prospecting_plans_workspace_status_idx").on(table.workspaceId, table.status),
+  ],
+);
+
+export const channelAssessments = pgTable(
+  "channel_assessments",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    planId: uuid("plan_id")
+      .notNull()
+      .references(() => prospectingPlans.id, { onDelete: "cascade" }),
+    channel: prospectingChannelEnum("channel").notNull(),
+    status: channelAssessmentStatusEnum("status").notNull().default("pending"),
+    recommendation: channelRecommendationEnum("recommendation"),
+    score: integer("score"),
+    strategy: jsonb("strategy").notNull().default({}),
+    metrics: jsonb("metrics").notNull().default({}),
+    evidence: jsonb("evidence").notNull().default([]),
+    rationale: text("rationale"),
+    sampleSize: integer("sample_size").notNull().default(0),
+    errorCode: varchar("error_code", { length: 120 }),
+    errorMessage: text("error_message"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.workspaceId],
+      foreignColumns: [workspaces.id],
+      name: "channel_assessments_workspace_fk",
+    }).onDelete("cascade"),
+    unique("channel_assessments_workspace_id_uq").on(table.workspaceId, table.id),
+    uniqueIndex("channel_assessments_plan_channel_uq").on(
+      table.workspaceId,
+      table.planId,
+      table.channel,
+    ),
+    index("channel_assessments_workspace_status_idx").on(table.workspaceId, table.status),
+  ],
+);
+
+export const contactChannelAssignments = pgTable(
+  "contact_channel_assignments",
+  {
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    contactId: uuid("contact_id")
+      .notNull()
+      .references(() => contacts.id, { onDelete: "cascade" }),
+    channel: prospectingChannelEnum("channel").notNull(),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    candidateId: uuid("candidate_id")
+      .notNull()
+      .references(() => prospectDiscoveryCandidates.id, { onDelete: "cascade" }),
+    score: integer("score").notNull(),
+    scoreVersion: varchar("score_version", { length: 80 }).notNull(),
+    assignedAt: timestamp("assigned_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.workspaceId, table.contactId, table.channel] }),
+    index("contact_channel_assignments_campaign_idx").on(
+      table.workspaceId,
+      table.campaignId,
+      table.assignedAt,
+    ),
+  ],
+);
+
+export const sequenceEnrollments = pgTable(
+  "sequence_enrollments",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
+    candidateId: uuid("candidate_id").notNull().references(() => prospectDiscoveryCandidates.id, { onDelete: "cascade" }),
+    contactId: uuid("contact_id").notNull().references(() => contacts.id, { onDelete: "cascade" }),
+    sequenceVersionId: uuid("sequence_version_id").notNull().references(() => sequenceVersions.id),
+    status: sequenceEnrollmentStatusEnum("status").notNull().default("active"),
+    currentPosition: integer("current_position").notNull().default(1),
+    suspensionReason: varchar("suspension_reason", { length: 160 }),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    suspendedAt: timestamp("suspended_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.workspaceId],
+      foreignColumns: [workspaces.id],
+      name: "sequence_enrollments_workspace_fk",
+    }).onDelete("cascade"),
+    uniqueIndex("sequence_enrollments_campaign_contact_uq").on(
+      table.workspaceId,
+      table.campaignId,
+      table.contactId,
+    ),
+    index("sequence_enrollments_active_idx").on(table.workspaceId, table.status, table.updatedAt),
+  ],
+);
+
+export const integrationEvents = pgTable(
+  "integration_events",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    provider: varchar("provider", { length: 40 }).notNull(),
+    providerEventId: varchar("provider_event_id", { length: 500 }).notNull(),
+    eventType: varchar("event_type", { length: 120 }).notNull(),
+    payload: jsonb("payload").notNull(),
+    status: varchar("status", { length: 40 }).notNull().default("pending"),
+    errorCode: varchar("error_code", { length: 160 }),
+    errorMessage: text("error_message"),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+    processedAt: timestamp("processed_at", { withTimezone: true }),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.workspaceId],
+      foreignColumns: [workspaces.id],
+      name: "integration_events_workspace_fk",
+    }).onDelete("cascade"),
+    uniqueIndex("integration_events_provider_event_uq").on(
+      table.workspaceId,
+      table.provider,
+      table.providerEventId,
+    ),
+    index("integration_events_status_idx").on(table.status, table.receivedAt),
+  ],
+);
+
+export const conversations = pgTable(
+  "conversations",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    contactId: uuid("contact_id").notNull().references(() => contacts.id, { onDelete: "cascade" }),
+    campaignId: uuid("campaign_id").references(() => campaigns.id, { onDelete: "set null" }),
+    provider: varchar("provider", { length: 40 }).notNull(),
+    providerAccountId: varchar("provider_account_id", { length: 300 }).notNull(),
+    providerThreadId: varchar("provider_thread_id", { length: 500 }).notNull(),
+    channel: prospectingChannelEnum("channel").notNull(),
+    status: varchar("status", { length: 40 }).notNull().default("open"),
+    unreadCount: integer("unread_count").notNull().default(0),
+    lastMessageAt: timestamp("last_message_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.workspaceId],
+      foreignColumns: [workspaces.id],
+      name: "conversations_workspace_fk",
+    }).onDelete("cascade"),
+    uniqueIndex("conversations_provider_thread_uq").on(
+      table.workspaceId,
+      table.providerAccountId,
+      table.providerThreadId,
+    ),
+    index("conversations_contact_idx").on(table.workspaceId, table.contactId, table.lastMessageAt),
+  ],
+);
+
+export const messages = pgTable(
+  "messages",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    conversationId: uuid("conversation_id").notNull().references(() => conversations.id, { onDelete: "cascade" }),
+    providerMessageId: varchar("provider_message_id", { length: 500 }).notNull(),
+    direction: varchar("direction", { length: 20 }).notNull(),
+    senderType: varchar("sender_type", { length: 40 }).notNull(),
+    body: text("body").notNull(),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    receivedAt: timestamp("received_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.workspaceId],
+      foreignColumns: [workspaces.id],
+      name: "messages_workspace_fk",
+    }).onDelete("cascade"),
+    uniqueIndex("messages_provider_message_uq").on(table.workspaceId, table.providerMessageId),
+    index("messages_conversation_idx").on(table.workspaceId, table.conversationId, table.createdAt),
+  ],
+);
+
+export const replyClassifications = pgTable(
+  "reply_classifications",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    messageId: uuid("message_id").notNull().references(() => messages.id, { onDelete: "cascade" }),
+    intent: varchar("intent", { length: 80 }).notNull(),
+    confidence: numeric("confidence", { precision: 5, scale: 4 }).notNull(),
+    action: varchar("action", { length: 40 }).notNull(),
+    rationale: text("rationale").notNull(),
+    metadata: jsonb("metadata").notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.workspaceId],
+      foreignColumns: [workspaces.id],
+      name: "reply_classifications_workspace_fk",
+    }).onDelete("cascade"),
+    uniqueIndex("reply_classifications_message_uq").on(table.workspaceId, table.messageId),
+  ],
+);
+
+export const automatedReplies = pgTable(
+  "automated_replies",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    conversationId: uuid("conversation_id").notNull().references(() => conversations.id, { onDelete: "cascade" }),
+    inboundMessageId: uuid("inbound_message_id").notNull().references(() => messages.id, { onDelete: "cascade" }),
+    providerAccountId: varchar("provider_account_id", { length: 300 }).notNull(),
+    channel: prospectingChannelEnum("channel").notNull(),
+    body: text("body").notNull(),
+    status: varchar("status", { length: 40 }).notNull().default("scheduled"),
+    idempotencyKey: varchar("idempotency_key", { length: 500 }).notNull(),
+    providerRequestId: varchar("provider_request_id", { length: 500 }),
+    errorCode: varchar("error_code", { length: 160 }),
+    errorMessage: text("error_message"),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.workspaceId],
+      foreignColumns: [workspaces.id],
+      name: "automated_replies_workspace_fk",
+    }).onDelete("cascade"),
+    uniqueIndex("automated_replies_inbound_message_uq").on(table.workspaceId, table.inboundMessageId),
+    uniqueIndex("automated_replies_idempotency_uq").on(table.workspaceId, table.idempotencyKey),
+  ],
+);
+
+export const conversationCommands = pgTable(
+  "conversation_commands",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    requestedBy: uuid("requested_by").references(() => authUsers.id, { onDelete: "set null" }),
+    mode: varchar("mode", { length: 20 }).notNull(),
+    requestedBody: text("requested_body"),
+    generatedBody: text("generated_body"),
+    status: varchar("status", { length: 40 }).notNull().default("scheduled"),
+    idempotencyKey: varchar("idempotency_key", { length: 500 }).notNull(),
+    providerRequestId: varchar("provider_request_id", { length: 500 }),
+    errorCode: varchar("error_code", { length: 160 }),
+    errorMessage: text("error_message"),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.workspaceId],
+      foreignColumns: [workspaces.id],
+      name: "conversation_commands_workspace_fk",
+    }).onDelete("cascade"),
+    uniqueIndex("conversation_commands_idempotency_uq").on(table.workspaceId, table.idempotencyKey),
+    index("conversation_commands_conversation_idx").on(
+      table.workspaceId,
+      table.conversationId,
+      table.createdAt,
+    ),
+  ],
+);
+
+export const opportunities = pgTable(
+  "opportunities",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    contactId: uuid("contact_id").notNull().references(() => contacts.id, { onDelete: "cascade" }),
+    campaignId: uuid("campaign_id").references(() => campaigns.id, { onDelete: "set null" }),
+    stage: varchar("stage", { length: 80 }).notNull().default("qualified"),
+    nextAction: text("next_action"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.workspaceId],
+      foreignColumns: [workspaces.id],
+      name: "opportunities_workspace_fk",
+    }).onDelete("cascade"),
+    unique("opportunities_workspace_id_uq").on(table.workspaceId, table.id),
+    uniqueIndex("opportunities_contact_campaign_uq").on(table.workspaceId, table.contactId, table.campaignId),
+  ],
+);
+
+export const opportunityStageHistory = pgTable(
+  "opportunity_stage_history",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    opportunityId: uuid("opportunity_id").notNull(),
+    fromStage: varchar("from_stage", { length: 80 }),
+    toStage: varchar("to_stage", { length: 80 }).notNull(),
+    source: varchar("source", { length: 80 }).notNull(),
+    reason: text("reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.workspaceId, table.opportunityId],
+      foreignColumns: [opportunities.workspaceId, opportunities.id],
+      name: "opportunity_stage_history_opportunity_fk",
+    }).onDelete("cascade"),
+    index("opportunity_stage_history_timeline_idx").on(
+      table.workspaceId,
+      table.opportunityId,
+      table.createdAt,
+    ),
+  ],
+);
+
+export const calendarConnections = pgTable(
+  "calendar_connections",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    provider: varchar("provider", { length: 40 }).notNull(),
+    bookingUrl: varchar("booking_url", { length: 2_000 }).notNull(),
+    apiKeyCiphertext: text("api_key_ciphertext"),
+    eventTypeId: integer("event_type_id"),
+    eventTypeSlug: varchar("event_type_slug", { length: 200 }),
+    eventTypeTitle: varchar("event_type_title", { length: 300 }),
+    username: varchar("username", { length: 200 }),
+    timeZone: varchar("time_zone", { length: 100 }),
+    webhookId: varchar("webhook_id", { length: 200 }),
+    lastVerifiedAt: timestamp("last_verified_at", { withTimezone: true }),
+    lastErrorCode: varchar("last_error_code", { length: 120 }),
+    status: varchar("status", { length: 40 }).notNull().default("active"),
+    isDefault: boolean("is_default").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.workspaceId],
+      foreignColumns: [workspaces.id],
+      name: "calendar_connections_workspace_fk",
+    }).onDelete("cascade"),
+    unique("calendar_connections_workspace_id_uq").on(table.workspaceId, table.id),
+    uniqueIndex("calendar_connections_workspace_default_uq")
+      .on(table.workspaceId)
+      .where(sql`${table.isDefault} = true and ${table.status} = 'active'`),
+  ],
+);
+
+export const calendarBookings = pgTable(
+  "calendar_bookings",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    connectionId: uuid("connection_id").notNull(),
+    providerBookingId: varchar("provider_booking_id", { length: 500 }).notNull(),
+    contactId: uuid("contact_id"),
+    campaignId: uuid("campaign_id"),
+    status: varchar("status", { length: 40 }).notNull(),
+    attendeeName: varchar("attendee_name", { length: 300 }),
+    attendeeEmail: varchar("attendee_email", { length: 320 }),
+    attendeePhone: varchar("attendee_phone", { length: 80 }),
+    startAt: timestamp("start_at", { withTimezone: true }).notNull(),
+    endAt: timestamp("end_at", { withTimezone: true }),
+    meetingUrl: text("meeting_url"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.workspaceId, table.connectionId],
+      foreignColumns: [calendarConnections.workspaceId, calendarConnections.id],
+      name: "calendar_bookings_connection_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.workspaceId, table.contactId],
+      foreignColumns: [contacts.workspaceId, contacts.id],
+      name: "calendar_bookings_contact_fk",
+    }).onDelete("set null"),
+    foreignKey({
+      columns: [table.workspaceId, table.campaignId],
+      foreignColumns: [campaigns.workspaceId, campaigns.id],
+      name: "calendar_bookings_campaign_fk",
+    }).onDelete("set null"),
+    uniqueIndex("calendar_bookings_provider_uq").on(
+      table.workspaceId,
+      table.connectionId,
+      table.providerBookingId,
+    ),
+    index("calendar_bookings_contact_idx").on(table.workspaceId, table.contactId, table.startAt),
+  ],
+);
+
+export const meetingProposals = pgTable(
+  "meeting_proposals",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    contactId: uuid("contact_id")
+      .notNull()
+      .references(() => contacts.id, { onDelete: "cascade" }),
+    campaignId: uuid("campaign_id").references(() => campaigns.id, { onDelete: "set null" }),
+    calendarBookingId: uuid("calendar_booking_id").references(() => calendarBookings.id, {
+      onDelete: "set null",
+    }),
+    status: varchar("status", { length: 40 }).notNull().default("offered"),
+    timeZone: varchar("time_zone", { length: 100 }).notNull(),
+    slots: jsonb("slots").notNull(),
+    selectedSlotStart: timestamp("selected_slot_start", { withTimezone: true }),
+    idempotencyKey: varchar("idempotency_key", { length: 500 }).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.workspaceId],
+      foreignColumns: [workspaces.id],
+      name: "meeting_proposals_workspace_fk",
+    }).onDelete("cascade"),
+    uniqueIndex("meeting_proposals_idempotency_uq").on(
+      table.workspaceId,
+      table.idempotencyKey,
+    ),
+    uniqueIndex("meeting_proposals_active_conversation_uq")
+      .on(table.workspaceId, table.conversationId)
+      .where(sql`${table.status} = 'offered'`),
+    index("meeting_proposals_conversation_idx").on(
+      table.workspaceId,
+      table.conversationId,
+      table.createdAt,
+    ),
   ],
 );
 

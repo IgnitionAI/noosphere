@@ -1,6 +1,7 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
+import { eq } from "drizzle-orm";
 import { CreateProductResearchRun, StartProductResearchRun } from "@outbound/application/gtm/product-research-use-cases";
 import { ProductResearchApplication } from "@outbound/application/gtm/product-research-application";
 import { ResearchOrchestrator } from "@outbound/application/gtm/research-orchestrator";
@@ -12,8 +13,11 @@ import { createBetterAuthRuntime } from "@outbound/infrastructure/auth/better-au
 import { createDatabase } from "@outbound/infrastructure/database/client";
 import { PostgresProductResearchRepository } from "@outbound/infrastructure/gtm/postgres-product-research-repository";
 import { PostgresJobQueue } from "@outbound/infrastructure/jobs/postgres-job-queue";
+import { PostgresResearchToolRequestRegistry } from "@outbound/infrastructure/ai/postgres-research-tool-request-registry";
 import {
   marketEvidence,
+  productResearchRuns,
+  researchWorkItems,
   workspaces,
 } from "@outbound/infrastructure/database/schema";
 import { Sha256ContentHasher } from "@outbound/infrastructure/shared/sha256-content-hasher";
@@ -43,6 +47,12 @@ databaseDescribe("PostgreSQL F-009 foundation", () => {
       { id: workspaceA, slug: `workspace-a-${workspaceA}`, name: "Workspace A" },
       { id: workspaceB, slug: `workspace-b-${workspaceB}`, name: "Workspace B" },
     ]);
+  });
+
+  afterEach(async () => {
+    await database.client`delete from jobs where workspace_id in (${workspaceA}, ${workspaceB})`;
+    await database.client`delete from outbox_events where workspace_id in (${workspaceA}, ${workspaceB})`;
+    await database.client`delete from product_research_runs where workspace_id in (${workspaceA}, ${workspaceB})`;
   });
 
   afterAll(async () => {
@@ -82,7 +92,238 @@ databaseDescribe("PostgreSQL F-009 foundation", () => {
     expect(workerA.length + workerB.length).toBe(1);
     const leased = workerA[0] ?? workerB[0];
     expect(leased).toBeDefined();
+    expect(leased!.payload).toEqual({ test: true });
     await queue.acknowledge(leased!.id, leased!.lockedBy, new Date());
+  });
+
+  test("leases fairly across workspaces even when one workspace has a large fan-out", async () => {
+    const now = new Date();
+    const jobType = `integration.fairness.${crypto.randomUUID()}`;
+    for (let index = 0; index < 4; index += 1) {
+      await queue.enqueue({
+        id: ids.generate(),
+        workspaceId: workspaceA,
+        type: jobType,
+        payload: { index },
+        idempotencyKey: `workspace-a-${index}-${crypto.randomUUID()}`,
+        correlationId: "integration-fairness",
+        maxAttempts: 3,
+        availableAt: now,
+      });
+    }
+    await queue.enqueue({
+      id: ids.generate(),
+      workspaceId: workspaceB,
+      type: jobType,
+      payload: { index: 0 },
+      idempotencyKey: `workspace-b-${crypto.randomUUID()}`,
+      correlationId: "integration-fairness",
+      maxAttempts: 3,
+      availableAt: now,
+    });
+
+    const leased = await queue.lease({
+      workerId: "fair-worker",
+      types: [jobType],
+      limit: 2,
+      leaseMs: 30_000,
+      now,
+    });
+
+    expect(new Set(leased.map((job) => job.workspaceId))).toEqual(
+      new Set([workspaceA, workspaceB]),
+    );
+    await Promise.all(
+      leased.map((job) => queue.acknowledge(job.id, job.lockedBy, new Date())),
+    );
+  });
+
+  test("allows only one active research run per workspace", async () => {
+    const create = new CreateProductResearchRun(repository, ids, clock);
+    const start = new StartProductResearchRun(repository, ids, clock);
+    const brief = {
+      productUrl: "https://example.com",
+      productName: "Active-run invariant",
+      description: "",
+      geography: "France",
+      languages: ["fr"],
+      salesMotion: "saas" as const,
+      knownCompetitors: [],
+      internalDocumentIds: [],
+      depth: "standard" as const,
+      researchVersion: 3 as const,
+    };
+    const first = await create.execute({ workspaceId: workspaceA, brief });
+    const second = await create.execute({
+      workspaceId: workspaceA,
+      brief: { ...brief, productName: "Second active-run candidate" },
+    });
+    await start.execute({
+      workspaceId: workspaceA,
+      runId: first.snapshot.id,
+      correlationId: "first-active-run",
+    });
+
+    await expect(start.execute({
+      workspaceId: workspaceA,
+      runId: second.snapshot.id,
+      correlationId: "second-active-run",
+    })).rejects.toThrow();
+
+    await database.db
+      .update(productResearchRuns)
+      .set({ status: "completed", activeStage: null })
+      .where(eq(productResearchRuns.id, first.snapshot.id));
+    const startedSecond = await start.execute({
+      workspaceId: workspaceA,
+      runId: second.snapshot.id,
+      correlationId: "second-active-run-after-completion",
+    });
+    expect(startedSecond.snapshot.status).toBe("queued");
+  });
+
+  test("claims identical research tool calls once, caches success and reclaims expired leases", async () => {
+    const run = await new CreateProductResearchRun(repository, ids, clock).execute({
+      workspaceId: workspaceA,
+      brief: {
+        productUrl: "https://example.com",
+        productName: "Tool registry",
+        description: "",
+        geography: "France",
+        languages: ["fr"],
+        salesMotion: "saas",
+        knownCompetitors: [],
+        internalDocumentIds: [],
+        depth: "standard",
+        researchVersion: 3,
+      },
+    });
+    const registry = new PostgresResearchToolRequestRegistry(database.db);
+    const now = new Date();
+    const claimInput = {
+      workspaceId: workspaceA,
+      runId: run.snapshot.id,
+      toolName: "searchWeb",
+      normalizedInputHash: "a".repeat(64),
+      normalizedInput: { query: "buyer workflow", limit: 5 },
+      now,
+      leaseMs: 1_000,
+    };
+    const claims = await Promise.all([
+      registry.claim(claimInput),
+      registry.claim(claimInput),
+      registry.claim(claimInput),
+    ]);
+    expect(claims.filter((claim) => claim.kind === "execute")).toHaveLength(1);
+    expect(claims.filter((claim) => claim.kind === "in_progress")).toHaveLength(2);
+    const lease = claims.find((claim) => claim.kind === "execute")!;
+    if (lease.kind !== "execute") throw new Error("expected lease");
+    await registry.complete({
+      leaseToken: lease.leaseToken,
+      output: "[]",
+      contentHash: "b".repeat(64),
+      now: new Date(now.getTime() + 10),
+    });
+    expect(await registry.claim({ ...claimInput, now: new Date(now.getTime() + 20) })).toEqual({
+      kind: "cache_hit",
+      output: "[]",
+      contentHash: "b".repeat(64),
+    });
+
+    const expiring = await registry.claim({
+      ...claimInput,
+      normalizedInputHash: "c".repeat(64),
+      normalizedInput: { query: "another workflow", limit: 5 },
+      leaseMs: 5,
+    });
+    expect(expiring.kind).toBe("execute");
+    const reclaimed = await registry.claim({
+      ...claimInput,
+      normalizedInputHash: "c".repeat(64),
+      normalizedInput: { query: "another workflow", limit: 5 },
+      now: new Date(now.getTime() + 10),
+      leaseMs: 1_000,
+    });
+    expect(reclaimed.kind).toBe("execute");
+  });
+
+  test("persists four concurrent market work items and inserts one durable finalizer", async () => {
+    const run = await new CreateProductResearchRun(repository, ids, clock).execute({
+      workspaceId: workspaceA,
+      brief: {
+        productUrl: "https://example.com",
+        productName: "Fanout integration",
+        description: "",
+        geography: "France",
+        languages: ["fr"],
+        salesMotion: "saas",
+        knownCompetitors: [],
+        internalDocumentIds: [],
+        depth: "standard",
+        researchVersion: 3,
+      },
+    });
+    await new StartProductResearchRun(repository, ids, clock).execute({
+      workspaceId: workspaceA,
+      runId: run.snapshot.id,
+      correlationId: "postgres-fanout",
+    });
+    const orchestrator = new ResearchOrchestrator(
+      repository,
+      queue,
+      new FanoutIntegrationFixtureAgents(),
+      ids,
+      clock,
+      new Sha256ContentHasher(),
+    );
+    for (let index = 0; index < 3; index += 1) {
+      const [job] = await queue.lease({
+        workerId: "fanout-planner",
+        types: ["research.stage.execute"],
+        limit: 1,
+        leaseMs: 30_000,
+        now: new Date(),
+      });
+      await orchestrator.process(job!);
+    }
+    const children = await queue.lease({
+      workerId: "fanout-workers",
+      types: ["research.stage.execute"],
+      limit: 10,
+      leaseMs: 30_000,
+      now: new Date(),
+    });
+    expect(children).toHaveLength(4);
+    await Promise.all(children.map((job) => orchestrator.process(job)));
+    const finalizers = await queue.lease({
+      workerId: "fanout-finalizer",
+      types: ["research.stage.execute"],
+      limit: 10,
+      leaseMs: 30_000,
+      now: new Date(),
+    });
+    expect(finalizers).toHaveLength(1);
+    expect(finalizers[0]?.payload).toMatchObject({ finalizeFanout: true });
+    await orchestrator.process(finalizers[0]!);
+
+    const persistedItems = await database.db
+      .select()
+      .from(researchWorkItems)
+      .where(eq(researchWorkItems.runId, run.snapshot.id));
+    expect(persistedItems).toHaveLength(4);
+    expect(persistedItems.every((item) => item.status === "completed")).toBe(true);
+    const joined = await repository.findCompletedCheckpoint(
+      workspaceA,
+      run.snapshot.id,
+      "market_investigation",
+    );
+    const joinedOutput = joined?.output as {
+      investigations: unknown[];
+      notInvestigatedHypothesisIds: string[];
+    };
+    expect(joinedOutput.notInvestigatedHypothesisIds).toEqual(["H05"]);
+    expect(Array.isArray(joinedOutput.investigations)).toBe(true);
+    expect(joinedOutput.investigations).toHaveLength(4);
   });
 
   test("persists run state, first job and outbox event atomically with workspace isolation", async () => {
@@ -100,6 +341,7 @@ databaseDescribe("PostgreSQL F-009 foundation", () => {
         knownCompetitors: [],
         internalDocumentIds: [],
         depth: "standard",
+        researchVersion: 2,
       },
     });
     await start.execute({
@@ -157,6 +399,7 @@ databaseDescribe("PostgreSQL F-009 foundation", () => {
           knownCompetitors: [],
           internalDocumentIds: [],
           depth: "standard",
+          researchVersion: 2,
         }),
       }),
     );
@@ -423,6 +666,7 @@ databaseDescribe("PostgreSQL F-009 foundation", () => {
           knownCompetitors: [],
           internalDocumentIds: [],
           depth: "standard",
+          researchVersion: 2,
         }),
       }),
     );
@@ -487,6 +731,34 @@ class IntegrationFixtureAgents implements ResearchAgentExecutor {
         provider: "fixture",
         model: "integration-v1",
         promptVersion: "integration-v1",
+        parameters: {},
+        cost: 0,
+        latencyMs: 1,
+      },
+    };
+  }
+}
+
+class FanoutIntegrationFixtureAgents implements ResearchAgentExecutor {
+  async execute(stage: ResearchStage, input: AgentStageInput): Promise<AgentExecutionResult> {
+    const output = structuredClone(validOutputFor(stage)) as Record<string, any>;
+    if (stage === "organization_discovery") {
+      const base = output.hypotheses[0];
+      output.hypotheses = Array.from({ length: 5 }, (_, index) => ({
+        ...structuredClone(base),
+        hypothesisId: `H${String(index + 1).padStart(2, "0")}`,
+        organizationType: `Evidence-derived organization ${index + 1}`,
+      }));
+    }
+    if (stage === "market_investigation" && input.workItemKey !== "main") {
+      output.investigations[0].hypothesisId = input.workItemKey.replace("hypothesis:", "");
+    }
+    return {
+      output: output as AgentExecutionResult["output"],
+      metadata: {
+        provider: "fixture",
+        model: "fanout-integration-v1",
+        promptVersion: "fanout-integration-v1",
         parameters: {},
         cost: 0,
         latencyMs: 1,

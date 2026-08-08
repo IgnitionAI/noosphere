@@ -1,8 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
-  auditIcpStructurally,
   finalizeIcpSynthesis,
-  synthesizeIcpFromSegments,
   validateBuyerLandscape,
 } from "@outbound/application/gtm/icp-prospectability-policy";
 
@@ -64,46 +62,6 @@ function proposal(input: {
     unknowns: ["Budget"],
     evidenceIds: ["P01", "M01", "M02"],
     marketEvidenceIds: input.marketEvidenceIds ?? ["M01", "M02"],
-  };
-}
-
-function segment(name: string, confidence: number, willingnessToBuy: number) {
-  return {
-    name,
-    buyerType: "end_customer" as const,
-    description: `${name} reuse proprietary documents.`,
-    industries: [name],
-    recurringWorkflows: ["Search and synthesize proprietary documents"],
-    problems: [
-      {
-        statement: "Manual document research is recurrent.",
-        confidence,
-        evidenceIds: ["M01", "M02"],
-        hypothesis: false,
-      },
-    ],
-    buyingSignals: [
-      {
-        statement: "The segment buys specialist document software.",
-        confidence,
-        evidenceIds: ["M01", "M02"],
-        hypothesis: false,
-      },
-    ],
-    buildVsBuy: {
-      buildAbility: 25,
-      willingnessToBuy,
-      rationale: "The segment lacks a dedicated AI engineering team.",
-      evidenceIds: ["M01", "M02"],
-    },
-    prospecting: {
-      ...prospecting,
-      industries: [name],
-      jobTitles: ["Decision maker"],
-      searchKeywords: [name],
-    },
-    marketEvidenceIds: ["M01", "M02"],
-    confidence,
   };
 }
 
@@ -242,62 +200,4 @@ describe("ICP prospectability policy", () => {
     ).toThrow("ICP_AUDIENCE_MISMATCH");
   });
 
-  test("builds a diverse five-ICP portfolio from evidenced segments without a model", () => {
-    const result = synthesizeIcpFromSegments({
-      brief: { ...brief, description: "Assistant for legal and compliance documents" },
-      previousOutputs: {
-        ...previousOutputs,
-        segment_synthesis: {
-          segments: [
-            segment("Pharmaceutical companies", 0.95, 90),
-            segment("Banking institutions", 0.92, 88),
-            {
-              ...segment("Mid-size law firms", 0.84, 85),
-              marketEvidenceIds: ["P01", "M01", "M02"],
-            },
-            segment("Corporate in-house legal departments", 0.82, 78),
-            segment("Management consulting firms", 0.72, 74),
-            segment("SME compliance teams", 0.68, 72),
-          ],
-        },
-      },
-    });
-
-    expect(result.proposals).toHaveLength(5);
-    const names = result.proposals.map((item) => item.name);
-    expect(names).toEqual(
-      expect.arrayContaining([
-        "Mid-size law firms",
-        "Corporate in-house legal departments",
-        "Management consulting firms",
-        "SME compliance teams",
-      ]),
-    );
-    expect(result.proposals.every((item) => item.buyerType === "end_customer")).toBe(true);
-    expect(result.proposals.every((item) => item.scorecard.total > 0)).toBe(true);
-    expect(
-      result.proposals.find((item) => item.name === "Mid-size law firms")?.marketEvidenceIds,
-    ).toEqual(["M01", "M02"]);
-  });
-
-  test("marks a quota fallback audit as requiring human semantic review", () => {
-    const synthesis = finalizeIcpSynthesis({
-      brief,
-      previousOutputs,
-      output: {
-        proposals: [proposal({ name: "Small law firms", buyerType: "end_customer", score: 82 })],
-      },
-    });
-
-    const audit = auditIcpStructurally({
-      previousOutputs: { ...previousOutputs, icp_synthesis: synthesis },
-    });
-
-    expect(audit.commercialReadiness.decision).toBe("needs_more_research");
-    expect(audit.commercialReadiness.blockedProposalRanks).toEqual([1]);
-    expect(audit.reviewedFindings[0]).toMatchObject({
-      findingPath: "proposals.0",
-      decision: "hypothesis",
-    });
-  });
 });

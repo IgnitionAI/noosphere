@@ -107,4 +107,43 @@ describe("ResearchWorker job leases", () => {
       error.mockRestore();
     }
   });
+
+  test("routes durable prospect discovery jobs to the enrichment processor", async () => {
+    const now = new Date();
+    const job: LeasedJob = {
+      id: crypto.randomUUID(),
+      workspaceId: crypto.randomUUID(),
+      type: "prospect.discovery.execute",
+      payload: { workspaceId: crypto.randomUUID(), runId: crypto.randomUUID() },
+      idempotencyKey: "prospect-run:initial",
+      correlationId: "prospect:test",
+      attempts: 1,
+      maxAttempts: 3,
+      availableAt: now,
+      lockedBy: "worker-test",
+      lockedUntil: new Date(now.getTime() + 60_000),
+    };
+    let processed = false;
+    const queue: JobQueue = {
+      async enqueue() { return { inserted: true }; },
+      async lease(request) {
+        expect(request.types).toContain("prospect.discovery.execute");
+        return [job];
+      },
+      async renewLease() { return true; },
+      async acknowledge() {},
+      async retry() { return "scheduled"; },
+    };
+    const worker = new ResearchWorker(
+      queue,
+      { async process() { throw new Error("wrong processor"); } } as unknown as ResearchOrchestrator,
+      new SystemClock(),
+      { workerId: "worker-test", leaseMs: 60_000, batchSize: 1, pollIntervalMs: 1 },
+      undefined,
+      { async process() { processed = true; } },
+    );
+
+    await worker.tick();
+    expect(processed).toBe(true);
+  });
 });
