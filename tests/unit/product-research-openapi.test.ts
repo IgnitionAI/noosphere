@@ -62,6 +62,11 @@ test("the OpenAPI contract declares every F-009 HTTP route", () => {
       "/api/v1/ai-policies",
       "/api/v1/ai-policies/{policyId}",
       "/api/v1/ai-policies/{policyId}/actions/publish",
+      "/api/v1/connected-accounts",
+      "/api/v1/connected-accounts/{connectedAccountId}",
+      "/api/v1/connected-accounts/{connectedAccountId}/actions/check",
+      "/api/v1/connected-accounts/{connectedAccountId}/actions/reconnect",
+      "/api/v1/webhooks/unipile",
       "/api/v1/companies",
       "/api/v1/companies/{companyId}",
       "/api/v1/contacts",
@@ -108,7 +113,8 @@ test("every F-009 operation requires authenticated workspace route context", () 
   };
 
   expect(document.security).toEqual([{ sessionCookie: [] }]);
-  for (const path of Object.values(document.paths)) {
+  for (const [pathname, path] of Object.entries(document.paths)) {
+    if (pathname === "/api/v1/webhooks/unipile") continue;
     const references = [
       ...(path.parameters ?? []),
       ...(path.get?.parameters ?? []),

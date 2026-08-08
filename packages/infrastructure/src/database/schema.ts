@@ -79,6 +79,13 @@ export const offerClaimValidationStatusEnum = pgEnum("offer_claim_validation_sta
   "validated",
   "invalidated",
 ]);
+export const connectedAccountStatusEnum = pgEnum("connected_account_status", [
+  "pending",
+  "connected",
+  "degraded",
+  "disconnected",
+  "unknown",
+]);
 
 export const authUsers = pgTable(
   "auth_users",
@@ -1357,5 +1364,50 @@ export const auditLogs = pgTable(
     uniqueIndex("audit_logs_source_event_uq").on(table.sourceEventId),
     index("audit_logs_workspace_created_idx").on(table.workspaceId, table.createdAt),
     index("audit_logs_subject_idx").on(table.workspaceId, table.subjectType, table.subjectId),
+  ],
+);
+
+export const connectedAccounts = pgTable(
+  "connected_accounts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    provider: varchar("provider", { length: 80 }).notNull(),
+    providerAccountId: varchar("provider_account_id", { length: 300 }).notNull(),
+    displayName: varchar("display_name", { length: 300 }),
+    status: connectedAccountStatusEnum("status").notNull().default("pending"),
+    capabilities: jsonb("capabilities").notNull().default({}),
+    quotas: jsonb("quotas").notNull().default({}),
+    encryptedSecret: text("encrypted_secret").notNull(),
+    lastErrorCode: varchar("last_error_code", { length: 120 }),
+    lastErrorMessage: varchar("last_error_message", { length: 500 }),
+    lastCheckedAt: timestamp("last_checked_at", { withTimezone: true }),
+    disconnectedAt: timestamp("disconnected_at", { withTimezone: true }),
+    createdBy: uuid("created_by").references(() => authUsers.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique("connected_accounts_workspace_id_uq").on(table.workspaceId, table.id),
+    uniqueIndex("connected_accounts_provider_account_uq").on(table.workspaceId, table.provider, table.providerAccountId),
+    index("connected_accounts_workspace_status_idx").on(table.workspaceId, table.status),
+  ],
+);
+
+export const connectedAccountWebhooks = pgTable(
+  "connected_account_webhooks",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    provider: varchar("provider", { length: 80 }).notNull(),
+    eventId: varchar("event_id", { length: 300 }).notNull(),
+    workspaceId: uuid("workspace_id").references(() => workspaces.id, { onDelete: "set null" }),
+    connectedAccountId: uuid("connected_account_id").references(() => connectedAccounts.id, { onDelete: "set null" }),
+    payload: jsonb("payload").notNull().default({}),
+    processedAt: timestamp("processed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique("connected_account_webhooks_provider_event_uq").on(table.provider, table.eventId),
+    index("connected_account_webhooks_account_idx").on(table.connectedAccountId, table.createdAt),
   ],
 );

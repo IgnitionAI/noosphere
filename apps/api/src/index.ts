@@ -14,6 +14,7 @@ import { createOfferHttpHandler } from "@outbound/interface/http/offer-handler";
 import { createImportHttpHandler } from "@outbound/interface/http/import-handler";
 import { createMergeHttpHandler } from "@outbound/interface/http/merge-handler";
 import { createMessagingStrategyHttpHandler } from "@outbound/interface/http/messaging-strategy-handler";
+import { createConnectedAccountHttpHandler } from "@outbound/interface/http/connected-account-handler";
 import {
   ProviderUnavailableError,
   UnipileProspectSource,
@@ -24,6 +25,7 @@ import { WorkspaceAiSettingsApplication } from "@outbound/application/workspaces
 import { PostgresWorkspaceAiSettingsRepository } from "@outbound/infrastructure/workspaces/postgres-workspace-ai-settings-repository";
 import { createWorkspaceAiSettingsHttpHandler } from "@outbound/interface/http/workspace-ai-settings-handler";
 import { resolveResearchModelPolicyFromEnvironment } from "@outbound/infrastructure/ai/langchain-research-agent-executor";
+import { HttpUnipileClient, UnavailableUnipileClient } from "@outbound/infrastructure/integrations/unipile-client";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
@@ -112,6 +114,14 @@ const offers = createOfferHttpHandler({ database: database.db, contextResolver: 
 const imports = createImportHttpHandler({ database: database.db, contextResolver: auth.contextResolver, queue });
 const merges = createMergeHttpHandler({ database: database.db, contextResolver: auth.contextResolver });
 const messagingStrategies = createMessagingStrategyHttpHandler({ database: database.db, contextResolver: auth.contextResolver });
+const connectedAccounts = createConnectedAccountHttpHandler({
+  database: database.db,
+  contextResolver: auth.contextResolver,
+  webhookSecret: process.env.UNIPILE_WEBHOOK_SECRET ?? "",
+  client: unipileDsn && unipileApiKey
+    ? new HttpUnipileClient({ dsn: unipileDsn, apiKey: unipileApiKey, timeoutMs: positiveIntegerEnvironment("UNIPILE_TIMEOUT_MS", 10_000) })
+    : new UnavailableUnipileClient(),
+});
 const port = positiveIntegerEnvironment("PORT", 3000);
 const server = Bun.serve({
   port,
@@ -140,6 +150,9 @@ const server = Bun.serve({
     }
     if (pathname.startsWith("/api/v1/messaging-strategies") || pathname.startsWith("/api/v1/ai-policies")) {
       return messagingStrategies(request);
+    }
+    if (pathname.startsWith("/api/v1/connected-accounts") || pathname === "/api/v1/webhooks/unipile") {
+      return connectedAccounts(request);
     }
     if (pathname === "/health/live") return Response.json({ status: "ok" });
     if (pathname === "/health/ready") {

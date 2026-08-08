@@ -169,6 +169,13 @@
       "when": 1786183600000,
       "tag": "0023_campaigns",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1786183700000,
+      "tag": "0024_connected_accounts",
+      "breakpoints": true
     }
   ]
 }
