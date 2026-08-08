@@ -12,6 +12,7 @@ import {
   LayoutDashboard,
   Menu,
   MessageSquareText,
+  Megaphone,
   Package,
   Search,
   Send,
@@ -65,6 +66,7 @@ export function AppShell({
     [suppressionsHref, "Suppressions", ShieldAlert],
     [`/w/${workspace.slug}/imports`, "Imports", FileSpreadsheet],
     [`/w/${workspace.slug}/duplicates`, "Doublons", GitMerge],
+    [`/w/${workspace.slug}/campaigns`, "Campagnes", Megaphone],
   ] as const;
   const initials = session.user.name
     .split(/\s+/)

@@ -13,6 +13,7 @@ export function MutationForm({
   className,
   confirmation,
   onError,
+  onSuccess,
   successMessage = "Modification enregistrée. La page est actualisée.",
 }: {
   action: MutationAction;
@@ -20,6 +21,7 @@ export function MutationForm({
   className?: string;
   confirmation?: string;
   onError?: (message: string) => void;
+  onSuccess?: (result: unknown) => void;
   successMessage?: string;
 }) {
   const router = useRouter();
@@ -31,9 +33,10 @@ export function MutationForm({
     setStatus("pending");
     setMessage("");
     try {
-      await action(formData);
+      const result = await action(formData);
       setStatus("success");
       setMessage(successMessage);
+      onSuccess?.(result);
       router.refresh();
     } catch (error) {
       setStatus("error");

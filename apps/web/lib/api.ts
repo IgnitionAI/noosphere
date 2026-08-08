@@ -858,6 +858,10 @@ export async function publishAIPolicy(workspaceSlug: string, policyId: string): 
   return crmFetch(workspaceSlug, `/api/v1/ai-policies/${policyId}/actions/publish`, { method: "POST", body: {} });
 }
 
+export async function getAIPolicy(workspaceSlug: string, policyId: string): Promise<AIPolicy> {
+  return crmFetch(workspaceSlug, `/api/v1/ai-policies/${policyId}`);
+}
+
 export type OfferClaimValidationStatus = "hypothesis" | "sourced" | "validated" | "invalidated";
 
 export interface OfferClaim {
@@ -907,6 +911,51 @@ export interface OfferVersion {
 
 export interface OfferDetail extends Offer {
   readonly versions: readonly OfferVersion[];
+}
+
+export interface Campaign {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly name: string;
+  readonly objective: string;
+  readonly status: "draft" | "active" | "paused" | "archived";
+  readonly offerVersionId: string;
+  readonly icpVersionId: string;
+  readonly messagingStrategyVersionId: string;
+  readonly aiPolicyVersionId: string;
+  readonly sequenceVersionId: string;
+  readonly createdBy: string | null;
+  readonly activatedBy: string | null;
+  readonly activatedAt: string | null;
+  readonly pausedAt: string | null;
+  readonly archivedAt: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface CampaignPreflight {
+  readonly ok: boolean;
+  readonly blockers: readonly { code: string; reference: string; versionId: string; message: string }[];
+  readonly warnings: readonly { code: string; message: string }[];
+}
+
+export async function listCampaigns(workspaceSlug: string): Promise<{ data: Campaign[] }> {
+  return crmFetch(workspaceSlug, "/api/v1/campaigns");
+}
+export async function createCampaign(workspaceSlug: string, input: Omit<Campaign, "id" | "workspaceId" | "status" | "createdBy" | "activatedBy" | "activatedAt" | "pausedAt" | "archivedAt" | "createdAt" | "updatedAt">): Promise<Campaign> {
+  return crmFetch(workspaceSlug, "/api/v1/campaigns", { method: "POST", body: input });
+}
+export async function getCampaign(workspaceSlug: string, campaignId: string): Promise<Campaign> {
+  return crmFetch(workspaceSlug, `/api/v1/campaigns/${campaignId}`);
+}
+export async function updateCampaign(workspaceSlug: string, campaignId: string, input: Partial<Pick<Campaign, "name" | "objective" | "offerVersionId" | "icpVersionId" | "messagingStrategyVersionId" | "aiPolicyVersionId" | "sequenceVersionId">>): Promise<Campaign> {
+  return crmFetch(workspaceSlug, `/api/v1/campaigns/${campaignId}`, { method: "PATCH", body: input });
+}
+export async function preflightCampaign(workspaceSlug: string, campaignId: string): Promise<CampaignPreflight> {
+  return crmFetch(workspaceSlug, `/api/v1/campaigns/${campaignId}/actions/preflight`, { method: "POST", body: {} });
+}
+export async function campaignTransition(workspaceSlug: string, campaignId: string, transition: "activate" | "pause" | "resume" | "archive"): Promise<Campaign> {
+  return crmFetch(workspaceSlug, `/api/v1/campaigns/${campaignId}/actions/${transition}`, { method: "POST", body: {} });
 }
 
 export async function listOffers(workspaceSlug: string): Promise<{ data: Offer[] }> {
@@ -1078,6 +1127,8 @@ export interface SequenceStep {
 
 export interface SequenceVersion {
   readonly id: string;
+  readonly sequenceId: string;
+  readonly workspaceId?: string;
   readonly version: number;
   readonly steps: readonly SequenceStep[];
   readonly publishedAt: string;
@@ -1159,12 +1210,12 @@ async function apiFetch(
 
 async function throwApiError(response: Response): Promise<never> {
   const body = (await response.json().catch(() => null)) as
-    | { code?: string; detail?: string; message?: string; errors?: unknown; blockedClaimIds?: unknown }
+    | { code?: string; detail?: string; message?: string; errors?: unknown; blockedClaimIds?: unknown; blockers?: unknown; warnings?: unknown }
     | null;
   throw new OutboundApiError(
     response.status,
     body?.code ?? "UPSTREAM_ERROR",
     body?.detail ?? body?.message ?? "Le serveur n’a pas pu traiter la demande.",
-    body ? { errors: body.errors, blockedClaimIds: body.blockedClaimIds } : null,
+    body ? { errors: body.errors, blockedClaimIds: body.blockedClaimIds, blockers: body.blockers, warnings: body.warnings } : null,
   );
 }
