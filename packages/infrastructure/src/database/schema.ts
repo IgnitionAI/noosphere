@@ -1290,6 +1290,47 @@ export const campaignEnrollments = pgTable(
   ],
 );
 
+export const approvalItemStatusEnum = pgEnum("approval_item_status", [
+  "pending",
+  "approved",
+  "rejected",
+  "invalidated",
+]);
+
+export const approvalItems = pgTable(
+  "approval_items",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull(),
+    campaignId: uuid("campaign_id"),
+    contactId: uuid("contact_id"),
+    enrollmentId: uuid("enrollment_id"),
+    itemType: varchar("item_type", { length: 100 }).notNull(),
+    channel: varchar("channel", { length: 40 }).notNull(),
+    stepPosition: integer("step_position"),
+    contentOriginal: jsonb("content_original").notNull(),
+    contentEdited: jsonb("content_edited"),
+    context: jsonb("context").notNull().default({}),
+    sourceUpdatedAt: timestamp("source_updated_at", { withTimezone: true }),
+    status: approvalItemStatusEnum("status").notNull().default("pending"),
+    decisionBy: uuid("decision_by").references(() => authUsers.id, { onDelete: "set null" }),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    rejectionJustification: text("rejection_justification"),
+    invalidationReason: text("invalidation_reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({ columns: [table.workspaceId], foreignColumns: [workspaces.id], name: "approval_items_workspace_fk" }).onDelete("cascade"),
+    foreignKey({ columns: [table.workspaceId, table.campaignId], foreignColumns: [campaigns.workspaceId, campaigns.id], name: "approval_items_campaign_fk" }).onDelete("cascade"),
+    foreignKey({ columns: [table.contactId], foreignColumns: [contacts.id], name: "approval_items_contact_fk" }).onDelete("set null"),
+    foreignKey({ columns: [table.enrollmentId], foreignColumns: [campaignEnrollments.id], name: "approval_items_enrollment_fk" }).onDelete("set null"),
+    unique("approval_items_workspace_id_uq").on(table.workspaceId, table.id),
+    index("approval_items_workspace_status_idx").on(table.workspaceId, table.status, table.createdAt),
+    index("approval_items_campaign_status_idx").on(table.workspaceId, table.campaignId, table.status, table.createdAt),
+  ],
+);
+
 export const jobs = pgTable(
   "jobs",
   {

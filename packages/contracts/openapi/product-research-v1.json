@@ -939,6 +939,27 @@
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/CampaignId" }, { "$ref": "#/components/parameters/ContactId" }],
       "get": { "operationId": "getCampaignProspectExplanation", "responses": { "200": { "description": "Score explanation separating facts, missing data and exclusions", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CampaignProspect" } } } } } }
     },
+    "/api/v1/approval-items": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
+      "get": { "operationId": "listApprovalItems", "parameters": [{ "name": "campaignId", "in": "query", "schema": { "type": "string", "format": "uuid" } }, { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["pending", "approved", "rejected", "invalidated"] } }], "responses": { "200": { "description": "Workspace approval queue", "content": { "application/json": { "schema": { "type": "object", "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/ApprovalItem" } } } } } } } } }
+    },
+    "/api/v1/approval-items/{approvalItemId}": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/ApprovalItemId" }],
+      "get": { "operationId": "getApprovalItem", "responses": { "200": { "description": "Approval item contextual preview", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApprovalItem" } } } } } },
+      "patch": { "operationId": "editApprovalItem", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApprovalItemEditRequest" } } } }, "responses": { "200": { "description": "Edited approval item" }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" } } }
+    },
+    "/api/v1/approval-items/{approvalItemId}/actions/approve": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/ApprovalItemId" }],
+      "post": { "operationId": "approveApprovalItem", "responses": { "200": { "description": "Approval item approved" }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" }, "409": { "description": "Item invalidated or already decided" } } }
+    },
+    "/api/v1/approval-items/{approvalItemId}/actions/reject": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/ApprovalItemId" }],
+      "post": { "operationId": "rejectApprovalItem", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApprovalItemRejectRequest" } } } }, "responses": { "200": { "description": "Approval item rejected" }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" }, "422": { "description": "Justification required" } } }
+    },
+    "/api/v1/approval-items/actions/bulk-decide": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
+      "post": { "operationId": "bulkDecideApprovalItems", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApprovalItemBulkDecisionRequest" } } } }, "responses": { "200": { "description": "Bulk decision summary" }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" } } }
+    },
     "/api/v1/offers": {
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
       "get": { "operationId": "listOffers", "responses": { "200": { "description": "Offers" } } },
@@ -1197,6 +1218,10 @@
       },
       "ConnectedAccountId": {
         "name": "connectedAccountId", "in": "path", "required": true,
+        "schema": { "type": "string", "format": "uuid" }
+      },
+      "ApprovalItemId": {
+        "name": "approvalItemId", "in": "path", "required": true,
         "schema": { "type": "string", "format": "uuid" }
       }
     },
@@ -2165,6 +2190,38 @@
       "CampaignProspectExclusionRequest": {
         "type": "object", "additionalProperties": false, "required": ["reason"],
         "properties": { "reason": { "type": "string", "minLength": 1, "maxLength": 1000 } }
+      },
+      "ApprovalItem": {
+        "type": "object",
+        "required": ["id", "itemType", "channel", "contentOriginal", "context", "status"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "campaignId": { "type": ["string", "null"], "format": "uuid" },
+          "contactId": { "type": ["string", "null"], "format": "uuid" },
+          "enrollmentId": { "type": ["string", "null"], "format": "uuid" },
+          "itemType": { "type": "string" },
+          "channel": { "type": "string" },
+          "stepPosition": { "type": ["integer", "null"] },
+          "contentOriginal": {},
+          "contentEdited": {},
+          "context": { "type": "object", "additionalProperties": true },
+          "sourceUpdatedAt": { "type": ["string", "null"], "format": "date-time" },
+          "status": { "type": "string", "enum": ["pending", "approved", "rejected", "invalidated"] },
+          "decisionBy": { "type": ["string", "null"], "format": "uuid" },
+          "decidedAt": { "type": ["string", "null"], "format": "date-time" },
+          "rejectionJustification": { "type": ["string", "null"] },
+          "invalidationReason": { "type": ["string", "null"] },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "ApprovalItemEditRequest": { "type": "object", "additionalProperties": false, "required": ["contentEdited"], "properties": { "contentEdited": {} } },
+      "ApprovalItemRejectRequest": { "type": "object", "additionalProperties": false, "required": ["justification"], "properties": { "justification": { "type": "string", "minLength": 1, "maxLength": 2000 } } },
+      "ApprovalItemBulkDecisionRequest": {
+        "oneOf": [
+          { "type": "object", "additionalProperties": false, "required": ["decisions"], "properties": { "decisions": { "type": "array", "minItems": 1, "maxItems": 500, "items": { "type": "object", "required": ["itemId", "decision"], "properties": { "itemId": { "type": "string", "format": "uuid" }, "decision": { "type": "string", "enum": ["approve", "reject"] }, "justification": { "type": "string" } } } } } },
+          { "type": "object", "additionalProperties": false, "required": ["itemIds", "decision"], "properties": { "itemIds": { "type": "array", "items": { "type": "string", "format": "uuid" } }, "decision": { "type": "string", "enum": ["approve", "reject"] }, "justification": { "type": "string" } } }
+        ]
       },
       "ConnectedAccount": {
         "type": "object",

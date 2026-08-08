@@ -183,6 +183,13 @@
       "when": 1786183800000,
       "tag": "0025_campaign_population",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1786183900000,
+      "tag": "0026_approval_items",
+      "breakpoints": true
     }
   ]
 }

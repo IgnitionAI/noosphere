@@ -15,6 +15,7 @@ import { createImportHttpHandler } from "@outbound/interface/http/import-handler
 import { createMergeHttpHandler } from "@outbound/interface/http/merge-handler";
 import { createMessagingStrategyHttpHandler } from "@outbound/interface/http/messaging-strategy-handler";
 import { createConnectedAccountHttpHandler } from "@outbound/interface/http/connected-account-handler";
+import { createApprovalHttpHandler } from "@outbound/interface/http/approval-handler";
 import {
   ProviderUnavailableError,
   UnipileProspectSource,
@@ -122,6 +123,7 @@ const connectedAccounts = createConnectedAccountHttpHandler({
     ? new HttpUnipileClient({ dsn: unipileDsn, apiKey: unipileApiKey, timeoutMs: positiveIntegerEnvironment("UNIPILE_TIMEOUT_MS", 10_000) })
     : new UnavailableUnipileClient(),
 });
+const approvals = createApprovalHttpHandler({ database: database.db, contextResolver: auth.contextResolver });
 const port = positiveIntegerEnvironment("PORT", 3000);
 const server = Bun.serve({
   port,
@@ -154,6 +156,7 @@ const server = Bun.serve({
     if (pathname.startsWith("/api/v1/connected-accounts") || pathname === "/api/v1/webhooks/unipile") {
       return connectedAccounts(request);
     }
+    if (pathname.startsWith("/api/v1/approval-items")) return approvals(request);
     if (pathname === "/health/live") return Response.json({ status: "ok" });
     if (pathname === "/health/ready") {
       try {
