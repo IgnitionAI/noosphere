@@ -369,6 +369,9 @@ conditions, fenêtres, fallback, templates, validation et publication.
 **Dépendances** : F-012, F-026.  
 **Surface** : séquences.
 
+**Spécification** :
+[`F-030-SEQUENCES.md`](features/F-030-SEQUENCES.md).
+
 ### F-031 — Campagne et snapshot immuable (`P0`)
 
 **Valeur** : assembler offre, ICP, stratégie, politique et séquence dans une
@@ -387,6 +390,9 @@ archivage.
 
 **Dépendances** : F-010, F-011, F-012, F-030, F-035.  
 **Surface** : campagnes, builder et détail.
+
+**Spécification** :
+[`F-031-CAMPAIGNS.md`](features/F-031-CAMPAIGNS.md).
 
 ### F-032 — Population, priorité et enrollment (`P0`)
 
