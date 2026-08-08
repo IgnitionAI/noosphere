@@ -939,6 +939,30 @@ export interface CampaignPreflight {
   readonly warnings: readonly { code: string; message: string }[];
 }
 
+export type ConnectedAccountStatus = "pending" | "connected" | "degraded" | "disconnected" | "unknown";
+export interface ConnectedAccount {
+  readonly id: string;
+  readonly provider: "unipile";
+  readonly providerAccountId: string;
+  readonly displayName: string | null;
+  readonly status: ConnectedAccountStatus;
+  readonly capabilities: Readonly<Record<string, unknown>>;
+  readonly quotas: Readonly<Record<string, unknown>>;
+  readonly lastErrorCode: string | null;
+  readonly lastErrorMessage: string | null;
+  readonly lastCheckedAt: string | null;
+  readonly disconnectedAt: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+export async function listConnectedAccounts(workspaceSlug: string): Promise<{ data: ConnectedAccount[] }> { return crmFetch(workspaceSlug, "/api/v1/connected-accounts"); }
+export async function connectConnectedAccount(workspaceSlug: string, input: { providerAccountId: string; displayName?: string; accessToken: string }): Promise<ConnectedAccount> { return crmFetch(workspaceSlug, "/api/v1/connected-accounts", { method: "POST", body: { provider: "unipile", ...input } }); }
+export async function checkConnectedAccount(workspaceSlug: string, accountId: string): Promise<ConnectedAccount> { return crmFetch(workspaceSlug, `/api/v1/connected-accounts/${accountId}/actions/check`, { method: "POST", body: {} }); }
+export async function reconnectConnectedAccount(workspaceSlug: string, accountId: string): Promise<ConnectedAccount> { return crmFetch(workspaceSlug, `/api/v1/connected-accounts/${accountId}/actions/reconnect`, { method: "POST", body: {} }); }
+export async function disconnectConnectedAccount(workspaceSlug: string, accountId: string): Promise<ConnectedAccount> {
+  return crmFetch(workspaceSlug, `/api/v1/connected-accounts/${accountId}`, { method: "DELETE" });
+}
+
 export async function listCampaigns(workspaceSlug: string): Promise<{ data: Campaign[] }> {
   return crmFetch(workspaceSlug, "/api/v1/campaigns");
 }

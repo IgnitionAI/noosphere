@@ -14,6 +14,7 @@ import {
   MessageSquareText,
   Megaphone,
   Package,
+  PlugZap,
   Search,
   Send,
   Settings,
@@ -67,6 +68,7 @@ export function AppShell({
     [`/w/${workspace.slug}/imports`, "Imports", FileSpreadsheet],
     [`/w/${workspace.slug}/duplicates`, "Doublons", GitMerge],
     [`/w/${workspace.slug}/campaigns`, "Campagnes", Megaphone],
+    [`/w/${workspace.slug}/integrations`, "Intégrations", PlugZap],
   ] as const;
   const initials = session.user.name
     .split(/\s+/)
