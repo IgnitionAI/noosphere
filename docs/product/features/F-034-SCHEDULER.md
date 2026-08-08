@@ -4,7 +4,7 @@
 
 Exécuter les séquences de façon fiable : chaque étape planifiée dans sa
 fenêtre, envoyée une seule fois, après revérification complète — et jamais
-sans l’approbation humaine exigée.
+sans la validation exigée par la politique (F-012/F-033).
 
 ## Acteurs et permissions
 

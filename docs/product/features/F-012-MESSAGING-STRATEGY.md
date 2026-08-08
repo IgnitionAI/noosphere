@@ -58,8 +58,10 @@ humaine — publiés en versions immuables.
 - un canal utilisé doit définir longueur, CTA et contraintes ;
 - un claim référencé doit être `sourced` ou `validated` dans l’`OfferVersion`
   ; un claim `hypothesis` ou `invalidated` bloque la publication ;
-- le premier contact et toute réponse restent soumis à validation humaine —
-  cet invariant n’est pas désactivable ;
+- le premier contact et les réponses restent supervisés par la politique
+  d’autopilote : envoi sans validation humaine dans le chemin normal (D-003),
+  revérifications déterministes avant chaque envoi, exceptions humaines en
+  file F-033 ;
 - une campagne (F-031) ne peut référencer que des versions publiées ;
 - une suppression (F-026) prime sur toute autorisation de la politique ;
 - la publication est idempotente et auditée (F-003, désormais disponible).
@@ -161,9 +163,11 @@ place depuis le chantier 2).
 
 ## Questions résolues avant développement
 
-- aucune génération par modèle dans cette feature : la supervision porte sur
-  du contenu humain, l’IA arrivera en Wave 7 avec les mêmes verrous ;
-- la validation humaine du premier contact et des réponses n’est pas
-  configurable : seules les relances peuvent être autorisées en automatique ;
+- la politique borne ce que l’autopilote peut dire et faire : la génération
+  par modèle (K3) opère dans ces bornes (D-005), sans validation humaine dans
+  le chemin normal (D-003) ; les exceptions restent humaines ;
+- la supervision du premier contact et des réponses est une affaire de
+  politique versionnée, pas de validation systématique : l’autopilote est le
+  positionnement produit ;
 - stratégie et politique sont deux conteneurs distincts versionnés
   séparément, publiés ensemble depuis le même écran.

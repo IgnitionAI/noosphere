@@ -1,7 +1,10 @@
 # ADR-006 — IA supervisée et traçable
 
 ## Statut
-Accepté.
+Remplacée par la décision produit D-003 (2026-08-02) : autopilote sans
+validation humaine dans le chemin normal, exceptions en file F-033. La
+traçabilité (claims, sources, prompt, modèle, politique, feedback) reste
+acquise.
 
 ## Décision
 Recherche, enrichissement, scoring et brouillons peuvent être automatiques. Le

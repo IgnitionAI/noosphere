@@ -59,7 +59,7 @@ réécriture des workflows.
    validation humaine ;
 8. une recommandation ne modifie jamais une campagne active ;
 9. chaque exécution conserve fournisseur, modèle, prompt, coût, latence et
-   décision humaine.
+   décision (politique appliquée ou exception humaine).
 
 ## Gate de démarrage de la phase IA
 

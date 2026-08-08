@@ -12,6 +12,39 @@
 Les identifiants sont stables. Une feature peut être divisée en tâches
 techniques sans changer son identifiant produit.
 
+## État d’implémentation (au 8 août 2026)
+
+| Feature | État | Note |
+|---|---|---|
+| F-001 | livré | login, sessions, bootstrap owner, redirection workspace |
+| F-002 | partiel | rôles et slug livrés ; invitations et protection du dernier owner à livrer |
+| F-003 | livré | jobs PostgreSQL, outbox dispatchée, audit log |
+| F-004 | livré | shell Next.js, navigation par rôle |
+| F-009 | livré | workflow V2/V3, rapport sourcé, publication ICP |
+| F-010 | livré | offres, versions immuables, claims |
+| F-011 | livré | ICP canonique + versions + critères structurés |
+| F-012 | livré | stratégie et politique de supervision, écran dédié |
+| F-020 | livré | entreprises, provenance par champ |
+| F-021 | livré | contacts, identités, emplois |
+| F-022 | livré | import CSV prévisualisé et idempotent |
+| F-023 | livré | découverte Unipile, import avec provenance |
+| F-024 | livré | candidats de fusion, merge réversible |
+| F-025 | partiel | ports d’enrichissement, observations téléphone/WhatsApp |
+| F-026 | livré | suppressions, éligibilité canal, lift justifié |
+| F-027 | non commencé | — |
+| F-030 | livré | éditeur de séquences, versions immuables |
+| F-031 | livré | campagnes, snapshot immuable, préflight |
+| F-032 | livré | scoring déterministe, enrollment, plans de prospection |
+| F-033 | livré | file d’exceptions/approbations autopilote |
+| F-034 | livré | scheduler, tentatives, idempotence d’envoi |
+| F-035 | livré | comptes Unipile, capacités, webhooks |
+| F-040 | livré | conversations campagne + Inbox globale (D-006) |
+| F-041 | livré | suspension sur réponse, reprise automatique bornée |
+| F-042 | livré (socle) | classification K3, réponses autonomes |
+| F-043 | partiel | Cal.com : connexions, bookings, propositions de RDV |
+| F-044 | partiel | opportunités, historique d’étapes, vue pipeline |
+| F-050 à F-053 | non commencé | — |
+
 ## Epic 1 — Socle multi-workspace
 
 ### F-001 — Authentification et sessions (`P0`)
@@ -32,9 +65,8 @@ routes, expiration et révocation.
 **Dépendances** : Better Auth, PostgreSQL.  
 **Surface** : `/login`, shell applicatif.
 
-**État backend** : tables et runtime Better Auth, révocation de session,
-inscription fermée par défaut et bootstrap owner implémentés. La page login et
-la redirection vers le dernier workspace restent dans la tranche Next.js.
+**État** : livré — runtime Better Auth, page login, redirection vers le
+dernier workspace, bootstrap owner (voir le tableau d’implémentation).
 
 ### F-002 — Workspaces, membres et rôles (`P0`)
 
@@ -56,9 +88,9 @@ la redirection vers le dernier workspace restent dans la tranche Next.js.
 **Dépendances** : F-001.  
 **Surface** : `/onboarding`, `/w/[workspaceSlug]/settings`.
 
-**État backend** : workspaces, memberships, rôles, désactivation et résolution
-du slug de route implémentés pour F-009. Invitations, administration des
-membres, audit des rôles et protection du dernier owner restent à livrer.
+**État** : partiel — workspaces, memberships, rôles, désactivation et
+résolution du slug de route livrés. Invitations, administration des membres,
+audit des rôles et protection du dernier owner restent à livrer.
 
 ### F-003 — Audit, jobs et outbox (`P0`)
 
@@ -179,7 +211,9 @@ templates par canal, variables autorisées, règles d’approbation et escalade.
 - une version publiée est immuable ;
 - les variables inconnues ou non résolues bloquent l’approbation ;
 - chaque canal possède ses longueurs, CTA et contraintes ;
-- le premier contact et toute réponse restent soumis à validation humaine ;
+- le premier contact et les réponses restent supervisés par la politique
+  d’autopilote : envoi sans validation humaine dans le chemin normal (D-003),
+  exceptions remontées en file F-033 ;
 - aucune génération par modèle n’est requise dans cette feature.
 
 **Dépendances** : F-010, F-011.  
@@ -506,8 +540,9 @@ automatique, relances annulées et opportunité.
 **Dépendances** : F-021, F-035.  
 **Surface** : `/w/[workspaceSlug]/campaigns/plans/[planId]?prospect=[contactId]`.
 
-Une Inbox globale, les unread et l’assignation d’équipe sont différés jusqu’à
-ce que le volume multi-campagnes les rende nécessaires.
+L’Inbox globale et les unread sont livrés (D-006) : la Messagerie synchronise
+aussi les conversations hors campagne. Seule l’assignation d’équipe reste
+différée jusqu’à ce que le volume multi-campagnes la rende nécessaire.
 
 ### F-041 — Suspension immédiate sur réponse (`P0`)
 
@@ -672,7 +707,11 @@ anonymisation, audit visible et préférences.
 **Dépendances** : F-002, F-003, F-026.  
 **Surface** : settings.
 
-## Epic 7 — Capacités IA différées
+## Epic 7 — Capacités IA d’évaluation et d’optimisation
+
+L’autopilote supervisé (D-003, D-005) a intégré la génération de contenu et
+la classification aux Waves 3 et 4. Cet epic ne couvre plus que les capacités
+d’évaluation et d’optimisation restantes.
 
 ### AI-100 — Scoring et explication assistés
 
@@ -681,13 +720,15 @@ la traçabilité des faits.
 
 ### AI-110 — Recherche et rédaction personnalisée
 
-Produire des brouillons de premiers contacts à partir des versions de campagne,
-des données réelles et de claims sourcés. Toute sortie reste en F-033.
+Absorbée par l’autopilote (D-005) : les premiers contacts sont générés à
+partir des versions de campagne, des données réelles et de claims sourcés,
+dans les bornes de la politique F-012. Les exceptions restent en F-033.
 
 ### AI-120 — Classification et brouillon de réponse
 
-Classer l’intention, proposer une réponse et détecter les sujets sensibles.
-Toute réponse reste en F-042 avec approbation humaine.
+Absorbée par l’autopilote : classification K3, détection des sujets sensibles
+et réponse autonome bornée par la politique (F-042) ; les sujets sensibles
+remontent en exceptions (F-033).
 
 ### AI-130 — Retrieval et RAG
 

@@ -1,4 +1,4 @@
-# F-033 — File d’approbation
+# F-033 — File d’approbation (exceptions autopilote)
 
 ## Résultat utilisateur
 
@@ -17,8 +17,9 @@ en lot sans jamais masquer un item devenu invalide.
 
 ## Périmètre
 
-- file d’attente des items à valider : premier contact et toute réponse
-  (invariant F-012, non désactivable), relances si la politique l’exige ;
+- file d’exceptions de l’autopilote : items que la politique F-012 soumet à
+  validation humaine (premier contact, réponses ou relances selon la
+  politique) et sorties hors bornes de l’autopilote ;
 - aperçu contextualisé : prospect, entreprise, canal, étape de séquence,
   contenu rendu avec variables résolues, claims et preuves associés ;
 - édition avant approbation, avec version conservée ;
@@ -30,8 +31,10 @@ en lot sans jamais masquer un item devenu invalide.
 
 - exécution de l’envoi (F-034) ;
 - rédaction de réponses (F-042) ;
-- génération de contenu par modèle (AI-110 : toute sortie reste soumise ici) ;
-- délégation de l’approbation du premier contact (jamais automatique).
+- génération de contenu par modèle (K3, dans les bornes de la politique
+  F-012) ;
+- blocage du chemin normal : l’autopilote n’attend jamais cette file pour les
+  actions dans les bornes (D-003).
 
 ## Parcours principal
 
@@ -45,8 +48,8 @@ en lot sans jamais masquer un item devenu invalide.
 
 ## Règles métier et invariants
 
-- aucun premier contact ni réponse n’est exécuté sans approbation humaine
-  (F-012) ;
+- aucun item soumis à validation par la politique (F-012) n’est exécuté sans
+  décision humaine ;
 - chaque item montre prospect, entreprise, canal, étape, contenu et preuves ;
 - un contenu obsolète après changement de données retourne en revue —
   jamais exécuté tel quel ;
@@ -144,7 +147,7 @@ catalogue), via l’outbox.
 
 ## Questions résolues avant développement
 
-- l’approbation du premier contact n’est jamais automatisable, même en lot ;
+- un item en exception n’est jamais auto-approuvé, même en lot ;
 - une édition ne change pas la version de stratégie : elle porte sur l’item
   uniquement et reste tracée ;
 - la file est générique dès maintenant (premier contact, relances, plus tard

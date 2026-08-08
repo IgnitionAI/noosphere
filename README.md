@@ -103,8 +103,12 @@ sont détaillées dans le runbook F-009.
 
 ## Statut
 
-Architecture V1, prototype frontend et moteur F-009 intégrés le 25 juillet
-2026. Le moteur utilise les agents LangChain avec Kimi Code par défaut,
-OpenAI pour les embeddings documentaires, le crawler
-SearXNG/Crawl4AI, Docling, ParadeDB et un rapport dont la publication d’ICP
-reste soumise à une décision humaine explicite.
+Socle multi-workspace, CRM, découverte de prospects, campagnes autopilote
+supervisées (D-003/D-005), Inbox globale (D-006), pipeline et rendez-vous
+Cal.com intégrés au 8 août 2026. Le moteur utilise les agents LangChain via
+l’API Kimi for Coding (modèles K3, provider `kimi-code` par défaut,
+`AI_PROVIDER=openai` en alternative), OpenAI pour les embeddings
+documentaires, le crawler SearXNG/Crawl4AI, Docling et ParadeDB. L’autopilote
+opère dans les bornes de la politique de supervision (F-012) :
+revérifications déterministes avant chaque envoi et exceptions humaines en
+file F-033.

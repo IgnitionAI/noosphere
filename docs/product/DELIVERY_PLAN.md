@@ -125,18 +125,20 @@ perdu, puis analyser les résultats par campagne, ICP, rôle, signal et canal.
 - exports et rétention testés ;
 - onboarding reprenable.
 
-## Wave 7 — IA supervisée
+## Wave 7 — Évaluation et optimisation IA
 
 **Features** : AI-100, AI-110, AI-120, AI-130, AI-140.
+
+La génération de contenu et la classification sont déjà intégrées à
+l’autopilote supervisé (Waves 3 et 4, D-003/D-005). Cette wave ne couvre plus
+que l’évaluation et l’optimisation.
 
 **Ordre recommandé**
 
 1. scoring en mode shadow comparé aux règles ;
-2. génération de premiers contacts sans envoi ;
-3. classification de réponses en mode suggestion ;
-4. génération de réponses avec approbation ;
-5. retrieval hybride après benchmark ;
-6. recommandations de campagne, jamais appliquées automatiquement.
+2. jeux d’évaluation sur les premiers contacts et réponses déjà générés ;
+3. retrieval hybride après benchmark ;
+4. recommandations de campagne, jamais appliquées automatiquement.
 
 Chaque capacité franchit un jeu d’évaluation et une comparaison à la baseline
 avant d’être visible aux opérateurs.
