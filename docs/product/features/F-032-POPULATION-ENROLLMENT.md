@@ -104,8 +104,8 @@ puis enrollment sans conflit.
 | POST | `/api/v1/campaigns/:id/prospects/:contactId/actions/exclude` | exclure avec motif |
 | GET | `/api/v1/campaigns/:id/prospects/:contactId/explanation` | détail du score et des exclusions |
 
-**Événements sortants** : `CampaignProspectEnrolled` (proposé ; le catalogue
-n’en liste pas pour F-032 — à entériner), via l’outbox.
+**Événements sortants** : `CampaignProspectEnrolled` (entériné par décision
+lead), via l’outbox.
 
 **Ports externes** : aucun.
 

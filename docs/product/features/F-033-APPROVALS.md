@@ -104,8 +104,8 @@ en lot sans jamais masquer un item devenu invalide.
 | POST | `/api/v1/approval-items/actions/bulk-decide` | décision en lot, invalides exclus |
 
 **Événements sortants** : `ApprovalItemApproved`, `ApprovalItemRejected`
-(proposés ; le catalogue nomme `SequenceApproved` pour F-030/F-033 —
-alignement du nommage à trancher dans le contrat d’événements), via l’outbox.
+(entérinés par décision lead — remplacent le `SequenceApproved` du
+catalogue), via l’outbox.
 
 **Ports externes** : aucun.
 

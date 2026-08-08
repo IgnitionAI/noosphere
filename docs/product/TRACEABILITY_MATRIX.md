@@ -82,8 +82,10 @@ Elle ne remplace pas les DTO OpenAPI à écrire avant chaque vertical slice.
 | F-027 | `EmploymentChanged`, `SignalObserved` |
 | F-026 | `SuppressionRegistered` |
 | F-031 | `CampaignActivated` |
-| F-030/F-033 | `SequenceApproved` |
+| F-032 | `CampaignProspectEnrolled` |
+| F-033 | `ApprovalItemApproved`, `ApprovalItemRejected` |
 | F-034 | `OutreachActionDue`, `OutreachActionAccepted` |
+| F-035 | `ConnectedAccountStatusChanged` |
 | F-040/F-041 | `InboundMessageReceived` |
 | F-042 | `ReplyDraftApproved` |
 | F-043 | `MeetingBooked` |

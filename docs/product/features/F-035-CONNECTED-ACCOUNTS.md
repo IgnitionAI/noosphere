@@ -98,8 +98,8 @@ dégradé — sans jamais exposer un secret au navigateur.
 | DELETE | `/api/v1/connected-accounts/:id` | déconnecter (historique préservé) |
 | POST | `/api/v1/webhooks/unipile` | webhook fournisseur (vérifié, idempotent) |
 
-**Événements sortants** : `ConnectedAccountStatusChanged` (proposé ; le
-catalogue n’en liste pas pour F-035 — à entériner).
+**Événements sortants** : `ConnectedAccountStatusChanged` (entériné par
+décision lead).
 
 **Ports externes** : `UnipileClient` (comptes, capacités, webhooks).
 
