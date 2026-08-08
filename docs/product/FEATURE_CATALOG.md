@@ -345,6 +345,9 @@ vérification, fraîcheur, confiance, coût et reprise asynchrone.
 
 **Dépendances** : F-003, F-020, F-021, F-024.
 
+**Spécification** :
+[`F-025-ENRICHMENT.md`](features/F-025-ENRICHMENT.md).
+
 ### F-026 — Suppressions et éligibilité canal (`P0`)
 
 **Valeur** : empêcher tout contact interdit, inapproprié ou techniquement
@@ -382,6 +385,9 @@ source, date d’observation, expiration et niveau de confiance.
 - les données non disponibles via un fournisseur ne sont pas simulées.
 
 **Dépendances** : F-020, F-021, F-023.
+
+**Spécification** :
+[`F-027-INTENT-SIGNALS.md`](features/F-027-INTENT-SIGNALS.md).
 
 ## Epic 4 — Campagnes et exécution
 
