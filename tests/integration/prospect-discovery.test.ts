@@ -195,6 +195,14 @@ databaseDescribe("F-023 prospect discovery", () => {
     expect(run.filters.category).toBe("people");
     expect(run.filters.keywords).toContain("legal");
     expect(run.candidateCount).toBe(2);
+    const discoveredEvents = await database.client<{ count: number }[]>`
+      select count(*)::int as count
+      from outbox_events
+      where workspace_id = ${workspaceId}
+        and event_type = 'ProspectDiscovered'
+        and payload->>'runId' = ${run.id}
+    `;
+    expect(discoveredEvents[0]?.count).toBe(2);
 
     const detail = await handle(
       new Request(`http://localhost/api/v1/discovery-runs/${run.id}`),
@@ -292,6 +300,17 @@ databaseDescribe("F-023 prospect discovery", () => {
     const retried = await postJson(`/api/v1/discovery-runs/${run.id}/actions/retry`, {});
     expect(retried.status).toBe(200);
     expect(((await retried.json()) as { status: string }).status).toBe("completed");
+
+    provider = new FakeProspectSource(new ProviderUnavailableError("Unipile still down", 503));
+    const bounded = (await (await postJson(`/api/v1/icp-versions/${versionId}/discovery-runs`, {})).json()) as { id: string };
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const retry = await postJson(`/api/v1/discovery-runs/${bounded.id}/actions/retry`, {});
+      expect(retry.status).toBe(200);
+      expect(((await retry.json()) as { status: string }).status).toBe("failed");
+    }
+    const exhausted = await postJson(`/api/v1/discovery-runs/${bounded.id}/actions/retry`, {});
+    expect(exhausted.status).toBe(409);
+    expect(((await exhausted.json()) as { code: string }).code).toBe("DISCOVERY_RETRY_EXHAUSTED");
   });
 
   test("a viewer cannot launch or import", async () => {

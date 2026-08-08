@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import type { Database } from "@outbound/infrastructure/database/client";
 import {
   companies,
@@ -6,6 +6,7 @@ import {
   icpVersions,
   prospectDiscoveryCandidates,
   prospectDiscoveryRuns,
+  outboxEvents,
 } from "@outbound/infrastructure/database/schema";
 
 export class PostgresDiscoveryRepository {
@@ -87,7 +88,7 @@ export class PostgresDiscoveryRepository {
   }) {
     return this.db.transaction(async (tx) => {
       if (input.candidates.length) {
-        await tx
+        const inserted = await tx
           .insert(prospectDiscoveryCandidates)
           .values(
             input.candidates.map((candidate) => ({
@@ -104,7 +105,22 @@ export class PostgresDiscoveryRepository {
               icpFit: candidate.icpFit as Record<string, unknown>,
             })),
           )
-          .onConflictDoNothing();
+          .onConflictDoNothing()
+          .returning({ id: prospectDiscoveryCandidates.id });
+        if (inserted.length) {
+          await tx.insert(outboxEvents).values(inserted.map((candidate) => ({
+            workspaceId: input.workspaceId,
+            aggregateType: "Prospect",
+            aggregateId: candidate.id,
+            eventType: "ProspectDiscovered",
+            payload: {
+              type: "ProspectDiscovered",
+              workspaceId: input.workspaceId,
+              runId: input.runId,
+              candidateId: candidate.id,
+            },
+          })));
+        }
       }
       const rows = await tx
         .update(prospectDiscoveryRuns)
@@ -150,6 +166,30 @@ export class PostgresDiscoveryRepository {
       .returning();
     if (rows.length !== 1) throw new Error("DISCOVERY_RUN_NOT_FOUND");
     return rows[0]!;
+  }
+
+  async beginRetry(input: { workspaceId: string; runId: string; maxRetries: number }) {
+    const rows = await this.db
+      .update(prospectDiscoveryRuns)
+      .set({
+        status: "running",
+        errorCode: null,
+        errorMessage: null,
+        completedAt: null,
+        retryCount: sql`${prospectDiscoveryRuns.retryCount} + 1`,
+      })
+      .where(and(
+        eq(prospectDiscoveryRuns.workspaceId, input.workspaceId),
+        eq(prospectDiscoveryRuns.id, input.runId),
+        eq(prospectDiscoveryRuns.status, "failed"),
+        sql`${prospectDiscoveryRuns.retryCount} < ${input.maxRetries}`,
+      ))
+      .returning();
+    if (rows.length === 1) return rows[0]!;
+    const current = await this.getRun({ workspaceId: input.workspaceId, runId: input.runId });
+    if (!current) throw new Error("DISCOVERY_RUN_NOT_FOUND");
+    if (current.retryCount >= input.maxRetries) throw new Error("DISCOVERY_RETRY_EXHAUSTED");
+    throw new Error("DISCOVERY_RUN_NOT_FAILED");
   }
 
   async listRuns(input: { workspaceId: string; icpVersionId?: string }) {

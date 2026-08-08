@@ -1,14 +1,14 @@
 import { z, ZodError } from "zod";
+import {
+  ProviderUnavailableError,
+  type ProspectSource,
+  type ProspectSourceCandidate,
+} from "@outbound/application/crm/prospect-source";
 import { normalizeLinkedinUrl } from "@outbound/domain/crm/normalization";
 import type { Database } from "@outbound/infrastructure/database/client";
 import { PostgresCrmRepository } from "@outbound/infrastructure/crm/postgres-crm-repository";
 import { PostgresDiscoveryRepository } from "@outbound/infrastructure/crm/postgres-discovery-repository";
 import { PostgresProductResearchRepository } from "@outbound/infrastructure/gtm/postgres-product-research-repository";
-import {
-  ProviderUnavailableError,
-  type ProspectSource,
-  type ProspectSourceCandidate,
-} from "@outbound/infrastructure/crm/unipile-prospect-source";
 import { createCrmHttpHandler } from "@outbound/interface/http/crm-handler";
 import {
   RequestAuthenticationError,
@@ -172,6 +172,7 @@ export function createDiscoveryHttpHandler(dependencies: DiscoveryHttpDependenci
           versionId: run.icpVersionId,
         });
         if (!version) return problem(404, "ICP_VERSION_NOT_FOUND", "Published ICP version not found");
+        await repository.beginRetry({ workspaceId: context.workspaceId, runId, maxRetries: 3 });
         const retried = await executeSearch(dependencies, repository, {
           workspaceId: context.workspaceId,
           runId: run.id,
@@ -251,6 +252,9 @@ export function createDiscoveryHttpHandler(dependencies: DiscoveryHttpDependenci
       }
       if (["ICP_DELETED", "ICP_NOT_PUBLISHABLE", "ICP_VERSION_ALLOCATION_CONFLICT"].includes(message)) {
         return problem(409, message, "The ICP cannot be published");
+      }
+      if (["DISCOVERY_RUN_NOT_FAILED", "DISCOVERY_RETRY_EXHAUSTED"].includes(message)) {
+        return problem(409, message, message === "DISCOVERY_RETRY_EXHAUSTED" ? "The discovery retry limit has been reached" : "Only a failed run can be retried");
       }
       return problem(500, "INTERNAL_ERROR", "An unexpected error occurred");
     }

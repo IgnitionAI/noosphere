@@ -1036,6 +1036,7 @@ export const prospectDiscoveryRuns = pgTable(
     errorCode: varchar("error_code", { length: 120 }),
     errorMessage: text("error_message"),
     candidateCount: integer("candidate_count").notNull().default(0),
+    retryCount: integer("retry_count").notNull().default(0),
     createdBy: uuid("created_by").references(() => authUsers.id),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     completedAt: timestamp("completed_at", { withTimezone: true }),

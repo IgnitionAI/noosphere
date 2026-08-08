@@ -1,32 +1,7 @@
-export interface ProspectSearchFilters {
-  readonly api: "classic" | "sales_navigator" | "recruiter";
-  readonly category: "people";
-  readonly keywords: string;
-  readonly limit: number;
-}
-
-export interface ProspectSourceCandidate {
-  readonly fullName: string;
-  readonly headline: string | null;
-  readonly linkedinUrl: string | null;
-  readonly location: string | null;
-  readonly companyName: string | null;
-  readonly providerData: Readonly<Record<string, unknown>>;
-}
-
-export interface ProspectSource {
-  searchPeople(filters: ProspectSearchFilters): Promise<readonly ProspectSourceCandidate[]>;
-}
-
-export class ProviderUnavailableError extends Error {
-  constructor(
-    message: string,
-    readonly status: number | null = null,
-  ) {
-    super(message);
-    this.name = "ProviderUnavailableError";
-  }
-}
+export type { ProspectSearchFilters, ProspectSource, ProspectSourceCandidate } from "@outbound/application/crm/prospect-source";
+export { ProviderUnavailableError } from "@outbound/application/crm/prospect-source";
+import type { ProspectSearchFilters, ProspectSource, ProspectSourceCandidate } from "@outbound/application/crm/prospect-source";
+import { ProviderUnavailableError } from "@outbound/application/crm/prospect-source";
 
 type UnipileAccount = {
   id?: string;
@@ -43,6 +18,7 @@ export class UnipileProspectSource implements ProspectSource {
   readonly #dsn: string;
   readonly #apiKey: string;
   readonly #fetch: typeof fetch;
+  readonly #timeoutMs: number;
   #accountId: string | null = null;
 
   constructor(options: {
@@ -50,10 +26,12 @@ export class UnipileProspectSource implements ProspectSource {
     apiKey: string;
     fetchImpl?: typeof fetch;
     accountId?: string;
+    timeoutMs?: number;
   }) {
     this.#dsn = options.dsn.replace(/\/+$/, "");
     this.#apiKey = options.apiKey;
     this.#fetch = options.fetchImpl ?? fetch;
+    this.#timeoutMs = Math.max(1_000, options.timeoutMs ?? 10_000);
     this.#accountId = options.accountId ?? null;
   }
 
@@ -62,7 +40,7 @@ export class UnipileProspectSource implements ProspectSource {
     const url =
       `${this.#dsn}/api/v1/linkedin/search` +
       `?account_id=${encodeURIComponent(accountId)}&limit=${filters.limit}`;
-    const response = await this.#fetch(url, {
+    const response = await this.#request(url, {
       method: "POST",
       headers: {
         "X-API-KEY": this.#apiKey,
@@ -114,7 +92,7 @@ export class UnipileProspectSource implements ProspectSource {
 
   async #linkedinAccountId(): Promise<string> {
     if (this.#accountId) return this.#accountId;
-    const response = await this.#fetch(`${this.#dsn}/api/v1/accounts`, {
+    const response = await this.#request(`${this.#dsn}/api/v1/accounts`, {
       headers: { "X-API-KEY": this.#apiKey, accept: "application/json" },
     });
     if (!response.ok) {
@@ -139,5 +117,22 @@ export class UnipileProspectSource implements ProspectSource {
     }
     this.#accountId = account.id;
     return account.id;
+  }
+
+  async #request(input: string, init: RequestInit): Promise<Response> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.#timeoutMs);
+    try {
+      return await this.#fetch(input, { ...init, signal: controller.signal });
+    } catch (error) {
+      if (controller.signal.aborted) {
+        throw new ProviderUnavailableError(`Unipile request timed out after ${this.#timeoutMs}ms`);
+      }
+      throw new ProviderUnavailableError(
+        `Unipile request failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 }

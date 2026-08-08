@@ -141,6 +141,13 @@
       "when": 1786183200000,
       "tag": "0019_messaging_draft_rules",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1786183300000,
+      "tag": "0020_discovery_retry_count",
+      "breakpoints": true
     }
   ]
 }

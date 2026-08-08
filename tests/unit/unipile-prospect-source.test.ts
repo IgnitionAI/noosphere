@@ -117,4 +117,30 @@ describe("UnipileProspectSource", () => {
     expect(error).toBeInstanceOf(ProviderUnavailableError);
     expect((error as ProviderUnavailableError).status).toBe(429);
   });
+
+  test("maps a valid empty provider response to an empty candidate set", async () => {
+    const source = new UnipileProspectSource({
+      dsn: "https://api37.unipile.com:16796",
+      apiKey: "secret-key",
+      fetchImpl: fakeFetch((url) => url.endsWith("/api/v1/accounts")
+        ? Response.json(accountsResponse)
+        : Response.json({ items: [] })),
+    });
+    await expect(source.searchPeople({ api: "classic", category: "people", keywords: "cto", limit: 10 })).resolves.toEqual([]);
+  });
+
+  test("maps an HTTP timeout to a recoverable provider outage", async () => {
+    const source = new UnipileProspectSource({
+      dsn: "https://api37.unipile.com:16796",
+      apiKey: "secret-key",
+      timeoutMs: 1_000,
+      fetchImpl: fakeFetch((_url, init) => new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+      })),
+    });
+    const error = await source.searchPeople({ api: "classic", category: "people", keywords: "cto", limit: 10 }).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(ProviderUnavailableError);
+    expect((error as ProviderUnavailableError).message).toContain("timed out");
+    expect((error as ProviderUnavailableError).status).toBeNull();
+  });
 });
