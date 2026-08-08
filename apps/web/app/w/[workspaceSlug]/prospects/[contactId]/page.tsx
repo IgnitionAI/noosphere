@@ -1,37 +1,25 @@
-import { ArrowLeft, Ban, Briefcase, Mail, Phone, Plus, TriangleAlert, UserRound } from "lucide-react";
+import { ArrowLeft, Ban, Briefcase, Plus, TriangleAlert, UserRound } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { CrmPermissionState } from "@/components/crm-states";
-import { getContact, listCompanies, listContactMerges, listWorkspaces, OutboundApiError } from "@/lib/api";
+import { getContact, getContactEnrichment, getEnrichmentJob, listCompanies, listContactMerges, listWorkspaces, OutboundApiError, type EnrichmentJobDetail, type EnrichmentObservation } from "@/lib/api";
 import { MutationForm } from "../../research/[runId]/report/mutation-form";
 import { resolveProspectReturn } from "@/lib/prospect-navigation";
-import { addEmploymentAction, addIdentityAction, suppressContactAction, undoContactMergeAction, updateContactAction } from "../actions";
+import { addEmploymentAction, addIdentityAction, enrichContactAction, retryEnrichmentJobAction, suppressContactAction, undoContactMergeAction, updateContactAction } from "../actions";
+import { EnrichmentPanel } from "./enrichment-panel";
 
 export const metadata = { title: "Prospect" };
 export const dynamic = "force-dynamic";
-
-const IDENTITY_ICON: Record<string, typeof Mail> = {
-  email: Mail,
-  linkedin: UserRound,
-  phone: Phone,
-  whatsapp: Phone,
-};
-
-const VERIFICATION_BADGE: Record<string, { label: string; className: string }> = {
-  unknown: { label: "non vérifié", className: "badge" },
-  verified: { label: "vérifié", className: "badge badge-success" },
-  invalid: { label: "invalide", className: "badge badge-danger" },
-};
 
 export default async function ContactDetailPage({
   params,
   searchParams,
 }: {
   params: Promise<{ workspaceSlug: string; contactId: string }>;
-  searchParams: Promise<{ returnTo?: string }>;
+  searchParams: Promise<{ returnTo?: string; enrichmentJobId?: string }>;
 }) {
   const { workspaceSlug, contactId } = await params;
-  const { returnTo } = await searchParams;
+  const { returnTo, enrichmentJobId } = await searchParams;
   const returnLink = resolveProspectReturn(workspaceSlug, returnTo);
   let contact;
   try {
@@ -42,6 +30,21 @@ export default async function ContactDetailPage({
       return <CrmPermissionState resource="ce prospect" />;
     }
     throw error;
+  }
+  let observations: EnrichmentObservation[] = [];
+  let enrichmentJob: EnrichmentJobDetail | null = null;
+  let enrichmentAccess = true;
+  if (contact.status !== "suppressed") {
+    try {
+      observations = (await getContactEnrichment(workspaceSlug, contactId)).data;
+    } catch (error) {
+      if (error instanceof OutboundApiError && (error.status === 401 || error.status === 403)) enrichmentAccess = false;
+      else throw error;
+    }
+    if (enrichmentJobId && enrichmentAccess) {
+      try { enrichmentJob = await getEnrichmentJob(workspaceSlug, enrichmentJobId); }
+      catch (error) { if (!(error instanceof OutboundApiError && (error.status === 403 || error.status === 404))) throw error; }
+    }
   }
   let companies;
   try {
@@ -61,15 +64,18 @@ export default async function ContactDetailPage({
     }
     throw error;
   }
-  const addIdentity = addIdentityAction.bind(null, workspaceSlug, contactId);
   const addEmployment = addEmploymentAction.bind(null, workspaceSlug, contactId);
   const suppress = suppressContactAction.bind(null, workspaceSlug, contactId);
   const update = updateContactAction.bind(null, workspaceSlug, contactId);
   const undo = undoContactMergeAction.bind(null, workspaceSlug, contactId);
+  const enrich = enrichContactAction.bind(null, workspaceSlug, contactId);
+  const retry = enrichmentJob?.status === "failed" ? retryEnrichmentJobAction.bind(null, workspaceSlug, contactId, enrichmentJob.id) : null;
+  const addIdentity = addIdentityAction.bind(null, workspaceSlug, contactId);
   const workspace = (await listWorkspaces()).find((item) => item.slug === workspaceSlug);
   const canEdit = workspace ? ["operator", "admin", "owner"].includes(workspace.role) : false;
   const suppressed = contact.status === "suppressed";
   const currentCompanyId = contact.employments.find((employment) => employment.isCurrent)?.companyId;
+  const requestKey = `contact-enrichment:${contactId}:${contact.updatedAt ?? contact.createdAt ?? "v1"}`;
 
   return (
     <>
@@ -107,52 +113,7 @@ export default async function ContactDetailPage({
 
       <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
         <main className="min-w-0 space-y-4">
-          <section className="panel">
-            <div className="panel-header">
-              <h2 className="font-semibold">Coordonnées</h2>
-              <span className="badge">{contact.identities.length}</span>
-            </div>
-            <div className="panel-body space-y-2">
-              {contact.identities.length === 0 ? (
-                <p className="py-4 text-center text-sm text-muted">Aucune coordonnée enregistrée.</p>
-              ) : (
-                contact.identities.map((identity) => {
-                  const Icon = IDENTITY_ICON[identity.type] ?? Mail;
-                  const badge = VERIFICATION_BADGE[identity.verificationStatus] ?? VERIFICATION_BADGE.unknown!;
-                  return (
-                    <div className="flex flex-wrap items-center gap-3 rounded-lg border border-line p-3" key={identity.id}>
-                      <Icon size={16} className="text-brand-blue" />
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-semibold">{identity.value}</p>
-                        <p className="text-[11px] text-muted">
-                          {identity.type} · source {identity.source}
-                        </p>
-                      </div>
-                      <span className={badge.className}>{badge.label}</span>
-                    </div>
-                  );
-                })
-              )}
-              {canEdit && !suppressed ? (
-                <details className="pt-2">
-                  <summary className="cursor-pointer text-sm font-semibold text-brand-blue">
-                    <Plus size={13} className="mr-1 inline" />
-                    Ajouter une coordonnée
-                  </summary>
-                  <form action={addIdentity} className="mt-3 flex flex-col gap-2 sm:flex-row">
-                    <select className="control sm:w-36" name="type" defaultValue="email">
-                      <option value="email">Email</option>
-                      <option value="linkedin">LinkedIn</option>
-                      <option value="phone">Téléphone</option>
-                      <option value="whatsapp">WhatsApp</option>
-                    </select>
-                    <input className="control min-w-0 flex-1" name="value" required />
-                    <button className="button" type="submit">Ajouter</button>
-                  </form>
-                </details>
-              ) : null}
-            </div>
-          </section>
+          {enrichmentAccess ? <EnrichmentPanel addIdentityAction={addIdentity} canEnrich={canEdit} contact={contact} enrichAction={enrich} job={enrichmentJob} observations={observations} requestKey={requestKey} retryAction={retry} workspaceSlug={workspaceSlug} /> : <section className="panel"><div className="panel-header"><h2 className="font-semibold">Coordonnées</h2></div><div className="panel-body text-sm text-muted">Les coordonnées enrichies ne sont pas accessibles avec vos droits.</div></section>}
 
           <section className="panel">
             <div className="panel-header">

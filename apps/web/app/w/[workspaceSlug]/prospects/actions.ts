@@ -5,9 +5,12 @@ import {
   addContactEmployment,
   addContactIdentity,
   createContact,
+  enrichContact,
   improveConversationDraft,
+  OutboundApiError,
   suppressContact,
   sendConversationCommand,
+  retryEnrichmentJob,
   undoContactMerge,
   updateContact,
 } from "@/lib/api";
@@ -71,6 +74,33 @@ export async function addIdentityAction(
   if (!value) throw new Error("La coordonnée est obligatoire.");
   await addContactIdentity(workspaceSlug, contactId, { type, value });
   revalidatePath(`/w/${workspaceSlug}/prospects/${contactId}`);
+}
+
+export async function enrichContactAction(
+  workspaceSlug: string,
+  contactId: string,
+  formData: FormData,
+) {
+  const requestKey = String(formData.get("requestKey") ?? "").trim();
+  if (!requestKey) throw new Error("La clé de requête d’enrichissement est obligatoire.");
+  let job;
+  try { job = await enrichContact(workspaceSlug, contactId, requestKey); }
+  catch (error) { throw new Error(error instanceof OutboundApiError ? `${error.code}: ${error.message}` : error instanceof Error ? error.message : "L’enrichissement a échoué."); }
+  revalidatePath(`/w/${workspaceSlug}/prospects/${contactId}`);
+  return job;
+}
+
+export async function retryEnrichmentJobAction(
+  workspaceSlug: string,
+  contactId: string,
+  jobId: string,
+  _formData: FormData,
+) {
+  let job;
+  try { job = await retryEnrichmentJob(workspaceSlug, jobId); }
+  catch (error) { throw new Error(error instanceof OutboundApiError ? `${error.code}: ${error.message}` : error instanceof Error ? error.message : "La relance a échoué."); }
+  revalidatePath(`/w/${workspaceSlug}/prospects/${contactId}`);
+  return job;
 }
 
 export async function updateContactAction(

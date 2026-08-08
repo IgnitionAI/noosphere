@@ -586,6 +586,46 @@ export interface ContactDetail {
   }[];
 }
 
+export type EnrichmentObservationStatus = "found" | "probable" | "verified" | "invalid";
+export type EnrichmentConfidence = "high" | "medium" | "low" | "none";
+export type EnrichmentPhoneKind = "public_company" | "personal";
+export interface EnrichmentObservation {
+  readonly id: string;
+  readonly field: string;
+  readonly value: string;
+  readonly normalizedValue: string;
+  readonly status: EnrichmentObservationStatus;
+  readonly confidence: EnrichmentConfidence;
+  readonly source: string;
+  readonly provider: string | null;
+  readonly evidenceUrl: string | null;
+  readonly evidenceSnippet: string | null;
+  readonly phoneKind: EnrichmentPhoneKind | null;
+  readonly observedAt: string;
+  readonly expiresAt: string | null;
+}
+export type EnrichmentJobStatus = "queued" | "running" | "succeeded" | "failed";
+export interface EnrichmentJob {
+  readonly id: string;
+  readonly entityType: "contact" | "company";
+  readonly entityId: string;
+  readonly requestKey: string;
+  readonly status: EnrichmentJobStatus;
+  readonly provider: string;
+  readonly attempts: number;
+  readonly maxAttempts: number;
+  readonly errorCode: string | null;
+  readonly errorMessage: string | null;
+  readonly correlationId: string;
+  readonly startedAt: string | null;
+  readonly completedAt: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+export interface EnrichmentJobDetail extends EnrichmentJob {
+  readonly observations: readonly EnrichmentObservation[];
+}
+
 export interface ProspectActivity {
   readonly id: string;
   readonly campaignId: string | null;
@@ -846,6 +886,22 @@ export async function getContact(
   contactId: string,
 ): Promise<ContactDetail> {
   return crmFetch(workspaceSlug, `/api/v1/contacts/${contactId}`);
+}
+
+export async function getContactEnrichment(workspaceSlug: string, contactId: string): Promise<{ data: EnrichmentObservation[] }> {
+  return crmFetch(workspaceSlug, `/api/v1/contacts/${contactId}/enrichment`);
+}
+
+export async function enrichContact(workspaceSlug: string, contactId: string, requestKey: string): Promise<EnrichmentJob> {
+  return crmFetch(workspaceSlug, `/api/v1/contacts/${contactId}/actions/enrich`, { method: "POST", body: { requestKey } });
+}
+
+export async function getEnrichmentJob(workspaceSlug: string, jobId: string): Promise<EnrichmentJobDetail> {
+  return crmFetch(workspaceSlug, `/api/v1/enrichment-jobs/${jobId}`);
+}
+
+export async function retryEnrichmentJob(workspaceSlug: string, jobId: string): Promise<EnrichmentJob> {
+  return crmFetch(workspaceSlug, `/api/v1/enrichment-jobs/${jobId}/actions/retry`, { method: "POST", body: {} });
 }
 
 export async function updateContact(
