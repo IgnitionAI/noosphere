@@ -61,12 +61,27 @@ if (!saveResponse.ok) {
   throw new Error(`AI settings update failed: ${saveResponse.status}`);
 }
 
+for (const resource of ["messaging-strategies", "ai-policies"] as const) {
+  const response = await fetch(`${apiUrl}/api/v1/${resource}`, { headers });
+  if (!response.ok) {
+    throw new Error(`Messaging supervision lookup failed for ${resource}: ${response.status}`);
+  }
+}
+
 const page = await fetch(`${webUrl}/w/${workspace.slug}/settings/ai`, {
   headers: { cookie },
 });
 const html = await page.text();
 if (!page.ok || !html.includes("Modèles Kimi du workspace")) {
   throw new Error(`AI settings page smoke test failed: ${page.status}`);
+}
+
+const messagingPage = await fetch(`${webUrl}/w/${workspace.slug}/messaging`, {
+  headers: { cookie },
+});
+const messagingHtml = await messagingPage.text();
+if (!messagingPage.ok || messagingHtml.includes("Impossible de charger la stratégie")) {
+  throw new Error(`Messaging supervision page smoke test failed: ${messagingPage.status}`);
 }
 
 console.info(
@@ -76,6 +91,7 @@ console.info(
     api: "ready",
     web: "ready",
     aiSettings: "read_write",
+    messagingSupervision: "readable",
   }),
 );
 

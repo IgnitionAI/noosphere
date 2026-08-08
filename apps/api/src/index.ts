@@ -10,6 +10,7 @@ import { createCrmHttpHandler } from "@outbound/interface/http/crm-handler";
 import { createDiscoveryHttpHandler } from "@outbound/interface/http/discovery-handler";
 import { createSequenceHttpHandler } from "@outbound/interface/http/sequence-handler";
 import { createCampaignHttpHandler } from "@outbound/interface/http/campaign-handler";
+import { createMessagingStrategyHttpHandler } from "@outbound/interface/http/messaging-strategy-handler";
 import { createOfferHttpHandler } from "@outbound/interface/http/offer-handler";
 import { createImportHttpHandler } from "@outbound/interface/http/import-handler";
 import { createMergeHttpHandler } from "@outbound/interface/http/merge-handler";
@@ -154,6 +155,10 @@ const campaignHandler = createCampaignHttpHandler({
     workspaceAiSettingsRepository,
   ),
 });
+const messagingStrategyHandler = createMessagingStrategyHttpHandler({
+  database: database.db,
+  contextResolver: auth.contextResolver,
+});
 const offers = createOfferHttpHandler({ database: database.db, contextResolver: auth.contextResolver });
 const imports = createImportHttpHandler({ database: database.db, contextResolver: auth.contextResolver, queue });
 const merges = createMergeHttpHandler({ database: database.db, contextResolver: auth.contextResolver });
@@ -192,6 +197,9 @@ const server = Bun.serve({
     if (pathname.startsWith("/api/v1/opportunities")) return opportunityHandler(request);
     if (pathname === "/api/v1/workspaces") return workspace(request);
     if (pathname === "/api/v1/workspace-ai-settings") return workspaceAiSettings(request);
+    if (pathname.startsWith("/api/v1/messaging-strategies") || pathname.startsWith("/api/v1/ai-policies")) {
+      return messagingStrategyHandler(request);
+    }
     if (pathname.startsWith("/api/v1/research-documents")) return documents(request);
     if (pathname.startsWith("/api/v1/merge-candidates") || (pathname.startsWith("/api/v1/contacts/") && (pathname.includes("/actions/undo-merge") || pathname.endsWith("/merges")))) return merges(request);
     if (pathname.startsWith("/api/v1/companies") || pathname.startsWith("/api/v1/contacts") || pathname.startsWith("/api/v1/prospects") || pathname.startsWith("/api/v1/suppressions")) return crm(request);
