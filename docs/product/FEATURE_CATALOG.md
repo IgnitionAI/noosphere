@@ -12,12 +12,12 @@
 Les identifiants sont stables. Une feature peut être divisée en tâches
 techniques sans changer son identifiant produit.
 
-## État d’implémentation (au 8 août 2026)
+## État d’implémentation (au 9 août 2026)
 
 | Feature | État | Note |
 |---|---|---|
 | F-001 | livré | login, sessions, bootstrap owner, redirection workspace |
-| F-002 | partiel | rôles et slug livrés ; invitations et protection du dernier owner à livrer |
+| F-002 | livré | création multi-workspace, invitations, équipe, rôles, désactivation, audit et dernier owner protégés |
 | F-003 | livré (moteur) | jobs PostgreSQL, outbox dispatchée, audit log ; console opérateur à livrer |
 | F-004 | livré | shell Next.js, navigation par rôle |
 | F-009 | livré | workflow V2/V3, rapport sourcé, publication ICP |
@@ -91,9 +91,10 @@ dernier workspace, bootstrap owner (voir le tableau d’implémentation).
 **Dépendances** : F-001.  
 **Surface** : `/onboarding`, `/w/[workspaceSlug]/settings`.
 
-**État** : partiel — workspaces, memberships, rôles, désactivation et
-résolution du slug de route livrés. Invitations, administration des membres,
-audit des rôles et protection du dernier owner restent à livrer.
+**État** : livré — création et sélection multi-workspace, invitation avec lien
+copiable, acceptation/révocation, administration des membres, rôles et statuts,
+audit transactionnel et protection du dernier owner. Les responsables du
+pipeline sont résolus en noms lisibles via l’annuaire des membres.
 
 **Spécification** :
 [`F-002-WORKSPACES-MEMBERS.md`](features/F-002-WORKSPACES-MEMBERS.md).

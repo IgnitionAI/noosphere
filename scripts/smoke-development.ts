@@ -27,7 +27,7 @@ if (!workspacesResponse.ok) {
   throw new Error(`Workspace lookup failed: ${workspacesResponse.status}`);
 }
 const workspaces = (await workspacesResponse.json()) as {
-  data: Array<{ slug: string; role: string }>;
+  data: Array<{ id: string; slug: string; role: string }>;
 };
 const workspace = workspaces.data[0];
 if (!workspace || workspace.role !== "owner") {
@@ -39,6 +39,12 @@ const headers = {
   "x-workspace-slug": workspace.slug,
   "content-type": "application/json",
 };
+const membersResponse = await fetch(`${apiUrl}/api/v1/workspaces/${workspace.id}/members`, {
+  headers,
+});
+if (!membersResponse.ok) {
+  throw new Error(`Workspace members lookup failed: ${membersResponse.status}`);
+}
 const settingsResponse = await fetch(`${apiUrl}/api/v1/workspace-ai-settings`, {
   headers,
 });
@@ -84,6 +90,14 @@ if (!messagingPage.ok || messagingHtml.includes("Impossible de charger la strat�
   throw new Error(`Messaging supervision page smoke test failed: ${messagingPage.status}`);
 }
 
+const membersPage = await fetch(`${webUrl}/w/${workspace.slug}/settings/members`, {
+  headers: { cookie },
+});
+const membersHtml = await membersPage.text();
+if (!membersPage.ok || !membersHtml.includes("Équipe et accès")) {
+  throw new Error(`Workspace members page smoke test failed: ${membersPage.status}`);
+}
+
 console.info(
   JSON.stringify({
     event: "development_smoke_passed",
@@ -92,6 +106,7 @@ console.info(
     web: "ready",
     aiSettings: "read_write",
     messagingSupervision: "readable",
+    workspaceMembers: "readable",
   }),
 );
 

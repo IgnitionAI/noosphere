@@ -67,7 +67,6 @@ export function createWorkspaceHttpHandler(dependencies: {
       const revoke = revokePath.exec(pathname);
       if (revoke && request.method === "POST") {
         const context = await requireContextResolver(contextResolver).resolve(request);
-        assertWorkspace(context.workspaceId, revoke[1]!);
         requireAdmin(context.role);
         return Response.json(await dependencies.management.revokeInvitation({ workspaceId: context.workspaceId, invitationId: revoke[1]!, actorUserId: context.userId }));
       }
@@ -89,7 +88,7 @@ export function createWorkspaceHttpHandler(dependencies: {
         if (request.method === "POST") {
           const body = inviteSchema.parse(await request.json());
           const invitation = await dependencies.management.invite({ workspaceId: context.workspaceId, actorUserId: context.userId, actorRole: context.role, email: body.email, proposedRole: body.role });
-          let emailDelivery: "sent" | "failed" = "sent";
+          let emailDelivery: "sent" | "failed" | "not_configured" = dependencies.mailer ? "sent" : "not_configured";
           if (dependencies.mailer) {
             try { await dependencies.mailer.send({ invitationId: invitation.id, workspaceId: invitation.workspaceId, email: invitation.email, proposedRole: invitation.proposedRole, expiresAt: invitation.expiresAt }); } catch { emailDelivery = "failed"; }
           }

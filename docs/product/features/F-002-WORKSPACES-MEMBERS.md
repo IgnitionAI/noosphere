@@ -19,17 +19,14 @@ modifier ou désactiver un owner ; seul un owner administre les owners.
 
 ## État d’implémentation
 
-Partiel. Socle livré : tables `workspaces` (slug unique, statut,
-`deleted_at`) et `workspace_members` (rôle parmi
-`owner/admin/operator/reviewer/viewer`, statut, `joined_at`,
-`last_selected_at`), résolution du contexte par slug avec vérification de
-membership active sur toutes les routes (`authenticated-workspace-context`),
-`GET /api/v1/workspaces` (memberships de l’utilisateur), sélecteur de
-workspace dans le shell, création par script (`bootstrap-owner.ts`). Restent
-à livrer : création de workspace via l’API, invitations (émission,
-acceptation, révocation, expiration), administration des membres (liste,
-changement de rôle, désactivation), protection du dernier owner et audit des
-changements de rôle.
+Livré. Le socle comprend les tables `workspaces`, `workspace_members` et
+`workspace_invitations`, la résolution stricte du contexte, la création et le
+sélecteur multi-workspace, les invitations renouvelables et copiables,
+l’acceptation/révocation, l’administration des rôles et statuts, la protection
+transactionnelle du dernier owner et l’audit/outbox. L’interface expose
+`/w/[workspaceSlug]/settings/members`, `/workspaces/new`, `/onboarding` et
+`/invitations/[invitationId]`. Sans transport email configuré, l’API retourne
+explicitement `emailDelivery: not_configured` et le lien reste copiable.
 
 ## Périmètre
 

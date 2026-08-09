@@ -7,6 +7,7 @@ import {
   listLostReasons,
   listOffers,
   listOfferVersions,
+  listWorkspaceMembers,
   listWorkspaces,
   OutboundApiError,
   type OfferVersion,
@@ -47,11 +48,17 @@ export default async function PipelinePage({
   const ownerId = query.ownerId;
   const visibleData = ownerId ? pipeline.data.filter((item) => item.ownerUserId === ownerId) : pipeline.data;
   const selected = query.opportunity ? pipeline.data.find((item) => item.id === query.opportunity) ?? null : null;
-  const [forecast, reasons, offers] = await Promise.all([
+  const [forecast, reasons, offers, members] = await Promise.all([
     getPipelineForecast(workspaceSlug).catch(() => ({ data: [] })),
     listLostReasons(workspaceSlug, workspace.id).then((result) => result.data).catch(() => []),
     listOffers(workspaceSlug).then((result) => result.data).catch(() => []),
+    listWorkspaceMembers(workspaceSlug, workspace.id).catch(() => []),
   ]);
+  const ownerOptions = ownerIds.map((id) => {
+    const member = members.find((candidate) => candidate.userId === id);
+    return { id, label: member?.name?.trim() || member?.email || `Membre · ${id.slice(0, 8)}` };
+  });
+  const ownerLabels = new Map(ownerOptions.map((option) => [option.id, option.label]));
   const offerVersions = (await Promise.all(offers.map((offer) => listOfferVersions(workspaceSlug, offer.id).then((result) => result.data).catch(() => [])))).flat() as OfferVersion[];
   const listHref = `/w/${workspaceSlug}/pipeline`;
 
@@ -74,7 +81,7 @@ export default async function PipelinePage({
         <Metric label="Gagnés" value={visibleData.filter((item) => item.stage === "won").length} tone="success" />
       </section>
 
-      <section className="panel mb-5"><div className="panel-header"><div><h2 className="font-semibold">Filtres et prévisions</h2><p className="mt-1 text-xs text-muted">La prévision est une projection du revenu pondéré, jamais une promesse.</p></div></div><form className="grid gap-3 p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end"><label className="text-xs font-semibold text-muted">Responsable<select className="control mt-1 w-full" defaultValue={ownerId ?? ""} name="ownerId"><option value="">Tous les responsables</option>{ownerIds.map((id) => <option key={id} value={id}>Membre · {id.slice(0, 8)}</option>)}</select></label><button className="button button-primary" type="submit">Filtrer</button></form><div className="border-t border-line p-4"><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{forecast.data.length ? forecast.data.map((row) => <div className="rounded-lg border border-line bg-slate-50/60 p-3" key={`${row.period}:${row.stage}:${row.ownerUserId ?? "none"}`}><p className="text-[11px] text-muted">{row.period} · {stageLabel(row.stage)}</p><p className="mt-2 text-sm font-semibold text-navy">{workspace.role === "viewer" || row.weightedRevenue === undefined ? "Montant masqué" : formatCurrency(row.weightedRevenue)}</p><p className="mt-1 text-[11px] text-muted">{row.count} opportunité{row.count > 1 ? "s" : ""} · revenu pondéré</p></div>) : <p className="text-sm text-muted">Aucune prévision disponible pour le moment.</p>}</div></div></section>
+      <section className="panel mb-5"><div className="panel-header"><div><h2 className="font-semibold">Filtres et prévisions</h2><p className="mt-1 text-xs text-muted">La prévision est une projection du revenu pondéré, jamais une promesse.</p></div></div><form className="grid gap-3 p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end"><label className="text-xs font-semibold text-muted">Responsable<select className="control mt-1 w-full" defaultValue={ownerId ?? ""} name="ownerId"><option value="">Tous les responsables</option>{ownerOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select></label><button className="button button-primary" type="submit">Filtrer</button></form><div className="border-t border-line p-4"><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{forecast.data.length ? forecast.data.map((row) => <div className="rounded-lg border border-line bg-slate-50/60 p-3" key={`${row.period}:${row.stage}:${row.ownerUserId ?? "none"}`}><p className="text-[11px] text-muted">{row.period} · {stageLabel(row.stage)}{row.ownerUserId ? ` · ${ownerLabels.get(row.ownerUserId) ?? "Responsable inconnu"}` : ""}</p><p className="mt-2 text-sm font-semibold text-navy">{workspace.role === "viewer" || row.weightedRevenue === undefined ? "Montant masqué" : formatCurrency(row.weightedRevenue)}</p><p className="mt-1 text-[11px] text-muted">{row.count} opportunité{row.count > 1 ? "s" : ""} · revenu pondéré</p></div>) : <p className="text-sm text-muted">Aucune prévision disponible pour le moment.</p>}</div></div></section>
 
       {visibleData.length ? (
         <section className="grid items-start gap-4 xl:grid-cols-4">
@@ -92,7 +99,7 @@ export default async function PipelinePage({
                 </div>
                 <div className="space-y-3">
                   {items.map((opportunity) => (
-                    <OpportunityCard key={opportunity.id} opportunity={opportunity} workspaceSlug={workspaceSlug} />
+                    <OpportunityCard key={opportunity.id} opportunity={opportunity} {...(opportunity.ownerUserId && ownerLabels.get(opportunity.ownerUserId) ? { ownerLabel: ownerLabels.get(opportunity.ownerUserId)! } : {})} workspaceSlug={workspaceSlug} />
                   ))}
                   {!items.length ? <div className="rounded-xl border border-dashed border-line bg-white/60 px-3 py-8 text-center text-xs text-muted">Aucune opportunité</div> : null}
                 </div>
@@ -109,12 +116,12 @@ export default async function PipelinePage({
         </section>
       )}
 
-      {selected ? <OpportunityDrawer opportunity={selected} workspaceSlug={workspaceSlug} workspaceRole={workspace.role} ownerIds={ownerIds} offerVersions={offerVersions} lostReasons={reasons} closeHref={listHref} /> : null}
+      {selected ? <OpportunityDrawer opportunity={selected} workspaceSlug={workspaceSlug} workspaceRole={workspace.role} ownerOptions={ownerOptions} offerVersions={offerVersions} lostReasons={reasons} closeHref={listHref} /> : null}
     </>
   );
 }
 
-function OpportunityCard({ opportunity, workspaceSlug }: { opportunity: PipelineOpportunity; workspaceSlug: string }) {
+function OpportunityCard({ opportunity, workspaceSlug, ownerLabel }: { opportunity: PipelineOpportunity; workspaceSlug: string; ownerLabel?: string }) {
   return (
     <Link className="block rounded-xl border border-line bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md" href={`/w/${workspaceSlug}/pipeline?opportunity=${opportunity.id}`} scroll={false}>
       <div className="flex items-start gap-3">
@@ -131,6 +138,7 @@ function OpportunityCard({ opportunity, workspaceSlug }: { opportunity: Pipeline
       </div>
       {opportunity.amount === undefined ? <p className="mt-3 text-xs text-muted">Montant masqué</p> : opportunity.amount !== null ? <p className="mt-3 text-xs font-semibold text-navy">{formatCurrency(opportunity.amount, opportunity.currency)}</p> : null}
       {opportunity.meeting ? <p className="mt-3 flex items-center gap-2 text-xs font-semibold text-emerald-800"><CalendarCheck size={13} />{formatDate(opportunity.meeting.startAt)}</p> : null}
+      {ownerLabel ? <p className="mt-3 flex items-center gap-2 text-[11px] text-muted"><UserRound size={12} />{ownerLabel}</p> : null}
       {opportunity.nextAction ? <p className="mt-3 line-clamp-3 text-[11px] leading-5 text-muted">{opportunity.nextAction}</p> : null}
       <p className="mt-3 text-[10px] text-muted">{opportunity.history.length} transition{opportunity.history.length > 1 ? "s" : ""} auditée{opportunity.history.length > 1 ? "s" : ""}</p>
     </Link>

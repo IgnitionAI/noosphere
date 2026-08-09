@@ -4,7 +4,7 @@ import { ArrowRight, LoaderCircle, LockKeyhole } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
-export function LoginForm() {
+export function LoginForm({ next = "/" }: { next?: string }) {
   const router = useRouter();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -27,7 +27,7 @@ export function LoginForm() {
       setError("Connexion impossible. Vérifiez vos identifiants puis réessayez.");
       return;
     }
-    router.replace("/");
+    router.replace(next);
     router.refresh();
   }
 

@@ -104,13 +104,18 @@ export class PostgresWorkspaceRepository {
 
   async acceptInvitation(input: { invitationId: string; userId: string; now?: Date }) {
     const now = input.now ?? new Date();
-    return this.db.transaction(async (tx) => {
+    const result = await this.db.transaction(async (tx) => {
       const [invitation] = await tx.select().from(workspaceInvitations).where(eq(workspaceInvitations.id, input.invitationId)).for("update").limit(1);
       if (!invitation) throw new WorkspaceManagementError("WORKSPACE_INVITATION_NOT_FOUND", 404);
+      if (invitation.status === "accepted" && invitation.acceptedBy === input.userId) {
+        const [member] = await tx.select().from(workspaceMembers).where(and(eq(workspaceMembers.workspaceId, invitation.workspaceId), eq(workspaceMembers.userId, input.userId))).limit(1);
+        if (!member) throw new WorkspaceManagementError("WORKSPACE_MEMBER_NOT_FOUND", 404);
+        return { invitation, member };
+      }
       if (invitation.status !== "pending") throw new WorkspaceManagementError("WORKSPACE_INVITATION_CONSUMED", 409);
       if (invitation.expiresAt <= now) {
         await tx.update(workspaceInvitations).set({ status: "expired", updatedAt: now }).where(eq(workspaceInvitations.id, invitation.id));
-        throw new WorkspaceManagementError("WORKSPACE_INVITATION_EXPIRED", 410);
+        return new WorkspaceManagementError("WORKSPACE_INVITATION_EXPIRED", 410);
       }
       const [user] = await tx.select({ id: authUsers.id, email: authUsers.email }).from(authUsers).where(eq(authUsers.id, input.userId)).limit(1);
       if (!user || normalizeEmail(user.email) !== normalizeEmail(invitation.email)) throw new WorkspaceManagementError("WORKSPACE_INVITATION_EMAIL_MISMATCH", 403);
@@ -126,6 +131,8 @@ export class PostgresWorkspaceRepository {
       await tx.insert(auditLogs).values({ workspaceId: invitation.workspaceId, actorUserId: input.userId, action: "WorkspaceInvitationAccepted", subjectType: "WorkspaceMember", subjectId: input.userId, changes: { after: { role: updatedMember.role, status: updatedMember.status } }, sourceEventId: event.id, createdAt: now });
       return { invitation: updatedInvitation, member: updatedMember };
     });
+    if (result instanceof WorkspaceManagementError) throw result;
+    return result;
   }
 
   async revokeInvitation(input: { workspaceId: string; invitationId: string; actorUserId: string; now?: Date }) {

@@ -22,6 +22,36 @@ export interface Workspace {
   readonly lastSelectedAt: string | null;
 }
 
+export type WorkspaceRole = Workspace["role"];
+export type WorkspaceMemberStatus = "active" | "disabled";
+
+export interface WorkspaceMember {
+  readonly workspaceId: string;
+  readonly userId: string;
+  readonly email: string;
+  readonly name: string;
+  readonly role: WorkspaceRole;
+  readonly status: WorkspaceMemberStatus;
+  readonly joinedAt: string;
+  readonly lastSelectedAt: string | null;
+}
+
+export interface WorkspaceInvitation {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly email: string;
+  readonly proposedRole: WorkspaceRole;
+  readonly status: "pending" | "accepted" | "revoked" | "expired";
+  readonly expiresAt: string;
+  readonly invitedBy: string | null;
+  readonly acceptedBy: string | null;
+  readonly acceptedAt: string | null;
+  readonly revokedAt: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly emailDelivery?: "sent" | "failed" | "not_configured";
+}
+
 export interface WorkspaceAiSettings {
   readonly researchModels: readonly string[];
   readonly synthesisModels: readonly string[];
@@ -188,6 +218,66 @@ export async function listWorkspaces(): Promise<readonly Workspace[]> {
   const response = await apiFetch("/api/v1/workspaces");
   if (!response.ok) await throwApiError(response);
   return ((await response.json()) as { data: Workspace[] }).data;
+}
+
+export async function createWorkspace(input: { name: string; slug?: string }): Promise<Workspace> {
+  return crmFetch("", "/api/v1/workspaces", { method: "POST", body: input });
+}
+
+export async function listWorkspaceMembers(
+  workspaceSlug: string,
+  workspaceId: string,
+): Promise<readonly WorkspaceMember[]> {
+  const response = await crmFetch<{ data: WorkspaceMember[] }>(workspaceSlug, `/api/v1/workspaces/${workspaceId}/members`);
+  return response.data;
+}
+
+export async function listWorkspaceInvitations(
+  workspaceSlug: string,
+  workspaceId: string,
+): Promise<readonly WorkspaceInvitation[]> {
+  const response = await crmFetch<{ data: WorkspaceInvitation[] }>(workspaceSlug, `/api/v1/workspaces/${workspaceId}/invitations`);
+  return response.data;
+}
+
+export async function inviteWorkspaceMember(
+  workspaceSlug: string,
+  workspaceId: string,
+  input: { email: string; role: WorkspaceRole },
+): Promise<WorkspaceInvitation> {
+  return crmFetch(workspaceSlug, `/api/v1/workspaces/${workspaceId}/invitations`, { method: "POST", body: input });
+}
+
+export async function acceptWorkspaceInvitation(invitationId: string): Promise<{
+  invitation: WorkspaceInvitation;
+  member: WorkspaceMember;
+}> {
+  return crmFetch("", `/api/v1/invitations/${invitationId}/actions/accept`, { method: "POST", body: {} });
+}
+
+export async function revokeWorkspaceInvitation(
+  workspaceSlug: string,
+  invitationId: string,
+): Promise<void> {
+  await crmFetch(workspaceSlug, `/api/v1/invitations/${invitationId}/actions/revoke`, { method: "POST", body: {} });
+}
+
+export async function changeWorkspaceMemberRole(
+  workspaceSlug: string,
+  workspaceId: string,
+  userId: string,
+  role: WorkspaceRole,
+): Promise<void> {
+  await crmFetch(workspaceSlug, `/api/v1/workspaces/${workspaceId}/members/${userId}/actions/change-role`, { method: "POST", body: { role } });
+}
+
+export async function setWorkspaceMemberStatus(
+  workspaceSlug: string,
+  workspaceId: string,
+  userId: string,
+  status: WorkspaceMemberStatus,
+): Promise<void> {
+  await crmFetch(workspaceSlug, `/api/v1/workspaces/${workspaceId}/members/${userId}/actions/set-status`, { method: "POST", body: { status } });
 }
 
 export async function getWorkspaceAiSettings(

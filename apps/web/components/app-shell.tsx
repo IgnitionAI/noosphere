@@ -22,6 +22,7 @@ import {
   X,
   Radar,
   Package,
+  Plus,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -55,6 +56,7 @@ export function AppShell({
   const aiSettingsHref = `/w/${workspace.slug}/settings/ai`;
   const calendarSettingsHref = `/w/${workspace.slug}/settings/calendar`;
   const channelSettingsHref = `/w/${workspace.slug}/settings/channels`;
+  const memberSettingsHref = `/w/${workspace.slug}/settings/members`;
   const productReadingActive = pathname.startsWith(productReadingHref);
   const icpsActive = pathname.startsWith(icpsHref);
   const offersActive = pathname.startsWith(offersHref);
@@ -107,9 +109,9 @@ export function AppShell({
             </span>
             <ChevronDown className="text-slate-400 group-open:rotate-180" size={14} />
           </summary>
-          {workspaces.length > 1 ? (
-            <div className="mt-2 space-y-1 rounded-lg border border-white/10 bg-navy-soft p-1.5">
-              {workspaces.map((candidate) => (
+          <div className="mt-2 space-y-1 rounded-lg border border-white/10 bg-navy-soft p-1.5">
+            {workspaces.length > 1
+              ? workspaces.map((candidate) => (
                 <Link
                   className="block rounded-md px-3 py-2 text-xs hover:bg-white/10"
                   href={`/w/${candidate.slug}/strategy/product-reading`}
@@ -117,9 +119,10 @@ export function AppShell({
                 >
                   {candidate.name}
                 </Link>
-              ))}
-            </div>
-          ) : null}
+              ))
+              : null}
+            <Link className="flex items-center gap-2 rounded-md border-t border-white/10 px-3 py-2 pt-2.5 text-xs text-signal hover:bg-white/10" href="/workspaces/new"><Plus size={13} /> Nouveau workspace</Link>
+          </div>
         </details>
 
         <nav aria-label="Navigation principale">
@@ -251,11 +254,24 @@ export function AppShell({
               Pipeline
             </Link>
           </div>
+          <div className="mb-2 mt-6 px-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+            Workspace
+          </div>
+          <Link
+            aria-current={pathname.startsWith(memberSettingsHref) ? "page" : undefined}
+            className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium ${
+              pathname.startsWith(memberSettingsHref)
+                ? "bg-white/10 text-white"
+                : "text-slate-300 hover:bg-white/5 hover:text-white"
+            }`}
+            href={memberSettingsHref}
+            onClick={() => setOpen(false)}
+          >
+            <UsersRound size={17} />
+            Équipe
+          </Link>
           {["admin", "owner"].includes(workspace.role) ? (
             <>
-              <div className="mb-2 mt-6 px-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">
-                Workspace
-              </div>
               <Link
                 aria-current={pathname.startsWith(channelSettingsHref) ? "page" : undefined}
                 className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium ${
