@@ -2368,7 +2368,14 @@ export const opportunities = pgTable(
     stage: varchar("stage", { length: 80 }).notNull().default("qualified"),
     amount: numeric("amount", { precision: 19, scale: 6, mode: "number" }),
     currency: varchar("currency", { length: 3 }),
+    probability: integer("probability").notNull().default(0),
+    ownerUserId: uuid("owner_user_id"),
     nextAction: text("next_action"),
+    expectedCloseDate: timestamp("expected_close_date", { withTimezone: true }),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+    lostReason: varchar("lost_reason", { length: 120 }),
+    lostComment: text("lost_comment"),
+    offerVersionId: uuid("offer_version_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -2378,8 +2385,37 @@ export const opportunities = pgTable(
       foreignColumns: [workspaces.id],
       name: "opportunities_workspace_fk",
     }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.workspaceId, table.ownerUserId],
+      foreignColumns: [workspaceMembers.workspaceId, workspaceMembers.userId],
+      name: "opportunities_workspace_owner_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.workspaceId, table.offerVersionId],
+      foreignColumns: [offerVersions.workspaceId, offerVersions.id],
+      name: "opportunities_workspace_offer_version_fk",
+    }).onDelete("restrict"),
     unique("opportunities_workspace_id_uq").on(table.workspaceId, table.id),
     uniqueIndex("opportunities_contact_campaign_uq").on(table.workspaceId, table.contactId, table.campaignId),
+  ],
+);
+
+export const workspaceLostReasons = pgTable(
+  "workspace_lost_reasons",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    key: varchar("key", { length: 120 }).notNull(),
+    label: varchar("label", { length: 300 }).notNull(),
+    active: boolean("active").notNull().default(true),
+    createdBy: uuid("created_by").references(() => authUsers.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique("workspace_lost_reasons_workspace_id_uq").on(table.workspaceId, table.id),
+    uniqueIndex("workspace_lost_reasons_key_uq").on(table.workspaceId, table.key),
+    index("workspace_lost_reasons_workspace_active_idx").on(table.workspaceId, table.active),
   ],
 );
 

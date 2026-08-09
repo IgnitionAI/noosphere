@@ -27,8 +27,8 @@ describe("opportunity HTTP routes", () => {
       repository: {
         async list() { throw new Error("unexpected"); },
         async changeStage(input) {
-          expect(input).toMatchObject({ workspaceId, opportunityId, stage: "won", reason: "Contrat signé" });
-          return { id: opportunityId, stage: "won" } as never;
+          expect(input).toMatchObject({ workspaceId, opportunityId, stage: "meeting_completed", reason: "Contrat signé" });
+          return { id: opportunityId, stage: "meeting_completed" } as never;
         },
       },
     });
@@ -37,11 +37,11 @@ describe("opportunity HTTP routes", () => {
       {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ stage: "won", reason: "Contrat signé" }),
+      body: JSON.stringify({ stage: "meeting_completed", reason: "Contrat signé" }),
       },
     ));
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ stage: "won" });
+    expect(await response.json()).toMatchObject({ stage: "meeting_completed" });
   });
 
   test("a viewer cannot mutate and invalid stages fail closed", async () => {
