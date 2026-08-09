@@ -18,6 +18,19 @@ campagne, ICP, canal, rôle et signal, et reproductibles sans modèle IA.
 
 ## État d’implémentation
 
+Livré (chantier 8, commits `98c6177`, `d7f69f4`, correctifs `20e343a` et
+`f09a986`) : projection SQL déterministe sur les tables de faits (jamais les
+events outbox), entonnoir complet, breakdowns réels par 5 dimensions
+(`null` documenté pour les combinaisons non attribuables, affichées « n/d »),
+endpoints `/api/v1/analytics/{funnel,breakdown,costs,export}`, coûts et
+revenu réservés owner/admin avec redaction, export CSV audité, page
+`/analytics` avec filtres période/campagne/ICP/canal/rôle/signal. Revenu via
+l’extension additive `opportunities.amount`/`currency` (migration 0049).
+Restent hors périmètre (voir section dédiée) : drill-down vers les faits,
+bounce fin fournisseur, attribution multi-touch, tables d’agrégats.
+
+<details><summary>État avant développement (historique)</summary>
+
 Non commencé en tant que feature, mais le socle de données est largement en
 place : faits persistés (`outreach_actions`, `outreach_attempts`,
 `enrichment_jobs`, `enrichment_observations`, `signals`,
@@ -30,6 +43,8 @@ place : faits persistés (`outreach_actions`, `outreach_attempts`,
 campagne). Restent à livrer : les projections transverses du workspace,
 les endpoints et la page `/analytics`, la gestion du revenu (montant
 d’opportunité), les coûts consolidés et l’export.
+
+</details>
 
 ## Périmètre
 
