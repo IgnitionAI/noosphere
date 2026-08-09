@@ -16,6 +16,13 @@ bun run check
 Lors de l’implémentation Next.js, ajouter progressivement types, tests
 unitaires, tests PostgreSQL, contrats fournisseurs et tests visuels.
 
+Les tests d’intégration PostgreSQL s’exécutent uniquement via
+`bun run test:integration` : le script dérive une base `_test` isolée et
+refuse `TEST_DATABASE_URL=DATABASE_URL`. Ne jamais lancer
+`bun test tests/integration` directement — sans `TEST_DATABASE_URL`, les
+tests retombent sur la base de développement et échouent sur ses résidus
+d’état.
+
 ## Flux de branches
 
 Trois branches permanentes, promotion dans un seul sens :
