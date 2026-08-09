@@ -1,12 +1,16 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import {
+  acknowledgeAccountHealthAlert,
   checkConnectedAccount,
   connectConnectedAccount,
   disconnectConnectedAccount,
   OutboundApiError,
   reconnectConnectedAccount,
+  startConnectedAccountOnboarding,
+  type OnboardingChannel,
 } from "@/lib/api";
 
 const path = (workspaceSlug: string) => `/w/${workspaceSlug}/integrations`;
@@ -31,7 +35,31 @@ export async function accountAction(workspaceSlug: string, accountId: string, ac
   revalidatePath(path(workspaceSlug));
 }
 
+export async function startOnboardingAction(workspaceSlug: string, formData: FormData) {
+  const channel = value(formData, "channel") as OnboardingChannel;
+  if (!["email", "linkedin", "whatsapp"].includes(channel)) throw new Error("Sélectionnez un canal valide.");
+  try {
+    const onboarding = await startConnectedAccountOnboarding(workspaceSlug, channel);
+    revalidatePath(path(workspaceSlug));
+    redirect(`${path(workspaceSlug)}?onboardingId=${onboarding.id}`);
+  } catch (error) {
+    if (isRedirectError(error)) throw error;
+    throw new Error(formatError(error));
+  }
+}
+
+export async function acknowledgeHealthAlertAction(workspaceSlug: string, alertId: string, _formData: FormData) {
+  try {
+    await acknowledgeAccountHealthAlert(workspaceSlug, alertId);
+  } catch (error) { throw new Error(formatError(error)); }
+  revalidatePath(`/w/${workspaceSlug}`, "layout");
+}
+
 function formatError(error: unknown): string {
   if (!(error instanceof OutboundApiError)) return error instanceof Error ? error.message : "L’opération a échoué.";
   return `${error.code}: ${error.message}`;
+}
+
+function isRedirectError(error: unknown): boolean {
+  return Boolean(error && typeof error === "object" && "digest" in error && String(error.digest).startsWith("NEXT_REDIRECT"));
 }

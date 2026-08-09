@@ -26,17 +26,19 @@ import {
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState, type ReactNode } from "react";
-import type { Session, Workspace } from "@/lib/api";
+import type { AccountHealthAlert, Session, Workspace } from "@/lib/api";
 
 export function AppShell({
   workspace,
   workspaces,
   session,
+  healthAlerts = [],
   children,
 }: {
   workspace: Workspace;
   workspaces: readonly Workspace[];
   session: Session;
+  healthAlerts?: readonly (AccountHealthAlert & { readonly acknowledgeAction?: (formData: FormData) => Promise<void> })[];
   children: ReactNode;
 }) {
   const pathname = usePathname();
@@ -346,6 +348,19 @@ export function AppShell({
           </div>
         </header>
         <main className="mx-auto w-full max-w-[1680px] px-4 py-6 sm:px-6 md:px-8 md:py-8">
+          {healthAlerts.length ? (
+            <div className="mb-5 space-y-2" aria-label="Alertes de santé des comptes">
+              {healthAlerts.map((alert) => (
+                <div className="flex flex-col gap-3 rounded-lg border border-danger/30 bg-red-50 px-4 py-3 text-sm text-danger sm:flex-row sm:items-center sm:justify-between" key={alert.id} role="alert">
+                  <div className="flex min-w-0 items-start gap-2">
+                    <ShieldAlert className="mt-0.5 shrink-0" size={16} />
+                    <p><strong>Compte d’envoi dégradé.</strong> {alert.reasonMessage || "Les actions de ce compte sont suspendues isolément."} <Link className="font-semibold underline" href={`/w/${workspace.slug}/integrations`}>Voir l’impact</Link></p>
+                  </div>
+                  {alert.acknowledgeAction ? <form action={alert.acknowledgeAction}><button className="button shrink-0 border-danger/30 bg-white text-danger hover:bg-red-100" type="submit">Acquitter</button></form> : null}
+                </div>
+              ))}
+            </div>
+          ) : null}
           {children}
         </main>
       </div>

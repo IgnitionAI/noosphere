@@ -1570,6 +1570,71 @@ export async function disconnectConnectedAccount(workspaceSlug: string, accountI
   return crmFetch(workspaceSlug, `/api/v1/connected-accounts/${accountId}`, { method: "DELETE" });
 }
 
+export type OnboardingChannel = "email" | "linkedin" | "whatsapp";
+export type OnboardingStep = "initiation" | "callback" | "verification";
+export type OnboardingStatus = "initiated" | "awaiting_callback" | "verifying" | "completed" | "failed" | "expired";
+export interface ConnectionOnboarding {
+  readonly id: string;
+  readonly provider?: "unipile";
+  readonly channel: OnboardingChannel;
+  readonly step: OnboardingStep;
+  readonly status: OnboardingStatus;
+  readonly hostedUrl?: string | null;
+  readonly providerAccountId?: string | null;
+  readonly errorCode?: string | null;
+  readonly errorMessage?: string | null;
+  readonly expiresAt: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+export interface AccountQuotaChannel {
+  readonly channel: OnboardingChannel;
+  readonly sentToday: number;
+  readonly limit: number | null;
+  readonly percentage: number | null;
+  readonly state: "ok" | "near_limit" | "reached" | "unlimited";
+}
+export interface AccountQuota {
+  readonly accountId: string;
+  readonly referenceDate: string;
+  readonly timezone: "UTC";
+  readonly channels: readonly AccountQuotaChannel[];
+}
+export interface AccountHealthAlert {
+  readonly id: string;
+  readonly connectedAccountId: string;
+  readonly status: "active" | "acknowledged" | "resolved";
+  readonly reasonCode?: string | null;
+  readonly reasonMessage?: string | null;
+  readonly acknowledgedBy?: string | null;
+  readonly acknowledgedAt?: string | null;
+  readonly resolvedAt?: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+export interface AccountSuspensionImpact {
+  readonly accountId: string;
+  readonly campaigns: readonly { readonly campaignId: string; readonly campaignName: string; readonly suspendedActions: number }[];
+}
+export async function startConnectedAccountOnboarding(workspaceSlug: string, channel: OnboardingChannel): Promise<ConnectionOnboarding> {
+  return crmFetch(workspaceSlug, "/api/v1/connected-accounts/onboarding", { method: "POST", body: { channel } });
+}
+export async function getConnectedAccountOnboarding(workspaceSlug: string, onboardingId: string): Promise<ConnectionOnboarding> {
+  return crmFetch(workspaceSlug, `/api/v1/connected-accounts/onboarding/${onboardingId}`);
+}
+export async function getConnectedAccountQuotas(workspaceSlug: string, accountId: string): Promise<AccountQuota> {
+  return crmFetch(workspaceSlug, `/api/v1/connected-accounts/${accountId}/quotas`);
+}
+export async function getConnectedAccountImpact(workspaceSlug: string, accountId: string): Promise<AccountSuspensionImpact> {
+  return crmFetch(workspaceSlug, `/api/v1/connected-accounts/${accountId}/impact`);
+}
+export async function listAccountHealthAlerts(workspaceSlug: string): Promise<{ data: AccountHealthAlert[] }> {
+  return crmFetch(workspaceSlug, "/api/v1/account-health-alerts");
+}
+export async function acknowledgeAccountHealthAlert(workspaceSlug: string, alertId: string): Promise<AccountHealthAlert> {
+  return crmFetch(workspaceSlug, `/api/v1/account-health-alerts/${alertId}/actions/acknowledge`, { method: "POST", body: {} });
+}
+
 export type CampaignProspectStatus = "candidate" | "selected" | "excluded" | "enrolled";
 export interface CampaignProspectExplanation {
   readonly facts: readonly Record<string, unknown>[];
