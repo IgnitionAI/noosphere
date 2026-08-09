@@ -105,8 +105,10 @@ databaseDescribe("Setter Cal.com scheduling", () => {
 
   afterAll(async () => {
     await database.client`delete from outbox_events where workspace_id = ${workspaceId}`;
+    await database.client`alter table opportunity_stage_history disable trigger user`;
     await database.client`delete from opportunity_stage_history where workspace_id = ${workspaceId}`;
     await database.client`delete from opportunities where workspace_id = ${workspaceId}`;
+    await database.client`alter table opportunity_stage_history enable trigger user`;
     await database.client`delete from calendar_bookings where workspace_id = ${workspaceId}`;
     await database.client`delete from contact_identities where workspace_id = ${workspaceId}`;
     await database.client`delete from contacts where workspace_id = ${workspaceId}`;
