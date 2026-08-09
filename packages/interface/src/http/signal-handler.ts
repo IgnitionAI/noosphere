@@ -49,16 +49,18 @@ export function createSignalHttpHandler(dependencies: SignalHttpDependencies) {
         const body = collectSchema.parse(await request.json().catch(() => ({})));
         const source = dependencies.signalSource(context.workspaceId);
         if (!source) return problem(503, "SIGNAL_SOURCE_UNAVAILABLE", "No signal source is configured");
+        const configuredTypes = await repository.getConfiguredSignalTypes({ workspaceId: context.workspaceId, fallback: source.supportedTypes });
+        const signalTypes = body.signalTypes ?? configuredTypes;
         const requestKey = body.requestKey ?? `signals:${body.companyId ?? body.contactId}:${crypto.randomUUID()}`;
         const result = await repository.requestCollection({ id: crypto.randomUUID(), workspaceId: context.workspaceId,
           ...(body.companyId ? { companyId: body.companyId } : {}), ...(body.contactId ? { contactId: body.contactId } : {}), requestKey, source: source.name,
           requestedBy: context.userId, correlationId: request.headers.get("x-correlation-id") ?? crypto.randomUUID() });
         if (result.created && dependencies.jobQueue) await dependencies.jobQueue.enqueue({
           id: crypto.randomUUID(), workspaceId: context.workspaceId, type: SIGNAL_COLLECTION_JOB_TYPE,
-          payload: { workspaceId: context.workspaceId, runId: result.run.id, signalTypes: body.signalTypes ?? source.supportedTypes }, idempotencyKey: result.run.requestKey,
+          payload: { workspaceId: context.workspaceId, runId: result.run.id, signalTypes }, idempotencyKey: result.run.requestKey,
           correlationId: request.headers.get("x-correlation-id") ?? crypto.randomUUID(), maxAttempts: 3, availableAt: new Date(),
         });
-        else if (result.created) await repository.processRun({ workspaceId: context.workspaceId, runId: result.run.id, source, signalTypes: body.signalTypes ?? source.supportedTypes });
+        else if (result.created) await repository.processRun({ workspaceId: context.workspaceId, runId: result.run.id, source, signalTypes });
         return json(serializeRun(result.run), result.created ? 202 : 200);
       }
       const runMatch = runPath.exec(url.pathname);
@@ -70,7 +72,8 @@ export function createSignalHttpHandler(dependencies: SignalHttpDependencies) {
       if (url.pathname === "/api/v1/settings/signals" && request.method === "PUT") {
         requireOwnerAdmin(context.role);
         const body = z.object({ signalTypes: z.array(z.enum(SIGNAL_TYPES)).min(1).max(SIGNAL_TYPES.length) }).strict().parse(await request.json());
-        return json({ signalTypes: body.signalTypes });
+        const settings = await repository.setConfiguredSignalTypes({ workspaceId: context.workspaceId, signalTypes: body.signalTypes, updatedBy: context.userId });
+        return json({ signalTypes: settings?.signalTypes ?? body.signalTypes });
       }
       return problem(404, "ROUTE_NOT_FOUND", "Route not found");
     } catch (error) {

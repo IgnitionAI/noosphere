@@ -1360,6 +1360,14 @@ export const signalCollectionRuns = pgTable(
   ],
 );
 
+export const workspaceSignalSettings = pgTable("workspace_signal_settings", {
+  workspaceId: uuid("workspace_id").primaryKey().references(() => workspaces.id, { onDelete: "cascade" }),
+  signalTypes: jsonb("signal_types").notNull().default([]),
+  updatedBy: uuid("updated_by").notNull().references(() => authUsers.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const signals = pgTable(
   "signals",
   {

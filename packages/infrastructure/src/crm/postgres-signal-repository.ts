@@ -18,6 +18,7 @@ import {
   outboxEvents,
   signalCollectionRuns,
   signals,
+  workspaceSignalSettings,
 } from "@outbound/infrastructure/database/schema";
 
 export const SIGNAL_COLLECTION_JOB_TYPE = "crm.signals.collect";
@@ -70,6 +71,20 @@ export class PostgresSignalRepository {
       eq(signalCollectionRuns.workspaceId, input.workspaceId), eq(signalCollectionRuns.id, input.runId),
     )).limit(1);
     return run ?? null;
+  }
+
+  async getConfiguredSignalTypes(input: { workspaceId: string; fallback: readonly SignalType[] }): Promise<readonly SignalType[]> {
+    const [settings] = await this.db.select({ signalTypes: workspaceSignalSettings.signalTypes }).from(workspaceSignalSettings)
+      .where(eq(workspaceSignalSettings.workspaceId, input.workspaceId)).limit(1);
+    if (!settings) return input.fallback;
+    const allowed = new Set<SignalType>(input.fallback);
+    return (Array.isArray(settings.signalTypes) ? settings.signalTypes : []).filter((type): type is SignalType => typeof type === "string" && allowed.has(type as SignalType));
+  }
+
+  async setConfiguredSignalTypes(input: { workspaceId: string; signalTypes: readonly SignalType[]; updatedBy: string }) {
+    const [settings] = await this.db.insert(workspaceSignalSettings).values({ workspaceId: input.workspaceId, signalTypes: input.signalTypes, updatedBy: input.updatedBy })
+      .onConflictDoUpdate({ target: workspaceSignalSettings.workspaceId, set: { signalTypes: input.signalTypes, updatedBy: input.updatedBy, updatedAt: this.clock.now() } }).returning();
+    return settings;
   }
 
   async listSignals(input: {
