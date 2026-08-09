@@ -118,6 +118,65 @@ export interface KnowledgeClaim {
   readonly updatedAt: string;
 }
 
+export type AiCapability = "icp_research" | "message_generation" | "setter";
+export interface EvaluationDataset {
+  readonly id: string;
+  readonly capability: AiCapability;
+  readonly name: string;
+  readonly description: string | null;
+  readonly rubricVersion: string;
+  readonly version: number;
+  readonly caseCount: number;
+  readonly createdAt: string;
+}
+export interface AiPromptVersion {
+  readonly id: string;
+  readonly capability: AiCapability;
+  readonly version: number;
+  readonly content: string;
+  readonly previousVersionId: string | null;
+  readonly createdAt: string;
+}
+export interface AiConfiguration {
+  readonly configuration: {
+    readonly id: string;
+    readonly capability: AiCapability;
+    readonly provider: "kimi-code";
+    readonly model: string;
+    readonly promptVersionId: string;
+    readonly status: "candidate" | "shadow" | "active" | "retired";
+    readonly promotedAt: string | null;
+    readonly createdAt: string;
+  };
+  readonly prompt: AiPromptVersion;
+}
+export interface EvaluationRun {
+  readonly id: string;
+  readonly datasetId: string;
+  readonly configurationId: string;
+  readonly requestKey: string;
+  readonly status: "queued" | "running" | "completed" | "partial" | "failed";
+  readonly totalCases: number;
+  readonly completedCases: number;
+  readonly failedCases: number;
+  readonly aggregateScores: Readonly<Record<string, number>>;
+  readonly totalCost: string | null;
+  readonly totalLatencyMs: number | null;
+  readonly createdAt: string;
+  readonly completedAt: string | null;
+}
+export interface EvaluationRunDetail extends EvaluationRun {
+  readonly results: readonly {
+    readonly id: string;
+    readonly evaluationCaseId: string;
+    readonly aiRunId: string | null;
+    readonly status: "pending" | "completed" | "failed";
+    readonly output: unknown;
+    readonly scores: Readonly<Record<string, number>>;
+    readonly errorCode: string | null;
+  }[];
+}
+
 export interface WorkspaceAiSettings {
   readonly researchModels: readonly string[];
   readonly synthesisModels: readonly string[];
@@ -428,6 +487,51 @@ export async function createKnowledgeClaim(workspaceSlug: string, input: { claim
 
 export async function validateKnowledgeClaim(workspaceSlug: string, claimId: string): Promise<KnowledgeClaim> {
   return crmFetch(workspaceSlug, `/api/v1/knowledge-claims/${claimId}/actions/validate`, { method: "POST", body: {} });
+}
+
+export async function listEvaluationDatasets(workspaceSlug: string): Promise<readonly EvaluationDataset[]> {
+  return (await crmFetch<{ data: EvaluationDataset[] }>(workspaceSlug, "/api/v1/evaluation-datasets")).data;
+}
+
+export async function createEvaluationDataset(workspaceSlug: string, input: { capability: AiCapability; name: string; description?: string | null; rubricVersion: string; cases: readonly { name: string; input: unknown; expected: Record<string, unknown>; criteria?: Record<string, unknown>; authorizedKnowledgeClaimIds?: readonly string[] }[] }): Promise<EvaluationDataset> {
+  return crmFetch(workspaceSlug, "/api/v1/evaluation-datasets", { method: "POST", body: input });
+}
+
+export async function createAiPromptVersion(workspaceSlug: string, input: { capability: AiCapability; content: string }): Promise<AiPromptVersion> {
+  return crmFetch(workspaceSlug, "/api/v1/ai-prompt-versions", { method: "POST", body: input });
+}
+
+export async function listAiConfigurations(workspaceSlug: string): Promise<readonly AiConfiguration[]> {
+  return (await crmFetch<{ data: AiConfiguration[] }>(workspaceSlug, "/api/v1/ai-configurations")).data;
+}
+
+export async function createAiConfiguration(workspaceSlug: string, input: { capability: AiCapability; provider: "kimi-code"; model: string; promptVersionId: string; status?: "candidate" | "shadow" }): Promise<AiConfiguration["configuration"]> {
+  return crmFetch(workspaceSlug, "/api/v1/ai-configurations", { method: "POST", body: input });
+}
+
+export async function listEvaluationRuns(workspaceSlug: string): Promise<readonly EvaluationRun[]> {
+  return (await crmFetch<{ data: EvaluationRun[] }>(workspaceSlug, "/api/v1/evaluation-runs")).data;
+}
+
+export async function getEvaluationRun(workspaceSlug: string, runId: string): Promise<EvaluationRunDetail> {
+  return crmFetch(workspaceSlug, `/api/v1/evaluation-runs/${runId}`);
+}
+
+export async function requestEvaluationRun(workspaceSlug: string, input: { datasetId: string; configurationId: string; requestKey: string }): Promise<EvaluationRun> {
+  return crmFetch(workspaceSlug, "/api/v1/evaluation-runs", { method: "POST", body: input });
+}
+
+export async function compareEvaluationRuns(workspaceSlug: string, leftRunId: string, rightRunId: string): Promise<{ left: EvaluationRun; right: EvaluationRun; recommendation: { decision: "consider_candidate" | "keep_baseline"; requiresHumanApproval: true; autoApplied: false; explanation: string } }> {
+  const query = new URLSearchParams({ left: leftRunId, right: rightRunId });
+  return crmFetch(workspaceSlug, `/api/v1/evaluation-runs/compare?${query}`);
+}
+
+export async function promoteAiConfiguration(workspaceSlug: string, configurationId: string): Promise<AiConfiguration["configuration"]> {
+  return crmFetch(workspaceSlug, `/api/v1/ai-configurations/${configurationId}/actions/promote`, { method: "POST", body: {} });
+}
+
+export async function recordAiFeedback(workspaceSlug: string, aiRunId: string, input: { rating: -1 | 1; reason: string | null }): Promise<unknown> {
+  return crmFetch(workspaceSlug, `/api/v1/ai-runs/${aiRunId}/feedback`, { method: "POST", body: input });
 }
 
 export async function getWorkspaceAiSettings(

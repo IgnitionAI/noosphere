@@ -55,6 +55,14 @@ const knowledgeSourcesResponse = await fetch(`${apiUrl}/api/v1/knowledge-sources
 if (!knowledgeSourcesResponse.ok) {
   throw new Error(`Knowledge sources lookup failed: ${knowledgeSourcesResponse.status}`);
 }
+const evaluationDatasetsResponse = await fetch(`${apiUrl}/api/v1/evaluation-datasets`, { headers });
+if (!evaluationDatasetsResponse.ok) {
+  throw new Error(`Evaluation datasets lookup failed: ${evaluationDatasetsResponse.status}`);
+}
+const aiConfigurationsResponse = await fetch(`${apiUrl}/api/v1/ai-configurations`, { headers });
+if (!aiConfigurationsResponse.ok) {
+  throw new Error(`AI configurations lookup failed: ${aiConfigurationsResponse.status}`);
+}
 const settingsResponse = await fetch(`${apiUrl}/api/v1/workspace-ai-settings`, {
   headers,
 });
@@ -124,6 +132,14 @@ if (!knowledgePage.ok || !knowledgeHtml.includes("Sources de connaissance")) {
   throw new Error(`Knowledge page smoke test failed: ${knowledgePage.status}`);
 }
 
+const aiStudioPage = await fetch(`${webUrl}/w/${workspace.slug}/ai-studio`, {
+  headers: { cookie },
+});
+const aiStudioHtml = await aiStudioPage.text();
+if (!aiStudioPage.ok || !aiStudioHtml.includes("AI Studio")) {
+  throw new Error(`AI Studio page smoke test failed: ${aiStudioPage.status}`);
+}
+
 console.info(
   JSON.stringify({
     event: "development_smoke_passed",
@@ -135,6 +151,7 @@ console.info(
     workspaceMembers: "readable",
     workspaceDataSettings: "readable",
     knowledgeSources: "readable",
+    aiStudio: "readable",
   }),
 );
 

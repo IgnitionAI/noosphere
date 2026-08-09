@@ -112,6 +112,45 @@
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "name": "claimId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
       "post": { "operationId": "validateKnowledgeClaim", "responses": { "200": { "description": "Claim validated against fresh sources" }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" }, "409": { "$ref": "#/components/responses/Conflict" }, "422": { "$ref": "#/components/responses/InvalidRequest" } } }
     },
+    "/api/v1/evaluation-datasets": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
+      "get": { "operationId": "listEvaluationDatasets", "responses": { "200": { "description": "Workspace evaluation datasets" }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" } } },
+      "post": { "operationId": "createEvaluationDataset", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EvaluationDatasetInput" } } } }, "responses": { "201": { "description": "Immutable evaluation dataset created" }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" }, "422": { "$ref": "#/components/responses/InvalidRequest" } } }
+    },
+    "/api/v1/ai-prompt-versions": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
+      "post": { "operationId": "createAiPromptVersion", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AiPromptVersionInput" } } } }, "responses": { "201": { "description": "Append-only prompt version created" }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" }, "422": { "$ref": "#/components/responses/InvalidRequest" } } }
+    },
+    "/api/v1/ai-configurations": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
+      "get": { "operationId": "listAiConfigurations", "responses": { "200": { "description": "Kimi configurations and exact prompt versions" }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" } } },
+      "post": { "operationId": "createAiConfiguration", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AiConfigurationInput" } } } }, "responses": { "201": { "description": "Candidate or shadow configuration created" }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" }, "422": { "$ref": "#/components/responses/InvalidRequest" } } }
+    },
+    "/api/v1/ai-configurations/{configurationId}/actions/promote": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "name": "configurationId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+      "post": { "operationId": "promoteAiConfiguration", "responses": { "200": { "description": "Human-approved configuration promoted and previous active retired" }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" }, "409": { "$ref": "#/components/responses/Conflict" } } }
+    },
+    "/api/v1/evaluation-runs": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
+      "get": { "operationId": "listEvaluationRuns", "responses": { "200": { "description": "Evaluation runs with quality, cost and latency" }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" } } },
+      "post": { "operationId": "requestEvaluationRun", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EvaluationRunRequest" } } } }, "responses": { "202": { "description": "Idempotent shadow evaluation queued" }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" }, "422": { "$ref": "#/components/responses/InvalidRequest" } } }
+    },
+    "/api/v1/evaluation-runs/compare": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "name": "left", "in": "query", "required": true, "schema": { "type": "string", "format": "uuid" } }, { "name": "right", "in": "query", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+      "get": { "operationId": "compareEvaluationRuns", "responses": { "200": { "description": "Same-dataset comparison" }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" }, "422": { "$ref": "#/components/responses/InvalidRequest" } } }
+    },
+    "/api/v1/evaluation-runs/{runId}": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "name": "runId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+      "get": { "operationId": "getEvaluationRun", "responses": { "200": { "description": "Run progress and case results" }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" }, "404": { "$ref": "#/components/responses/RunNotFound" } } }
+    },
+    "/api/v1/evaluation-runs/{runId}/actions/retry": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "name": "runId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+      "post": { "operationId": "retryFailedEvaluationCases", "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["requestKey"], "properties": { "requestKey": { "type": "string", "minLength": 1, "maxLength": 300 } } } } } }, "responses": { "202": { "description": "Failed cases requeued" }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" }, "409": { "$ref": "#/components/responses/Conflict" } } }
+    },
+    "/api/v1/ai-runs/{aiRunId}/feedback": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "name": "aiRunId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+      "post": { "operationId": "recordAiFeedback", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AiFeedbackInput" } } } }, "responses": { "201": { "description": "Workspace-scoped operator feedback recorded without message copy" }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" }, "404": { "$ref": "#/components/responses/RunNotFound" } } }
+    },
     "/api/v1/workspace-ai-settings": {
       "parameters": [
         {
@@ -1599,6 +1638,13 @@
       "WorkspaceAuditLogList": { "type": "object", "required": ["data"], "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/WorkspaceAuditLog" } } } },
       "KnowledgeSourceInput": { "type": "object", "additionalProperties": false, "required": ["type", "title", "content", "researchDocumentId", "authorName", "publishedAt", "freshnessUntil"], "properties": { "type": { "type": "string", "enum": ["product_document", "proof", "customer_case", "objection_response"] }, "title": { "type": "string", "minLength": 1, "maxLength": 500 }, "content": { "type": ["string", "null"], "maxLength": 200000 }, "researchDocumentId": { "type": ["string", "null"], "format": "uuid" }, "authorName": { "type": "string", "minLength": 1, "maxLength": 300 }, "publishedAt": { "type": "string", "format": "date-time" }, "freshnessUntil": { "type": ["string", "null"], "format": "date-time" } } },
       "KnowledgeClaimInput": { "type": "object", "additionalProperties": false, "required": ["claim", "offerClaimId", "sourceIds"], "properties": { "claim": { "type": "string", "minLength": 1, "maxLength": 5000 }, "offerClaimId": { "type": ["string", "null"], "format": "uuid" }, "sourceIds": { "type": "array", "maxItems": 50, "uniqueItems": true, "items": { "type": "string", "format": "uuid" } } } },
+      "AiCapability": { "type": "string", "enum": ["icp_research", "message_generation", "setter"] },
+      "EvaluationCaseInput": { "type": "object", "additionalProperties": false, "required": ["name", "input", "expected"], "properties": { "name": { "type": "string", "minLength": 1, "maxLength": 300 }, "input": {}, "expected": { "type": "object" }, "criteria": { "type": "object" }, "authorizedKnowledgeClaimIds": { "type": "array", "maxItems": 50, "uniqueItems": true, "items": { "type": "string", "format": "uuid" } } } },
+      "EvaluationDatasetInput": { "type": "object", "additionalProperties": false, "required": ["capability", "name", "rubricVersion", "cases"], "properties": { "capability": { "$ref": "#/components/schemas/AiCapability" }, "name": { "type": "string", "minLength": 1, "maxLength": 300 }, "description": { "type": ["string", "null"], "maxLength": 5000 }, "rubricVersion": { "type": "string", "minLength": 1, "maxLength": 120 }, "cases": { "type": "array", "minItems": 1, "maxItems": 500, "items": { "$ref": "#/components/schemas/EvaluationCaseInput" } } } },
+      "AiPromptVersionInput": { "type": "object", "additionalProperties": false, "required": ["capability", "content"], "properties": { "capability": { "$ref": "#/components/schemas/AiCapability" }, "content": { "type": "string", "minLength": 1, "maxLength": 100000 } } },
+      "AiConfigurationInput": { "type": "object", "additionalProperties": false, "required": ["capability", "provider", "model", "promptVersionId"], "properties": { "capability": { "$ref": "#/components/schemas/AiCapability" }, "provider": { "type": "string", "const": "kimi-code" }, "model": { "type": "string", "minLength": 1, "maxLength": 200 }, "promptVersionId": { "type": "string", "format": "uuid" }, "status": { "type": "string", "enum": ["candidate", "shadow"] } } },
+      "EvaluationRunRequest": { "type": "object", "additionalProperties": false, "required": ["datasetId", "configurationId", "requestKey"], "properties": { "datasetId": { "type": "string", "format": "uuid" }, "configurationId": { "type": "string", "format": "uuid" }, "requestKey": { "type": "string", "minLength": 1, "maxLength": 300 } } },
+      "AiFeedbackInput": { "type": "object", "additionalProperties": false, "required": ["rating"], "properties": { "rating": { "type": "integer", "enum": [-1, 1] }, "reason": { "type": ["string", "null"], "maxLength": 1000 } } },
       "WorkspaceAiModelList": {
         "type": "array",
         "minItems": 1,

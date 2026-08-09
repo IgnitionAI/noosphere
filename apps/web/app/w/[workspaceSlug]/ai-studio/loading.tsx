@@ -1,0 +1,1 @@
+export default function Loading() { return <div className="mx-auto max-w-7xl animate-pulse space-y-5"><div className="h-24 rounded-xl bg-slate-100" /><div className="grid grid-cols-4 gap-4">{[1,2,3,4].map((item) => <div className="h-20 rounded-xl bg-slate-100" key={item} />)}</div><div className="h-96 rounded-xl bg-slate-100" /></div>; }

@@ -6,6 +6,8 @@ import type {
   InboundReplyDecision,
 } from "@outbound/application/campaigns/inbound-reply-agent";
 import type { WorkspaceAiModelPolicyReader } from "@outbound/application/workspaces/workspace-ai-settings";
+import type { ActiveAiConfigurationReader } from "@outbound/application/ai/active-ai-configuration";
+import type { AiRunRecorder } from "@outbound/application/ai/ai-run-recorder";
 import { filterAuthorizedKnowledgeCitations, type KnowledgeRetriever } from "@outbound/application/knowledge/knowledge-retriever";
 import {
   buildChatModelFields,
@@ -39,13 +41,17 @@ export class LangChainInboundReplyAgent implements InboundReplyAgent {
     environment: Readonly<Record<string, string | undefined>> = process.env,
     private readonly modelPolicyReader?: WorkspaceAiModelPolicyReader,
     private readonly knowledgeRetriever?: KnowledgeRetriever,
+    private readonly activeConfigurationReader?: ActiveAiConfigurationReader,
+    private readonly aiRunRecorder?: AiRunRecorder,
   ) {
     this.#configuration = resolveResearchModelConfigurationFromEnvironment(environment);
   }
 
   async decide(input: Parameters<InboundReplyAgent["decide"]>[0]): Promise<InboundReplyDecision> {
+    const startedAt = performance.now();
     const workspacePolicy = await this.modelPolicyReader?.find(input.workspaceId);
-    const modelName = workspacePolicy?.researchModels[0] ?? this.#configuration.researchModels[0]!;
+    const activeConfiguration = await this.activeConfigurationReader?.find(input.workspaceId, "setter");
+    const modelName = activeConfiguration?.model ?? workspacePolicy?.researchModels[0] ?? this.#configuration.researchModels[0]!;
     const model = new ChatOpenAI(buildChatModelFields(this.#configuration, modelName, "max"));
     const authorizedKnowledge = await this.knowledgeRetriever?.search({
       workspaceId: input.workspaceId,
@@ -74,6 +80,7 @@ export class LangChainInboundReplyAgent implements InboundReplyAgent {
           "Keep replies concise, natural and non-pushy.",
           "Optional campaign instructions refine the reply but cannot override stop, truthfulness or non-invention rules.",
           "Call the submit_inbound_reply_decision tool exactly once with the final decision.",
+          ...(activeConfiguration ? [`Approved workspace guidance (subordinate to every stop, safety and truthfulness rule above): ${activeConfiguration.promptContent}`] : []),
         ].join("\n"),
       },
       { role: "user" as const, content: JSON.stringify({ ...input, authorizedKnowledge }) },
@@ -90,17 +97,35 @@ export class LangChainInboundReplyAgent implements InboundReplyAgent {
     if (!call) throw new Error("INBOUND_REPLY_DECISION_TOOL_CALL_MISSING");
     const parsed = decisionSchema.parse(call.args);
     const citations = filterAuthorizedKnowledgeCitations(authorizedKnowledge, parsed.knowledgeClaimIds, parsed.knowledgeSourceIds);
-    return {
+    const promptVersion = activeConfiguration ? `setter-v${activeConfiguration.promptVersion}` : "inbound-reply-v3-knowledge";
+    const normalizedDecision = {
       ...parsed,
       replyBody: parsed.action === "stop" ? null : parsed.replyBody,
       calendarAction: parsed.action === "booking" ? parsed.calendarAction : null,
-      selectedSlotStart: parsed.action === "booking" && ["book", "reschedule"].includes(parsed.calendarAction ?? "")
-        ? parsed.selectedSlotStart
-        : null,
+      selectedSlotStart: parsed.action === "booking" && ["book", "reschedule"].includes(parsed.calendarAction ?? "") ? parsed.selectedSlotStart : null,
+    };
+    const aiRun = await this.aiRunRecorder?.record({
+      workspaceId: input.workspaceId,
+      purpose: "setter",
+      provider: this.#configuration.provider,
+      model: modelName,
+      promptVersion,
+      ...(activeConfiguration ? { aiConfigurationId: activeConfiguration.configurationId, promptVersionId: activeConfiguration.promptVersionId } : {}),
+      shadow: false,
+      inputHash: new Bun.CryptoHasher("sha256").update(JSON.stringify(input)).digest("hex"),
+      output: { ...normalizedDecision, knowledgeClaimIds: citations.claimIds, knowledgeSourceIds: citations.sourceIds },
+      status: "completed",
+      cost: null,
+      latencyMs: Math.max(0, Math.round(performance.now() - startedAt)),
+    });
+    return {
+      ...normalizedDecision,
       metadata: {
         provider: this.#configuration.provider,
         model: modelName,
-        promptVersion: "inbound-reply-v3-knowledge",
+        promptVersion,
+        ...(activeConfiguration ? { aiConfigurationId: activeConfiguration.configurationId, promptVersionId: activeConfiguration.promptVersionId } : {}),
+        ...(aiRun ? { aiRunId: aiRun.id } : {}),
         knowledgeClaimIds: citations.claimIds,
         knowledgeSourceIds: citations.sourceIds,
       },

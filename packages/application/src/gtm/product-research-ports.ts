@@ -248,6 +248,8 @@ export interface ResearchAIRun {
   readonly provider: string;
   readonly model: string;
   readonly promptVersion: string;
+  readonly promptVersionId?: string;
+  readonly aiConfigurationId?: string;
   readonly inputHash: string;
   readonly parameters: Readonly<Record<string, unknown>>;
   readonly output: unknown;

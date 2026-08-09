@@ -19,6 +19,9 @@ export interface PersonalizedCampaignContent {
     readonly provider: string;
     readonly model: string;
     readonly promptVersion: string;
+    readonly aiConfigurationId?: string;
+    readonly promptVersionId?: string;
+    readonly aiRunId?: string;
     readonly knowledgeClaimIds?: readonly string[];
     readonly knowledgeSourceIds?: readonly string[];
   };

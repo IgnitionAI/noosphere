@@ -784,6 +784,14 @@ Conserver les `AIRun`, jeux d’évaluation, feedback, coûts et recommandations
 campagne. Aucune optimisation n’est appliquée automatiquement à une campagne
 active.
 
+**Livré** : jeux synthétiques persistés, configurations Kimi et prompts
+append-only, harness durable et idempotent, scoring déterministe contre les
+claims F-050, comparaison coût/latence/qualité, exécution shadow sans émission,
+promotion humaine auditée, feedback et console `/ai-studio`.
+Les prochaines générations de message et décisions Setter consomment la
+configuration active et tracent sa version exacte ; aucun contenu historique
+n’est recalculé.
+
 **Spécification** :
 [`AI-140-CONTINUOUS-EVALUATION.md`](features/AI-140-CONTINUOUS-EVALUATION.md).
 

@@ -71,6 +71,10 @@ import { PostgresWorkspaceDataLifecycle } from "@outbound/infrastructure/workspa
 import { PostgresKnowledgeService } from "@outbound/infrastructure/knowledge/postgres-knowledge-service";
 import { KnowledgeSourceExpirationProcessor } from "@outbound/infrastructure/knowledge/knowledge-source-expiration";
 import { PostgresKnowledgeRetriever } from "@outbound/infrastructure/knowledge/postgres-knowledge-retriever";
+import { EvaluationRunProcessor } from "@outbound/infrastructure/ai/evaluation-run-processor";
+import { LangChainEvaluationExecutor } from "@outbound/infrastructure/ai/langchain-evaluation-executor";
+import { PostgresActiveAiConfigurationReader } from "@outbound/infrastructure/ai/postgres-active-ai-configuration-reader";
+import { PostgresAiRunRecorder } from "@outbound/infrastructure/ai/postgres-ai-run-recorder";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
@@ -99,6 +103,15 @@ const knowledgeExpirationProcessor = new KnowledgeSourceExpirationProcessor(
   clock,
 );
 const knowledgeRetriever = new PostgresKnowledgeRetriever(database.db, clock);
+const activeAiConfigurations = new PostgresActiveAiConfigurationReader(database.db);
+const aiRunRecorder = new PostgresAiRunRecorder(database.db, clock, ids);
+const evaluationRunProcessor = new EvaluationRunProcessor(
+  database.db,
+  queue,
+  new LangChainEvaluationExecutor(process.env),
+  clock,
+  ids,
+);
 const documentOptions = documentServiceOptionsFromEnvironment();
 const documentService = new ResearchDocumentService(
   database.db,
@@ -192,7 +205,7 @@ const channelAssessmentProcessor = new ChannelAssessmentJobProcessor(
   clock,
 );
 const campaignAutomationProcessor = new CampaignAutomationJobProcessor(database.db, queue, clock);
-const campaignContentGenerator = new LangChainCampaignContentGenerator(process.env, workspaceAiSettings, knowledgeRetriever);
+const campaignContentGenerator = new LangChainCampaignContentGenerator(process.env, workspaceAiSettings, knowledgeRetriever, activeAiConfigurations, aiRunRecorder);
 const calendarIntegration = new PostgresCalendarIntegration(
   database.db,
   process.env.CALENDAR_WEBHOOK_SIGNING_KEY ?? requiredEnvironment("BETTER_AUTH_SECRET"),
@@ -218,7 +231,7 @@ const outreachDispatchProcessor = new OutreachDispatchJobProcessor(
   createReachabilityResolver,
   workspaceDataLifecycle,
 );
-const inboundReplyAgent = new LangChainInboundReplyAgent(process.env, workspaceAiSettings, knowledgeRetriever);
+const inboundReplyAgent = new LangChainInboundReplyAgent(process.env, workspaceAiSettings, knowledgeRetriever, activeAiConfigurations, aiRunRecorder);
 const inboundReplyProcessor = new InboundReplyJobProcessor(
   database.db,
   queue,
@@ -282,6 +295,7 @@ const orchestrator = new ResearchOrchestrator(
     workspaceAiSettings,
     sourcingValidator,
     toolRequestRegistry,
+    activeAiConfigurations,
   ),
   ids,
   clock,
@@ -292,7 +306,7 @@ const worker = new ResearchWorker(queue, orchestrator, clock, {
   leaseMs: positiveIntegerEnvironment("JOB_LEASE_MS", 60_000),
   batchSize: positiveIntegerEnvironment("JOB_BATCH_SIZE", 4),
   pollIntervalMs: positiveIntegerEnvironment("JOB_POLL_INTERVAL_MS", 1_000),
-}, documentService, discoveryProcessor, channelAssessmentProcessor, campaignAutomationProcessor, campaignCompositionProcessor, outreachDispatchProcessor, inboundReplyProcessor, automatedReplySendProcessor, conversationCommandProcessor, maintenance, outboxDispatcher, importService, outreachScheduler, enrichmentProcessor, signalProcessor, workspaceExportProcessor, retentionPurgeProcessor, knowledgeExpirationProcessor);
+}, documentService, discoveryProcessor, channelAssessmentProcessor, campaignAutomationProcessor, campaignCompositionProcessor, outreachDispatchProcessor, inboundReplyProcessor, automatedReplySendProcessor, conversationCommandProcessor, maintenance, outboxDispatcher, importService, outreachScheduler, enrichmentProcessor, signalProcessor, workspaceExportProcessor, retentionPurgeProcessor, knowledgeExpirationProcessor, evaluationRunProcessor);
 
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
   process.once(signal, () => {

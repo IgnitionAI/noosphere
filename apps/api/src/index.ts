@@ -49,6 +49,8 @@ import { S3WorkspaceArchiveStorage } from "@outbound/infrastructure/workspaces/w
 import { createWorkspaceDataHttpHandler } from "@outbound/interface/http/workspace-data-handler";
 import { PostgresKnowledgeService } from "@outbound/infrastructure/knowledge/postgres-knowledge-service";
 import { createKnowledgeHttpHandler, isKnowledgeRoute } from "@outbound/interface/http/knowledge-handler";
+import { PostgresEvaluationService } from "@outbound/infrastructure/ai/postgres-evaluation-service";
+import { createEvaluationHttpHandler, isEvaluationRoute } from "@outbound/interface/http/evaluation-handler";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
@@ -89,6 +91,7 @@ const workspace = createWorkspaceHttpHandler({
   management: new PostgresWorkspaceRepository(database.db),
 });
 const workspaceDataLifecycle = new PostgresWorkspaceDataLifecycle(database.db, clock, ids);
+const workspaceAiSettingsRepository = new PostgresWorkspaceAiSettingsRepository(database.db);
 const workspaceArchiveStorage = new S3WorkspaceArchiveStorage(workspaceArchiveOptionsFromEnvironment());
 const workspaceData = createWorkspaceDataHttpHandler({
   contextResolver: auth.contextResolver,
@@ -100,7 +103,10 @@ const knowledge = createKnowledgeHttpHandler({
   contextResolver: auth.contextResolver,
   service: new PostgresKnowledgeService(database.db, clock, ids),
 });
-const workspaceAiSettingsRepository = new PostgresWorkspaceAiSettingsRepository(database.db);
+const evaluation = createEvaluationHttpHandler({
+  contextResolver: auth.contextResolver,
+  service: new PostgresEvaluationService(database.db, clock, ids, workspaceAiSettingsRepository),
+});
 const workspaceAiSettings = createWorkspaceAiSettingsHttpHandler({
   application: new WorkspaceAiSettingsApplication(
     workspaceAiSettingsRepository,
@@ -253,6 +259,7 @@ const server = Bun.serve({
     if (pathname.startsWith("/api/v1/analytics/")) return analytics(request);
     if (pathname.startsWith("/api/v1/signals") || pathname.startsWith("/api/v1/settings/signals") || pathname.includes("/signals")) return signals(request);
     if (isKnowledgeRoute(pathname)) return knowledge(request);
+    if (isEvaluationRoute(pathname)) return evaluation(request);
     if (isWorkspaceDataRoute(pathname, request.method)) return workspaceData(request);
     if (pathname.startsWith("/api/v1/opportunities") || pathname === "/api/v1/pipeline/forecast" || pathname.startsWith("/api/v1/workspaces/") && pathname.endsWith("/lost-reasons")) return opportunityHandler(request);
     if (pathname.includes("/actions/enrich") || pathname.startsWith("/api/v1/enrichment-jobs/") || pathname.endsWith("/enrichment")) return enrichment(request);

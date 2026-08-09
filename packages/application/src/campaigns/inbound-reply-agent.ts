@@ -21,6 +21,9 @@ export interface InboundReplyDecision {
     readonly provider: string;
     readonly model: string;
     readonly promptVersion: string;
+    readonly aiConfigurationId?: string;
+    readonly promptVersionId?: string;
+    readonly aiRunId?: string;
     readonly calendarBookingId?: string;
     readonly calendarAction?: "propose_slots" | "book" | "reschedule" | "cancel";
     readonly meetingProposalId?: string;

@@ -18,17 +18,17 @@ appliquée automatiquement à une campagne active.
 
 ## État d’implémentation
 
-Non commencé en tant que feature. Fondations vérifiées dans le code :
-`ai_runs` (purpose, provider, model, **`prompt_version`**, `input_hash`,
-parameters, output, status, **cost**, **latency_ms**) et `ai_tool_runs` —
-chaque appel IA est déjà tracé, coûté et versionné par prompt ; scripts
-d’évaluation ponctuels (`evaluate-ignitionrag-icp-run.ts`, inspection SQL
-directe d’un run ICP) ; `AI_BOUNDARY.md` documente la frontière IA.
-Restent à livrer : jeux d’évaluation persistés, harness d’exécution en job,
-métriques de qualité (exactitude de qualification, hallucinations, respect
-des claims F-050, qualité message/CTA), comparaison de modèles, mode shadow
-avant changement de modèle, gouvernance des versions de prompts et boucle de
-feedback.
+Livré. Les jeux et cas synthétiques, prompts append-only, configurations Kimi,
+runs et résultats sont persistés par workspace. Le harness durable exécute les
+cas en shadow, écrit un `ai_run` par cas avec la version exacte du prompt,
+calcule les métriques déterministes hors du modèle, compare coût/latence/qualité
+et reprend uniquement les cas en échec. La promotion owner/admin est humaine et
+auditée. `/w/[workspaceSlug]/ai-studio` expose les jeux, configurations, runs et
+comparaisons ; les operators peuvent lire et déposer un feedback sans recopier
+le contenu des conversations. Une configuration active `message_generation` ou
+`setter` est lue par les prochains appels de production ; ceux-ci écrivent un
+`ai_run` non-shadow avec `ai_configuration_id` et `prompt_version_id`. Les
+snapshots de campagne et les messages déjà produits ne sont jamais réécrits.
 
 ## Périmètre
 
@@ -148,13 +148,15 @@ jeux, runs, comparaisons, versions de prompts, feedback).
 
 | Méthode | Route | Usage | État |
 |---|---|---|---|
-| GET/POST | `/api/v1/evaluation-datasets` | jeux de référence par capacité | à spécifier |
-| POST | `/api/v1/evaluation-runs` | lance un run (config cible, `requestKey`) | à spécifier |
-| GET | `/api/v1/evaluation-runs/:id` | résultats et progression | à spécifier |
-| GET | `/api/v1/evaluation-runs/compare` | comparaison de deux runs | à spécifier |
-| GET | `/api/v1/ai-configurations` | versions de prompts et modèle actif par capacité | à spécifier |
-| POST | `/api/v1/ai-configurations/:id/actions/promote` | adoption (owner/admin, auditée) | à spécifier |
-| POST | `/api/v1/ai-runs/:id/feedback` | feedback opérateur sur une sortie | à spécifier |
+| GET/POST | `/api/v1/evaluation-datasets` | jeux de référence par capacité | livré |
+| POST | `/api/v1/ai-prompt-versions` | nouvelle version immuable | livré |
+| GET/POST | `/api/v1/ai-configurations` | versions de prompts et modèle actif par capacité | livré |
+| POST | `/api/v1/evaluation-runs` | lance un run (config cible, `requestKey`) | livré |
+| GET | `/api/v1/evaluation-runs/:id` | résultats et progression | livré |
+| POST | `/api/v1/evaluation-runs/:id/actions/retry` | reprise des cas en échec | livré |
+| GET | `/api/v1/evaluation-runs/compare` | comparaison de deux runs | livré |
+| POST | `/api/v1/ai-configurations/:id/actions/promote` | adoption (owner/admin, auditée) | livré |
+| POST | `/api/v1/ai-runs/:id/feedback` | feedback opérateur sur une sortie | livré |
 
 **Événements sortants** : `EvaluationRunCompleted`,
 `AiConfigurationPromoted` — un seul envoi par transition.

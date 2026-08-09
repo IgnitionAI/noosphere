@@ -103,6 +103,29 @@ export const knowledgeClaimStatusEnum = pgEnum("knowledge_claim_status", [
   "draft",
   "validated",
 ]);
+export const aiCapabilityEnum = pgEnum("ai_capability", [
+  "icp_research",
+  "message_generation",
+  "setter",
+]);
+export const aiConfigurationStatusEnum = pgEnum("ai_configuration_status", [
+  "candidate",
+  "shadow",
+  "active",
+  "retired",
+]);
+export const evaluationRunStatusEnum = pgEnum("evaluation_run_status", [
+  "queued",
+  "running",
+  "completed",
+  "partial",
+  "failed",
+]);
+export const evaluationCaseResultStatusEnum = pgEnum("evaluation_case_result_status", [
+  "pending",
+  "completed",
+  "failed",
+]);
 export const workspaceRoleEnum = pgEnum("workspace_role", [
   "viewer",
   "operator",
@@ -599,6 +622,103 @@ export const researchToolRequests = pgTable(
   ],
 );
 
+export const evaluationDatasets = pgTable(
+  "evaluation_datasets",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    capability: aiCapabilityEnum("capability").notNull(),
+    name: varchar("name", { length: 300 }).notNull(),
+    description: text("description"),
+    rubricVersion: varchar("rubric_version", { length: 120 }).notNull(),
+    version: integer("version").notNull().default(1),
+    createdBy: uuid("created_by").references(() => authUsers.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique("evaluation_datasets_workspace_id_uq").on(table.workspaceId, table.id),
+    uniqueIndex("evaluation_datasets_workspace_name_version_uq").on(table.workspaceId, table.name, table.version),
+    index("evaluation_datasets_workspace_capability_idx").on(table.workspaceId, table.capability, table.createdAt),
+  ],
+);
+
+export const evaluationCases = pgTable(
+  "evaluation_cases",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    datasetId: uuid("dataset_id").notNull(),
+    name: varchar("name", { length: 300 }).notNull(),
+    input: jsonb("input").notNull(),
+    expected: jsonb("expected").notNull().default({}),
+    criteria: jsonb("criteria").notNull().default({}),
+    authorizedKnowledgeClaimIds: jsonb("authorized_knowledge_claim_ids").notNull().default([]),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.workspaceId, table.datasetId],
+      foreignColumns: [evaluationDatasets.workspaceId, evaluationDatasets.id],
+      name: "evaluation_cases_workspace_dataset_fk",
+    }).onDelete("cascade"),
+    unique("evaluation_cases_workspace_id_uq").on(table.workspaceId, table.id),
+    uniqueIndex("evaluation_cases_dataset_name_uq").on(table.workspaceId, table.datasetId, table.name),
+  ],
+);
+
+export const aiPromptVersions = pgTable(
+  "ai_prompt_versions",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    capability: aiCapabilityEnum("capability").notNull(),
+    version: integer("version").notNull(),
+    content: text("content").notNull(),
+    previousVersionId: uuid("previous_version_id"),
+    createdBy: uuid("created_by").references(() => authUsers.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique("ai_prompt_versions_workspace_id_uq").on(table.workspaceId, table.id),
+    uniqueIndex("ai_prompt_versions_workspace_capability_version_uq").on(table.workspaceId, table.capability, table.version),
+    foreignKey({
+      columns: [table.workspaceId, table.previousVersionId],
+      foreignColumns: [table.workspaceId, table.id],
+      name: "ai_prompt_versions_previous_fk",
+    }).onDelete("restrict"),
+  ],
+);
+
+export const aiConfigurations = pgTable(
+  "ai_configurations",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    capability: aiCapabilityEnum("capability").notNull(),
+    provider: varchar("provider", { length: 120 }).notNull(),
+    model: varchar("model", { length: 200 }).notNull(),
+    promptVersionId: uuid("prompt_version_id").notNull(),
+    status: aiConfigurationStatusEnum("status").notNull().default("candidate"),
+    createdBy: uuid("created_by").references(() => authUsers.id, { onDelete: "set null" }),
+    promotedBy: uuid("promoted_by").references(() => authUsers.id, { onDelete: "set null" }),
+    promotedAt: timestamp("promoted_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique("ai_configurations_workspace_id_uq").on(table.workspaceId, table.id),
+    foreignKey({
+      columns: [table.workspaceId, table.promptVersionId],
+      foreignColumns: [aiPromptVersions.workspaceId, aiPromptVersions.id],
+      name: "ai_configurations_workspace_prompt_fk",
+    }).onDelete("restrict"),
+    uniqueIndex("ai_configurations_active_capability_uq")
+      .on(table.workspaceId, table.capability)
+      .where(sql`${table.status} = 'active'`),
+    index("ai_configurations_workspace_capability_idx").on(table.workspaceId, table.capability, table.status),
+  ],
+);
+
 export const aiRuns = pgTable(
   "ai_runs",
   {
@@ -612,6 +732,9 @@ export const aiRuns = pgTable(
     provider: varchar("provider", { length: 120 }).notNull(),
     model: varchar("model", { length: 200 }).notNull(),
     promptVersion: varchar("prompt_version", { length: 120 }).notNull(),
+    promptVersionId: uuid("prompt_version_id"),
+    aiConfigurationId: uuid("ai_configuration_id"),
+    shadow: boolean("shadow").notNull().default(false),
     inputHash: varchar("input_hash", { length: 128 }).notNull(),
     parameters: jsonb("parameters").notNull().default(sql`'{}'::jsonb`),
     output: jsonb("output"),
@@ -631,7 +754,91 @@ export const aiRuns = pgTable(
       foreignColumns: [researchStageRuns.workspaceId, researchStageRuns.id],
       name: "ai_runs_workspace_stage_run_fk",
     }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.workspaceId, table.promptVersionId],
+      foreignColumns: [aiPromptVersions.workspaceId, aiPromptVersions.id],
+      name: "ai_runs_workspace_prompt_version_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.workspaceId, table.aiConfigurationId],
+      foreignColumns: [aiConfigurations.workspaceId, aiConfigurations.id],
+      name: "ai_runs_workspace_configuration_fk",
+    }).onDelete("restrict"),
+    unique("ai_runs_workspace_id_uq").on(table.workspaceId, table.id),
     index("ai_runs_workspace_research_idx").on(table.workspaceId, table.productResearchRunId),
+  ],
+);
+
+export const evaluationRuns = pgTable(
+  "evaluation_runs",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    datasetId: uuid("dataset_id").notNull(),
+    configurationId: uuid("configuration_id").notNull(),
+    requestKey: varchar("request_key", { length: 300 }).notNull(),
+    status: evaluationRunStatusEnum("status").notNull().default("queued"),
+    totalCases: integer("total_cases").notNull(),
+    completedCases: integer("completed_cases").notNull().default(0),
+    failedCases: integer("failed_cases").notNull().default(0),
+    aggregateScores: jsonb("aggregate_scores").notNull().default({}),
+    totalCost: numeric("total_cost", { precision: 19, scale: 6 }),
+    totalLatencyMs: integer("total_latency_ms"),
+    createdBy: uuid("created_by").references(() => authUsers.id, { onDelete: "set null" }),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({ columns: [table.workspaceId, table.datasetId], foreignColumns: [evaluationDatasets.workspaceId, evaluationDatasets.id], name: "evaluation_runs_workspace_dataset_fk" }).onDelete("restrict"),
+    foreignKey({ columns: [table.workspaceId, table.configurationId], foreignColumns: [aiConfigurations.workspaceId, aiConfigurations.id], name: "evaluation_runs_workspace_configuration_fk" }).onDelete("restrict"),
+    unique("evaluation_runs_workspace_id_uq").on(table.workspaceId, table.id),
+    uniqueIndex("evaluation_runs_workspace_request_uq").on(table.workspaceId, table.requestKey),
+    index("evaluation_runs_workspace_created_idx").on(table.workspaceId, table.createdAt),
+  ],
+);
+
+export const evaluationCaseResults = pgTable(
+  "evaluation_case_results",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    evaluationRunId: uuid("evaluation_run_id").notNull(),
+    evaluationCaseId: uuid("evaluation_case_id").notNull(),
+    aiRunId: uuid("ai_run_id"),
+    status: evaluationCaseResultStatusEnum("status").notNull().default("pending"),
+    output: jsonb("output"),
+    scores: jsonb("scores").notNull().default({}),
+    cost: numeric("cost", { precision: 19, scale: 6 }),
+    latencyMs: integer("latency_ms"),
+    errorCode: varchar("error_code", { length: 120 }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({ columns: [table.workspaceId, table.evaluationRunId], foreignColumns: [evaluationRuns.workspaceId, evaluationRuns.id], name: "evaluation_case_results_workspace_run_fk" }).onDelete("cascade"),
+    foreignKey({ columns: [table.workspaceId, table.evaluationCaseId], foreignColumns: [evaluationCases.workspaceId, evaluationCases.id], name: "evaluation_case_results_workspace_case_fk" }).onDelete("restrict"),
+    foreignKey({ columns: [table.workspaceId, table.aiRunId], foreignColumns: [aiRuns.workspaceId, aiRuns.id], name: "evaluation_case_results_workspace_ai_run_fk" }).onDelete("restrict"),
+    uniqueIndex("evaluation_case_results_run_case_uq").on(table.workspaceId, table.evaluationRunId, table.evaluationCaseId),
+  ],
+);
+
+export const aiFeedbacks = pgTable(
+  "ai_feedbacks",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    aiRunId: uuid("ai_run_id").notNull(),
+    rating: integer("rating").notNull(),
+    reason: varchar("reason", { length: 1000 }),
+    createdBy: uuid("created_by").references(() => authUsers.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({ columns: [table.workspaceId, table.aiRunId], foreignColumns: [aiRuns.workspaceId, aiRuns.id], name: "ai_feedbacks_workspace_ai_run_fk" }).onDelete("cascade"),
+    uniqueIndex("ai_feedbacks_workspace_run_author_uq").on(table.workspaceId, table.aiRunId, table.createdBy),
+    check("ai_feedbacks_rating_ck", sql`${table.rating} in (-1, 1)`),
   ],
 );
 

@@ -50,6 +50,7 @@ export function AppShell({
   const icpsHref = `/w/${workspace.slug}/icps`;
   const offersHref = `/w/${workspace.slug}/offers`;
   const knowledgeHref = `/w/${workspace.slug}/knowledge`;
+  const aiStudioHref = `/w/${workspace.slug}/ai-studio`;
   const messagingHref = `/w/${workspace.slug}/messaging`;
   const analyticsHref = `/w/${workspace.slug}/analytics`;
   const inboxHref = `/w/${workspace.slug}/inbox`;
@@ -65,6 +66,7 @@ export function AppShell({
   const icpsActive = pathname.startsWith(icpsHref);
   const offersActive = pathname.startsWith(offersHref);
   const knowledgeActive = pathname.startsWith(knowledgeHref);
+  const aiStudioActive = pathname.startsWith(aiStudioHref);
   const messagingActive = pathname.startsWith(messagingHref);
   const analyticsActive = pathname.startsWith(analyticsHref);
   const initials = session.user.name
@@ -189,6 +191,19 @@ export function AppShell({
             <BookOpenCheck size={17} />
             Connaissance
           </Link>
+          {workspace.role === "owner" || workspace.role === "admin" || workspace.role === "operator" ? <Link
+            aria-current={aiStudioActive ? "page" : undefined}
+            className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium ${
+              aiStudioActive
+                ? "bg-white/10 text-white"
+                : "text-slate-300 hover:bg-white/5 hover:text-white"
+            }`}
+            href={aiStudioHref}
+            onClick={() => setOpen(false)}
+          >
+            <ShieldAlert size={17} />
+            AI Studio
+          </Link> : null}
           <Link
             aria-current={messagingActive ? "page" : undefined}
             className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium ${

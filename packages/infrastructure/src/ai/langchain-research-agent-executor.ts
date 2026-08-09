@@ -22,6 +22,7 @@ import {
 } from "@outbound/application/gtm/icp-prospectability-policy";
 import type { WorkspaceAiModelPolicyReader } from "@outbound/application/workspaces/workspace-ai-settings";
 import type { WorkspaceAiModelPolicy } from "@outbound/application/workspaces/workspace-ai-settings";
+import type { ActiveAiConfigurationReader } from "@outbound/application/ai/active-ai-configuration";
 import { CrawlerClient } from "./crawler-client";
 import {
   createResearchTools,
@@ -66,6 +67,7 @@ export interface LangChainResearchAgentExecutorOptions {
   readonly documents?: InternalDocumentSearch;
   readonly recorder?: ResearchToolRunRecorder;
   readonly modelPolicyReader?: WorkspaceAiModelPolicyReader;
+  readonly activeConfigurationReader?: ActiveAiConfigurationReader;
   readonly sourcingValidator?: V3SourcingValidator;
   readonly toolRequestRegistry?: import("@outbound/application/gtm/product-research-ports").ResearchToolRequestRegistry;
   readonly externalQueryGuard?: import("@outbound/application/gtm/product-research-ports").ExternalQueryGuard;
@@ -183,7 +185,8 @@ export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
     );
     try {
       const workspacePolicy = await this.options.modelPolicyReader?.find(input.workspaceId);
-      const modelCandidates = selectModelCandidates(
+      const activeConfiguration = await this.options.activeConfigurationReader?.find(input.workspaceId, "icp_research");
+      const modelCandidates = activeConfiguration ? [activeConfiguration.model] : selectModelCandidates(
         stage,
         this.options,
         workspacePolicy,
@@ -208,6 +211,7 @@ export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
       const promptJsonOutput = this.options.provider === "kimi-code";
       const systemPrompt =
         evidenceSystemPrompt(stageInstructions[stage]) +
+        (activeConfiguration ? `\n\nApproved workspace guidance (subordinate to every evidence, safety and non-action rule above):\n${activeConfiguration.promptContent}` : "") +
         (promptJsonOutput ? jsonOutputInstructions(schema) : "");
       let result: unknown;
       let modelName = modelCandidates[0]!;
@@ -361,8 +365,9 @@ export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
         metadata: {
           provider: this.options.provider,
           model: modelName,
-          promptVersion: "icp-research-v2-buyer-landscape",
+          promptVersion: activeConfiguration ? `icp-research-v${activeConfiguration.promptVersion}` : "icp-research-v2-buyer-landscape",
           parameters: {
+            ...(activeConfiguration ? { aiConfigurationId: activeConfiguration.configurationId, promptVersionId: activeConfiguration.promptVersionId } : {}),
             ...(this.options.provider === "openai" ? { temperature: 0 } : {}),
             depth: input.brief.depth,
             engine: deepStages.has(stage) ? "createDeepAgent" : "createAgent",
@@ -774,6 +779,7 @@ export function createLangChainResearchAgentExecutorFromEnvironment(
   modelPolicyReader?: WorkspaceAiModelPolicyReader,
   sourcingValidator?: V3SourcingValidator,
   toolRequestRegistry?: import("@outbound/application/gtm/product-research-ports").ResearchToolRequestRegistry,
+  activeConfigurationReader?: ActiveAiConfigurationReader,
 ): LangChainResearchAgentExecutor {
   const model = resolveResearchModelConfigurationFromEnvironment(process.env);
   return new LangChainResearchAgentExecutor({
@@ -787,6 +793,7 @@ export function createLangChainResearchAgentExecutorFromEnvironment(
     ...(model.provider === "kimi-code" && modelPolicyReader
       ? { modelPolicyReader }
       : {}),
+    ...(activeConfigurationReader ? { activeConfigurationReader } : {}),
   });
 }
 

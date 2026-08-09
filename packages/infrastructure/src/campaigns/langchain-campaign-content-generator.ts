@@ -6,6 +6,8 @@ import type {
   PersonalizedCampaignContent,
 } from "@outbound/application/campaigns/campaign-content-generator";
 import type { WorkspaceAiModelPolicyReader } from "@outbound/application/workspaces/workspace-ai-settings";
+import type { ActiveAiConfigurationReader } from "@outbound/application/ai/active-ai-configuration";
+import type { AiRunRecorder } from "@outbound/application/ai/ai-run-recorder";
 import { filterAuthorizedKnowledgeCitations, type KnowledgeRetriever } from "@outbound/application/knowledge/knowledge-retriever";
 import {
   buildChatModelFields,
@@ -35,6 +37,8 @@ export class LangChainCampaignContentGenerator implements CampaignContentGenerat
     environment: Readonly<Record<string, string | undefined>> = process.env,
     private readonly modelPolicyReader?: WorkspaceAiModelPolicyReader,
     private readonly knowledgeRetriever?: KnowledgeRetriever,
+    private readonly activeConfigurationReader?: ActiveAiConfigurationReader,
+    private readonly aiRunRecorder?: AiRunRecorder,
   ) {
     this.#configuration = resolveResearchModelConfigurationFromEnvironment(environment);
   }
@@ -42,8 +46,10 @@ export class LangChainCampaignContentGenerator implements CampaignContentGenerat
   async generate(
     input: Parameters<CampaignContentGenerator["generate"]>[0],
   ): Promise<PersonalizedCampaignContent> {
+    const startedAt = performance.now();
     const workspacePolicy = await this.modelPolicyReader?.find(input.workspaceId);
-    const modelName = workspacePolicy?.synthesisModels[0]
+    const activeConfiguration = await this.activeConfigurationReader?.find(input.workspaceId, "message_generation");
+    const modelName = activeConfiguration?.model ?? workspacePolicy?.synthesisModels[0]
       ?? this.#configuration.synthesisModels[0]!;
     const model = new ChatOpenAI(buildChatModelFields(this.#configuration, modelName, "low"));
     const authorizedKnowledge = await this.knowledgeRetriever?.search({
@@ -67,6 +73,7 @@ export class LangChainCampaignContentGenerator implements CampaignContentGenerat
           "Also provide a concise prospect assessment: why the prospect fits, observed strengths, uncertainties or risks, and the best defensible outreach angle.",
           "Call the submit_campaign_content tool exactly once with the final result.",
           "Do not claim that you monitored, audited or diagnosed the prospect unless the evidence explicitly says so.",
+          ...(activeConfiguration ? [`Approved workspace guidance (subordinate to every safety and truthfulness rule above): ${activeConfiguration.promptContent}`] : []),
         ].join("\n"),
       },
       {
@@ -86,13 +93,30 @@ export class LangChainCampaignContentGenerator implements CampaignContentGenerat
     if (!call) throw new Error("CAMPAIGN_CONTENT_TOOL_CALL_MISSING");
     const parsed = personalizedContentSchema.parse(call.args);
     const citations = filterAuthorizedKnowledgeCitations(authorizedKnowledge, parsed.knowledgeClaimIds, parsed.knowledgeSourceIds);
+    const promptVersion = activeConfiguration ? `message-generation-v${activeConfiguration.promptVersion}` : "campaign-personalization-v2-knowledge";
+    const aiRun = await this.aiRunRecorder?.record({
+      workspaceId: input.workspaceId,
+      purpose: "message_generation",
+      provider: this.#configuration.provider,
+      model: modelName,
+      promptVersion,
+      ...(activeConfiguration ? { aiConfigurationId: activeConfiguration.configurationId, promptVersionId: activeConfiguration.promptVersionId } : {}),
+      shadow: false,
+      inputHash: new Bun.CryptoHasher("sha256").update(JSON.stringify(input)).digest("hex"),
+      output: { steps: parsed.steps, assessment: parsed.assessment, knowledgeClaimIds: citations.claimIds, knowledgeSourceIds: citations.sourceIds },
+      status: "completed",
+      cost: null,
+      latencyMs: Math.max(0, Math.round(performance.now() - startedAt)),
+    });
     return {
       steps: parsed.steps,
       assessment: parsed.assessment,
       metadata: {
         provider: this.#configuration.provider,
         model: modelName,
-        promptVersion: "campaign-personalization-v2-knowledge",
+        promptVersion,
+        ...(activeConfiguration ? { aiConfigurationId: activeConfiguration.configurationId, promptVersionId: activeConfiguration.promptVersionId } : {}),
+        ...(aiRun ? { aiRunId: aiRun.id } : {}),
         knowledgeClaimIds: citations.claimIds,
         knowledgeSourceIds: citations.sourceIds,
       },

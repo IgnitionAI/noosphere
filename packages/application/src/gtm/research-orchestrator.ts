@@ -159,6 +159,7 @@ export class ResearchOrchestrator {
           provider: execution.metadata.provider,
           model: execution.metadata.model,
           promptVersion: execution.metadata.promptVersion,
+          ...aiConfigurationReferences(execution.metadata.parameters),
           inputHash: checkpoint.inputHash,
           parameters: { ...execution.metadata.parameters, workItemKey: checkpoint.workItemKey },
           output: execution.output,
@@ -480,6 +481,7 @@ export class ResearchOrchestrator {
           provider: execution.metadata.provider,
           model: execution.metadata.model,
           promptVersion: execution.metadata.promptVersion,
+          ...aiConfigurationReferences(execution.metadata.parameters),
           inputHash: checkpoint.inputHash,
           parameters: execution.metadata.parameters,
           output,
@@ -633,6 +635,12 @@ export class ResearchOrchestrator {
       availableAt: this.clock.now(),
     };
   }
+}
+
+function aiConfigurationReferences(parameters: Readonly<Record<string, unknown>>): { aiConfigurationId?: string; promptVersionId?: string } {
+  const aiConfigurationId = typeof parameters.aiConfigurationId === "string" ? parameters.aiConfigurationId : undefined;
+  const promptVersionId = typeof parameters.promptVersionId === "string" ? parameters.promptVersionId : undefined;
+  return { ...(aiConfigurationId ? { aiConfigurationId } : {}), ...(promptVersionId ? { promptVersionId } : {}) };
 }
 
 export function isBudgetExhaustion(code: string): boolean {

@@ -930,6 +930,8 @@ function toAIRunRow(aiRun: ResearchAIRun): typeof aiRuns.$inferInsert {
     provider: aiRun.provider,
     model: aiRun.model,
     promptVersion: aiRun.promptVersion,
+    promptVersionId: aiRun.promptVersionId ?? null,
+    aiConfigurationId: aiRun.aiConfigurationId ?? null,
     inputHash: aiRun.inputHash,
     parameters: aiRun.parameters,
     output: aiRun.output,

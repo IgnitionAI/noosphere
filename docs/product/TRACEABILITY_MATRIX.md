@@ -28,7 +28,7 @@ Elle ne remplace pas les DTO OpenAPI à écrire avant chaque vertical slice.
 | `inbox.html` | `/w/[workspaceSlug]/inbox` | F-040, F-041, F-042 | conversations, messages, drafts |
 | `pipeline.html` | `/w/[workspaceSlug]/pipeline` | F-043, F-044 | meeting, opportunity, change stage |
 | `knowledge.html` | `/w/[workspaceSlug]/knowledge` | F-050 | sources, documents, claims |
-| `ai-studio.html` | `/w/[workspaceSlug]/ai-studio` | AI-100 à AI-140 | runs, evaluations, prompts, feedback |
+| `ai-studio.html` | `/w/[workspaceSlug]/ai-studio` | AI-100 à AI-140 | livré : jeux, runs shadow, comparaison, prompts immuables, promotion et feedback |
 | `analytics.html` | `/w/[workspaceSlug]/analytics` | F-051 | campaign and pipeline projections |
 | `integrations.html` | `/w/[workspaceSlug]/integrations` | F-035, F-043 | accounts, health, calendar |
 | `settings.html` | `/w/[workspaceSlug]/settings` | F-002, F-053 | members, roles, policies, export |

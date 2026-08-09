@@ -1,0 +1,2 @@
+"use client";
+export default function ErrorPage({ reset }: { reset: () => void }) { return <section className="panel mx-auto max-w-3xl p-8"><h1 className="text-xl font-semibold">Impossible de charger l’AI Studio</h1><p className="mt-2 text-sm text-muted">Les campagnes actives ne sont pas affectées. Vous pouvez réessayer sans perdre les runs persistés.</p><button className="button mt-5" onClick={reset} type="button">Réessayer</button></section>; }
