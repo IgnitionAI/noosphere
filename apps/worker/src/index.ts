@@ -68,6 +68,9 @@ import {
   WorkspaceRetentionPurgeProcessor,
 } from "@outbound/infrastructure/workspaces/workspace-data-export";
 import { PostgresWorkspaceDataLifecycle } from "@outbound/infrastructure/workspaces/postgres-workspace-data-lifecycle";
+import { PostgresKnowledgeService } from "@outbound/infrastructure/knowledge/postgres-knowledge-service";
+import { KnowledgeSourceExpirationProcessor } from "@outbound/infrastructure/knowledge/knowledge-source-expiration";
+import { PostgresKnowledgeRetriever } from "@outbound/infrastructure/knowledge/postgres-knowledge-retriever";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
@@ -90,6 +93,12 @@ const repository = new PostgresProductResearchRepository(database.db);
 const clock = new SystemClock();
 const ids = new CryptoIdGenerator();
 const workspaceDataLifecycle = new PostgresWorkspaceDataLifecycle(database.db, clock, ids);
+const knowledgeExpirationProcessor = new KnowledgeSourceExpirationProcessor(
+  new PostgresKnowledgeService(database.db, clock, ids),
+  queue,
+  clock,
+);
+const knowledgeRetriever = new PostgresKnowledgeRetriever(database.db, clock);
 const documentOptions = documentServiceOptionsFromEnvironment();
 const documentService = new ResearchDocumentService(
   database.db,
@@ -183,7 +192,7 @@ const channelAssessmentProcessor = new ChannelAssessmentJobProcessor(
   clock,
 );
 const campaignAutomationProcessor = new CampaignAutomationJobProcessor(database.db, queue, clock);
-const campaignContentGenerator = new LangChainCampaignContentGenerator(process.env, workspaceAiSettings);
+const campaignContentGenerator = new LangChainCampaignContentGenerator(process.env, workspaceAiSettings, knowledgeRetriever);
 const calendarIntegration = new PostgresCalendarIntegration(
   database.db,
   process.env.CALENDAR_WEBHOOK_SIGNING_KEY ?? requiredEnvironment("BETTER_AUTH_SECRET"),
@@ -209,7 +218,7 @@ const outreachDispatchProcessor = new OutreachDispatchJobProcessor(
   createReachabilityResolver,
   workspaceDataLifecycle,
 );
-const inboundReplyAgent = new LangChainInboundReplyAgent(process.env, workspaceAiSettings);
+const inboundReplyAgent = new LangChainInboundReplyAgent(process.env, workspaceAiSettings, knowledgeRetriever);
 const inboundReplyProcessor = new InboundReplyJobProcessor(
   database.db,
   queue,
@@ -283,7 +292,7 @@ const worker = new ResearchWorker(queue, orchestrator, clock, {
   leaseMs: positiveIntegerEnvironment("JOB_LEASE_MS", 60_000),
   batchSize: positiveIntegerEnvironment("JOB_BATCH_SIZE", 4),
   pollIntervalMs: positiveIntegerEnvironment("JOB_POLL_INTERVAL_MS", 1_000),
-}, documentService, discoveryProcessor, channelAssessmentProcessor, campaignAutomationProcessor, campaignCompositionProcessor, outreachDispatchProcessor, inboundReplyProcessor, automatedReplySendProcessor, conversationCommandProcessor, maintenance, outboxDispatcher, importService, outreachScheduler, enrichmentProcessor, signalProcessor, workspaceExportProcessor, retentionPurgeProcessor);
+}, documentService, discoveryProcessor, channelAssessmentProcessor, campaignAutomationProcessor, campaignCompositionProcessor, outreachDispatchProcessor, inboundReplyProcessor, automatedReplySendProcessor, conversationCommandProcessor, maintenance, outboxDispatcher, importService, outreachScheduler, enrichmentProcessor, signalProcessor, workspaceExportProcessor, retentionPurgeProcessor, knowledgeExpirationProcessor);
 
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
   process.once(signal, () => {

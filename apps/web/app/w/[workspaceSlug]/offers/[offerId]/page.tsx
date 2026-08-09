@@ -14,11 +14,13 @@ import { notFound } from "next/navigation";
 import { CrmEmptyState, CrmPermissionState } from "@/components/crm-states";
 import {
   getOffer,
+  listKnowledgeClaims,
   listWorkspaces,
   OutboundApiError,
   type Offer,
   type OfferDetail,
   type OfferVersion,
+  type KnowledgeClaim,
 } from "@/lib/api";
 import { MutationForm } from "../../research/[runId]/report/mutation-form";
 import { publishOfferAction, updateOfferAction } from "../actions";
@@ -35,10 +37,12 @@ export default async function OfferDetailPage({
   const { workspaceSlug, offerId } = await params;
   let offer: OfferDetail;
   let role: string | undefined;
+  let knowledgeClaims: readonly KnowledgeClaim[];
   try {
-    [offer, role] = await Promise.all([
+    [offer, role, knowledgeClaims] = await Promise.all([
       getOffer(workspaceSlug, offerId),
       listWorkspaces().then((workspaces) => workspaces.find((workspace) => workspace.slug === workspaceSlug)?.role),
+      listKnowledgeClaims(workspaceSlug),
     ]);
   } catch (error) {
     if (error instanceof OutboundApiError && error.status === 404) notFound();
@@ -54,6 +58,8 @@ export default async function OfferDetailPage({
   const update = updateOfferAction.bind(null, workspaceSlug, offer.id);
   const publish = publishOfferAction.bind(null, workspaceSlug, offer.id);
   const versions = [...offer.versions].sort((left, right) => right.version - left.version);
+  const knowledgeStatuses = new Map(knowledgeClaims.filter((claim) => claim.offerClaimId).map((claim) => [claim.offerClaimId!, claim.effectiveStatus]));
+  const needsResourcing = offer.claims.filter((claim) => claim.id && claim.validationStatus === "validated" && (knowledgeStatuses.get(claim.id) ?? "needs_resourcing") !== "validated");
 
   return (
     <>
@@ -123,10 +129,10 @@ export default async function OfferDetailPage({
       {canEdit ? (
         <section className="panel mb-5">
           <div className="panel-header"><h2 className="font-semibold">Brouillon éditable</h2><span className="badge">Claims, preuves et règles</span></div>
-          <div className="panel-body"><OfferEditor action={update} offer={offer} /></div>
+          <div className="panel-body">{needsResourcing.length ? <p className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-warning"><TriangleAlert className="mr-1 inline" size={13} /> {needsResourcing.length} claim{needsResourcing.length > 1 ? "s" : ""} validé{needsResourcing.length > 1 ? "s" : ""} ne dispose{needsResourcing.length > 1 ? "nt" : ""} plus d’une source fraîche. Associez-les depuis Connaissance.</p> : null}<OfferEditor action={update} offer={offer} /></div>
         </section>
       ) : (
-        <ReadOnlyDraft offer={offer} />
+        <ReadOnlyDraft offer={offer} knowledgeStatuses={knowledgeStatuses} />
       )}
 
       <section className="panel">
@@ -136,7 +142,7 @@ export default async function OfferDetailPage({
         </div>
         {versions.length ? (
           <div className="space-y-4 p-4 md:p-6">
-            {versions.map((version) => <PublishedVersion key={version.id} version={version} />)}
+            {versions.map((version) => <PublishedVersion key={version.id} version={version} knowledgeStatuses={knowledgeStatuses} />)}
           </div>
         ) : (
           <div className="panel-body"><CrmEmptyState title="Aucune publication" description="Le brouillon apparaîtra ici après sa première publication." /></div>
@@ -146,7 +152,7 @@ export default async function OfferDetailPage({
   );
 }
 
-function ReadOnlyDraft({ offer }: { offer: Offer }) {
+function ReadOnlyDraft({ offer, knowledgeStatuses }: { offer: Offer; knowledgeStatuses: Map<string, KnowledgeClaim["effectiveStatus"]> }) {
   return (
     <section className="panel mb-5">
       <div className="panel-header"><h2 className="font-semibold">Détails de l’offre</h2><span className="badge"><Lock size={11} /> Lecture seule</span></div>
@@ -157,13 +163,13 @@ function ReadOnlyDraft({ offer }: { offer: Offer }) {
         <DetailField label="Règles commerciales" value={formatUnknown(offer.commercialRules)} />
         <DetailField label="Contraintes" value={formatUnknown(offer.constraints)} />
         <DetailField label="Objections" value={formatUnknown(offer.objections)} />
-        <Claims claims={offer.claims} />
+        <Claims claims={offer.claims} knowledgeStatuses={knowledgeStatuses} />
       </div>
     </section>
   );
 }
 
-function PublishedVersion({ version }: { version: OfferVersion }) {
+function PublishedVersion({ version, knowledgeStatuses }: { version: OfferVersion; knowledgeStatuses: Map<string, KnowledgeClaim["effectiveStatus"]> }) {
   return (
     <article className="rounded-xl border border-line bg-slate-50/60 p-4 md:p-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -177,18 +183,19 @@ function PublishedVersion({ version }: { version: OfferVersion }) {
         <DetailField label="Règles commerciales" value={formatUnknown(version.commercialRules)} />
         <DetailField label="Contraintes" value={formatUnknown(version.constraints)} />
         <DetailField label="Objections" value={formatUnknown(version.objections)} />
-        <Claims claims={version.claims} />
+        <Claims claims={version.claims} knowledgeStatuses={knowledgeStatuses} />
       </div>
     </article>
   );
 }
 
-function Claims({ claims }: { claims: readonly Offer["claims"][number][] }) {
-  return <div className="md:col-span-2"><h4 className="text-xs font-semibold uppercase tracking-wide text-muted">Claims autorisés</h4>{claims.length ? <ul className="mt-2 space-y-2">{claims.map((claim, index) => <li className="flex flex-wrap items-start gap-2 rounded-lg border border-line bg-white px-3 py-2 text-sm" key={`${claim.id ?? claim.claim}-${index}`}><span className="min-w-0 flex-1">{claim.claim}</span><ClaimStatus status={claim.validationStatus} />{claim.evidenceUri ? <a className="inline-flex items-center gap-1 text-xs font-semibold text-brand-blue" href={claim.evidenceUri} rel="noreferrer" target="_blank">Preuve <ExternalLink size={11} /></a> : <span className="text-xs text-muted">Sans preuve</span>}</li>)}</ul> : <p className="mt-2 text-sm text-muted">Aucun claim renseigné.</p>}</div>;
+function Claims({ claims, knowledgeStatuses }: { claims: readonly Offer["claims"][number][]; knowledgeStatuses: Map<string, KnowledgeClaim["effectiveStatus"]> }) {
+  return <div className="md:col-span-2"><h4 className="text-xs font-semibold uppercase tracking-wide text-muted">Claims autorisés</h4>{claims.length ? <ul className="mt-2 space-y-2">{claims.map((claim, index) => { const knowledgeStatus = claim.id ? knowledgeStatuses.get(claim.id) : undefined; return <li className="flex flex-wrap items-start gap-2 rounded-lg border border-line bg-white px-3 py-2 text-sm" key={`${claim.id ?? claim.claim}-${index}`}><span className="min-w-0 flex-1">{claim.claim}</span><ClaimStatus status={claim.validationStatus} {...(knowledgeStatus ? { knowledgeStatus } : {})} />{claim.evidenceUri ? <a className="inline-flex items-center gap-1 text-xs font-semibold text-brand-blue" href={claim.evidenceUri} rel="noreferrer" target="_blank">Preuve <ExternalLink size={11} /></a> : <span className="text-xs text-muted">Sans preuve</span>}</li>; })}</ul> : <p className="mt-2 text-sm text-muted">Aucun claim renseigné.</p>}</div>;
 }
 
-function ClaimStatus({ status }: { status: Offer["claims"][number]["validationStatus"] }) {
+function ClaimStatus({ status, knowledgeStatus }: { status: Offer["claims"][number]["validationStatus"]; knowledgeStatus?: KnowledgeClaim["effectiveStatus"] }) {
   const labels = { hypothesis: "Hypothèse", sourced: "Sourcé", validated: "Validé", invalidated: "Invalidé" } as const;
+  if (status === "validated" && knowledgeStatus !== "validated") return <span className="badge badge-warning">À re-sourcer</span>;
   return <span className={`badge ${status === "validated" ? "badge-success" : status === "invalidated" ? "badge-warning" : ""}`}>{labels[status]}</span>;
 }
 

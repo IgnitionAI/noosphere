@@ -51,6 +51,10 @@ const channelLimitsResponse = await fetch(`${apiUrl}/api/v1/workspaces/${workspa
 if (!channelLimitsResponse.ok) {
   throw new Error(`Workspace channel limits lookup failed: ${channelLimitsResponse.status}`);
 }
+const knowledgeSourcesResponse = await fetch(`${apiUrl}/api/v1/knowledge-sources`, { headers });
+if (!knowledgeSourcesResponse.ok) {
+  throw new Error(`Knowledge sources lookup failed: ${knowledgeSourcesResponse.status}`);
+}
 const settingsResponse = await fetch(`${apiUrl}/api/v1/workspace-ai-settings`, {
   headers,
 });
@@ -112,6 +116,14 @@ if (!workspaceSettingsPage.ok || !workspaceSettingsHtml.includes("Paramètres du
   throw new Error(`Workspace settings page smoke test failed: ${workspaceSettingsPage.status}`);
 }
 
+const knowledgePage = await fetch(`${webUrl}/w/${workspace.slug}/knowledge`, {
+  headers: { cookie },
+});
+const knowledgeHtml = await knowledgePage.text();
+if (!knowledgePage.ok || !knowledgeHtml.includes("Sources de connaissance")) {
+  throw new Error(`Knowledge page smoke test failed: ${knowledgePage.status}`);
+}
+
 console.info(
   JSON.stringify({
     event: "development_smoke_passed",
@@ -122,6 +134,7 @@ console.info(
     messagingSupervision: "readable",
     workspaceMembers: "readable",
     workspaceDataSettings: "readable",
+    knowledgeSources: "readable",
   }),
 );
 

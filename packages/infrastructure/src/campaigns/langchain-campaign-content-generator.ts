@@ -6,6 +6,7 @@ import type {
   PersonalizedCampaignContent,
 } from "@outbound/application/campaigns/campaign-content-generator";
 import type { WorkspaceAiModelPolicyReader } from "@outbound/application/workspaces/workspace-ai-settings";
+import { filterAuthorizedKnowledgeCitations, type KnowledgeRetriever } from "@outbound/application/knowledge/knowledge-retriever";
 import {
   buildChatModelFields,
   resolveResearchModelConfigurationFromEnvironment,
@@ -23,6 +24,8 @@ const personalizedContentSchema = z.object({
     risks: z.array(z.string().trim().min(1).max(300)).max(5),
     recommendedAngle: z.string().trim().min(1).max(500),
   }),
+  knowledgeClaimIds: z.array(z.string().uuid()).max(20).default([]),
+  knowledgeSourceIds: z.array(z.string().uuid()).max(40).default([]),
 });
 
 export class LangChainCampaignContentGenerator implements CampaignContentGenerator {
@@ -31,6 +34,7 @@ export class LangChainCampaignContentGenerator implements CampaignContentGenerat
   constructor(
     environment: Readonly<Record<string, string | undefined>> = process.env,
     private readonly modelPolicyReader?: WorkspaceAiModelPolicyReader,
+    private readonly knowledgeRetriever?: KnowledgeRetriever,
   ) {
     this.#configuration = resolveResearchModelConfigurationFromEnvironment(environment);
   }
@@ -42,6 +46,11 @@ export class LangChainCampaignContentGenerator implements CampaignContentGenerat
     const modelName = workspacePolicy?.synthesisModels[0]
       ?? this.#configuration.synthesisModels[0]!;
     const model = new ChatOpenAI(buildChatModelFields(this.#configuration, modelName, "low"));
+    const authorizedKnowledge = await this.knowledgeRetriever?.search({
+      workspaceId: input.workspaceId,
+      query: [input.icpName, JSON.stringify(input.problems), JSON.stringify(input.signals), input.prospect.companyName, input.prospect.headline].filter(Boolean).join(" ").slice(0, 1_000),
+      limit: 8,
+    }) ?? [];
     const messages = [
       {
         role: "system" as const,
@@ -53,6 +62,8 @@ export class LangChainCampaignContentGenerator implements CampaignContentGenerat
           "Each message must sound natural, mention one defensible contextual element and end with one low-friction question.",
           "For email, treat position 1 as the opener and later positions as follow-ups in the same thread. Follow-ups must add a different useful angle instead of paraphrasing the opener.",
           "Campaign policy instructions influence tone and emphasis but never authorize invented facts.",
+          "Any product capability, proof, customer case or objection answer must come from authorizedKnowledge. If it is absent, do not invent or imply it.",
+          "Return the exact knowledgeClaimIds and knowledgeSourceIds actually used; return empty arrays when none were used.",
           "Also provide a concise prospect assessment: why the prospect fits, observed strengths, uncertainties or risks, and the best defensible outreach angle.",
           "Call the submit_campaign_content tool exactly once with the final result.",
           "Do not claim that you monitored, audited or diagnosed the prospect unless the evidence explicitly says so.",
@@ -60,7 +71,7 @@ export class LangChainCampaignContentGenerator implements CampaignContentGenerat
       },
       {
         role: "user" as const,
-        content: JSON.stringify(input),
+        content: JSON.stringify({ ...input, authorizedKnowledge }),
       },
     ];
     const submit = tool(async (value) => value, {
@@ -74,13 +85,16 @@ export class LangChainCampaignContentGenerator implements CampaignContentGenerat
     const call = response.tool_calls?.find((item) => item.name === "submit_campaign_content");
     if (!call) throw new Error("CAMPAIGN_CONTENT_TOOL_CALL_MISSING");
     const parsed = personalizedContentSchema.parse(call.args);
+    const citations = filterAuthorizedKnowledgeCitations(authorizedKnowledge, parsed.knowledgeClaimIds, parsed.knowledgeSourceIds);
     return {
       steps: parsed.steps,
       assessment: parsed.assessment,
       metadata: {
         provider: this.#configuration.provider,
         model: modelName,
-        promptVersion: "campaign-personalization-v1",
+        promptVersion: "campaign-personalization-v2-knowledge",
+        knowledgeClaimIds: citations.claimIds,
+        knowledgeSourceIds: citations.sourceIds,
       },
     };
   }

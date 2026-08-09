@@ -64,7 +64,7 @@ Elle ne remplace pas les DTO OpenAPI à écrire avant chaque vertical slice.
 | F-042 | reply draft approve/reject | create et edit draft |
 | F-043 | `GET/PUT/DELETE /calendar-connection`, API slots/bookings et webhook Cal.com signé | proposition de créneaux, réservation Setter, annulation et no-show |
 | F-044 | `GET /opportunities`, `POST /opportunities/:id/actions/change-stage` | projection pipeline et historique immuable |
-| F-050 | — | sources, documents et claims |
+| F-050 | `GET/POST /knowledge-sources`, validation/retrait, `GET/POST /knowledge-claims` | FTS PostgreSQL, fraîcheur, claims et injection agents |
 | F-051 | campaign/pipeline analytics | export et metric definitions |
 | F-052 | endpoints métier existants | onboarding progress |
 | F-053 | workspace endpoints | audit read, export et anonymize |

@@ -47,6 +47,8 @@ import { PostgresWorkspaceRepository } from "@outbound/infrastructure/workspaces
 import { PostgresWorkspaceDataLifecycle } from "@outbound/infrastructure/workspaces/postgres-workspace-data-lifecycle";
 import { S3WorkspaceArchiveStorage } from "@outbound/infrastructure/workspaces/workspace-data-export";
 import { createWorkspaceDataHttpHandler } from "@outbound/interface/http/workspace-data-handler";
+import { PostgresKnowledgeService } from "@outbound/infrastructure/knowledge/postgres-knowledge-service";
+import { createKnowledgeHttpHandler, isKnowledgeRoute } from "@outbound/interface/http/knowledge-handler";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
@@ -93,6 +95,10 @@ const workspaceData = createWorkspaceDataHttpHandler({
   service: workspaceDataLifecycle,
   clock,
   downloads: workspaceArchiveStorage,
+});
+const knowledge = createKnowledgeHttpHandler({
+  contextResolver: auth.contextResolver,
+  service: new PostgresKnowledgeService(database.db, clock, ids),
 });
 const workspaceAiSettingsRepository = new PostgresWorkspaceAiSettingsRepository(database.db);
 const workspaceAiSettings = createWorkspaceAiSettingsHttpHandler({
@@ -246,6 +252,7 @@ const server = Bun.serve({
     if (pathname.startsWith("/api/v1/connected-accounts") || pathname.startsWith("/api/v1/account-health-alerts")) return connectedAccounts(request);
     if (pathname.startsWith("/api/v1/analytics/")) return analytics(request);
     if (pathname.startsWith("/api/v1/signals") || pathname.startsWith("/api/v1/settings/signals") || pathname.includes("/signals")) return signals(request);
+    if (isKnowledgeRoute(pathname)) return knowledge(request);
     if (isWorkspaceDataRoute(pathname, request.method)) return workspaceData(request);
     if (pathname.startsWith("/api/v1/opportunities") || pathname === "/api/v1/pipeline/forecast" || pathname.startsWith("/api/v1/workspaces/") && pathname.endsWith("/lost-reasons")) return opportunityHandler(request);
     if (pathname.includes("/actions/enrich") || pathname.startsWith("/api/v1/enrichment-jobs/") || pathname.endsWith("/enrichment")) return enrichment(request);

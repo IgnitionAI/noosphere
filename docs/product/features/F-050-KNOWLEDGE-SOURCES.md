@@ -18,18 +18,12 @@ cite que du vérifié.
 
 ## État d’implémentation
 
-Non commencé en tant que feature. Briques réutilisables vérifiées dans le
-code : `research_documents` et `research_document_chunks` (documents de
-recherche F-009 déjà découpés), `offer_claims` (claims d’offre avec preuves,
-F-010), `market_evidence` ; `KnowledgeRetriever` est un port documenté
-(décision d’architecture : PostgreSQL d’abord, pgvector/ParadeDB seulement
-après benchmark — confirmée par le user : PostgreSQL suffit pour la V1) mais
-**non implémenté**. Aujourd’hui, le Setter (F-042) et le générateur de
-contenu ne consomment que les stratégies/politiques et instructions — aucun
-accès à une base de preuves. Restent à livrer : le modèle de sources de
-connaissance, la validation des claims adossée à des sources, la fraîcheur,
-le port `KnowledgeRetriever` en PostgreSQL FTS, et son branchement au
-Setter/générateur.
+Livré. Le modèle `knowledge_sources` / `knowledge_claims`, la recherche
+PostgreSQL FTS, les transitions auditées, l’expiration par job durable et la
+page `/w/[workspaceSlug]/knowledge` sont opérationnels. Le générateur de
+campagne et le Setter interrogent le même `KnowledgeRetriever` filtré ; les
+citations retournées par le modèle sont recoupées côté serveur avec les IDs
+effectivement autorisés avant leur persistance dans les snapshots.
 
 ## Périmètre
 
@@ -148,16 +142,17 @@ type/statut/fraîcheur) ; badge « à re-sourcer » sur les claims d’offre
 
 | Méthode | Route | Usage | État |
 |---|---|---|---|
-| GET | `/api/v1/knowledge-sources` | liste filtrable (type, statut, fraîcheur) | à spécifier |
-| POST | `/api/v1/knowledge-sources` | dépôt (statut `draft`) | à spécifier |
-| POST | `/api/v1/knowledge-sources/:id/actions/validate` | validation (owner/admin) | à spécifier |
-| POST | `/api/v1/knowledge-sources/:id/actions/withdraw` | retrait motivé (owner/admin) | à spécifier |
-| GET | `/api/v1/knowledge-claims` | claims avec leurs sources et statut « à re-sourcer » | à spécifier |
-| POST | `/api/v1/knowledge-claims/:id/actions/validate` | validation d’un claim sourcé (owner/admin) | à spécifier |
+| GET | `/api/v1/knowledge-sources` | liste filtrable (type, statut, fraîcheur) | livré |
+| POST | `/api/v1/knowledge-sources` | dépôt (statut `draft`) | livré |
+| POST | `/api/v1/knowledge-sources/:id/actions/validate` | validation (owner/admin) | livré |
+| POST | `/api/v1/knowledge-sources/:id/actions/withdraw` | retrait motivé (owner/admin) | livré |
+| GET | `/api/v1/knowledge-claims` | claims avec leurs sources et statut « à re-sourcer » | livré |
+| POST | `/api/v1/knowledge-claims` | proposition d’un claim (operator+) | livré |
+| POST | `/api/v1/knowledge-claims/:id/actions/validate` | validation d’un claim sourcé (owner/admin) | livré |
 
 **Événements sortants** : `KnowledgeSourceValidated`,
-`KnowledgeSourceWithdrawn`, `KnowledgeSourceExpired` (via job quotidien de
-passage d’expiration, idempotent) — un seul envoi par transition.
+`KnowledgeSourceWithdrawn`, `KnowledgeSourceExpired` (job planifié à la date
+de fraîcheur, idempotent) — un seul envoi par transition.
 
 **Ports externes** : `KnowledgeRetriever` (nouveau port, implémentation
 PostgreSQL FTS V1 ; pgvector/ParadeDB interchangeables après benchmark).

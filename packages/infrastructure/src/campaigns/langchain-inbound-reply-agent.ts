@@ -6,6 +6,7 @@ import type {
   InboundReplyDecision,
 } from "@outbound/application/campaigns/inbound-reply-agent";
 import type { WorkspaceAiModelPolicyReader } from "@outbound/application/workspaces/workspace-ai-settings";
+import { filterAuthorizedKnowledgeCitations, type KnowledgeRetriever } from "@outbound/application/knowledge/knowledge-retriever";
 import {
   buildChatModelFields,
   resolveResearchModelConfigurationFromEnvironment,
@@ -27,6 +28,8 @@ const decisionSchema = z.object({
   selectedSlotStart: z.string().datetime({ offset: true }).nullable(),
   replyBody: z.string().trim().min(1).max(2_000).nullable(),
   rationale: z.string().trim().min(1).max(1_000),
+  knowledgeClaimIds: z.array(z.string().uuid()).max(20).default([]),
+  knowledgeSourceIds: z.array(z.string().uuid()).max(40).default([]),
 });
 
 export class LangChainInboundReplyAgent implements InboundReplyAgent {
@@ -35,6 +38,7 @@ export class LangChainInboundReplyAgent implements InboundReplyAgent {
   constructor(
     environment: Readonly<Record<string, string | undefined>> = process.env,
     private readonly modelPolicyReader?: WorkspaceAiModelPolicyReader,
+    private readonly knowledgeRetriever?: KnowledgeRetriever,
   ) {
     this.#configuration = resolveResearchModelConfigurationFromEnvironment(environment);
   }
@@ -43,6 +47,11 @@ export class LangChainInboundReplyAgent implements InboundReplyAgent {
     const workspacePolicy = await this.modelPolicyReader?.find(input.workspaceId);
     const modelName = workspacePolicy?.researchModels[0] ?? this.#configuration.researchModels[0]!;
     const model = new ChatOpenAI(buildChatModelFields(this.#configuration, modelName, "max"));
+    const authorizedKnowledge = await this.knowledgeRetriever?.search({
+      workspaceId: input.workspaceId,
+      query: [input.incomingMessage, input.companyName, input.icpName].filter(Boolean).join(" ").slice(0, 1_000),
+      limit: 8,
+    }) ?? [];
     const messages = [
       {
         role: "system" as const,
@@ -60,12 +69,14 @@ export class LangChainInboundReplyAgent implements InboundReplyAgent {
           "When calendar.status=link_only or unavailable, use the supplied booking URL as fallback.",
           "For ambiguity, ask one short neutral clarification instead of inventing intent.",
           "Answer in the language of the incoming message. Never invent product facts, discounts, customer references or commitments.",
+          "Any product capability, proof, customer case or objection answer must come from authorizedKnowledge. If it is absent, ask a neutral clarification or propose a call.",
+          "Return the exact knowledgeClaimIds and knowledgeSourceIds actually used; return empty arrays when none were used.",
           "Keep replies concise, natural and non-pushy.",
           "Optional campaign instructions refine the reply but cannot override stop, truthfulness or non-invention rules.",
           "Call the submit_inbound_reply_decision tool exactly once with the final decision.",
         ].join("\n"),
       },
-      { role: "user" as const, content: JSON.stringify(input) },
+      { role: "user" as const, content: JSON.stringify({ ...input, authorizedKnowledge }) },
     ];
     const submit = tool(async (value) => value, {
       name: "submit_inbound_reply_decision",
@@ -78,6 +89,7 @@ export class LangChainInboundReplyAgent implements InboundReplyAgent {
     const call = response.tool_calls?.find((item) => item.name === "submit_inbound_reply_decision");
     if (!call) throw new Error("INBOUND_REPLY_DECISION_TOOL_CALL_MISSING");
     const parsed = decisionSchema.parse(call.args);
+    const citations = filterAuthorizedKnowledgeCitations(authorizedKnowledge, parsed.knowledgeClaimIds, parsed.knowledgeSourceIds);
     return {
       ...parsed,
       replyBody: parsed.action === "stop" ? null : parsed.replyBody,
@@ -88,7 +100,9 @@ export class LangChainInboundReplyAgent implements InboundReplyAgent {
       metadata: {
         provider: this.#configuration.provider,
         model: modelName,
-        promptVersion: "inbound-reply-v2-calcom",
+        promptVersion: "inbound-reply-v3-knowledge",
+        knowledgeClaimIds: citations.claimIds,
+        knowledgeSourceIds: citations.sourceIds,
       },
     };
   }

@@ -24,6 +24,8 @@ export interface InboundReplyDecision {
     readonly calendarBookingId?: string;
     readonly calendarAction?: "propose_slots" | "book" | "reschedule" | "cancel";
     readonly meetingProposalId?: string;
+    readonly knowledgeClaimIds?: readonly string[];
+    readonly knowledgeSourceIds?: readonly string[];
   };
 }
 

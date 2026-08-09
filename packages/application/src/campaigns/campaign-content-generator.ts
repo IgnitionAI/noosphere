@@ -19,6 +19,8 @@ export interface PersonalizedCampaignContent {
     readonly provider: string;
     readonly model: string;
     readonly promptVersion: string;
+    readonly knowledgeClaimIds?: readonly string[];
+    readonly knowledgeSourceIds?: readonly string[];
   };
 }
 

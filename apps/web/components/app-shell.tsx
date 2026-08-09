@@ -3,6 +3,7 @@
 import {
   Bell,
   BarChart3,
+  BookOpenCheck,
   CalendarDays,
   ChevronDown,
   FlaskConical,
@@ -48,6 +49,7 @@ export function AppShell({
   const productReadingHref = `/w/${workspace.slug}/strategy/product-reading`;
   const icpsHref = `/w/${workspace.slug}/icps`;
   const offersHref = `/w/${workspace.slug}/offers`;
+  const knowledgeHref = `/w/${workspace.slug}/knowledge`;
   const messagingHref = `/w/${workspace.slug}/messaging`;
   const analyticsHref = `/w/${workspace.slug}/analytics`;
   const inboxHref = `/w/${workspace.slug}/inbox`;
@@ -62,6 +64,7 @@ export function AppShell({
   const productReadingActive = pathname.startsWith(productReadingHref);
   const icpsActive = pathname.startsWith(icpsHref);
   const offersActive = pathname.startsWith(offersHref);
+  const knowledgeActive = pathname.startsWith(knowledgeHref);
   const messagingActive = pathname.startsWith(messagingHref);
   const analyticsActive = pathname.startsWith(analyticsHref);
   const initials = session.user.name
@@ -172,6 +175,19 @@ export function AppShell({
           >
             <Package size={17} />
             Offres
+          </Link>
+          <Link
+            aria-current={knowledgeActive ? "page" : undefined}
+            className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium ${
+              knowledgeActive
+                ? "bg-white/10 text-white"
+                : "text-slate-300 hover:bg-white/5 hover:text-white"
+            }`}
+            href={knowledgeHref}
+            onClick={() => setOpen(false)}
+          >
+            <BookOpenCheck size={17} />
+            Connaissance
           </Link>
           <Link
             aria-current={messagingActive ? "page" : undefined}

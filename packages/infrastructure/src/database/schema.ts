@@ -6,6 +6,7 @@ import {
 import {
   type AnyPgColumn,
   boolean,
+  check,
   foreignKey,
   index,
   integer,
@@ -85,6 +86,22 @@ export const workspaceExportStatusEnum = pgEnum("workspace_export_status", [
   "processing",
   "completed",
   "failed",
+]);
+export const knowledgeSourceTypeEnum = pgEnum("knowledge_source_type", [
+  "product_document",
+  "proof",
+  "customer_case",
+  "objection_response",
+]);
+export const knowledgeSourceStatusEnum = pgEnum("knowledge_source_status", [
+  "draft",
+  "validated",
+  "expired",
+  "withdrawn",
+]);
+export const knowledgeClaimStatusEnum = pgEnum("knowledge_claim_status", [
+  "draft",
+  "validated",
 ]);
 export const workspaceRoleEnum = pgEnum("workspace_role", [
   "viewer",
@@ -1090,7 +1107,75 @@ export const offerClaims = pgTable(
   },
   (table) => [
     foreignKey({ columns: [table.workspaceId, table.offerVersionId], foreignColumns: [offerVersions.workspaceId, offerVersions.id], name: "offer_claims_workspace_version_fk" }).onDelete("restrict"),
+    unique("offer_claims_workspace_id_uq").on(table.workspaceId, table.id),
     index("offer_claims_workspace_version_idx").on(table.workspaceId, table.offerVersionId),
+  ],
+);
+
+export const knowledgeSources = pgTable(
+  "knowledge_sources",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    type: knowledgeSourceTypeEnum("type").notNull(),
+    title: varchar("title", { length: 500 }).notNull(),
+    content: text("content"),
+    researchDocumentId: uuid("research_document_id"),
+    authorName: varchar("author_name", { length: 300 }).notNull(),
+    publishedAt: timestamp("published_at", { withTimezone: true }).notNull(),
+    freshnessUntil: timestamp("freshness_until", { withTimezone: true }),
+    status: knowledgeSourceStatusEnum("status").notNull().default("draft"),
+    createdBy: uuid("created_by").references(() => authUsers.id, { onDelete: "set null" }),
+    validatedBy: uuid("validated_by").references(() => authUsers.id, { onDelete: "set null" }),
+    validatedAt: timestamp("validated_at", { withTimezone: true }),
+    withdrawnBy: uuid("withdrawn_by").references(() => authUsers.id, { onDelete: "set null" }),
+    withdrawnAt: timestamp("withdrawn_at", { withTimezone: true }),
+    withdrawalReason: text("withdrawal_reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({ columns: [table.workspaceId, table.researchDocumentId], foreignColumns: [researchDocuments.workspaceId, researchDocuments.id], name: "knowledge_sources_workspace_document_fk" }).onDelete("restrict"),
+    unique("knowledge_sources_workspace_id_uq").on(table.workspaceId, table.id),
+    index("knowledge_sources_workspace_status_idx").on(table.workspaceId, table.status, table.freshnessUntil),
+    check("knowledge_sources_content_or_document_ck", sql`${table.content} is not null or ${table.researchDocumentId} is not null`),
+  ],
+);
+
+export const knowledgeClaims = pgTable(
+  "knowledge_claims",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    claim: text("claim").notNull(),
+    status: knowledgeClaimStatusEnum("status").notNull().default("draft"),
+    offerClaimId: uuid("offer_claim_id"),
+    createdBy: uuid("created_by").references(() => authUsers.id, { onDelete: "set null" }),
+    validatedBy: uuid("validated_by").references(() => authUsers.id, { onDelete: "set null" }),
+    validatedAt: timestamp("validated_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({ columns: [table.workspaceId, table.offerClaimId], foreignColumns: [offerClaims.workspaceId, offerClaims.id], name: "knowledge_claims_workspace_offer_claim_fk" }).onDelete("restrict"),
+    unique("knowledge_claims_workspace_id_uq").on(table.workspaceId, table.id),
+    index("knowledge_claims_workspace_status_idx").on(table.workspaceId, table.status),
+  ],
+);
+
+export const knowledgeClaimSources = pgTable(
+  "knowledge_claim_sources",
+  {
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    claimId: uuid("claim_id").notNull(),
+    sourceId: uuid("source_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.workspaceId, table.claimId, table.sourceId] }),
+    foreignKey({ columns: [table.workspaceId, table.claimId], foreignColumns: [knowledgeClaims.workspaceId, knowledgeClaims.id], name: "knowledge_claim_sources_workspace_claim_fk" }).onDelete("cascade"),
+    foreignKey({ columns: [table.workspaceId, table.sourceId], foreignColumns: [knowledgeSources.workspaceId, knowledgeSources.id], name: "knowledge_claim_sources_workspace_source_fk" }).onDelete("restrict"),
+    index("knowledge_claim_sources_source_idx").on(table.workspaceId, table.sourceId),
   ],
 );
 

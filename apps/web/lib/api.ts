@@ -87,6 +87,37 @@ export interface WorkspaceAuditLog {
   readonly createdAt: string;
 }
 
+export type KnowledgeSourceType = "product_document" | "proof" | "customer_case" | "objection_response";
+export type KnowledgeSourceStatus = "draft" | "validated" | "expired" | "withdrawn";
+export interface KnowledgeSource {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly type: KnowledgeSourceType;
+  readonly title: string;
+  readonly content: string | null;
+  readonly researchDocumentId: string | null;
+  readonly authorName: string;
+  readonly publishedAt: string;
+  readonly freshnessUntil: string | null;
+  readonly status: KnowledgeSourceStatus;
+  readonly effectiveStatus: KnowledgeSourceStatus;
+  readonly withdrawalReason: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface KnowledgeClaim {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly claim: string;
+  readonly status: "draft" | "validated";
+  readonly effectiveStatus: "draft" | "validated" | "needs_resourcing";
+  readonly offerClaimId: string | null;
+  readonly sources: readonly KnowledgeSource[];
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
 export interface WorkspaceAiSettings {
   readonly researchModels: readonly string[];
   readonly synthesisModels: readonly string[];
@@ -363,6 +394,40 @@ export async function listWorkspaceAuditLogs(workspaceSlug: string, filters: { a
   query.set("limit", String(filters.limit ?? 50));
   const response = await crmFetch<{ data: WorkspaceAuditLog[] }>(workspaceSlug, `/api/v1/audit-logs?${query.toString()}`);
   return response.data;
+}
+
+export async function listKnowledgeSources(workspaceSlug: string, filters: { type?: KnowledgeSourceType; status?: KnowledgeSourceStatus; fresh?: boolean } = {}): Promise<readonly KnowledgeSource[]> {
+  const query = new URLSearchParams();
+  if (filters.type) query.set("type", filters.type);
+  if (filters.status) query.set("status", filters.status);
+  if (filters.fresh !== undefined) query.set("fresh", String(filters.fresh));
+  const response = await crmFetch<{ data: KnowledgeSource[] }>(workspaceSlug, `/api/v1/knowledge-sources${query.size ? `?${query}` : ""}`);
+  return response.data;
+}
+
+export async function createKnowledgeSource(workspaceSlug: string, input: { type: KnowledgeSourceType; title: string; content: string | null; researchDocumentId: string | null; authorName: string; publishedAt: string; freshnessUntil: string | null }): Promise<KnowledgeSource> {
+  return crmFetch(workspaceSlug, "/api/v1/knowledge-sources", { method: "POST", body: input });
+}
+
+export async function validateKnowledgeSource(workspaceSlug: string, sourceId: string): Promise<KnowledgeSource> {
+  return crmFetch(workspaceSlug, `/api/v1/knowledge-sources/${sourceId}/actions/validate`, { method: "POST", body: {} });
+}
+
+export async function withdrawKnowledgeSource(workspaceSlug: string, sourceId: string, reason: string): Promise<KnowledgeSource> {
+  return crmFetch(workspaceSlug, `/api/v1/knowledge-sources/${sourceId}/actions/withdraw`, { method: "POST", body: { reason } });
+}
+
+export async function listKnowledgeClaims(workspaceSlug: string): Promise<readonly KnowledgeClaim[]> {
+  const response = await crmFetch<{ data: KnowledgeClaim[] }>(workspaceSlug, "/api/v1/knowledge-claims");
+  return response.data;
+}
+
+export async function createKnowledgeClaim(workspaceSlug: string, input: { claim: string; offerClaimId: string | null; sourceIds: readonly string[] }): Promise<KnowledgeClaim> {
+  return crmFetch(workspaceSlug, "/api/v1/knowledge-claims", { method: "POST", body: input });
+}
+
+export async function validateKnowledgeClaim(workspaceSlug: string, claimId: string): Promise<KnowledgeClaim> {
+  return crmFetch(workspaceSlug, `/api/v1/knowledge-claims/${claimId}/actions/validate`, { method: "POST", body: {} });
 }
 
 export async function getWorkspaceAiSettings(

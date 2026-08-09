@@ -43,7 +43,7 @@ techniques sans changer son identifiant produit.
 | F-042 | livré (socle) | classification K3, réponses autonomes |
 | F-043 | partiel | Cal.com : connexions, bookings, propositions de RDV |
 | F-044 | livré | opportunités, historique d’étapes immuable, édition, clôture won/lost, prévisions pondérées |
-| F-050 | non commencé | fiche DoR prête ; briques réutilisables (documents F-009, claims F-010) présentes |
+| F-050 | livré | sources/claims validés, PostgreSQL FTS, fraîcheur/retrait, agents bornés aux preuves autorisées |
 | F-051 | livré | entonnoir déterministe, breakdowns 5 dimensions, coûts et export owner/admin |
 | F-052 | non commencé | page stub de redirection ; fiche DoR prête (parcours 7 étapes) |
 | F-053 | livré | paramètres unifiés, limites de dispatch, rétention/purge, export 72 h, anonymisation et audit filtrable |
