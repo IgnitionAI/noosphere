@@ -1,0 +1,2 @@
+"use client";
+export default function ErrorPage({ reset }: { error: Error; reset: () => void }) { return <div className="panel p-8"><h1 className="text-xl font-semibold">Impossible de charger la console opérateur</h1><p className="mt-2 text-sm text-muted">Une erreur temporaire est survenue. Le contexte du workspace est conservé.</p><button className="button mt-5" onClick={reset} type="button">Réessayer</button></div>; }

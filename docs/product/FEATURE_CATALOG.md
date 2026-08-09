@@ -18,7 +18,7 @@ techniques sans changer son identifiant produit.
 |---|---|---|
 | F-001 | livré | login, sessions, bootstrap owner, redirection workspace |
 | F-002 | livré | création multi-workspace, invitations, équipe, rôles, désactivation, audit et dernier owner protégés |
-| F-003 | livré (moteur) | jobs PostgreSQL, outbox dispatchée, audit log ; console opérateur à livrer |
+| F-003 | livré | moteur durable + console opérateur workspace, corrélations expurgées, webhooks rejetés et relance idempotente auditée |
 | F-004 | livré | shell Next.js, navigation par rôle |
 | F-009 | livré | workflow V2/V3, rapport sourcé, publication ICP |
 | F-010 | livré | offres, versions immuables, claims |
@@ -116,7 +116,9 @@ retries bornés, dead letters, idempotence et corrélation.
 - les logs excluent secrets et données personnelles non nécessaires.
 
 **Dépendances** : F-001, F-002.  
-**Surface** : health endpoints, administration technique.
+**Surface** : health endpoints, API `/api/v1/console/*`, page
+`/w/[workspaceSlug]/settings/console` et administration technique filtrée par
+rôle. Les webhooks non authentifiés ne conservent que leur hash et leur motif.
 
 **Spécification** (console opérateur) :
 [`F-003-OPERATOR-CONSOLE.md`](features/F-003-OPERATOR-CONSOLE.md).

@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Activity,
   Bell,
   BarChart3,
   BookOpenCheck,
@@ -62,6 +63,7 @@ export function AppShell({
   const channelSettingsHref = `/w/${workspace.slug}/settings/channels`;
   const memberSettingsHref = `/w/${workspace.slug}/settings/members`;
   const workspaceSettingsHref = `/w/${workspace.slug}/settings`;
+  const operatorConsoleHref = `/w/${workspace.slug}/settings/console`;
   const productReadingActive = pathname.startsWith(productReadingHref);
   const icpsActive = pathname.startsWith(icpsHref);
   const offersActive = pathname.startsWith(offersHref);
@@ -316,6 +318,12 @@ export function AppShell({
             <SlidersHorizontal size={17} />
             Paramètres
           </Link>
+          {["operator", "admin", "owner"].includes(workspace.role) ? <Link
+            aria-current={pathname.startsWith(operatorConsoleHref) ? "page" : undefined}
+            className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium ${pathname.startsWith(operatorConsoleHref) ? "bg-white/10 text-white" : "text-slate-300 hover:bg-white/5 hover:text-white"}`}
+            href={operatorConsoleHref}
+            onClick={() => setOpen(false)}
+          ><Activity size={17} />Console opérateur</Link> : null}
           {["admin", "owner"].includes(workspace.role) ? (
             <>
               <Link

@@ -1,4 +1,4 @@
-import { Archive, CalendarDays, Clock3, Database, Download, ExternalLink, Gauge, Mail, MessageCircle, Settings, ShieldCheck, Sparkles, UsersRound } from "lucide-react";
+import { Activity, Archive, CalendarDays, Clock3, Database, Download, ExternalLink, Gauge, Mail, MessageCircle, Settings, ShieldCheck, Sparkles, UsersRound } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
@@ -21,6 +21,7 @@ export default async function WorkspaceSettingsPage({ params, searchParams }: { 
   const workspace = workspaces.find((candidate) => candidate.slug === workspaceSlug);
   if (!session || !workspace) notFound();
   const operationalReader = workspace.role !== "viewer";
+  const canOperate = workspace.role === "owner" || workspace.role === "admin" || workspace.role === "operator";
   const canAdminister = workspace.role === "owner" || workspace.role === "admin";
   const [policy, members, audit] = await Promise.all([
     operationalReader ? getWorkspaceDataPolicy(workspaceSlug, workspace.id, canAdminister) : null,
@@ -53,6 +54,7 @@ export default async function WorkspaceSettingsPage({ params, searchParams }: { 
 
     <section className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       <SettingLink href={`/w/${workspaceSlug}/settings/members`} icon={<UsersRound size={17} />} label="Équipe" detail={`${members.length} membre${members.length > 1 ? "s" : ""}`} />
+      {canOperate ? <SettingLink href={`/w/${workspaceSlug}/settings/console`} icon={<Activity size={17} />} label="Console opérateur" detail="Jobs et corrélations" /> : null}
       {canAdminister ? <>
         <SettingLink href={`/w/${workspaceSlug}/settings/channels`} icon={<MessageCircle size={17} />} label="Canaux" detail="Comptes d’envoi" />
         <SettingLink href={`/w/${workspaceSlug}/settings/calendar`} icon={<CalendarDays size={17} />} label="Agenda" detail="Cal.com et RDV" />

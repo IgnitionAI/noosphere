@@ -40,7 +40,7 @@ Elle ne remplace pas les DTO OpenAPI à écrire avant chaque vertical slice.
 |---|---|---|
 | F-001 | Better Auth | session contract et erreurs |
 | F-002 | `GET/POST /workspaces`, invitations, members | invitation accept/revoke |
-| F-003 | health endpoints | audit, jobs et dead letters admin |
+| F-003 | health endpoints, `/api/v1/console/jobs`, `/dead-letters`, `/webhooks/rejected`, `/correlations/:id`, requeue | livré : console opérateur, expurgation et relance atomique |
 | F-009 | — | research runs, stages, competitors, evidence and findings |
 | F-010 | `GET/POST /offers`, publish | versions, claims et preuves |
 | F-011 | `GET/POST /icps`, publish | versions et validation critères |

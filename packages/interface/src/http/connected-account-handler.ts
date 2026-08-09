@@ -1,4 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { recordRejectedUnipileWebhook } from "@outbound/infrastructure/campaigns/unipile-webhook-ingestor";
 import { z, ZodError } from "zod";
 import type { RequestContextResolver } from "./request-context";
 import {
@@ -239,7 +240,10 @@ async function handleWebhook(
 ): Promise<Response> {
   const raw = await request.text();
   const supplied = request.headers.get("x-unipile-signature") ?? request.headers.get("x-webhook-signature");
-  if (!supplied || !isValidSignature(raw, supplied, dependencies.webhookSecret)) return problem(401, "INVALID_WEBHOOK_SIGNATURE", "Webhook signature is invalid");
+  if (!supplied || !isValidSignature(raw, supplied, dependencies.webhookSecret)) {
+    await recordRejectedUnipileWebhook(dependencies.database, raw, "INVALID_WEBHOOK_SIGNATURE");
+    return problem(401, "INVALID_WEBHOOK_SIGNATURE", "Webhook signature is invalid");
+  }
   let body: Record<string, unknown>;
   try {
     const parsed = JSON.parse(raw) as unknown;

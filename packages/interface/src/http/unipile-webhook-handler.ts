@@ -17,11 +17,13 @@ export function createUnipileWebhookHttpHandler(input: {
       response.headers.set("allow", "POST");
       return response;
     }
+    const rawBody = await request.text();
     if (!secureEqual(request.headers.get("unipile-auth") ?? "", input.secret)) {
+      await input.ingestor.recordRejected(rawBody, "WEBHOOK_AUTHENTICATION_FAILED");
       return problem(401, "WEBHOOK_AUTHENTICATION_FAILED", "Webhook authentication failed");
     }
     try {
-      const result = await input.ingestor.ingest(await request.text());
+      const result = await input.ingestor.ingest(rawBody);
       return Response.json(result, { status: result.duplicate ? 200 : 202 });
     } catch (error) {
       if (error instanceof UnipileWebhookError) {

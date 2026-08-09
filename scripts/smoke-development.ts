@@ -63,6 +63,10 @@ const aiConfigurationsResponse = await fetch(`${apiUrl}/api/v1/ai-configurations
 if (!aiConfigurationsResponse.ok) {
   throw new Error(`AI configurations lookup failed: ${aiConfigurationsResponse.status}`);
 }
+const consoleJobsResponse = await fetch(`${apiUrl}/api/v1/console/jobs`, { headers });
+if (!consoleJobsResponse.ok) {
+  throw new Error(`Operator console jobs lookup failed: ${consoleJobsResponse.status}`);
+}
 const settingsResponse = await fetch(`${apiUrl}/api/v1/workspace-ai-settings`, {
   headers,
 });
@@ -140,6 +144,12 @@ if (!aiStudioPage.ok || !aiStudioHtml.includes("AI Studio")) {
   throw new Error(`AI Studio page smoke test failed: ${aiStudioPage.status}`);
 }
 
+const operatorConsolePage = await fetch(`${webUrl}/w/${workspace.slug}/settings/console`, { headers: { cookie } });
+const operatorConsoleHtml = await operatorConsolePage.text();
+if (!operatorConsolePage.ok || !operatorConsoleHtml.includes("Console opérateur")) {
+  throw new Error(`Operator console page smoke test failed: ${operatorConsolePage.status}`);
+}
+
 console.info(
   JSON.stringify({
     event: "development_smoke_passed",
@@ -152,6 +162,7 @@ console.info(
     workspaceDataSettings: "readable",
     knowledgeSources: "readable",
     aiStudio: "readable",
+    operatorConsole: "readable",
   }),
 );
 

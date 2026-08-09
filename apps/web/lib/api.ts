@@ -87,6 +87,38 @@ export interface WorkspaceAuditLog {
   readonly createdAt: string;
 }
 
+export type ConsoleJobStatus = "pending" | "running" | "retry" | "completed" | "dead_lettered";
+export interface ConsoleJob {
+  readonly id: string;
+  readonly type: string;
+  readonly status: ConsoleJobStatus;
+  readonly attempts: number;
+  readonly maxAttempts: number;
+  readonly correlationId: string;
+  readonly payloadPreview: unknown;
+  readonly lastErrorCode: string | null;
+  readonly lastErrorMessage: string | null;
+  readonly availableAt: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+export interface RejectedWebhook {
+  readonly id: string;
+  readonly provider: string;
+  readonly providerEventId: string;
+  readonly eventType: string;
+  readonly reasonCode: string | null;
+  readonly reason: string | null;
+  readonly payloadPreview: unknown;
+  readonly receivedAt: string;
+}
+export interface CorrelationTrace {
+  readonly correlationId: string;
+  readonly jobs: readonly ConsoleJob[];
+  readonly events: readonly { readonly id: string; readonly aggregateType: string; readonly aggregateId: string; readonly eventType: string; readonly payloadPreview: unknown; readonly attempts: number; readonly publishedAt: string | null; readonly createdAt: string }[];
+  readonly audit: readonly { readonly id: string; readonly actorUserId: string | null; readonly action: string; readonly subjectType: string; readonly subjectId: string; readonly changes: unknown; readonly createdAt: string }[];
+}
+
 export type KnowledgeSourceType = "product_document" | "proof" | "customer_case" | "objection_response";
 export type KnowledgeSourceStatus = "draft" | "validated" | "expired" | "withdrawn";
 export interface KnowledgeSource {
@@ -453,6 +485,32 @@ export async function listWorkspaceAuditLogs(workspaceSlug: string, filters: { a
   query.set("limit", String(filters.limit ?? 50));
   const response = await crmFetch<{ data: WorkspaceAuditLog[] }>(workspaceSlug, `/api/v1/audit-logs?${query.toString()}`);
   return response.data;
+}
+
+export async function listConsoleJobs(workspaceSlug: string, filters: { statuses?: readonly string[]; type?: string; from?: string; to?: string; limit?: number } = {}): Promise<readonly ConsoleJob[]> {
+  const query = consoleQuery(filters);
+  for (const status of filters.statuses ?? []) query.append("status", status);
+  return (await crmFetch<{ data: ConsoleJob[] }>(workspaceSlug, `/api/v1/console/jobs?${query}`)).data;
+}
+export async function listConsoleDeadLetters(workspaceSlug: string, filters: { type?: string; from?: string; to?: string; limit?: number } = {}): Promise<readonly ConsoleJob[]> {
+  return (await crmFetch<{ data: ConsoleJob[] }>(workspaceSlug, `/api/v1/console/dead-letters?${consoleQuery(filters)}`)).data;
+}
+export async function listConsoleRejectedWebhooks(workspaceSlug: string, filters: { from?: string; to?: string; limit?: number } = {}): Promise<readonly RejectedWebhook[]> {
+  return (await crmFetch<{ data: RejectedWebhook[] }>(workspaceSlug, `/api/v1/console/webhooks/rejected?${consoleQuery(filters)}`)).data;
+}
+export async function traceConsoleCorrelation(workspaceSlug: string, correlationId: string): Promise<CorrelationTrace> {
+  return crmFetch(workspaceSlug, `/api/v1/console/correlations/${encodeURIComponent(correlationId)}`);
+}
+export async function requeueConsoleJob(workspaceSlug: string, jobId: string): Promise<ConsoleJob & { requeued: true }> {
+  return crmFetch(workspaceSlug, `/api/v1/console/jobs/${jobId}/actions/requeue`, { method: "POST", body: {} });
+}
+
+function consoleQuery(filters: { type?: string; from?: string; to?: string; limit?: number }): URLSearchParams {
+  const query = new URLSearchParams({ limit: String(filters.limit ?? 50) });
+  if (filters.type) query.set("type", filters.type);
+  if (filters.from) query.set("from", filters.from);
+  if (filters.to) query.set("to", filters.to);
+  return query;
 }
 
 export async function listKnowledgeSources(workspaceSlug: string, filters: { type?: KnowledgeSourceType; status?: KnowledgeSourceStatus; fresh?: boolean } = {}): Promise<readonly KnowledgeSource[]> {

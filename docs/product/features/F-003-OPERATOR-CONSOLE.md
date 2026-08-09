@@ -21,15 +21,18 @@ sans nouvel effet métier quand le traitement d’origine a réussi.
 
 ## État d’implémentation
 
-Moteur livré (catalogue : « livré ») : table `jobs` (type, payload,
+**Livré le 9 août 2026.** Table `jobs` (type, payload,
 `idempotency_key`, **`correlation_id`**, attempts/max, statuts
 `pending/running/retry/completed/dead_lettered`, verrous), file PostgreSQL
 avec retry borné et passage en dead letter, outbox dispatchée, `audit_logs`
 alimenté par toutes les mutations sensibles, webhooks persistés
 (`connected_account_webhooks`, événements d’intégration). Restent à livrer :
-les endpoints de lecture/administration et la page console — listes filtrées
-(jobs en échec, dead letters, webhooks rejetés), vue par `correlationId`,
-relance sécurisée.
+les endpoints de lecture/administration et la page console sont disponibles :
+listes filtrées (jobs en échec, dead letters, webhooks rejetés), vue par
+`correlationId`, relance sécurisée et journal d’audit mutualisé avec F-053.
+Les webhooks rejetés avant authentification ne stockent jamais leur corps :
+seuls le hash, le fournisseur et la raison sont conservés lorsque le compte
+permet de résoudre le workspace.
 
 ## Périmètre
 
@@ -126,15 +129,15 @@ au workspace) — jobs, dead letters, webhooks rejetés, corrélation, audit.
 
 | Méthode | Route | Usage | État |
 |---|---|---|---|
-| GET | `/api/v1/console/jobs` | jobs filtrés (statut, type, période) | à spécifier |
-| GET | `/api/v1/console/dead-letters` | dead letters avec cause | à spécifier |
-| GET | `/api/v1/console/webhooks/rejected` | webhooks rejetés et raisons | à spécifier |
-| GET | `/api/v1/console/correlations/:id` | vue de corrélation complète | à spécifier |
-| POST | `/api/v1/console/jobs/:id/actions/requeue` | relance idempotente (owner/admin) | à spécifier |
+| GET | `/api/v1/console/jobs` | jobs filtrés (statut, type, période) | livré |
+| GET | `/api/v1/console/dead-letters` | dead letters avec cause | livré |
+| GET | `/api/v1/console/webhooks/rejected` | webhooks rejetés et raisons | livré |
+| GET | `/api/v1/console/correlations/:id` | vue de corrélation complète | livré |
+| POST | `/api/v1/console/jobs/:id/actions/requeue` | relance idempotente (owner/admin) | livré |
 | GET | `/api/v1/audit-logs` | journal d’audit (endpoint partagé F-053) | spécifié dans F-053 |
 
 **Événements sortants** : `JobRequeued` à ajouter (un seul envoi par
-relance effective).
+relance effective) — livré.
 
 **Ports externes** : aucun.
 
