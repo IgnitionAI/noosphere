@@ -45,6 +45,12 @@ const membersResponse = await fetch(`${apiUrl}/api/v1/workspaces/${workspace.id}
 if (!membersResponse.ok) {
   throw new Error(`Workspace members lookup failed: ${membersResponse.status}`);
 }
+const channelLimitsResponse = await fetch(`${apiUrl}/api/v1/workspaces/${workspace.id}/channel-limits`, {
+  headers,
+});
+if (!channelLimitsResponse.ok) {
+  throw new Error(`Workspace channel limits lookup failed: ${channelLimitsResponse.status}`);
+}
 const settingsResponse = await fetch(`${apiUrl}/api/v1/workspace-ai-settings`, {
   headers,
 });
@@ -98,6 +104,14 @@ if (!membersPage.ok || !membersHtml.includes("Équipe et accès")) {
   throw new Error(`Workspace members page smoke test failed: ${membersPage.status}`);
 }
 
+const workspaceSettingsPage = await fetch(`${webUrl}/w/${workspace.slug}/settings`, {
+  headers: { cookie },
+});
+const workspaceSettingsHtml = await workspaceSettingsPage.text();
+if (!workspaceSettingsPage.ok || !workspaceSettingsHtml.includes("Paramètres du workspace")) {
+  throw new Error(`Workspace settings page smoke test failed: ${workspaceSettingsPage.status}`);
+}
+
 console.info(
   JSON.stringify({
     event: "development_smoke_passed",
@@ -107,6 +121,7 @@ console.info(
     aiSettings: "read_write",
     messagingSupervision: "readable",
     workspaceMembers: "readable",
+    workspaceDataSettings: "readable",
   }),
 );
 

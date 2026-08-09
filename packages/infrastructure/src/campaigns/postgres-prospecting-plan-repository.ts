@@ -11,6 +11,7 @@ import type {
 } from "@outbound/domain/campaigns/prospecting-plan";
 import { defaultCampaignSequenceSteps } from "@outbound/domain/campaigns/campaign-sequence";
 import type { Database } from "@outbound/infrastructure/database/client";
+import { workspaceCampaignPolicy } from "@outbound/infrastructure/workspaces/workspace-campaign-policy";
 import {
   campaigns,
   channelAssessments,
@@ -418,6 +419,7 @@ async function ensureChannelCampaign(
   const discoveryRunId = crypto.randomUUID();
   const sourcingFilters = buildAutonomousSourcingFilters(input.channel, input.strategy);
   const channelLabel = label(input.channel);
+  const autopilotPolicy = await workspaceCampaignPolicy(tx, input.workspaceId, input.channel);
   await tx.insert(sequences).values({
     id: sequenceId,
     workspaceId: input.workspaceId,
@@ -459,6 +461,7 @@ async function ensureChannelCampaign(
     sequenceId,
     discoveryRunId,
     prospectCount: 0,
+    autopilotPolicy,
     createdAt: input.now,
     updatedAt: input.now,
   });

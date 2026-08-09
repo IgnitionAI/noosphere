@@ -55,6 +55,41 @@
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceId" }, { "$ref": "#/components/parameters/UserId" }, { "$ref": "#/components/parameters/WorkspaceSlug" }],
       "post": { "operationId": "setWorkspaceMemberStatus", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkspaceMemberStatusRequest" } } } }, "responses": { "200": { "description": "Status changed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkspaceMember" } } } }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" }, "409": { "$ref": "#/components/responses/Conflict" } } }
     },
+    "/api/v1/workspaces/{workspaceId}": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceId" }, { "$ref": "#/components/parameters/WorkspaceSlug" }],
+      "patch": { "operationId": "updateWorkspaceProfile", "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string", "minLength": 1, "maxLength": 200 } } } } } }, "responses": { "200": { "description": "Workspace profile updated", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Workspace" } } } }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" } } }
+    },
+    "/api/v1/workspaces/{workspaceId}/sending-preferences": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceId" }, { "$ref": "#/components/parameters/WorkspaceSlug" }],
+      "get": { "operationId": "getWorkspaceSendingPreferences", "responses": { "200": { "description": "Sending preferences", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkspaceSendingPreferencesEnvelope" } } } } } },
+      "put": { "operationId": "updateWorkspaceSendingPreferences", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkspaceSendingPreferencesEnvelope" } } } }, "responses": { "200": { "description": "Sending preferences updated" }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" } } }
+    },
+    "/api/v1/workspaces/{workspaceId}/channel-limits": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceId" }, { "$ref": "#/components/parameters/WorkspaceSlug" }],
+      "get": { "operationId": "getWorkspaceChannelLimits", "responses": { "200": { "description": "Workspace channel limits", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkspaceChannelLimitsEnvelope" } } } } } },
+      "put": { "operationId": "updateWorkspaceChannelLimits", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkspaceChannelLimitsEnvelope" } } } }, "responses": { "200": { "description": "Channel limits updated" }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" } } }
+    },
+    "/api/v1/workspaces/{workspaceId}/retention-policy": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceId" }, { "$ref": "#/components/parameters/WorkspaceSlug" }],
+      "get": { "operationId": "getWorkspaceRetentionPolicy", "responses": { "200": { "description": "Workspace retention policy", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkspaceRetentionPolicyEnvelope" } } } }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" } } },
+      "put": { "operationId": "updateWorkspaceRetentionPolicy", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkspaceRetentionPolicyUpdate" } } } }, "responses": { "200": { "description": "Retention policy updated and purge scheduled when reduced" }, "400": { "$ref": "#/components/responses/InvalidRequest" }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" } } }
+    },
+    "/api/v1/workspaces/{workspaceId}/actions/export": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceId" }, { "$ref": "#/components/parameters/WorkspaceSlug" }],
+      "post": { "operationId": "requestWorkspaceDataExport", "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["requestKey"], "properties": { "requestKey": { "type": "string", "minLength": 1, "maxLength": 200 } } } } } }, "responses": { "202": { "description": "Export job accepted", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkspaceDataExport" } } } }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" }, "409": { "$ref": "#/components/responses/Conflict" } } }
+    },
+    "/api/v1/exports/{exportId}": {
+      "parameters": [{ "name": "exportId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }, { "$ref": "#/components/parameters/WorkspaceSlug" }],
+      "get": { "operationId": "getWorkspaceDataExport", "responses": { "200": { "description": "Export status and temporary download URL", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkspaceDataExport" } } } }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" }, "404": { "$ref": "#/components/responses/RunNotFound" }, "410": { "description": "Export expired" } } }
+    },
+    "/api/v1/contacts/{contactId}/actions/anonymize": {
+      "parameters": [{ "name": "contactId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }, { "$ref": "#/components/parameters/WorkspaceSlug" }],
+      "post": { "operationId": "anonymizeWorkspaceContact", "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["confirmation"], "properties": { "confirmation": { "type": "string", "const": "ANONYMISER" } } } } } }, "responses": { "200": { "description": "Contact anonymized while facts and suppressions remain" }, "400": { "$ref": "#/components/responses/InvalidRequest" }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" } } }
+    },
+    "/api/v1/audit-logs": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
+      "get": { "operationId": "listWorkspaceAuditLogs", "parameters": [{ "name": "action", "in": "query", "schema": { "type": "string" } }, { "name": "actorUserId", "in": "query", "schema": { "type": "string", "format": "uuid" } }, { "name": "from", "in": "query", "schema": { "type": "string", "format": "date-time" } }, { "name": "to", "in": "query", "schema": { "type": "string", "format": "date-time" } }, { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100 } }], "responses": { "200": { "description": "Workspace-scoped audit entries", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkspaceAuditLogList" } } } }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" } } }
+    },
     "/api/v1/workspace-ai-settings": {
       "parameters": [
         {
@@ -1530,6 +1565,16 @@
       "WorkspaceInvitationAcceptance": { "type": "object", "required": ["invitation", "member"], "properties": { "invitation": { "$ref": "#/components/schemas/WorkspaceInvitation" }, "member": { "$ref": "#/components/schemas/WorkspaceMember" } } },
       "WorkspaceMemberRoleRequest": { "type": "object", "required": ["role"], "properties": { "role": { "$ref": "#/components/schemas/WorkspaceRole" } } },
       "WorkspaceMemberStatusRequest": { "type": "object", "required": ["status"], "properties": { "status": { "type": "string", "enum": ["active", "disabled"] } } },
+      "WorkspaceSendingPreferences": { "type": "object", "required": ["timezone", "activeDays", "windowStart", "windowEnd"], "properties": { "timezone": { "type": "string" }, "activeDays": { "type": "array", "minItems": 1, "maxItems": 7, "items": { "type": "integer", "minimum": 1, "maximum": 7 } }, "windowStart": { "type": "string", "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$" }, "windowEnd": { "type": "string", "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$" } } },
+      "WorkspaceSendingPreferencesEnvelope": { "type": "object", "required": ["sending"], "properties": { "sending": { "$ref": "#/components/schemas/WorkspaceSendingPreferences" } } },
+      "WorkspaceChannelLimits": { "type": "object", "required": ["linkedin", "email", "whatsapp"], "properties": { "linkedin": { "type": "integer", "minimum": 1, "maximum": 100 }, "email": { "type": "integer", "minimum": 1, "maximum": 500 }, "whatsapp": { "type": "integer", "minimum": 1, "maximum": 200 } } },
+      "WorkspaceChannelLimitsEnvelope": { "type": "object", "required": ["channelLimits"], "properties": { "channelLimits": { "$ref": "#/components/schemas/WorkspaceChannelLimits" } } },
+      "WorkspaceRetentionPolicy": { "type": "object", "required": ["invitationsDays", "jobsDays", "auditDays"], "properties": { "invitationsDays": { "type": "integer", "minimum": 30, "maximum": 3650 }, "jobsDays": { "type": "integer", "minimum": 30, "maximum": 365 }, "auditDays": { "type": "integer", "minimum": 365, "maximum": 3650 } } },
+      "WorkspaceRetentionPolicyEnvelope": { "type": "object", "required": ["retention"], "properties": { "retention": { "$ref": "#/components/schemas/WorkspaceRetentionPolicy" } } },
+      "WorkspaceRetentionPolicyUpdate": { "allOf": [{ "$ref": "#/components/schemas/WorkspaceRetentionPolicyEnvelope" }, { "type": "object", "properties": { "confirmation": { "type": "string" } } }] },
+      "WorkspaceDataExport": { "type": "object", "required": ["id", "workspaceId", "requestKey", "status", "createdAt", "updatedAt"], "properties": { "id": { "type": "string", "format": "uuid" }, "workspaceId": { "type": "string", "format": "uuid" }, "requestKey": { "type": "string" }, "status": { "type": "string", "enum": ["pending", "processing", "completed", "failed"] }, "sizeBytes": { "type": ["integer", "null"] }, "checksumSha256": { "type": ["string", "null"] }, "expiresAt": { "type": ["string", "null"], "format": "date-time" }, "completedAt": { "type": ["string", "null"], "format": "date-time" }, "failureCode": { "type": ["string", "null"] }, "downloadUrl": { "type": ["string", "null"], "format": "uri" }, "createdAt": { "type": "string", "format": "date-time" }, "updatedAt": { "type": "string", "format": "date-time" } } },
+      "WorkspaceAuditLog": { "type": "object", "required": ["id", "action", "subjectType", "subjectId", "changes", "createdAt"], "properties": { "id": { "type": "string", "format": "uuid" }, "actorUserId": { "type": ["string", "null"], "format": "uuid" }, "actorName": { "type": ["string", "null"] }, "actorEmail": { "type": ["string", "null"], "format": "email" }, "action": { "type": "string" }, "subjectType": { "type": "string" }, "subjectId": { "type": "string", "format": "uuid" }, "changes": {}, "correlationId": { "type": ["string", "null"] }, "createdAt": { "type": "string", "format": "date-time" } } },
+      "WorkspaceAuditLogList": { "type": "object", "required": ["data"], "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/WorkspaceAuditLog" } } } },
       "WorkspaceAiModelList": {
         "type": "array",
         "minItems": 1,

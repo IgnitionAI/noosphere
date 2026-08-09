@@ -18,15 +18,11 @@ confirmée, réservée aux rôles autorisés et auditée.
 
 ## État d’implémentation
 
-Partiel. Socle livré : paramètres IA (`workspace_ai_settings` + endpoints et
-page `settings/ai`), pages `settings/channels` et `settings/calendar`,
-configuration des types de signaux (`PUT /settings/signals`), suppressions
-F-026, journal `audit_logs` alimenté par toutes les mutations sensibles
-(écriture seule — aucune lecture exposée). Restent à livrer : profil du
-workspace (renommage), section membres (adossée à F-002), préférences
-d’envoi, limites par canal, politique de rétention, export des données en
-job, anonymisation, consultation de l’audit et cadre de confirmation des
-opérations destructives.
+Livré. `/w/[workspaceSlug]/settings` regroupe le profil, l’équipe F-002, les
+préférences d’envoi, les limites par canal, la rétention, l’export asynchrone
+et le journal d’audit. L’anonymisation irréversible est disponible depuis la
+fiche prospect. Les permissions, confirmations typées, purges et exports sont
+appliqués côté serveur et couverts par les suites HTTP et PostgreSQL.
 
 ## Périmètre
 
@@ -142,27 +138,26 @@ existantes `settings/ai`, `settings/channels`, `settings/calendar` restent.
 
 | Méthode | Route | Usage | État |
 |---|---|---|---|
-| PATCH | `/api/v1/workspaces/:id` | renommage (slug immuable) | à spécifier |
-| GET/PUT | `/api/v1/workspaces/:id/sending-preferences` | fuseau et fenêtres par défaut | à spécifier |
-| GET/PUT | `/api/v1/workspaces/:id/channel-limits` | plafonds quotidiens par canal | à spécifier |
-| GET/PUT | `/api/v1/workspaces/:id/retention-policy` | durées par catégorie | à spécifier |
-| POST | `/api/v1/workspaces/:id/actions/export` | lance un export (job, owner/admin) | à spécifier |
-| GET | `/api/v1/exports/:id` | statut + lien signé expirant | à spécifier |
-| POST | `/api/v1/contacts/:id/actions/anonymize` | anonymisation confirmée (owner/admin) | à spécifier |
-| GET | `/api/v1/audit-logs` | journal filtrable (owner/admin) | à spécifier |
+| PATCH | `/api/v1/workspaces/:id` | renommage (slug immuable) | livré |
+| GET/PUT | `/api/v1/workspaces/:id/sending-preferences` | fuseau et fenêtres par défaut | livré |
+| GET/PUT | `/api/v1/workspaces/:id/channel-limits` | plafonds quotidiens par canal | livré |
+| GET/PUT | `/api/v1/workspaces/:id/retention-policy` | durées par catégorie | livré |
+| POST | `/api/v1/workspaces/:id/actions/export` | lance un export (job, owner/admin) | livré |
+| GET | `/api/v1/exports/:id` | statut + lien signé expirant | livré |
+| POST | `/api/v1/contacts/:id/actions/anonymize` | anonymisation confirmée (owner/admin) | livré |
+| GET | `/api/v1/audit-logs` | journal filtrable (owner/admin) | livré |
 
 **Événements sortants** : `WorkspaceDataExportRequested`,
-`ContactAnonymized`, `RetentionPolicyChanged` à ajouter — un seul envoi via
-l’outbox, en phase avec l’audit.
+`ContactAnonymized`, `RetentionPolicyChanged`, livrés via l’outbox dans la
+même transaction que l’audit et la mutation métier.
 
 **Ports externes** : stockage des archives d’export derrière un port
 (fichier signé à expiration) ; purge planifiée via la file de jobs (F-003).
 
 ## Données et confidentialité
 
-- nouvelles tables : `workspace_channel_limits`, `workspace_retention_policy`
-  (ou colonnes sur `workspaces`), `workspace_exports` (job, statut, clé
-  d’archive, `expiresAt`, demandeur) ;
+- tables livrées : `workspace_data_settings` (envoi, limites, rétention) et
+  `workspace_exports` (job, statut, clé d’archive, `expiresAt`, demandeur) ;
 - données personnelles : l’export contient des PII — accès owner/admin
   uniquement, lien expirant, audit obligatoire ; l’anonymisation remplace
   nom, email, téléphone et identités par des valeurs irréversibles en

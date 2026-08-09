@@ -80,6 +80,12 @@ export const workspaceInvitationStatusEnum = pgEnum("workspace_invitation_status
   "revoked",
   "expired",
 ]);
+export const workspaceExportStatusEnum = pgEnum("workspace_export_status", [
+  "pending",
+  "processing",
+  "completed",
+  "failed",
+]);
 export const workspaceRoleEnum = pgEnum("workspace_role", [
   "viewer",
   "operator",
@@ -272,6 +278,52 @@ export const workspaceAiSettings = pgTable("workspace_ai_settings", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+export const workspaceDataSettings = pgTable("workspace_data_settings", {
+  workspaceId: uuid("workspace_id")
+    .primaryKey()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  timezone: varchar("timezone", { length: 120 }).notNull().default("Europe/Paris"),
+  activeDays: jsonb("active_days").notNull().default([1, 2, 3, 4, 5]),
+  windowStart: varchar("window_start", { length: 5 }).notNull().default("09:00"),
+  windowEnd: varchar("window_end", { length: 5 }).notNull().default("17:00"),
+  linkedinDailyLimit: integer("linkedin_daily_limit").notNull().default(20),
+  emailDailyLimit: integer("email_daily_limit").notNull().default(50),
+  whatsappDailyLimit: integer("whatsapp_daily_limit").notNull().default(30),
+  invitationsRetentionDays: integer("invitations_retention_days").notNull().default(90),
+  jobsRetentionDays: integer("jobs_retention_days").notNull().default(90),
+  auditRetentionDays: integer("audit_retention_days").notNull().default(365),
+  updatedBy: uuid("updated_by").references(() => authUsers.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const workspaceExports = pgTable(
+  "workspace_exports",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    requestKey: varchar("request_key", { length: 200 }).notNull(),
+    status: workspaceExportStatusEnum("status").notNull().default("pending"),
+    objectKey: varchar("object_key", { length: 800 }),
+    sizeBytes: integer("size_bytes"),
+    checksumSha256: varchar("checksum_sha256", { length: 64 }),
+    requestedBy: uuid("requested_by").references(() => authUsers.id, { onDelete: "set null" }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    failureCode: varchar("failure_code", { length: 120 }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique("workspace_exports_workspace_id_uq").on(table.workspaceId, table.id),
+    uniqueIndex("workspace_exports_request_key_uq").on(table.workspaceId, table.requestKey),
+    uniqueIndex("workspace_exports_active_uq")
+      .on(table.workspaceId)
+      .where(sql`${table.status} in ('pending', 'processing')`),
+    index("workspace_exports_workspace_created_idx").on(table.workspaceId, table.createdAt),
+  ],
+);
 
 export const dailyProspectingSchedules = pgTable(
   "daily_prospecting_schedules",
@@ -1203,6 +1255,7 @@ export const contacts = pgTable(
     source: crmSourceEnum("source").notNull().default("manual"),
     mergedIntoId: uuid("merged_into_id"),
     mergedAt: timestamp("merged_at", { withTimezone: true }),
+    anonymizedAt: timestamp("anonymized_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

@@ -23,6 +23,7 @@ import {
   Radar,
   Package,
   Plus,
+  SlidersHorizontal,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -57,6 +58,7 @@ export function AppShell({
   const calendarSettingsHref = `/w/${workspace.slug}/settings/calendar`;
   const channelSettingsHref = `/w/${workspace.slug}/settings/channels`;
   const memberSettingsHref = `/w/${workspace.slug}/settings/members`;
+  const workspaceSettingsHref = `/w/${workspace.slug}/settings`;
   const productReadingActive = pathname.startsWith(productReadingHref);
   const icpsActive = pathname.startsWith(icpsHref);
   const offersActive = pathname.startsWith(offersHref);
@@ -269,6 +271,19 @@ export function AppShell({
           >
             <UsersRound size={17} />
             Équipe
+          </Link>
+          <Link
+            aria-current={pathname === workspaceSettingsHref ? "page" : undefined}
+            className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium ${
+              pathname === workspaceSettingsHref
+                ? "bg-white/10 text-white"
+                : "text-slate-300 hover:bg-white/5 hover:text-white"
+            }`}
+            href={workspaceSettingsHref}
+            onClick={() => setOpen(false)}
+          >
+            <SlidersHorizontal size={17} />
+            Paramètres
           </Link>
           {["admin", "owner"].includes(workspace.role) ? (
             <>

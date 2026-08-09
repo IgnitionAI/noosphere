@@ -61,6 +61,13 @@ import { PostgresSignalRepository, SignalCollectionJobProcessor } from "@outboun
 import { PostgresOutboxDispatcher } from "@outbound/infrastructure/outbox/postgres-outbox-dispatcher";
 import { HttpUnipileClient, UnavailableUnipileClient } from "@outbound/infrastructure/integrations/unipile-client";
 import { PostgresOutreachScheduler } from "@outbound/infrastructure/scheduler/postgres-outreach-scheduler";
+import {
+  PostgresWorkspaceExportSnapshot,
+  S3WorkspaceArchiveStorage,
+  WorkspaceDataExportProcessor,
+  WorkspaceRetentionPurgeProcessor,
+} from "@outbound/infrastructure/workspaces/workspace-data-export";
+import { PostgresWorkspaceDataLifecycle } from "@outbound/infrastructure/workspaces/postgres-workspace-data-lifecycle";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
@@ -82,6 +89,7 @@ const outreachScheduler = new PostgresOutreachScheduler(database.db, unipileClie
 const repository = new PostgresProductResearchRepository(database.db);
 const clock = new SystemClock();
 const ids = new CryptoIdGenerator();
+const workspaceDataLifecycle = new PostgresWorkspaceDataLifecycle(database.db, clock, ids);
 const documentOptions = documentServiceOptionsFromEnvironment();
 const documentService = new ResearchDocumentService(
   database.db,
@@ -95,6 +103,21 @@ const documentSearch = new ParadeDbInternalDocumentSearch(
   documentOptions.openAIApiKey,
   documentOptions.embeddingModel,
 );
+const workspaceArchiveStorage = new S3WorkspaceArchiveStorage({
+  bucket: documentOptions.bucket,
+  endpoint: documentOptions.endpoint,
+  region: documentOptions.region,
+  accessKeyId: documentOptions.accessKeyId,
+  secretAccessKey: documentOptions.secretAccessKey,
+});
+const workspaceExportProcessor = new WorkspaceDataExportProcessor(
+  database.db,
+  queue,
+  new PostgresWorkspaceExportSnapshot(database.client),
+  workspaceArchiveStorage,
+  clock,
+);
+const retentionPurgeProcessor = new WorkspaceRetentionPurgeProcessor(database.db, queue, clock);
 const toolRunRecorder = new PostgresResearchToolRunRecorder(database.db);
 const workspaceAiSettings = new PostgresWorkspaceAiSettingsRepository(database.db);
 const sourcingValidator = new V3SourcingValidator(
@@ -184,6 +207,7 @@ const outreachDispatchProcessor = new OutreachDispatchJobProcessor(
   },
   campaignContentGenerator,
   createReachabilityResolver,
+  workspaceDataLifecycle,
 );
 const inboundReplyAgent = new LangChainInboundReplyAgent(process.env, workspaceAiSettings);
 const inboundReplyProcessor = new InboundReplyJobProcessor(
@@ -259,7 +283,7 @@ const worker = new ResearchWorker(queue, orchestrator, clock, {
   leaseMs: positiveIntegerEnvironment("JOB_LEASE_MS", 60_000),
   batchSize: positiveIntegerEnvironment("JOB_BATCH_SIZE", 4),
   pollIntervalMs: positiveIntegerEnvironment("JOB_POLL_INTERVAL_MS", 1_000),
-}, documentService, discoveryProcessor, channelAssessmentProcessor, campaignAutomationProcessor, campaignCompositionProcessor, outreachDispatchProcessor, inboundReplyProcessor, automatedReplySendProcessor, conversationCommandProcessor, maintenance, outboxDispatcher, importService, outreachScheduler, enrichmentProcessor, signalProcessor);
+}, documentService, discoveryProcessor, channelAssessmentProcessor, campaignAutomationProcessor, campaignCompositionProcessor, outreachDispatchProcessor, inboundReplyProcessor, automatedReplySendProcessor, conversationCommandProcessor, maintenance, outboxDispatcher, importService, outreachScheduler, enrichmentProcessor, signalProcessor, workspaceExportProcessor, retentionPurgeProcessor);
 
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
   process.once(signal, () => {

@@ -1,11 +1,11 @@
-import { ArrowLeft, Ban, Briefcase, Plus, TriangleAlert, UserRound } from "lucide-react";
+import { ArrowLeft, Ban, Briefcase, Fingerprint, Plus, TriangleAlert, UserRound } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { CrmPermissionState } from "@/components/crm-states";
 import { getContact, getContactEnrichment, getEnrichmentJob, getSignalCollectionRun, listCompanies, listContactMerges, listContactSignals, listWorkspaces, OutboundApiError, type EnrichmentJobDetail, type EnrichmentObservation, type IntentSignal, type SignalCollectionRun } from "@/lib/api";
 import { MutationForm } from "../../research/[runId]/report/mutation-form";
 import { resolveProspectReturn } from "@/lib/prospect-navigation";
-import { addEmploymentAction, addIdentityAction, enrichContactAction, retryEnrichmentJobAction, suppressContactAction, undoContactMergeAction, updateContactAction } from "../actions";
+import { addEmploymentAction, addIdentityAction, anonymizeContactAction, enrichContactAction, retryEnrichmentJobAction, suppressContactAction, undoContactMergeAction, updateContactAction } from "../actions";
 import { EnrichmentPanel } from "./enrichment-panel";
 import { collectSignalsAction } from "../../signals-actions";
 import { SignalsPanel } from "@/components/signals-panel";
@@ -77,6 +77,7 @@ export default async function ContactDetailPage({
   }
   const addEmployment = addEmploymentAction.bind(null, workspaceSlug, contactId);
   const suppress = suppressContactAction.bind(null, workspaceSlug, contactId);
+  const anonymize = anonymizeContactAction.bind(null, workspaceSlug, contactId);
   const update = updateContactAction.bind(null, workspaceSlug, contactId);
   const undo = undoContactMergeAction.bind(null, workspaceSlug, contactId);
   const enrich = enrichContactAction.bind(null, workspaceSlug, contactId);
@@ -85,6 +86,7 @@ export default async function ContactDetailPage({
   const addIdentity = addIdentityAction.bind(null, workspaceSlug, contactId);
   const workspace = (await listWorkspaces()).find((item) => item.slug === workspaceSlug);
   const canEdit = workspace ? ["operator", "admin", "owner"].includes(workspace.role) : false;
+  const canAdminister = workspace ? ["admin", "owner"].includes(workspace.role) : false;
   const suppressed = contact.status === "suppressed";
   const currentCompanyId = contact.employments.find((employment) => employment.isCurrent)?.companyId;
   const requestKey = `contact-enrichment:${contactId}:${contact.updatedAt ?? contact.createdAt ?? "v1"}`;
@@ -183,8 +185,8 @@ export default async function ContactDetailPage({
           </section>
         </main>
 
-        {canEdit && !suppressed ? (
-          <aside className="panel border-warning">
+        <aside className="space-y-4">
+          {canEdit && !suppressed ? <section className="panel border-warning">
             <div className="panel-header">
               <h2 className="flex items-center gap-2 font-semibold">
                 <Ban size={15} className="text-warning" />
@@ -204,11 +206,12 @@ export default async function ContactDetailPage({
                 </button>
               </MutationForm>
             </div>
-          </aside>
-        ) : null}
+          </section> : null}
+          {canAdminister ? <section className="panel border-danger/30"><div className="panel-header"><h2 className="flex items-center gap-2 font-semibold"><Fingerprint size={15} className="text-danger" /> Anonymisation irréversible</h2></div><div className="panel-body"><p className="text-xs leading-5 text-muted">Remplace le nom et toutes les coordonnées sans réécrire les faits historiques. Les empreintes de suppression restent actives afin qu’un réimport demeure bloqué.</p><MutationForm action={anonymize} className="mt-3 space-y-2" successMessage="Le contact a été anonymisé."><label className="block text-xs font-semibold text-muted">Saisissez ANONYMISER<input className="control mt-1" name="confirmation" pattern="ANONYMISER" required /></label><button className="button w-full text-danger" type="submit"><Fingerprint size={14} /> Anonymiser définitivement</button></MutationForm></div></section> : null}
+        </aside>
       </div>
       {!suppressed && signalAccess ? <SignalsPanel canCollect={workspace ? ["admin", "owner"].includes(workspace.role) : false} collectAction={collect} entityId={contactId} entityType="contact" requestKey={signalRequestKey} run={signalRun} signals={signals} /> : null}
-      {canEdit ? (
+      {canEdit && !suppressed ? (
         <section className="panel mt-5">
           <div className="panel-header">
             <h2 className="font-semibold">Modifier le contact</h2>

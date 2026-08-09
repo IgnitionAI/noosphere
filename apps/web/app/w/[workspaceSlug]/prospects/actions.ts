@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import {
   addContactEmployment,
   addContactIdentity,
+  anonymizeWorkspaceContact,
   createContact,
   enrichContact,
   improveConversationDraft,
@@ -147,6 +148,21 @@ export async function suppressContactAction(
     reason || "Suppression déclarée depuis la fiche prospect.",
   );
   revalidatePath(`/w/${workspaceSlug}/prospects/${contactId}`);
+}
+
+export async function anonymizeContactAction(
+  workspaceSlug: string,
+  contactId: string,
+  formData: FormData,
+) {
+  await anonymizeWorkspaceContact(
+    workspaceSlug,
+    contactId,
+    String(formData.get("confirmation") ?? ""),
+  );
+  revalidatePath(`/w/${workspaceSlug}/prospects`);
+  revalidatePath(`/w/${workspaceSlug}/prospects/${contactId}`);
+  revalidatePath(`/w/${workspaceSlug}/settings`);
 }
 
 export async function undoContactMergeAction(

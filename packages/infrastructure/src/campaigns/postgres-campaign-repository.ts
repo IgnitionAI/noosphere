@@ -2,6 +2,7 @@ import { and, asc, count, desc, eq, gte, sql } from "drizzle-orm";
 import { mergeCampaignAutopilotPolicy, resolveCampaignAutopilotPolicy } from "@outbound/domain/campaigns/campaign-autopilot-policy";
 import { transitionCampaign, type CampaignSnapshot, type CampaignTransition } from "@outbound/domain/campaigns/campaign";
 import type { Database } from "@outbound/infrastructure/database/client";
+import { workspaceCampaignPolicy } from "@outbound/infrastructure/workspaces/workspace-campaign-policy";
 import {
   campaigns,
   aiPolicyVersions,
@@ -63,10 +64,12 @@ export class PostgresCampaignRepository {
         .where(and(eq(sequenceVersions.workspaceId, input.workspaceId), eq(sequenceVersions.id, input.sequenceVersionId)))
         .limit(1);
       if (!version) throw new Error("SEQUENCE_VERSION_NOT_FOUND");
+      const autopilotPolicy = await workspaceCampaignPolicy(tx, input.workspaceId, "email");
       const [campaign] = await tx.insert(campaigns).values({
         ...input,
         sequenceId: version.sequenceId,
         channel: "email",
+        autopilotPolicy,
       }).returning();
       const [event] = await tx.insert(outboxEvents).values({
         workspaceId: input.workspaceId,

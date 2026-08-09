@@ -52,6 +52,41 @@ export interface WorkspaceInvitation {
   readonly emailDelivery?: "sent" | "failed" | "not_configured";
 }
 
+export interface WorkspaceDataPolicy {
+  readonly sending: { readonly timezone: string; readonly activeDays: readonly number[]; readonly windowStart: string; readonly windowEnd: string };
+  readonly channelLimits: { readonly linkedin: number; readonly email: number; readonly whatsapp: number };
+  readonly retention: { readonly invitationsDays: number; readonly jobsDays: number; readonly auditDays: number };
+}
+
+export interface WorkspaceDataExport {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly requestKey: string;
+  readonly status: "pending" | "processing" | "completed" | "failed";
+  readonly sizeBytes: number | null;
+  readonly checksumSha256: string | null;
+  readonly requestedBy: string | null;
+  readonly expiresAt: string | null;
+  readonly completedAt: string | null;
+  readonly failureCode: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly downloadUrl?: string | null;
+}
+
+export interface WorkspaceAuditLog {
+  readonly id: string;
+  readonly actorUserId: string | null;
+  readonly actorName: string | null;
+  readonly actorEmail: string | null;
+  readonly action: string;
+  readonly subjectType: string;
+  readonly subjectId: string;
+  readonly changes: unknown;
+  readonly correlationId: string | null;
+  readonly createdAt: string;
+}
+
 export interface WorkspaceAiSettings {
   readonly researchModels: readonly string[];
   readonly synthesisModels: readonly string[];
@@ -278,6 +313,56 @@ export async function setWorkspaceMemberStatus(
   status: WorkspaceMemberStatus,
 ): Promise<void> {
   await crmFetch(workspaceSlug, `/api/v1/workspaces/${workspaceId}/members/${userId}/actions/set-status`, { method: "POST", body: { status } });
+}
+
+export async function updateWorkspaceProfile(workspaceSlug: string, workspaceId: string, name: string): Promise<Workspace> {
+  return crmFetch(workspaceSlug, `/api/v1/workspaces/${workspaceId}`, { method: "PATCH", body: { name } });
+}
+
+export async function getWorkspaceDataPolicy(workspaceSlug: string, workspaceId: string, includeRetention: boolean): Promise<WorkspaceDataPolicy> {
+  const [sending, limits, retention] = await Promise.all([
+    crmFetch<{ sending: WorkspaceDataPolicy["sending"] }>(workspaceSlug, `/api/v1/workspaces/${workspaceId}/sending-preferences`),
+    crmFetch<{ channelLimits: WorkspaceDataPolicy["channelLimits"] }>(workspaceSlug, `/api/v1/workspaces/${workspaceId}/channel-limits`),
+    includeRetention
+      ? crmFetch<{ retention: WorkspaceDataPolicy["retention"] }>(workspaceSlug, `/api/v1/workspaces/${workspaceId}/retention-policy`)
+      : Promise.resolve({ retention: { invitationsDays: 90, jobsDays: 90, auditDays: 365 } }),
+  ]);
+  return { sending: sending.sending, channelLimits: limits.channelLimits, retention: retention.retention };
+}
+
+export async function updateWorkspaceSendingPreferences(workspaceSlug: string, workspaceId: string, sending: WorkspaceDataPolicy["sending"]): Promise<void> {
+  await crmFetch(workspaceSlug, `/api/v1/workspaces/${workspaceId}/sending-preferences`, { method: "PUT", body: { sending } });
+}
+
+export async function updateWorkspaceChannelLimits(workspaceSlug: string, workspaceId: string, channelLimits: WorkspaceDataPolicy["channelLimits"]): Promise<void> {
+  await crmFetch(workspaceSlug, `/api/v1/workspaces/${workspaceId}/channel-limits`, { method: "PUT", body: { channelLimits } });
+}
+
+export async function updateWorkspaceRetentionPolicy(workspaceSlug: string, workspaceId: string, retention: WorkspaceDataPolicy["retention"], confirmation: string): Promise<void> {
+  await crmFetch(workspaceSlug, `/api/v1/workspaces/${workspaceId}/retention-policy`, { method: "PUT", body: { retention, confirmation } });
+}
+
+export async function requestWorkspaceDataExport(workspaceSlug: string, workspaceId: string, requestKey: string): Promise<WorkspaceDataExport> {
+  return crmFetch(workspaceSlug, `/api/v1/workspaces/${workspaceId}/actions/export`, { method: "POST", body: { requestKey } });
+}
+
+export async function getWorkspaceDataExport(workspaceSlug: string, exportId: string): Promise<WorkspaceDataExport> {
+  return crmFetch(workspaceSlug, `/api/v1/exports/${exportId}`);
+}
+
+export async function anonymizeWorkspaceContact(workspaceSlug: string, contactId: string, confirmation: string): Promise<void> {
+  await crmFetch(workspaceSlug, `/api/v1/contacts/${contactId}/actions/anonymize`, { method: "POST", body: { confirmation } });
+}
+
+export async function listWorkspaceAuditLogs(workspaceSlug: string, filters: { action?: string; actorUserId?: string; from?: string; to?: string; limit?: number } = {}): Promise<readonly WorkspaceAuditLog[]> {
+  const query = new URLSearchParams();
+  if (filters.action) query.set("action", filters.action);
+  if (filters.actorUserId) query.set("actorUserId", filters.actorUserId);
+  if (filters.from) query.set("from", filters.from);
+  if (filters.to) query.set("to", filters.to);
+  query.set("limit", String(filters.limit ?? 50));
+  const response = await crmFetch<{ data: WorkspaceAuditLog[] }>(workspaceSlug, `/api/v1/audit-logs?${query.toString()}`);
+  return response.data;
 }
 
 export async function getWorkspaceAiSettings(

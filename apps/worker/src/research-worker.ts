@@ -43,6 +43,8 @@ export class ResearchWorker {
     private readonly outreachProcessor?: OutreachSchedulerProcessor,
     private readonly enrichmentProcessor?: { process(job: LeasedJob): Promise<void> },
     private readonly signalProcessor?: { process(job: LeasedJob): Promise<void> },
+    private readonly workspaceExportProcessor?: { process(job: LeasedJob): Promise<void> },
+    private readonly retentionPurgeProcessor?: { process(job: LeasedJob): Promise<void> },
   ) {}
 
   stop(): void {
@@ -80,6 +82,8 @@ export class ResearchWorker {
         ...(this.outreachProcessor ? ["outreach.action.execute"] : []),
         ...(this.enrichmentProcessor ? ["crm.enrichment.execute"] : []),
         ...(this.signalProcessor ? ["crm.signals.collect"] : []),
+        ...(this.workspaceExportProcessor ? ["workspace.data.export"] : []),
+        ...(this.retentionPurgeProcessor ? ["workspace.retention.purge"] : []),
       ],
       limit: this.options.batchSize,
       leaseMs: this.options.leaseMs,
@@ -126,6 +130,10 @@ export class ResearchWorker {
         await this.enrichmentProcessor.process(job);
       } else if (job.type === "crm.signals.collect" && this.signalProcessor) {
         await this.signalProcessor.process(job);
+      } else if (job.type === "workspace.data.export" && this.workspaceExportProcessor) {
+        await this.workspaceExportProcessor.process(job);
+      } else if (job.type === "workspace.retention.purge" && this.retentionPurgeProcessor) {
+        await this.retentionPurgeProcessor.process(job);
       } else {
         await this.orchestrator.process(job);
       }

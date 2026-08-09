@@ -44,6 +44,9 @@ import { createSignalHttpHandler } from "@outbound/interface/http/signal-handler
 import { createConnectedAccountHttpHandler } from "@outbound/interface/http/connected-account-handler";
 import { HttpUnipileClient, UnavailableUnipileClient } from "@outbound/infrastructure/integrations/unipile-client";
 import { PostgresWorkspaceRepository } from "@outbound/infrastructure/workspaces/postgres-workspace-repository";
+import { PostgresWorkspaceDataLifecycle } from "@outbound/infrastructure/workspaces/postgres-workspace-data-lifecycle";
+import { S3WorkspaceArchiveStorage } from "@outbound/infrastructure/workspaces/workspace-data-export";
+import { createWorkspaceDataHttpHandler } from "@outbound/interface/http/workspace-data-handler";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
@@ -82,6 +85,14 @@ const workspace = createWorkspaceHttpHandler({
   memberships: auth.memberships,
   contextResolver: auth.contextResolver,
   management: new PostgresWorkspaceRepository(database.db),
+});
+const workspaceDataLifecycle = new PostgresWorkspaceDataLifecycle(database.db, clock, ids);
+const workspaceArchiveStorage = new S3WorkspaceArchiveStorage(workspaceArchiveOptionsFromEnvironment());
+const workspaceData = createWorkspaceDataHttpHandler({
+  contextResolver: auth.contextResolver,
+  service: workspaceDataLifecycle,
+  clock,
+  downloads: workspaceArchiveStorage,
 });
 const workspaceAiSettingsRepository = new PostgresWorkspaceAiSettingsRepository(database.db);
 const workspaceAiSettings = createWorkspaceAiSettingsHttpHandler({
@@ -235,6 +246,7 @@ const server = Bun.serve({
     if (pathname.startsWith("/api/v1/connected-accounts") || pathname.startsWith("/api/v1/account-health-alerts")) return connectedAccounts(request);
     if (pathname.startsWith("/api/v1/analytics/")) return analytics(request);
     if (pathname.startsWith("/api/v1/signals") || pathname.startsWith("/api/v1/settings/signals") || pathname.includes("/signals")) return signals(request);
+    if (isWorkspaceDataRoute(pathname, request.method)) return workspaceData(request);
     if (pathname.startsWith("/api/v1/opportunities") || pathname === "/api/v1/pipeline/forecast" || pathname.startsWith("/api/v1/workspaces/") && pathname.endsWith("/lost-reasons")) return opportunityHandler(request);
     if (pathname.includes("/actions/enrich") || pathname.startsWith("/api/v1/enrichment-jobs/") || pathname.endsWith("/enrichment")) return enrichment(request);
     if (pathname === "/api/v1/workspaces" || pathname.startsWith("/api/v1/workspaces/") || pathname.startsWith("/api/v1/invitations/")) return workspace(request);
@@ -336,4 +348,21 @@ function documentServiceOptionsFromEnvironment() {
     doclingUrl: requiredEnvironment("DOCLING_SERVICE_URL"),
     ...(process.env.DOCLING_API_KEY ? { doclingApiKey: process.env.DOCLING_API_KEY } : {}),
   };
+}
+
+function workspaceArchiveOptionsFromEnvironment() {
+  return {
+    bucket: requiredEnvironment("S3_BUCKET"),
+    endpoint: requiredEnvironment("S3_ENDPOINT"),
+    region: process.env.S3_REGION ?? "us-east-1",
+    accessKeyId: requiredEnvironment("S3_ACCESS_KEY_ID"),
+    secretAccessKey: requiredEnvironment("S3_SECRET_ACCESS_KEY"),
+  };
+}
+
+function isWorkspaceDataRoute(pathname: string, method: string): boolean {
+  if (pathname === "/api/v1/audit-logs" || pathname.startsWith("/api/v1/exports/")) return true;
+  if (/^\/api\/v1\/contacts\/[^/]+\/actions\/anonymize$/.test(pathname)) return true;
+  if (/^\/api\/v1\/workspaces\/[^/]+\/(sending-preferences|channel-limits|retention-policy|actions\/export)$/.test(pathname)) return true;
+  return method === "PATCH" && /^\/api\/v1\/workspaces\/[^/]+$/.test(pathname);
 }

@@ -12,6 +12,7 @@ import { deriveCampaignExecutionState } from "@outbound/domain/campaigns/campaig
 import { nextAllowedCampaignSendAt, type CampaignSendSchedule } from "@outbound/domain/campaigns/campaign-autopilot-policy";
 import { resolveCampaignAutopilotPolicy } from "@outbound/domain/campaigns/campaign-autopilot-policy";
 import { fitSequenceStepContent, validateSequenceSteps, type SequenceStepInput } from "@outbound/domain/campaigns/sequence-validation";
+import { startOfWorkspaceDay } from "@outbound/domain/workspaces/workspace-data-policy";
 import type { Database } from "@outbound/infrastructure/database/client";
 import {
   campaigns,
@@ -33,6 +34,10 @@ export interface OutreachDispatchLimits {
   readonly whatsapp: number;
 }
 
+export interface WorkspaceDispatchPolicyReader {
+  readDispatchPolicy(workspaceId: string): Promise<{ limits: OutreachDispatchLimits; timezone: string }>;
+}
+
 export class OutreachDispatchJobProcessor {
   constructor(
     private readonly database: Database,
@@ -42,6 +47,7 @@ export class OutreachDispatchJobProcessor {
     private readonly limits: OutreachDispatchLimits = { linkedin: 20, email: 50, whatsapp: 30 },
     private readonly generator?: CampaignContentGenerator,
     private readonly reachabilityResolver?: (workspaceId: string) => WhatsappReachabilityResolver,
+    private readonly workspacePolicy?: WorkspaceDispatchPolicyReader,
   ) {}
 
   async process(job: LeasedJob): Promise<void> {
@@ -314,8 +320,10 @@ export class OutreachDispatchJobProcessor {
   }
 
   async #dailyLimitReached(action: ClaimedAction): Promise<boolean> {
-    const start = new Date(this.clock.now());
-    start.setHours(0, 0, 0, 0);
+    const policy = this.workspacePolicy
+      ? await this.workspacePolicy.readDispatchPolicy(action.workspaceId)
+      : { limits: this.limits, timezone: "UTC" };
+    const start = startOfWorkspaceDay(this.clock.now(), policy.timezone);
     const sent = await this.database
       .select({ id: outreachActions.id })
       .from(outreachActions)
@@ -328,7 +336,7 @@ export class OutreachDispatchJobProcessor {
           gte(outreachActions.sentAt, start),
         ),
       );
-    return sent.length >= this.limits[action.channel];
+    return sent.length >= policy.limits[action.channel];
   }
 
   async #prepareContentIfNeeded(action: ClaimedAction): Promise<unknown> {

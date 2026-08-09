@@ -46,7 +46,7 @@ techniques sans changer son identifiant produit.
 | F-050 | non commencé | fiche DoR prête ; briques réutilisables (documents F-009, claims F-010) présentes |
 | F-051 | livré | entonnoir déterministe, breakdowns 5 dimensions, coûts et export owner/admin |
 | F-052 | non commencé | page stub de redirection ; fiche DoR prête (parcours 7 étapes) |
-| F-053 | partiel | paramètres IA/canaux/calendrier et audit écrit ; profil, rétention, export, anonymisation et lecture d’audit à livrer |
+| F-053 | livré | paramètres unifiés, limites de dispatch, rétention/purge, export 72 h, anonymisation et audit filtrable |
 
 ## Epic 1 — Socle multi-workspace
 
