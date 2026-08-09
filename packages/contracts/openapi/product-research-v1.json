@@ -1137,6 +1137,22 @@
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
       "put": { "operationId": "updateSignalSettings", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SignalSettings" } } } }, "responses": { "200": { "description": "Signal settings updated" }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" } } }
     },
+    "/api/v1/analytics/funnel": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
+      "get": { "operationId": "getAnalyticsFunnel", "responses": { "200": { "description": "Deterministic workspace funnel" }, "400": { "description": "Invalid period" } } }
+    },
+    "/api/v1/analytics/breakdown": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
+      "get": { "operationId": "getAnalyticsBreakdown", "parameters": [{ "name": "dimension", "in": "query", "required": true, "schema": { "$ref": "#/components/schemas/AnalyticsDimension" } }], "responses": { "200": { "description": "Deterministic analytics breakdown" } } }
+    },
+    "/api/v1/analytics/costs": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
+      "get": { "operationId": "getAnalyticsCosts", "responses": { "200": { "description": "AI costs and unit costs" }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" } } }
+    },
+    "/api/v1/analytics/export": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
+      "get": { "operationId": "exportAnalytics", "responses": { "200": { "description": "Filtered CSV export", "content": { "text/csv": { "schema": { "type": "string" } } } }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" } } }
+    },
     "/api/v1/contacts/{contactId}/actions/suppress": {
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/ContactId" }],
       "post": { "operationId": "suppressContact", "responses": { "204": { "description": "Contact suppressed" } } }
@@ -2431,6 +2447,9 @@
         "properties": { "id": { "type": "string", "format": "uuid" }, "workspaceId": { "type": "string", "format": "uuid" }, "companyId": { "type": ["string", "null"], "format": "uuid" }, "contactId": { "type": ["string", "null"], "format": "uuid" }, "requestKey": { "type": "string" }, "status": { "type": "string", "enum": ["queued", "running", "succeeded", "partial", "failed"] }, "source": { "type": "string" }, "errorCode": { "type": ["string", "null"] }, "errorMessage": { "type": ["string", "null"] }, "startedAt": { "type": ["string", "null"], "format": "date-time" }, "completedAt": { "type": ["string", "null"], "format": "date-time" }, "createdAt": { "type": "string", "format": "date-time" }, "updatedAt": { "type": "string", "format": "date-time" } }
       },
       "SignalSettings": { "type": "object", "additionalProperties": false, "required": ["signalTypes"], "properties": { "signalTypes": { "type": "array", "minItems": 1, "items": { "$ref": "#/components/schemas/SignalType" } } } },
+      "AnalyticsDimension": { "type": "string", "enum": ["campaign", "icp", "channel", "role", "signal"] },
+      "AnalyticsFunnel": { "type": "object", "required": ["period", "metrics"], "properties": { "period": { "type": "object", "required": ["from", "to"], "properties": { "from": { "type": "string", "format": "date-time" }, "to": { "type": "string", "format": "date-time" } } }, "metrics": { "type": "object", "additionalProperties": { "type": "number" } } } },
+      "AnalyticsCosts": { "type": "object", "required": ["totalAiCost", "costPerProspect", "costPerMeeting"], "properties": { "totalAiCost": { "type": "number" }, "costPerProspect": { "type": "number" }, "costPerMeeting": { "type": "number" } } },
       "Problem": {
         "type": "object",
         "required": [

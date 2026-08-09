@@ -38,6 +38,7 @@ import { PostgresUnipileChannelConnections } from "@outbound/infrastructure/chan
 import { createChannelConnectionHttpHandler } from "@outbound/interface/http/channel-connection-handler";
 import { createEnrichmentHttpHandler } from "@outbound/interface/http/enrichment-handler";
 import { PostgresChannelCapabilityReassessment } from "@outbound/infrastructure/campaigns/channel-capability-reassessment";
+import { createAnalyticsHttpHandler } from "@outbound/interface/http/analytics-handler";
 import { CrawlerSignalSource } from "@outbound/infrastructure/crm/crawler-signal-source";
 import { createSignalHttpHandler } from "@outbound/interface/http/signal-handler";
 
@@ -156,6 +157,7 @@ const signals = createSignalHttpHandler({
   signalSource: () => discoveryCrawler ? new CrawlerSignalSource(discoveryCrawler) : null,
   jobQueue: queue,
 });
+const analytics = createAnalyticsHttpHandler({ database: database.db, contextResolver: auth.contextResolver });
 const sequenceHandler = createSequenceHttpHandler({
   database: database.db,
   contextResolver: auth.contextResolver,
@@ -209,6 +211,7 @@ const server = Bun.serve({
     if (pathname.startsWith("/api/v1/webhooks/calendar/")) return calendarWebhook(request);
     if (pathname === "/api/v1/calendar-connection") return calendarConnection(request);
     if (pathname.startsWith("/api/v1/channel-connections/")) return channelConnection(request);
+    if (pathname.startsWith("/api/v1/analytics/")) return analytics(request);
     if (pathname.startsWith("/api/v1/signals") || pathname.startsWith("/api/v1/settings/signals") || pathname.includes("/signals")) return signals(request);
     if (pathname.startsWith("/api/v1/opportunities")) return opportunityHandler(request);
     if (pathname.includes("/actions/enrich") || pathname.startsWith("/api/v1/enrichment-jobs/") || pathname.endsWith("/enrichment")) return enrichment(request);

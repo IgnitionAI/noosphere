@@ -2345,6 +2345,8 @@ export const opportunities = pgTable(
     contactId: uuid("contact_id").notNull().references(() => contacts.id, { onDelete: "cascade" }),
     campaignId: uuid("campaign_id").references(() => campaigns.id, { onDelete: "set null" }),
     stage: varchar("stage", { length: 80 }).notNull().default("qualified"),
+    amount: numeric("amount", { precision: 19, scale: 6, mode: "number" }),
+    currency: varchar("currency", { length: 3 }),
     nextAction: text("next_action"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
