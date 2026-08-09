@@ -1459,6 +1459,93 @@ export interface OutreachAction {
   readonly updatedAt: string;
 }
 
+export type AnalyticsDimension = "campaign" | "icp" | "channel" | "role" | "signal";
+export interface AnalyticsQuery {
+  readonly from?: string;
+  readonly to?: string;
+  readonly campaignId?: string;
+  readonly icpVersionId?: string;
+  readonly channel?: string;
+  readonly role?: string;
+  readonly signalType?: string;
+}
+export interface AnalyticsFunnel {
+  readonly period: { readonly from: string; readonly to: string };
+  readonly metrics: {
+    readonly prospectsFound: number;
+    readonly profilesEnriched: number;
+    readonly actionsPlanned: number;
+    readonly attempts: number;
+    readonly actionsSent: number;
+    readonly actionsAccepted: number;
+    readonly responded: number;
+    readonly positiveReplies: number;
+    readonly meetingsBooked: number;
+    readonly opportunities: number;
+    readonly revenue: number;
+  };
+}
+export interface AnalyticsBreakdownRow {
+  readonly key: string;
+  readonly label: string;
+  readonly prospectsFound: number;
+  readonly profilesEnriched: number;
+  readonly actionsPlanned: number;
+  readonly attempts: number;
+  readonly actionsSent: number;
+  readonly actionsAccepted: number;
+  readonly responded: number;
+  readonly positiveReplies: number;
+  readonly meetingsBooked: number;
+  readonly opportunities: number;
+  readonly revenue: number;
+}
+export interface AnalyticsBreakdown {
+  readonly period: { readonly from: string; readonly to: string };
+  readonly dimension: AnalyticsDimension;
+  readonly data: readonly AnalyticsBreakdownRow[];
+}
+export interface AnalyticsCosts {
+  readonly period?: { readonly from: string; readonly to: string };
+  readonly totalAiCost: number;
+  readonly costPerProspect: number;
+  readonly costPerMeeting: number;
+}
+function analyticsParams(options: AnalyticsQuery = {}): string {
+  const params = new URLSearchParams();
+  if (options.from) params.set("from", normalizeAnalyticsDate(options.from, false));
+  if (options.to) params.set("to", normalizeAnalyticsDate(options.to, true));
+  for (const key of ["campaignId", "icpVersionId", "channel", "role", "signalType"] as const) if (options[key]) params.set(key, options[key]!);
+  return params.toString();
+}
+function normalizeAnalyticsDate(value: string, _end: boolean): string {
+  const date = value.length === 10
+    // Keep the API's [from,to) semantics: a date-only `to` is midnight at
+    // the start of that date, so the selected end date remains exclusive.
+    ? new Date(`${value}T00:00:00.000Z`)
+    : new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toISOString();
+}
+export async function getAnalyticsFunnel(workspaceSlug: string, options: AnalyticsQuery = {}): Promise<AnalyticsFunnel> {
+  const query = analyticsParams(options);
+  return crmFetch(workspaceSlug, `/api/v1/analytics/funnel${query ? `?${query}` : ""}`);
+}
+export async function getAnalyticsBreakdown(workspaceSlug: string, dimension: AnalyticsDimension, options: AnalyticsQuery = {}): Promise<AnalyticsBreakdown> {
+  const query = analyticsParams({ ...options });
+  return crmFetch(workspaceSlug, `/api/v1/analytics/breakdown?dimension=${dimension}${query ? `&${query}` : ""}`);
+}
+export async function getAnalyticsCosts(workspaceSlug: string, options: AnalyticsQuery = {}): Promise<AnalyticsCosts> {
+  const query = analyticsParams(options);
+  return crmFetch(workspaceSlug, `/api/v1/analytics/costs${query ? `?${query}` : ""}`);
+}
+export async function exportAnalyticsCsv(workspaceSlug: string, options: AnalyticsQuery = {}, dimension?: AnalyticsDimension): Promise<string> {
+  const query = analyticsParams(options);
+  const full = `${query}${dimension ? `${query ? "&" : ""}dimension=${dimension}` : ""}`;
+  const response = await apiFetch(`/api/v1/analytics/export${full ? `?${full}` : ""}`, { workspaceSlug });
+  if (!response.ok) await throwApiError(response);
+  return response.text();
+}
+
 export type ConnectedAccountStatus = "pending" | "connected" | "degraded" | "disconnected" | "unknown";
 export interface ConnectedAccount {
   readonly id: string;

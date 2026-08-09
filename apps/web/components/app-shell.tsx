@@ -2,6 +2,7 @@
 
 import {
   Bell,
+  BarChart3,
   CalendarDays,
   ChevronDown,
   FlaskConical,
@@ -44,6 +45,7 @@ export function AppShell({
   const icpsHref = `/w/${workspace.slug}/icps`;
   const offersHref = `/w/${workspace.slug}/offers`;
   const messagingHref = `/w/${workspace.slug}/messaging`;
+  const analyticsHref = `/w/${workspace.slug}/analytics`;
   const inboxHref = `/w/${workspace.slug}/inbox`;
   const campaignsHref = `/w/${workspace.slug}/campaigns`;
   const prospectsHref = `/w/${workspace.slug}/prospects`;
@@ -55,6 +57,7 @@ export function AppShell({
   const icpsActive = pathname.startsWith(icpsHref);
   const offersActive = pathname.startsWith(offersHref);
   const messagingActive = pathname.startsWith(messagingHref);
+  const analyticsActive = pathname.startsWith(analyticsHref);
   const initials = session.user.name
     .split(/\s+/)
     .map((part) => part[0])
@@ -175,6 +178,19 @@ export function AppShell({
           >
             <MessageSquareText size={17} />
             Messages & supervision
+          </Link>
+          <Link
+            aria-current={analyticsActive ? "page" : undefined}
+            className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium ${
+              analyticsActive
+                ? "bg-white/10 text-white"
+                : "text-slate-300 hover:bg-white/5 hover:text-white"
+            }`}
+            href={analyticsHref}
+            onClick={() => setOpen(false)}
+          >
+            <BarChart3 size={17} />
+            Analytics
           </Link>
           <div className="mb-2 mt-6 px-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">
             Prospection
