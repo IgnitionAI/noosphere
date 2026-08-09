@@ -41,6 +41,8 @@ import { PostgresChannelCapabilityReassessment } from "@outbound/infrastructure/
 import { createAnalyticsHttpHandler } from "@outbound/interface/http/analytics-handler";
 import { CrawlerSignalSource } from "@outbound/infrastructure/crm/crawler-signal-source";
 import { createSignalHttpHandler } from "@outbound/interface/http/signal-handler";
+import { createConnectedAccountHttpHandler } from "@outbound/interface/http/connected-account-handler";
+import { HttpUnipileClient, UnavailableUnipileClient } from "@outbound/infrastructure/integrations/unipile-client";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
@@ -96,6 +98,9 @@ const crm = createCrmHttpHandler({
 });
 const unipileDsn = process.env.UNIPILE_DSN ?? "";
 const unipileApiKey = process.env.UNIPILE_API_KEY ?? "";
+const connectedAccountClient = unipileDsn && unipileApiKey
+  ? new HttpUnipileClient({ dsn: unipileDsn, apiKey: unipileApiKey, timeoutMs: positiveIntegerEnvironment("UNIPILE_TIMEOUT_MS", 10_000) })
+  : new UnavailableUnipileClient();
 const unipileChannelConnections = unipileDsn && unipileApiKey
   ? new PostgresUnipileChannelConnections(database.db, { dsn: unipileDsn, apiKey: unipileApiKey })
   : null;
@@ -183,6 +188,12 @@ const unipileWebhook = createUnipileWebhookHttpHandler({
   ingestor: new UnipileWebhookIngestor(database.db),
   secret: process.env.UNIPILE_WEBHOOK_SECRET ?? "",
 });
+const connectedAccounts = createConnectedAccountHttpHandler({
+  database: database.db,
+  contextResolver: auth.contextResolver,
+  client: connectedAccountClient,
+  webhookSecret: process.env.UNIPILE_WEBHOOK_SECRET ?? "",
+});
 const calendarSigningKey = process.env.CALENDAR_WEBHOOK_SIGNING_KEY
   ?? requiredSecretEnvironment("BETTER_AUTH_SECRET");
 const calendarIntegration = new PostgresCalendarIntegration(database.db, calendarSigningKey);
@@ -207,10 +218,18 @@ const server = Bun.serve({
   async fetch(request) {
     const pathname = new URL(request.url).pathname;
     if (pathname.startsWith("/api/auth/")) return auth.handle(request);
-    if (pathname === "/api/v1/webhooks/unipile") return unipileWebhook(request);
+    if (pathname === "/api/v1/webhooks/unipile") {
+      // Account health webhooks use the dedicated signature header. Keep the
+      // existing message webhook contract (unipile-auth) untouched.
+      if (request.headers.has("x-unipile-signature") || request.headers.has("x-webhook-signature")) {
+        return connectedAccounts(request);
+      }
+      return unipileWebhook(request);
+    }
     if (pathname.startsWith("/api/v1/webhooks/calendar/")) return calendarWebhook(request);
     if (pathname === "/api/v1/calendar-connection") return calendarConnection(request);
     if (pathname.startsWith("/api/v1/channel-connections/")) return channelConnection(request);
+    if (pathname.startsWith("/api/v1/connected-accounts") || pathname.startsWith("/api/v1/account-health-alerts")) return connectedAccounts(request);
     if (pathname.startsWith("/api/v1/analytics/")) return analytics(request);
     if (pathname.startsWith("/api/v1/signals") || pathname.startsWith("/api/v1/settings/signals") || pathname.includes("/signals")) return signals(request);
     if (pathname.startsWith("/api/v1/opportunities")) return opportunityHandler(request);

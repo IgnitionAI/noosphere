@@ -1040,6 +1040,35 @@
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/ConnectedAccountId" }],
       "post": { "operationId": "reconnectAccount", "responses": { "200": { "description": "Reconnected account" }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" } } }
     },
+    "/api/v1/connected-accounts/onboarding": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
+      "post": {
+        "operationId": "startConnectedAccountOnboarding",
+        "description": "Starts or resumes one provider onboarding per workspace and channel. Access tokens never appear in this response.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConnectionOnboardingRequest" } } } },
+        "responses": { "201": { "description": "Onboarding session", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConnectionOnboarding" } } } }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" } }
+      }
+    },
+    "/api/v1/connected-accounts/onboarding/{onboardingId}": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/OnboardingId" }],
+      "get": { "operationId": "getConnectedAccountOnboarding", "responses": { "200": { "description": "Onboarding status", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConnectionOnboarding" } } } }, "404": { "description": "Onboarding not found" } } }
+    },
+    "/api/v1/connected-accounts/{connectedAccountId}/quotas": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/ConnectedAccountId" }],
+      "get": { "operationId": "getConnectedAccountQuotas", "description": "Daily usage is projected from outreach_actions in UTC. Channels are returned only when the provider confirms sending capability.", "responses": { "200": { "description": "Normalized account quotas", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AccountQuota" } } } }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" } } }
+    },
+    "/api/v1/connected-accounts/{connectedAccountId}/impact": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/ConnectedAccountId" }],
+      "get": { "operationId": "getConnectedAccountSuspensionImpact", "description": "Read-only campaigns and actions currently suspended because this account is degraded.", "responses": { "200": { "description": "Suspension impact", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AccountSuspensionImpact" } } } }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" } } }
+    },
+    "/api/v1/account-health-alerts": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
+      "get": { "operationId": "listAccountHealthAlerts", "responses": { "200": { "description": "Active and acknowledged degradation episodes", "content": { "application/json": { "schema": { "type": "object", "required": ["data"], "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/AccountHealthAlert" } } } } } } } } }
+    },
+    "/api/v1/account-health-alerts/{alertId}/actions/acknowledge": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/AlertId" }],
+      "post": { "operationId": "acknowledgeAccountHealthAlert", "responses": { "200": { "description": "Acknowledged alert", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AccountHealthAlert" } } } }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" } } }
+    },
     "/api/v1/webhooks/unipile": {
       "post": { "operationId": "receiveUnipileWebhook", "summary": "Receive a signed idempotent Unipile status webhook", "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object" } } } }, "responses": { "202": { "description": "Webhook accepted" }, "400": { "$ref": "#/components/responses/InvalidRequest" }, "401": { "description": "Invalid webhook signature" } } }
     },
@@ -1308,6 +1337,14 @@
       },
       "ConnectedAccountId": {
         "name": "connectedAccountId", "in": "path", "required": true,
+        "schema": { "type": "string", "format": "uuid" }
+      },
+      "OnboardingId": {
+        "name": "onboardingId", "in": "path", "required": true,
+        "schema": { "type": "string", "format": "uuid" }
+      },
+      "AlertId": {
+        "name": "alertId", "in": "path", "required": true,
         "schema": { "type": "string", "format": "uuid" }
       },
       "ApprovalItemId": {
@@ -2369,6 +2406,62 @@
           "displayName": { "type": ["string", "null"] },
           "accessToken": { "type": "string", "writeOnly": true }
         }
+      },
+      "ConnectionOnboardingRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["channel"],
+        "properties": { "channel": { "type": "string", "enum": ["email", "linkedin", "whatsapp"] } }
+      },
+      "ConnectionOnboarding": {
+        "type": "object",
+        "required": ["id", "provider", "channel", "step", "status", "expiresAt", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "provider": { "type": "string", "enum": ["unipile"] },
+          "channel": { "type": "string", "enum": ["email", "linkedin", "whatsapp"] },
+          "step": { "type": "string", "enum": ["initiation", "callback", "verification"] },
+          "status": { "type": "string", "enum": ["initiated", "awaiting_callback", "verifying", "completed", "failed", "expired"] },
+          "hostedUrl": { "type": ["string", "null"], "format": "uri-reference" },
+          "providerAccountId": { "type": ["string", "null"] },
+          "result": { "type": "object", "additionalProperties": true, "writeOnly": true },
+          "errorCode": { "type": ["string", "null"] },
+          "errorMessage": { "type": ["string", "null"] },
+          "expiresAt": { "type": "string", "format": "date-time" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "AccountQuota": {
+        "type": "object",
+        "required": ["accountId", "referenceDate", "timezone", "channels"],
+        "properties": {
+          "accountId": { "type": "string", "format": "uuid" },
+          "referenceDate": { "type": "string", "format": "date" },
+          "timezone": { "type": "string", "enum": ["UTC"] },
+          "channels": { "type": "array", "items": { "type": "object", "required": ["channel", "sentToday", "limit", "percentage", "state"], "properties": { "channel": { "type": "string", "enum": ["email", "linkedin", "whatsapp"] }, "sentToday": { "type": "integer", "minimum": 0 }, "limit": { "type": ["integer", "null"], "minimum": 0 }, "percentage": { "type": ["number", "null"], "minimum": 0, "maximum": 100 }, "state": { "type": "string", "enum": ["ok", "near_limit", "reached", "unlimited"] } } } }
+        }
+      },
+      "AccountHealthAlert": {
+        "type": "object",
+        "required": ["id", "connectedAccountId", "status", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "connectedAccountId": { "type": "string", "format": "uuid" },
+          "status": { "type": "string", "enum": ["active", "acknowledged", "resolved"] },
+          "reasonCode": { "type": ["string", "null"] },
+          "reasonMessage": { "type": ["string", "null"] },
+          "acknowledgedBy": { "type": ["string", "null"], "format": "uuid" },
+          "acknowledgedAt": { "type": ["string", "null"], "format": "date-time" },
+          "resolvedAt": { "type": ["string", "null"], "format": "date-time" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "AccountSuspensionImpact": {
+        "type": "object",
+        "required": ["accountId", "campaigns"],
+        "properties": { "accountId": { "type": "string", "format": "uuid" }, "campaigns": { "type": "array", "items": { "type": "object", "required": ["campaignId", "campaignName", "suspendedActions"], "properties": { "campaignId": { "type": "string", "format": "uuid" }, "campaignName": { "type": "string" }, "suspendedActions": { "type": "integer", "minimum": 0 } } } } }
       },
       "EnrichmentRequest": {
         "type": "object",

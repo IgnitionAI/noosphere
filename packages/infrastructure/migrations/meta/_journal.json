@@ -351,6 +351,13 @@
       "when": 1787349600000,
       "tag": "0049_opportunity_amount_currency",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1787436000000,
+      "tag": "0050_connected_account_onboarding_alerts",
+      "breakpoints": true
     }
   ]
 }

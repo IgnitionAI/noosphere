@@ -104,6 +104,27 @@ export const connectedAccountStatusEnum = pgEnum("connected_account_status", [
   "unknown",
 ]);
 
+export const connectionOnboardingStatusEnum = pgEnum("connection_onboarding_status", [
+  "initiated",
+  "awaiting_callback",
+  "verifying",
+  "completed",
+  "failed",
+  "expired",
+]);
+
+export const connectionOnboardingStepEnum = pgEnum("connection_onboarding_step", [
+  "initiation",
+  "callback",
+  "verification",
+]);
+
+export const accountHealthAlertStatusEnum = pgEnum("account_health_alert_status", [
+  "active",
+  "acknowledged",
+  "resolved",
+]);
+
 export const authUsers = pgTable(
   "auth_users",
   {
@@ -2696,5 +2717,54 @@ export const connectedAccountWebhooks = pgTable(
   (table) => [
     unique("connected_account_webhooks_provider_event_uq").on(table.provider, table.eventId),
     index("connected_account_webhooks_account_idx").on(table.connectedAccountId, table.createdAt),
+  ],
+);
+
+export const connectionOnboardings = pgTable(
+  "connection_onboardings",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    provider: varchar("provider", { length: 80 }).notNull().default("unipile"),
+    channel: varchar("channel", { length: 40 }).notNull(),
+    step: connectionOnboardingStepEnum("step").notNull().default("initiation"),
+    status: connectionOnboardingStatusEnum("status").notNull().default("initiated"),
+    hostedUrl: text("hosted_url"),
+    providerAccountId: varchar("provider_account_id", { length: 300 }),
+    result: jsonb("result").notNull().default({}),
+    errorCode: varchar("error_code", { length: 120 }),
+    errorMessage: varchar("error_message", { length: 500 }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdBy: uuid("created_by").references(() => authUsers.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique("connection_onboardings_workspace_id_uq").on(table.workspaceId, table.id),
+    uniqueIndex("connection_onboardings_active_channel_uq").on(table.workspaceId, table.channel).where(sql`${table.status} in ('initiated', 'awaiting_callback', 'verifying')`),
+    index("connection_onboardings_workspace_status_idx").on(table.workspaceId, table.status, table.updatedAt),
+  ],
+);
+
+export const accountHealthAlerts = pgTable(
+  "account_health_alerts",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    connectedAccountId: uuid("connected_account_id").notNull().references(() => connectedAccounts.id, { onDelete: "cascade" }),
+    episodeKey: varchar("episode_key", { length: 200 }).notNull(),
+    status: accountHealthAlertStatusEnum("status").notNull().default("active"),
+    reasonCode: varchar("reason_code", { length: 120 }),
+    reasonMessage: varchar("reason_message", { length: 500 }),
+    acknowledgedBy: uuid("acknowledged_by").references(() => authUsers.id, { onDelete: "set null" }),
+    acknowledgedAt: timestamp("acknowledged_at", { withTimezone: true }),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique("account_health_alerts_workspace_id_uq").on(table.workspaceId, table.id),
+    uniqueIndex("account_health_alerts_account_episode_uq").on(table.connectedAccountId, table.episodeKey),
+    index("account_health_alerts_workspace_status_idx").on(table.workspaceId, table.status, table.createdAt),
   ],
 );

@@ -30,6 +30,13 @@ const connectSchema = z.object({
 }).strict();
 const accountPath = /^\/api\/v1\/connected-accounts\/([^/]+)$/;
 const actionPath = /^\/api\/v1\/connected-accounts\/([^/]+)\/actions\/(check|reconnect)$/;
+const onboardingPath = /^\/api\/v1\/connected-accounts\/onboarding\/([^/]+)$/;
+const onboardingActionPath = /^\/api\/v1\/connected-accounts\/onboarding\/([^/]+)\/actions\/complete$/;
+const quotasPath = /^\/api\/v1\/connected-accounts\/([^/]+)\/quotas$/;
+const impactPath = /^\/api\/v1\/connected-accounts\/([^/]+)\/impact$/;
+const alertPath = /^\/api\/v1\/account-health-alerts\/([^/]+)\/actions\/acknowledge$/;
+const onboardingSchema = z.object({ channel: z.enum(["email", "linkedin", "whatsapp"]) }).strict();
+const onboardingCompleteSchema = z.object({ providerAccountId: z.string().trim().min(1).max(300), accessToken: z.string().min(1).max(20_000), displayName: z.string().trim().max(300).nullish() }).strict();
 
 export interface ConnectedAccountHttpDependencies {
   readonly database: Database;
@@ -45,6 +52,56 @@ export function createConnectedAccountHttpHandler(dependencies: ConnectedAccount
     try {
       if (url.pathname === "/api/v1/webhooks/unipile") return await handleWebhook(request, dependencies, repository);
       const context = await resolveContext(dependencies.contextResolver, request);
+
+      if (url.pathname === "/api/v1/connected-accounts/onboarding" && request.method === "POST") {
+        requireAdmin(context.role);
+        const body = onboardingSchema.parse(await request.json());
+        const onboarding = await repository.startOnboarding({
+          id: crypto.randomUUID(),
+          workspaceId: context.workspaceId,
+          channel: body.channel,
+          createdBy: context.userId,
+          expiresAt: new Date(Date.now() + 15 * 60_000),
+        });
+        return json(onboarding, 201);
+      }
+
+      const onboardingAction = onboardingActionPath.exec(url.pathname);
+      if (onboardingAction && request.method === "POST") {
+        requireAdmin(context.role);
+        const body = onboardingCompleteSchema.parse(await request.json());
+        const onboardingId = uuidSchema.parse(onboardingAction[1]);
+        const onboarding = await repository.getOnboarding({ workspaceId: context.workspaceId, id: onboardingId });
+        if (!onboarding) return problem(404, "CONNECTION_ONBOARDING_NOT_FOUND", "Connection onboarding not found");
+        let snapshot: UnipileAccountSnapshot;
+        try {
+          snapshot = await dependencies.client.connect({ providerAccountId: body.providerAccountId, accessToken: body.accessToken });
+        } catch (error) {
+          if (error instanceof ProviderUnavailableError) {
+            const failed = await repository.failOnboarding({ workspaceId: context.workspaceId, id: onboardingId, errorCode: "PROVIDER_UNAVAILABLE", errorMessage: error.message });
+            return json(failed, 503);
+          }
+          throw error;
+        }
+        const completed = await repository.completeOnboarding({
+          workspaceId: context.workspaceId,
+          onboardingId,
+          providerAccountId: body.providerAccountId,
+          displayName: body.displayName ?? null,
+          encryptedSecret: encryptSecret(body.accessToken),
+          snapshot,
+          actorUserId: context.userId,
+        });
+        return json({ onboarding: completed.onboarding, account: completed.account }, 201);
+      }
+
+      const onboardingMatch = onboardingPath.exec(url.pathname);
+      if (onboardingMatch && request.method === "GET") {
+        requireViewer(context.role);
+        const onboarding = await repository.getOnboarding({ workspaceId: context.workspaceId, id: uuidSchema.parse(onboardingMatch[1]) });
+        if (!onboarding) return problem(404, "CONNECTION_ONBOARDING_NOT_FOUND", "Connection onboarding not found");
+        return json(onboardingViewForRole(onboarding, context.role));
+      }
 
       if (url.pathname === "/api/v1/connected-accounts") {
         if (request.method === "GET") {
@@ -90,6 +147,35 @@ export function createConnectedAccountHttpHandler(dependencies: ConnectedAccount
         const account = await repository.disconnect({ workspaceId: context.workspaceId, accountId: uuidSchema.parse(match[1]), actorUserId: context.userId });
         if (!account) return problem(404, "CONNECTED_ACCOUNT_NOT_FOUND", "Connected account not found");
         return json(account);
+      }
+
+      const quotas = quotasPath.exec(url.pathname);
+      if (quotas && request.method === "GET") {
+        requireQuotaReader(context.role);
+        const result = await repository.quotas({ workspaceId: context.workspaceId, accountId: uuidSchema.parse(quotas[1]) });
+        if (!result) return problem(404, "CONNECTED_ACCOUNT_NOT_FOUND", "Connected account not found");
+        return json(result);
+      }
+
+      const impact = impactPath.exec(url.pathname);
+      if (impact && request.method === "GET") {
+        requireOperatorReader(context.role);
+        const result = await repository.suspensionImpact({ workspaceId: context.workspaceId, accountId: uuidSchema.parse(impact[1]) });
+        if (!result) return problem(404, "CONNECTED_ACCOUNT_NOT_FOUND", "Connected account not found");
+        return json(result);
+      }
+
+      if (url.pathname === "/api/v1/account-health-alerts" && request.method === "GET") {
+        requireOperatorReader(context.role);
+        const alerts = await repository.listHealthAlerts({ workspaceId: context.workspaceId });
+        return json({ data: alerts.map((alert) => alertViewForRole(alert, context.role)) });
+      }
+      const alert = alertPath.exec(url.pathname);
+      if (alert && request.method === "POST") {
+        requireAdmin(context.role);
+        const result = await repository.acknowledgeHealthAlert({ workspaceId: context.workspaceId, id: uuidSchema.parse(alert[1]), actorUserId: context.userId });
+        if (!result) return problem(404, "ACCOUNT_HEALTH_ALERT_NOT_FOUND", "Account health alert not found");
+        return json(result);
       }
 
       const action = actionPath.exec(url.pathname);
@@ -217,11 +303,21 @@ function asRecord(value: unknown): Readonly<Record<string, unknown>> {
 class WorkspacePermissionError extends Error {}
 function requireViewer(role: string): void { if (!["viewer", "operator", "reviewer", "admin", "owner"].includes(role)) throw new WorkspacePermissionError("Workspace access is required"); }
 function requireAdmin(role: string): void { if (!["admin", "owner"].includes(role)) throw new WorkspacePermissionError("Administrator access is required"); }
+function requireQuotaReader(role: string): void { if (!["admin", "owner", "operator"].includes(role)) throw new WorkspacePermissionError("Quota access is restricted to operators and administrators"); }
+function requireOperatorReader(role: string): void { if (!["admin", "owner", "operator"].includes(role)) throw new WorkspacePermissionError("Account health access is restricted to operators and administrators"); }
 function viewForRole(account: import("@outbound/infrastructure/integrations/postgres-connected-account-repository").ConnectedAccountView, role: string) {
   if (role === "viewer" || role === "reviewer") {
     return { ...account, capabilities: {}, quotas: {}, lastErrorCode: null, lastErrorMessage: null };
   }
   return account;
+}
+function onboardingViewForRole(onboarding: import("@outbound/infrastructure/integrations/postgres-connected-account-repository").ConnectionOnboardingView, role: string) {
+  if (role === "viewer" || role === "reviewer") return { id: onboarding.id, channel: onboarding.channel, step: onboarding.step, status: onboarding.status, expiresAt: onboarding.expiresAt, createdAt: onboarding.createdAt, updatedAt: onboarding.updatedAt };
+  return onboarding;
+}
+function alertViewForRole(alert: import("@outbound/infrastructure/integrations/postgres-connected-account-repository").AccountHealthAlertView, role: string) {
+  if (role === "viewer" || role === "reviewer") return { id: alert.id, connectedAccountId: alert.connectedAccountId, status: alert.status, createdAt: alert.createdAt, updatedAt: alert.updatedAt };
+  return alert;
 }
 function isUniqueViolation(error: unknown): boolean {
   let current: unknown = error;
@@ -243,6 +339,11 @@ async function resolveContext(resolver: RequestContextResolver, request: Request
 }
 function allowedMethods(pathname: string): string | null {
   if (pathname === "/api/v1/connected-accounts") return "GET, POST";
+  if (pathname === "/api/v1/connected-accounts/onboarding") return "POST";
+  if (onboardingPath.test(pathname) || onboardingActionPath.test(pathname)) return "GET, POST";
+  if (quotasPath.test(pathname) || impactPath.test(pathname)) return "GET";
+  if (pathname === "/api/v1/account-health-alerts") return "GET";
+  if (alertPath.test(pathname)) return "POST";
   if (accountPath.test(pathname)) return "GET, DELETE";
   if (actionPath.test(pathname)) return "POST";
   if (pathname === "/api/v1/webhooks/unipile") return "POST";

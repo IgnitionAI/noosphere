@@ -105,5 +105,53 @@ databaseDescribe("F-035 connected accounts", () => {
     expect(invalid.status).toBe(401);
     const webhooks = await database.client<{ count: number }[]>`select count(*)::int as count from connected_account_webhooks where event_id = ${(JSON.parse(body) as { id: string }).id}`;
     expect(webhooks[0]?.count).toBe(1);
+
+    const alertsResponse = await send("GET", "/api/v1/account-health-alerts");
+    expect(alertsResponse.status).toBe(200);
+    const alerts = await alertsResponse.json() as { data: { id: string; status: string }[] };
+    expect(alerts.data).toHaveLength(1);
+    expect(alerts.data[0]?.status).toBe("active");
+    const acknowledged = await send("POST", `/api/v1/account-health-alerts/${alerts.data[0]?.id}/actions/acknowledge`);
+    expect(acknowledged.status).toBe(200);
+    expect((await acknowledged.json() as { status: string }).status).toBe("acknowledged");
+
+    context.role = "viewer";
+    expect((await send("POST", `/api/v1/account-health-alerts/${alerts.data[0]?.id}/actions/acknowledge`)).status).toBe(403);
+    context.role = "admin";
+  });
+
+  test("resumes onboarding idempotently and exposes provider-confirmed quota channels only", async () => {
+    const first = await send("POST", "/api/v1/connected-accounts/onboarding", { channel: "email" });
+    expect(first.status).toBe(201);
+    const onboarding = await first.json() as { id: string; status: string; channel: string; hostedUrl: string };
+    expect(onboarding.status).toBe("awaiting_callback");
+    expect(onboarding.channel).toBe("email");
+    expect(onboarding.hostedUrl).not.toContain("token");
+
+    const resumed = await send("POST", "/api/v1/connected-accounts/onboarding", { channel: "email" });
+    expect(resumed.status).toBe(201);
+    expect((await resumed.json() as { id: string }).id).toBe(onboarding.id);
+
+    const completed = await send("POST", `/api/v1/connected-accounts/onboarding/${onboarding.id}/actions/complete`, {
+      providerAccountId: `onboarded-${crypto.randomUUID()}`,
+      accessToken: "onboarding-secret",
+      displayName: "Onboarded sender",
+    });
+    expect(completed.status).toBe(201);
+    const completion = await completed.json() as { onboarding: { status: string }; account: { id: string } };
+    expect(completion.onboarding.status).toBe("completed");
+    expect(completion.account.id).toBeString();
+    expect(JSON.stringify(completion)).not.toContain("onboarding-secret");
+
+    const quota = await send("GET", `/api/v1/connected-accounts/${completion.account.id}/quotas`);
+    expect(quota.status).toBe(200);
+    const quotaBody = await quota.json() as { timezone: string; channels: { channel: string; sentToday: number }[] };
+    expect(quotaBody.timezone).toBe("UTC");
+    expect(quotaBody.channels.map((channel) => channel.channel)).toEqual(["email"]);
+    expect(quotaBody.channels[0]?.sentToday).toBe(0);
+
+    context.role = "viewer";
+    expect((await send("GET", `/api/v1/connected-accounts/${completion.account.id}/quotas`)).status).toBe(403);
+    context.role = "admin";
   });
 });
