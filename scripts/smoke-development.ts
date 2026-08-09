@@ -67,6 +67,10 @@ const consoleJobsResponse = await fetch(`${apiUrl}/api/v1/console/jobs`, { heade
 if (!consoleJobsResponse.ok) {
   throw new Error(`Operator console jobs lookup failed: ${consoleJobsResponse.status}`);
 }
+const calendarBookingsResponse = await fetch(`${apiUrl}/api/v1/calendar-bookings`, { headers });
+if (!calendarBookingsResponse.ok) throw new Error(`Calendar bookings lookup failed: ${calendarBookingsResponse.status}`);
+const calendarMeetingTypesResponse = await fetch(`${apiUrl}/api/v1/calendar-connection/meeting-types`, { headers });
+if (!calendarMeetingTypesResponse.ok) throw new Error(`Calendar meeting types lookup failed: ${calendarMeetingTypesResponse.status}`);
 const settingsResponse = await fetch(`${apiUrl}/api/v1/workspace-ai-settings`, {
   headers,
 });
@@ -150,6 +154,10 @@ if (!operatorConsolePage.ok || !operatorConsoleHtml.includes("Console opérateur
   throw new Error(`Operator console page smoke test failed: ${operatorConsolePage.status}`);
 }
 
+const calendarSettingsPage = await fetch(`${webUrl}/w/${workspace.slug}/settings/calendar`, { headers: { cookie } });
+const calendarSettingsHtml = await calendarSettingsPage.text();
+if (!calendarSettingsPage.ok || !calendarSettingsHtml.includes("Agenda du Setter IA")) throw new Error(`Calendar settings page smoke test failed: ${calendarSettingsPage.status}`);
+
 console.info(
   JSON.stringify({
     event: "development_smoke_passed",
@@ -163,6 +171,7 @@ console.info(
     knowledgeSources: "readable",
     aiStudio: "readable",
     operatorConsole: "readable",
+    calendarProduct: "readable",
   }),
 );
 

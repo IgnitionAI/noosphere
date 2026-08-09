@@ -1,7 +1,7 @@
 import { CalendarCheck, Clock3, KeyRound, Link2, ShieldCheck, Webhook } from "lucide-react";
 import { notFound } from "next/navigation";
-import { getCalendarConnection, listWorkspaces } from "@/lib/api";
-import { disconnectCalendarConnection, saveCalendarConnection } from "./actions";
+import { getCalendarConnection, listCalendarMeetingTypes, listWorkspaces } from "@/lib/api";
+import { disconnectCalendarConnection, saveCalendarConnection, saveCalendarMeetingTypes } from "./actions";
 
 export const metadata = { title: "Agenda" };
 export const dynamic = "force-dynamic";
@@ -15,8 +15,10 @@ export default async function CalendarSettingsPage({
   const workspace = (await listWorkspaces()).find((item) => item.slug === workspaceSlug);
   if (!workspace || !["admin", "owner"].includes(workspace.role)) notFound();
   const connection = await getCalendarConnection(workspaceSlug);
+  const meetingTypes = connection.connected ? await listCalendarMeetingTypes(workspaceSlug).catch(() => []) : [];
   const save = saveCalendarConnection.bind(null, workspaceSlug);
   const disconnect = disconnectCalendarConnection.bind(null, workspaceSlug);
+  const saveMeetingTypes = saveCalendarMeetingTypes.bind(null, workspaceSlug);
 
   return (
     <div className="mx-auto max-w-5xl">
@@ -98,6 +100,7 @@ export default async function CalendarSettingsPage({
           </form>
         </section>
       ) : null}
+      {connection.connected && meetingTypes.length ? <section className="mt-6 rounded-xl border border-line bg-white p-5 shadow-sm"><div className="flex items-start gap-3"><span className="grid h-10 w-10 place-items-center rounded-lg bg-navy text-signal"><CalendarCheck size={18} /></span><div><h2 className="font-semibold text-navy">Types de rendez-vous</h2><p className="mt-1 text-xs leading-5 text-muted">Activez plusieurs formats et choisissez celui utilisé par défaut par le Setter.</p></div></div><form action={saveMeetingTypes} className="mt-5 space-y-3">{meetingTypes.map((type) => <div className="grid gap-3 rounded-lg border border-line p-3 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center" key={type.id}><input aria-label={`Activer ${type.title}`} defaultChecked={type.active} name="providerEventTypeIds" type="checkbox" value={type.providerEventTypeId} /><div><strong className="block text-sm">{type.title}</strong><span className="text-xs text-muted">{type.lengthMinutes} min · {type.timeZone}</span></div><label className="flex items-center gap-2 text-xs font-semibold"><input defaultChecked={type.isDefault} name="defaultProviderEventTypeId" required type="radio" value={type.providerEventTypeId} /> Par défaut</label></div>)}<button className="button button-primary" type="submit">Enregistrer les types</button></form></section> : null}
     </div>
   );
 }

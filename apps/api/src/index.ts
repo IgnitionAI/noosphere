@@ -31,6 +31,7 @@ import { createUnipileWebhookHttpHandler } from "@outbound/interface/http/unipil
 import { PostgresCalendarIntegration } from "@outbound/infrastructure/calendar/postgres-calendar-integration";
 import { createCalendarConnectionHttpHandler } from "@outbound/interface/http/calendar-connection-handler";
 import { createCalendarWebhookHttpHandler } from "@outbound/interface/http/calendar-webhook-handler";
+import { createCalendarBookingHttpHandler } from "@outbound/interface/http/calendar-booking-handler";
 import { PostgresOpportunityRepository } from "@outbound/infrastructure/pipeline/postgres-opportunity-repository";
 import { createOpportunityHttpHandler } from "@outbound/interface/http/opportunity-handler";
 import { LangChainConversationDraftImprover } from "@outbound/infrastructure/campaigns/langchain-conversation-draft-improver";
@@ -238,6 +239,7 @@ const calendarWebhook = createCalendarWebhookHttpHandler({
   integration: calendarIntegration,
   signingKey: calendarSigningKey,
 });
+const calendarBookings = createCalendarBookingHttpHandler({ integration: calendarIntegration, contextResolver: auth.contextResolver });
 const opportunityHandler = createOpportunityHttpHandler({
   repository: new PostgresOpportunityRepository(database.db),
   contextResolver: auth.contextResolver,
@@ -259,6 +261,7 @@ const server = Bun.serve({
       return unipileWebhook(request);
     }
     if (pathname.startsWith("/api/v1/webhooks/calendar/")) return calendarWebhook(request);
+    if (pathname.startsWith("/api/v1/calendar-bookings") || pathname === "/api/v1/calendar-connection/meeting-types") return calendarBookings(request);
     if (pathname === "/api/v1/calendar-connection") return calendarConnection(request);
     if (pathname.startsWith("/api/v1/channel-connections/")) return channelConnection(request);
     if (pathname.startsWith("/api/v1/connected-accounts") || pathname.startsWith("/api/v1/account-health-alerts")) return connectedAccounts(request);

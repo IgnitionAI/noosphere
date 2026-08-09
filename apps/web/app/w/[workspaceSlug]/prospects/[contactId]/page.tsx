@@ -2,13 +2,14 @@ import { ArrowLeft, Ban, Briefcase, Fingerprint, Plus, TriangleAlert, UserRound 
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { CrmPermissionState } from "@/components/crm-states";
-import { getContact, getContactEnrichment, getEnrichmentJob, getSignalCollectionRun, listCompanies, listContactMerges, listContactSignals, listWorkspaces, OutboundApiError, type EnrichmentJobDetail, type EnrichmentObservation, type IntentSignal, type SignalCollectionRun } from "@/lib/api";
+import { getContact, getContactEnrichment, getEnrichmentJob, getSignalCollectionRun, listCalendarBookings, listCompanies, listContactMerges, listContactSignals, listWorkspaces, OutboundApiError, type EnrichmentJobDetail, type EnrichmentObservation, type IntentSignal, type SignalCollectionRun } from "@/lib/api";
 import { MutationForm } from "../../research/[runId]/report/mutation-form";
 import { resolveProspectReturn } from "@/lib/prospect-navigation";
 import { addEmploymentAction, addIdentityAction, anonymizeContactAction, enrichContactAction, retryEnrichmentJobAction, suppressContactAction, undoContactMergeAction, updateContactAction } from "../actions";
 import { EnrichmentPanel } from "./enrichment-panel";
 import { collectSignalsAction } from "../../signals-actions";
 import { SignalsPanel } from "@/components/signals-panel";
+import { CalendarBookingsPanel } from "@/components/calendar-bookings-panel";
 
 export const metadata = { title: "Prospect" };
 export const dynamic = "force-dynamic";
@@ -91,6 +92,7 @@ export default async function ContactDetailPage({
   const currentCompanyId = contact.employments.find((employment) => employment.isCurrent)?.companyId;
   const requestKey = `contact-enrichment:${contactId}:${contact.updatedAt ?? contact.createdAt ?? "v1"}`;
   const signalRequestKey = `contact-signals:${contactId}:${contact.updatedAt ?? contact.createdAt ?? "v1"}`;
+  const calendarBookings = await listCalendarBookings(workspaceSlug, { contactId, limit: 50 }).catch(() => []);
 
   return (
     <>
@@ -129,6 +131,7 @@ export default async function ContactDetailPage({
       <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
         <main className="min-w-0 space-y-4">
           {enrichmentAccess ? <EnrichmentPanel addIdentityAction={addIdentity} canEnrich={canEdit} contact={contact} enrichAction={enrich} job={enrichmentJob} observations={observations} requestKey={requestKey} retryAction={retry} workspaceSlug={workspaceSlug} /> : <section className="panel"><div className="panel-header"><h2 className="font-semibold">Coordonnées</h2></div><div className="panel-body text-sm text-muted">Les coordonnées enrichies ne sont pas accessibles avec vos droits.</div></section>}
+          <CalendarBookingsPanel bookings={calendarBookings} canMutate={canEdit} workspaceSlug={workspaceSlug} />
 
           <section className="panel">
             <div className="panel-header">

@@ -17,17 +17,18 @@ rendez-vous restant rattaché au contact, à l’opportunité et à son historiq
 
 ## État d’implémentation
 
-Partiel avancé (revérifié) : connexions Cal.com (`GET/PUT/DELETE
+**Livré le 9 août 2026**, hors OAuth explicitement planifié comme extension
+indépendante : connexions Cal.com (`GET/PUT/DELETE
 /api/v1/calendar-connection`), client avec `cancelBooking`/
 `rescheduleBooking`, webhook signé (`/api/v1/webhooks/calendar/calcom`,
 mapping des statuts dont `BOOKING_CANCELLED`), tables `calendar_bookings` et
 `meeting_proposals` avec manager, page `settings/calendar`, transitions
 pipeline automatiques (F-044 : `meeting_booked`, `meeting_no_show`). Restent
-à livrer : actions de déplacement/annulation exposées dans l’UI produit,
-gestion explicite des no-shows, multi types de RDV, rattachement systématique
-contact/opportunité, preuve d’idempotence du webhook relivré, fuseaux
-explicites partout, historique conservé après déconnexion. Non bloquant V1
-(décision user).
+et les actions de déplacement/annulation/no-show sont exposées dans l’UI
+prospect et pipeline. Plusieurs types de RDV peuvent être activés, chaque
+rendez-vous garde contact/opportunité, fuseaux et historique append-only. Les
+tests prouvent qu’un nouvel UID Cal.com ou un webhook relivré conserve le même
+identifiant interne.
 
 ## Périmètre
 
@@ -135,11 +136,11 @@ explicites partout, historique conservé après déconnexion. Non bloquant V1
 |---|---|---|---|
 | GET/PUT/DELETE | `/api/v1/calendar-connection` | connexion Cal.com | implémenté |
 | POST | `/api/v1/webhooks/calendar/calcom` | webhook signé, idempotent | implémenté |
-| GET | `/api/v1/calendar-bookings` | rendez-vous du workspace (filtres contact/opportunité) | à spécifier |
-| POST | `/api/v1/calendar-bookings/:id/actions/reschedule` | déplacement (fuseau explicite) | à spécifier |
-| POST | `/api/v1/calendar-bookings/:id/actions/cancel` | annulation avec motif | à spécifier |
-| POST | `/api/v1/calendar-bookings/:id/actions/no-show` | marquage no-show | à spécifier |
-| GET/PUT | `/api/v1/calendar-connection/meeting-types` | multi types de RDV | à spécifier |
+| GET | `/api/v1/calendar-bookings` | rendez-vous du workspace (filtres contact/opportunité) | livré |
+| POST | `/api/v1/calendar-bookings/:id/actions/reschedule` | déplacement (fuseau explicite) | livré |
+| POST | `/api/v1/calendar-bookings/:id/actions/cancel` | annulation avec motif | livré |
+| POST | `/api/v1/calendar-bookings/:id/actions/no-show` | marquage no-show | livré |
+| GET/PUT | `/api/v1/calendar-connection/meeting-types` | multi types de RDV | livré |
 | POST | `/api/v1/calendar-connection/oauth/start` | flux OAuth (extension) | à spécifier (planifiable à part) |
 
 **Événements sortants** : `CalendarMeetingBooked` et

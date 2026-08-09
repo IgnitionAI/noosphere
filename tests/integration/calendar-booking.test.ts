@@ -9,6 +9,7 @@ import { PostgresOpportunityRepository } from "@outbound/infrastructure/pipeline
 import { createDatabase } from "@outbound/infrastructure/database/client";
 import {
   calendarBookings,
+  calendarBookingHistory,
   contactIdentities,
   contacts,
   integrationEvents,
@@ -142,12 +143,36 @@ databaseDescribe("calendar booking automation", () => {
     expect(events[0]).toMatchObject({ provider: "calendar:calcom", status: "processed" });
   });
 
+  test("rescheduled webhook keeps the same internal booking when Cal.com changes its uid", async () => {
+    const [before] = await database.db.select().from(calendarBookings).where(eq(calendarBookings.workspaceId, workspaceId));
+    const rawBody = JSON.stringify({
+      triggerEvent: "BOOKING_RESCHEDULED",
+      createdAt: "2026-08-04T12:10:00.000Z",
+      payload: {
+        uid: "fixture-booking-2",
+        startTime: "2026-08-07T14:00:00.000Z",
+        endTime: "2026-08-07T14:30:00.000Z",
+        attendees: [{ email: "marie@example.com", timeZone: "Europe/Paris" }],
+        reschedulingReason: "Créneau demandé par le prospect",
+      },
+    });
+    const response = await handler(request(rawBody, signature(rawBody)));
+    expect(response.status).toBe(202);
+    const duplicate = await handler(request(rawBody, signature(rawBody)));
+    expect(duplicate.status).toBe(200);
+    const bookings = await database.db.select().from(calendarBookings).where(eq(calendarBookings.workspaceId, workspaceId));
+    expect(bookings).toHaveLength(1);
+    expect(bookings[0]).toMatchObject({ id: before!.id, providerBookingId: "fixture-booking-2", rescheduleCount: 1, attendeeTimeZone: "Europe/Paris" });
+    const history = await database.db.select().from(calendarBookingHistory).where(eq(calendarBookingHistory.workspaceId, workspaceId));
+    expect(history.map((entry) => entry.action)).toEqual(["booked", "rescheduled"]);
+  });
+
   test("cancellation updates the same booking and returns the opportunity to qualified", async () => {
     const rawBody = JSON.stringify({
       triggerEvent: "BOOKING_CANCELLED",
       createdAt: "2026-08-05T10:10:00.000Z",
       payload: {
-        bookingUid: "fixture-booking-1",
+        bookingUid: "fixture-booking-2",
         startTime: "2026-08-06T13:00:00.000Z",
         attendees: [{ email: "marie@example.com" }],
       },

@@ -133,6 +133,9 @@ databaseDescribe("durable meeting proposals", () => {
   });
 
   afterAll(async () => {
+    await database.client`alter table audit_logs disable trigger user`;
+    await database.client`delete from audit_logs where workspace_id = ${workspaceId}`;
+    await database.client`alter table audit_logs enable trigger user`;
     await database.client`delete from meeting_proposals where workspace_id = ${workspaceId}`;
     await database.client`delete from outbox_events where workspace_id = ${workspaceId}`;
     await database.client`alter table opportunity_stage_history disable trigger user`;
@@ -262,7 +265,8 @@ databaseDescribe("durable meeting proposals", () => {
     expect(cancelled.replyBody).toContain("annulé");
     expect(cancelBookingCalls).toBe(1);
     const bookingRows = await database.db.select().from(calendarBookings).where(eq(calendarBookings.workspaceId, workspaceId));
-    expect(bookingRows.map((item) => item.status).sort()).toEqual(["cancelled", "rescheduled"]);
+    expect(bookingRows).toHaveLength(1);
+    expect(bookingRows[0]).toMatchObject({ status: "cancelled", rescheduleCount: 1 });
     expect(await database.db.select().from(opportunities).where(eq(opportunities.workspaceId, workspaceId))).toMatchObject([
       { stage: "qualified" },
     ]);

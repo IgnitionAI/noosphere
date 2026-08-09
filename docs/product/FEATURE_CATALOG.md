@@ -41,7 +41,7 @@ techniques sans changer son identifiant produit.
 | F-040 | livré | conversations campagne + Inbox globale (D-006) |
 | F-041 | livré | suspension sur réponse, reprise automatique bornée |
 | F-042 | livré (socle) | classification K3, réponses autonomes |
-| F-043 | partiel | Cal.com : connexions, bookings, propositions de RDV |
+| F-043 | livré | Cal.com : types multiples, rendez-vous immuables, déplacement/annulation/no-show, historique, fuseaux et UI prospect/pipeline |
 | F-044 | livré | opportunités, historique d’étapes immuable, édition, clôture won/lost, prévisions pondérées |
 | F-050 | livré | sources/claims validés, PostgreSQL FTS, fraîcheur/retrait, agents bornés aux preuves autorisées |
 | F-051 | livré | entonnoir déterministe, breakdowns 5 dimensions, coûts et export owner/admin |
@@ -621,17 +621,20 @@ meeting, participants, statut et rattachement.
 
 **Dépendances** : F-003, F-040.
 
-**Implémentation actuelle** : connexion Cal.com par workspace, résolution du
-type d’événement depuis le lien public et lecture native des disponibilités.
+**Implémentation actuelle** : connexion Cal.com par workspace, synchronisation
+de plusieurs types d’événement et lecture native des disponibilités.
 Pour un événement public, le Setter fonctionne immédiatement sans secret ; une
 clé API optionnelle est validée puis chiffrée pour les événements privés et
 l’enregistrement automatique du webhook. K3 propose trois créneaux réels et ne
 réserve qu’après un choix explicite, avec le lien signé en secours. Les
-événements sont dédupliqués, les annulations/no-shows sont réconciliés, les
-relances s’arrêtent et l’opportunité passe à `meeting_booked`. L’OAuth Cal.com
-reste une extension produit.
+événements sont dédupliqués. Déplacement, annulation et no-show mettent à jour
+le même identifiant interne sous verrou transactionnel, alimentent un historique
+append-only, arrêtent les relances et mettent à jour l’opportunité. Les fuseaux
+prospect/organisateur sont affichés explicitement sur la fiche prospect et dans
+le pipeline. L’OAuth Cal.com reste une extension produit indépendante.
 
-**Surface** : `/w/[workspaceSlug]/settings/calendar` et fiche prospect.
+**Surface** : `/w/[workspaceSlug]/settings/calendar`, fiche prospect et tiroir
+pipeline ; API `/calendar-bookings` et `/calendar-connection/meeting-types`.
 
 **Spécification** (complétion : déplacements/annulations UI, no-shows,
 multi types, OAuth) : [`F-043-CALENDAR.md`](features/F-043-CALENDAR.md).

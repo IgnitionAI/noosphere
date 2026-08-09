@@ -16,6 +16,9 @@ export interface NormalizedCalcomWebhook {
   readonly attendeeName: string | null;
   readonly attendeeEmail: string | null;
   readonly attendeePhone: string | null;
+  readonly attendeeTimeZone: string | null;
+  readonly eventTypeId: number | null;
+  readonly reason: string | null;
   readonly contactToken: string | null;
   readonly startAt: Date;
   readonly endAt: Date | null;
@@ -106,6 +109,10 @@ export function normalizeCalcomWebhook(payload: unknown): NormalizedCalcomWebhoo
   const rawPhone = firstString(attendee, ["phoneNumber", "phone", "phone_number"]);
   const attendeeEmail = rawEmail ? normalizeEmail(rawEmail) || null : null;
   const attendeePhone = rawPhone ? normalizePhone(rawPhone) || null : null;
+  const attendeeTimeZone = firstString(attendee, ["timeZone", "timezone", "time_zone"]);
+  const eventType = recordValue(data.eventType) ?? recordValue(data.event_type);
+  const eventTypeIdRaw = eventType ? firstString(eventType, ["id"]) : firstString(data, ["eventTypeId", "event_type_id"]);
+  const eventTypeId = eventTypeIdRaw && Number.isSafeInteger(Number(eventTypeIdRaw)) ? Number(eventTypeIdRaw) : null;
   const contactToken = metadata
     ? firstString(metadata, ["ignitionContact", "ignition_contact"])
     : null;
@@ -123,6 +130,9 @@ export function normalizeCalcomWebhook(payload: unknown): NormalizedCalcomWebhoo
     attendeeName: firstString(attendee, ["name"]),
     attendeeEmail,
     attendeePhone,
+    attendeeTimeZone,
+    eventTypeId,
+    reason: firstString(data, ["cancellationReason", "reschedulingReason", "reason"]),
     contactToken,
     startAt,
     endAt,

@@ -633,6 +633,40 @@ export type CalendarConnection =
       readonly updatedAt: string;
     };
 
+export interface CalendarMeetingType {
+  readonly id: string;
+  readonly providerEventTypeId: number;
+  readonly slug: string;
+  readonly title: string;
+  readonly lengthMinutes: number;
+  readonly bookingUrl: string;
+  readonly timeZone: string;
+  readonly isDefault: boolean;
+  readonly active: boolean;
+}
+export interface CalendarBooking {
+  readonly id: string;
+  readonly contactId: string | null;
+  readonly campaignId: string | null;
+  readonly opportunityId: string | null;
+  readonly status: string;
+  readonly attendeeName: string | null;
+  readonly attendeeEmail: string | null;
+  readonly attendeePhone: string | null;
+  readonly attendeeTimeZone: string;
+  readonly organizerTimeZone: string;
+  readonly startAt: string;
+  readonly endAt: string | null;
+  readonly meetingUrl: string | null;
+  readonly cancellationReason: string | null;
+  readonly noShowAt: string | null;
+  readonly rescheduleCount: number;
+  readonly meetingType: CalendarMeetingType | null;
+  readonly history: readonly { readonly id: string; readonly action: string; readonly fromStatus: string | null; readonly toStatus: string; readonly previousStartAt: string | null; readonly newStartAt: string | null; readonly reason: string | null; readonly source: string; readonly createdAt: string }[];
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
 export async function getCalendarConnection(
   workspaceSlug: string,
 ): Promise<CalendarConnection> {
@@ -653,6 +687,28 @@ export async function disconnectCalendar(
   workspaceSlug: string,
 ): Promise<void> {
   return crmFetch(workspaceSlug, "/api/v1/calendar-connection", { method: "DELETE" });
+}
+
+export async function listCalendarMeetingTypes(workspaceSlug: string): Promise<readonly CalendarMeetingType[]> {
+  return (await crmFetch<{ data: CalendarMeetingType[] }>(workspaceSlug, "/api/v1/calendar-connection/meeting-types")).data;
+}
+export async function updateCalendarMeetingTypes(workspaceSlug: string, input: { providerEventTypeIds: readonly number[]; defaultProviderEventTypeId: number }): Promise<readonly CalendarMeetingType[]> {
+  return (await crmFetch<{ data: CalendarMeetingType[] }>(workspaceSlug, "/api/v1/calendar-connection/meeting-types", { method: "PUT", body: input })).data;
+}
+export async function listCalendarBookings(workspaceSlug: string, filters: { contactId?: string; opportunityId?: string; limit?: number } = {}): Promise<readonly CalendarBooking[]> {
+  const query = new URLSearchParams({ limit: String(filters.limit ?? 100) });
+  if (filters.contactId) query.set("contactId", filters.contactId);
+  if (filters.opportunityId) query.set("opportunityId", filters.opportunityId);
+  return (await crmFetch<{ data: CalendarBooking[] }>(workspaceSlug, `/api/v1/calendar-bookings?${query}`)).data;
+}
+export async function rescheduleCalendarBooking(workspaceSlug: string, bookingId: string, input: { start: string; reason: string; requestKey: string }): Promise<unknown> {
+  return crmFetch(workspaceSlug, `/api/v1/calendar-bookings/${bookingId}/actions/reschedule`, { method: "POST", body: input });
+}
+export async function cancelCalendarBooking(workspaceSlug: string, bookingId: string, input: { reason: string; requestKey: string }): Promise<unknown> {
+  return crmFetch(workspaceSlug, `/api/v1/calendar-bookings/${bookingId}/actions/cancel`, { method: "POST", body: input });
+}
+export async function markCalendarBookingNoShow(workspaceSlug: string, bookingId: string, input: { reason: string; requestKey: string }): Promise<unknown> {
+  return crmFetch(workspaceSlug, `/api/v1/calendar-bookings/${bookingId}/actions/no-show`, { method: "POST", body: input });
 }
 
 export interface WhatsAppChannelConnection {

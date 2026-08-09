@@ -5,6 +5,7 @@ import {
   getPipeline,
   getPipelineForecast,
   listLostReasons,
+  listCalendarBookings,
   listOffers,
   listOfferVersions,
   listWorkspaceMembers,
@@ -54,6 +55,7 @@ export default async function PipelinePage({
     listOffers(workspaceSlug).then((result) => result.data).catch(() => []),
     listWorkspaceMembers(workspaceSlug, workspace.id).catch(() => []),
   ]);
+  const selectedBookings = selected ? await listCalendarBookings(workspaceSlug, { opportunityId: selected.id, limit: 20 }).catch(() => []) : [];
   const ownerOptions = ownerIds.map((id) => {
     const member = members.find((candidate) => candidate.userId === id);
     return { id, label: member?.name?.trim() || member?.email || `Membre · ${id.slice(0, 8)}` };
@@ -116,7 +118,7 @@ export default async function PipelinePage({
         </section>
       )}
 
-      {selected ? <OpportunityDrawer opportunity={selected} workspaceSlug={workspaceSlug} workspaceRole={workspace.role} ownerOptions={ownerOptions} offerVersions={offerVersions} lostReasons={reasons} closeHref={listHref} /> : null}
+      {selected ? <OpportunityDrawer bookings={selectedBookings} opportunity={selected} workspaceSlug={workspaceSlug} workspaceRole={workspace.role} ownerOptions={ownerOptions} offerVersions={offerVersions} lostReasons={reasons} closeHref={listHref} /> : null}
     </>
   );
 }

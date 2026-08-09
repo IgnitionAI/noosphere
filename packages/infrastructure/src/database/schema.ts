@@ -2857,22 +2857,54 @@ export const calendarConnections = pgTable(
   ],
 );
 
+export const calendarMeetingTypes = pgTable(
+  "calendar_meeting_types",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    connectionId: uuid("connection_id").notNull(),
+    providerEventTypeId: integer("provider_event_type_id").notNull(),
+    slug: varchar("slug", { length: 200 }).notNull(),
+    title: varchar("title", { length: 300 }).notNull(),
+    lengthMinutes: integer("length_minutes").notNull(),
+    bookingUrl: varchar("booking_url", { length: 2_000 }).notNull(),
+    timeZone: varchar("time_zone", { length: 100 }).notNull(),
+    isDefault: boolean("is_default").notNull().default(false),
+    active: boolean("active").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({ columns: [table.workspaceId, table.connectionId], foreignColumns: [calendarConnections.workspaceId, calendarConnections.id], name: "calendar_meeting_types_connection_fk" }).onDelete("cascade"),
+    unique("calendar_meeting_types_workspace_id_uq").on(table.workspaceId, table.id),
+    uniqueIndex("calendar_meeting_types_provider_uq").on(table.workspaceId, table.connectionId, table.providerEventTypeId),
+    uniqueIndex("calendar_meeting_types_default_uq").on(table.workspaceId, table.connectionId).where(sql`${table.isDefault} = true and ${table.active} = true`),
+  ],
+);
+
 export const calendarBookings = pgTable(
   "calendar_bookings",
   {
     id: uuid("id").primaryKey(),
     workspaceId: uuid("workspace_id").notNull(),
     connectionId: uuid("connection_id").notNull(),
+    meetingTypeId: uuid("meeting_type_id"),
     providerBookingId: varchar("provider_booking_id", { length: 500 }).notNull(),
     contactId: uuid("contact_id"),
     campaignId: uuid("campaign_id"),
+    opportunityId: uuid("opportunity_id"),
     status: varchar("status", { length: 40 }).notNull(),
     attendeeName: varchar("attendee_name", { length: 300 }),
     attendeeEmail: varchar("attendee_email", { length: 320 }),
     attendeePhone: varchar("attendee_phone", { length: 80 }),
+    attendeeTimeZone: varchar("attendee_time_zone", { length: 100 }),
+    organizerTimeZone: varchar("organizer_time_zone", { length: 100 }),
     startAt: timestamp("start_at", { withTimezone: true }).notNull(),
     endAt: timestamp("end_at", { withTimezone: true }),
     meetingUrl: text("meeting_url"),
+    cancellationReason: text("cancellation_reason"),
+    noShowAt: timestamp("no_show_at", { withTimezone: true }),
+    rescheduleCount: integer("reschedule_count").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -2882,11 +2914,14 @@ export const calendarBookings = pgTable(
       foreignColumns: [calendarConnections.workspaceId, calendarConnections.id],
       name: "calendar_bookings_connection_fk",
     }).onDelete("cascade"),
+    foreignKey({ columns: [table.workspaceId, table.meetingTypeId], foreignColumns: [calendarMeetingTypes.workspaceId, calendarMeetingTypes.id], name: "calendar_bookings_meeting_type_fk" }).onDelete("set null"),
     foreignKey({
       columns: [table.workspaceId, table.contactId],
       foreignColumns: [contacts.workspaceId, contacts.id],
       name: "calendar_bookings_contact_fk",
     }).onDelete("set null"),
+    foreignKey({ columns: [table.workspaceId, table.opportunityId], foreignColumns: [opportunities.workspaceId, opportunities.id], name: "calendar_bookings_opportunity_fk" }),
+    unique("calendar_bookings_workspace_id_uq").on(table.workspaceId, table.id),
     foreignKey({
       columns: [table.workspaceId, table.campaignId],
       foreignColumns: [campaigns.workspaceId, campaigns.id],
@@ -2898,6 +2933,32 @@ export const calendarBookings = pgTable(
       table.providerBookingId,
     ),
     index("calendar_bookings_contact_idx").on(table.workspaceId, table.contactId, table.startAt),
+  ],
+);
+
+export const calendarBookingHistory = pgTable(
+  "calendar_booking_history",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    bookingId: uuid("booking_id").notNull(),
+    action: varchar("action", { length: 40 }).notNull(),
+    idempotencyKey: varchar("idempotency_key", { length: 500 }).notNull(),
+    fromStatus: varchar("from_status", { length: 40 }),
+    toStatus: varchar("to_status", { length: 40 }).notNull(),
+    previousProviderBookingId: varchar("previous_provider_booking_id", { length: 500 }),
+    newProviderBookingId: varchar("new_provider_booking_id", { length: 500 }),
+    previousStartAt: timestamp("previous_start_at", { withTimezone: true }),
+    newStartAt: timestamp("new_start_at", { withTimezone: true }),
+    reason: text("reason"),
+    actorUserId: uuid("actor_user_id").references(() => authUsers.id, { onDelete: "set null" }),
+    source: varchar("source", { length: 80 }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({ columns: [table.workspaceId, table.bookingId], foreignColumns: [calendarBookings.workspaceId, calendarBookings.id], name: "calendar_booking_history_booking_fk" }).onDelete("cascade"),
+    uniqueIndex("calendar_booking_history_idempotency_uq").on(table.workspaceId, table.bookingId, table.idempotencyKey),
+    index("calendar_booking_history_timeline_idx").on(table.workspaceId, table.bookingId, table.createdAt),
   ],
 );
 

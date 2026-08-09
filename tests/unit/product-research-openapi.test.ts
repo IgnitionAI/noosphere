@@ -143,6 +143,13 @@ test("the OpenAPI contract declares every F-009 HTTP route", () => {
       "/api/v1/exports/{exportId}",
       "/api/v1/contacts/{contactId}/actions/anonymize",
       "/api/v1/audit-logs",
+      "/api/v1/calendar-connection",
+      "/api/v1/calendar-connection/meeting-types",
+      "/api/v1/calendar-bookings",
+      "/api/v1/calendar-bookings/{bookingId}/actions/reschedule",
+      "/api/v1/calendar-bookings/{bookingId}/actions/cancel",
+      "/api/v1/calendar-bookings/{bookingId}/actions/no-show",
+      "/api/v1/webhooks/calendar/calcom",
       "/api/v1/console/jobs",
       "/api/v1/console/dead-letters",
       "/api/v1/console/webhooks/rejected",
@@ -214,7 +221,7 @@ test("every F-009 operation requires authenticated workspace route context", () 
 
   expect(document.security).toEqual([{ sessionCookie: [] }]);
   for (const [pathname, path] of Object.entries(document.paths)) {
-    if (pathname === "/api/v1/webhooks/unipile" || pathname === "/api/v1/workspaces" || pathname === "/api/v1/invitations/{invitationId}/actions/accept") continue;
+    if (pathname === "/api/v1/webhooks/unipile" || pathname === "/api/v1/webhooks/calendar/calcom" || pathname === "/api/v1/workspaces" || pathname === "/api/v1/invitations/{invitationId}/actions/accept") continue;
     const references = [
       ...(path.parameters ?? []),
       ...(path.get?.parameters ?? []),
