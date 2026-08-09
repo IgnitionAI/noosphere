@@ -37,7 +37,7 @@ techniques sans changer son identifiant produit.
 | F-032 | livré | scoring déterministe, enrollment, plans de prospection |
 | F-033 | livré | file d’exceptions/approbations autopilote |
 | F-034 | livré | scheduler, tentatives, idempotence d’envoi |
-| F-035 | livré | comptes Unipile, capacités, webhooks |
+| F-035 | livré | comptes Unipile, capacités, webhooks, onboarding guidé, quotas par canal, alertes de dégradation |
 | F-040 | livré | conversations campagne + Inbox globale (D-006) |
 | F-041 | livré | suspension sur réponse, reprise automatique bornée |
 | F-042 | livré (socle) | classification K3, réponses autonomes |
@@ -532,7 +532,7 @@ capacités, quotas, erreurs, reconnexion et webhooks.
 [`F-035-CONNECTED-ACCOUNTS.md`](features/F-035-CONNECTED-ACCOUNTS.md)
 (socle livré) ;
 [`F-035-SUITE-ONBOARDING-ALERTS.md`](features/F-035-SUITE-ONBOARDING-ALERTS.md)
-(onboarding guidé, quotas par canal, alertes de dégradation).
+(onboarding guidé, quotas par canal, alertes de dégradation — livré).
 
 ## Epic 5 — Conversations et revenu
 
