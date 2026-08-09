@@ -339,6 +339,12 @@ export class PostgresProductResearchRepository
     errorCode: string | null;
   }): Promise<void> {
     await this.db.transaction(async (tx) => {
+      // Serialize terminal fan-out commits for this run. Without this lock, two
+      // children can each observe the other as still running (or both observe
+      // an empty remainder) under READ COMMITTED, yielding zero or duplicate
+      // finalizer jobs despite the idempotency key.
+      const fanoutLockKey = `research:fanout:${input.checkpoint.workspaceId}:${input.checkpoint.runId}:market_investigation`;
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${fanoutLockKey}, 0))`);
       const updated = await tx
         .update(researchStageRuns)
         .set(toCheckpointUpdate(input.checkpoint))
