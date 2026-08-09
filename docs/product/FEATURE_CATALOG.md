@@ -43,7 +43,7 @@ techniques sans changer son identifiant produit.
 | F-042 | livré (socle) | classification K3, réponses autonomes |
 | F-043 | partiel | Cal.com : connexions, bookings, propositions de RDV |
 | F-044 | partiel | opportunités, historique d’étapes, vue pipeline |
-| F-050 | non commencé | — |
+| F-050 | non commencé | fiche DoR prête ; briques réutilisables (documents F-009, claims F-010) présentes |
 | F-051 | livré | entonnoir déterministe, breakdowns 5 dimensions, coûts et export owner/admin |
 | F-052 | non commencé | — |
 | F-053 | partiel | paramètres IA/canaux/calendrier et audit écrit ; profil, rétention, export, anonymisation et lecture d’audit à livrer |
@@ -674,6 +674,9 @@ statut d’indexation et liens vers offres. Pas de RAG requis.
 **Dépendances** : F-003, F-010.  
 **Surface** : `/w/[workspaceSlug]/knowledge`.
 
+**Spécification** :
+[`F-050-KNOWLEDGE-SOURCES.md`](features/F-050-KNOWLEDGE-SOURCES.md).
+
 ### F-051 — Événements analytics et dashboards (`P1`)
 
 **Valeur** : mesurer acquisition, exécution, réponse, rendez-vous et revenu.
@@ -767,6 +770,9 @@ uniquement après benchmark.
 Conserver les `AIRun`, jeux d’évaluation, feedback, coûts et recommandations de
 campagne. Aucune optimisation n’est appliquée automatiquement à une campagne
 active.
+
+**Spécification** :
+[`AI-140-CONTINUOUS-EVALUATION.md`](features/AI-140-CONTINUOUS-EVALUATION.md).
 
 ## Hors périmètre fonctionnel initial
 
