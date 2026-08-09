@@ -42,7 +42,7 @@ techniques sans changer son identifiant produit.
 | F-041 | livré | suspension sur réponse, reprise automatique bornée |
 | F-042 | livré (socle) | classification K3, réponses autonomes |
 | F-043 | partiel | Cal.com : connexions, bookings, propositions de RDV |
-| F-044 | partiel | opportunités, historique d’étapes, vue pipeline |
+| F-044 | livré | opportunités, historique d’étapes immuable, édition, clôture won/lost, prévisions pondérées |
 | F-050 | non commencé | fiche DoR prête ; briques réutilisables (documents F-009, claims F-010) présentes |
 | F-051 | livré | entonnoir déterministe, breakdowns 5 dimensions, coûts et export owner/admin |
 | F-052 | non commencé | page stub de redirection ; fiche DoR prête (parcours 7 étapes) |
@@ -653,9 +653,12 @@ action, clôture, motif de perte et historique.
 
 **Implémentation actuelle** : vue workspace en quatre colonnes, métriques,
 rattachement prospect/campagne/ICP/rendez-vous, transitions automatiques depuis
-le Setter et le calendrier, historique immuable et action explicite de
-changement d’étape. Montants, probabilités, ownership et clôture financière
-restent hors du lot initial.
+le Setter et le calendrier, historique immuable (trigger PostgreSQL), édition
+(montant, devise, probabilité, responsable, prochaine action, clôture estimée),
+clôture dédiée `won`/`lost` avec champs exigés (422), verrouillage après
+clôture et réouverture owner/admin auditée, motifs de perte normalisés par
+workspace, prévisions de revenu pondéré déterministes, redaction des montants
+pour les viewers.
 
 **Spécification** (complétion : édition, clôture, prévisions) :
 [`F-044-PIPELINE.md`](features/F-044-PIPELINE.md).
