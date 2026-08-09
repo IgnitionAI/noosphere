@@ -1,11 +1,18 @@
 import { CalendarCheck, CheckCircle2, CircleDollarSign, Flame, Kanban, RotateCcw, UserRound } from "lucide-react";
 import Link from "next/link";
-import { ProspectActivityDrawer } from "@/components/prospect-activity-drawer";
+import { CrmPermissionState } from "@/components/crm-states";
 import {
   getPipeline,
-  getProspectView,
+  getPipelineForecast,
+  listLostReasons,
+  listOffers,
+  listOfferVersions,
+  listWorkspaces,
+  OutboundApiError,
+  type OfferVersion,
   type PipelineOpportunity,
 } from "@/lib/api";
+import { OpportunityDrawer } from "./opportunity-drawer";
 
 export const metadata = { title: "Pipeline" };
 export const dynamic = "force-dynamic";
@@ -22,12 +29,30 @@ export default async function PipelinePage({
   searchParams,
 }: {
   params: Promise<{ workspaceSlug: string }>;
-  searchParams: Promise<{ prospect?: string }>;
+  searchParams: Promise<{ opportunity?: string; ownerId?: string }>;
 }) {
   const { workspaceSlug } = await params;
   const query = await searchParams;
-  const pipeline = await getPipeline(workspaceSlug);
-  const selected = query.prospect ? await getProspectView(workspaceSlug, query.prospect) : null;
+  let pipeline: Awaited<ReturnType<typeof getPipeline>>;
+  let workspaces: Awaited<ReturnType<typeof listWorkspaces>>;
+  try {
+    [pipeline, workspaces] = await Promise.all([getPipeline(workspaceSlug), listWorkspaces()]);
+  } catch (error) {
+    if (error instanceof OutboundApiError && (error.status === 401 || error.status === 403)) return <CrmPermissionState resource="le pipeline" />;
+    throw error;
+  }
+  const workspace = workspaces.find((candidate) => candidate.slug === workspaceSlug);
+  if (!workspace) return <CrmPermissionState resource="le pipeline" />;
+  const ownerIds = [...new Set(pipeline.data.map((item) => item.ownerUserId).filter((id): id is string => Boolean(id)))];
+  const ownerId = query.ownerId;
+  const visibleData = ownerId ? pipeline.data.filter((item) => item.ownerUserId === ownerId) : pipeline.data;
+  const selected = query.opportunity ? pipeline.data.find((item) => item.id === query.opportunity) ?? null : null;
+  const [forecast, reasons, offers] = await Promise.all([
+    getPipelineForecast(workspaceSlug).catch(() => ({ data: [] })),
+    listLostReasons(workspaceSlug, workspace.id).then((result) => result.data).catch(() => []),
+    listOffers(workspaceSlug).then((result) => result.data).catch(() => []),
+  ]);
+  const offerVersions = (await Promise.all(offers.map((offer) => listOfferVersions(workspaceSlug, offer.id).then((result) => result.data).catch(() => [])))).flat() as OfferVersion[];
   const listHref = `/w/${workspaceSlug}/pipeline`;
 
   return (
@@ -42,17 +67,19 @@ export default async function PipelinePage({
       </header>
 
       <section className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        <Metric label="Opportunités" value={pipeline.metrics.total} />
-        <Metric label="Qualifiés" value={pipeline.metrics.qualified} />
-        <Metric label="RDV réservés" value={pipeline.metrics.meetings} tone="signal" />
-        <Metric label="À suivre" value={pipeline.metrics.followUp} />
-        <Metric label="Gagnés" value={pipeline.metrics.won} tone="success" />
+        <Metric label="Opportunités" value={visibleData.length} />
+        <Metric label="Qualifiés" value={visibleData.filter((item) => item.column === "qualified").length} />
+        <Metric label="RDV réservés" value={visibleData.filter((item) => item.stage === "meeting_booked").length} tone="signal" />
+        <Metric label="À suivre" value={visibleData.filter((item) => item.column === "follow_up").length} />
+        <Metric label="Gagnés" value={visibleData.filter((item) => item.stage === "won").length} tone="success" />
       </section>
 
-      {pipeline.data.length ? (
+      <section className="panel mb-5"><div className="panel-header"><div><h2 className="font-semibold">Filtres et prévisions</h2><p className="mt-1 text-xs text-muted">La prévision est une projection du revenu pondéré, jamais une promesse.</p></div></div><form className="grid gap-3 p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end"><label className="text-xs font-semibold text-muted">Responsable<select className="control mt-1 w-full" defaultValue={ownerId ?? ""} name="ownerId"><option value="">Tous les responsables</option>{ownerIds.map((id) => <option key={id} value={id}>Membre · {id.slice(0, 8)}</option>)}</select></label><button className="button button-primary" type="submit">Filtrer</button></form><div className="border-t border-line p-4"><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{forecast.data.length ? forecast.data.map((row) => <div className="rounded-lg border border-line bg-slate-50/60 p-3" key={`${row.period}:${row.stage}:${row.ownerUserId ?? "none"}`}><p className="text-[11px] text-muted">{row.period} · {stageLabel(row.stage)}</p><p className="mt-2 text-sm font-semibold text-navy">{workspace.role === "viewer" || row.weightedRevenue === undefined ? "Montant masqué" : formatCurrency(row.weightedRevenue)}</p><p className="mt-1 text-[11px] text-muted">{row.count} opportunité{row.count > 1 ? "s" : ""} · revenu pondéré</p></div>) : <p className="text-sm text-muted">Aucune prévision disponible pour le moment.</p>}</div></div></section>
+
+      {visibleData.length ? (
         <section className="grid items-start gap-4 xl:grid-cols-4">
           {columns.map((column) => {
-            const items = pipeline.data.filter((item) => item.column === column.id);
+            const items = visibleData.filter((item) => item.column === column.id);
             const Icon = column.icon;
             return (
               <div className="rounded-xl border border-line bg-slate-100/70 p-3" key={column.id}>
@@ -82,14 +109,14 @@ export default async function PipelinePage({
         </section>
       )}
 
-      {selected ? <ProspectActivityDrawer prospect={selected} workspaceSlug={workspaceSlug} closeHref={listHref} /> : null}
+      {selected ? <OpportunityDrawer opportunity={selected} workspaceSlug={workspaceSlug} workspaceRole={workspace.role} ownerIds={ownerIds} offerVersions={offerVersions} lostReasons={reasons} closeHref={listHref} /> : null}
     </>
   );
 }
 
 function OpportunityCard({ opportunity, workspaceSlug }: { opportunity: PipelineOpportunity; workspaceSlug: string }) {
   return (
-    <Link className="block rounded-xl border border-line bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md" href={`/w/${workspaceSlug}/pipeline?prospect=${opportunity.contactId}`} scroll={false}>
+    <Link className="block rounded-xl border border-line bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md" href={`/w/${workspaceSlug}/pipeline?opportunity=${opportunity.id}`} scroll={false}>
       <div className="flex items-start gap-3">
         <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-slate-100"><UserRound size={15} /></span>
         <div className="min-w-0">
@@ -100,7 +127,9 @@ function OpportunityCard({ opportunity, workspaceSlug }: { opportunity: Pipeline
       <div className="mt-3 flex flex-wrap gap-1.5">
         <span className={stageBadge(opportunity.stage)}>{stageLabel(opportunity.stage)}</span>
         {opportunity.icpName ? <span className="badge truncate">{opportunity.icpName}</span> : null}
+        <span className="badge">{opportunity.probability}%</span>
       </div>
+      {opportunity.amount === undefined ? <p className="mt-3 text-xs text-muted">Montant masqué</p> : opportunity.amount !== null ? <p className="mt-3 text-xs font-semibold text-navy">{formatCurrency(opportunity.amount, opportunity.currency)}</p> : null}
       {opportunity.meeting ? <p className="mt-3 flex items-center gap-2 text-xs font-semibold text-emerald-800"><CalendarCheck size={13} />{formatDate(opportunity.meeting.startAt)}</p> : null}
       {opportunity.nextAction ? <p className="mt-3 line-clamp-3 text-[11px] leading-5 text-muted">{opportunity.nextAction}</p> : null}
       <p className="mt-3 text-[10px] text-muted">{opportunity.history.length} transition{opportunity.history.length > 1 ? "s" : ""} auditée{opportunity.history.length > 1 ? "s" : ""}</p>
@@ -126,3 +155,5 @@ function stageBadge(stage: string): string {
 function formatDate(value: string): string {
   return new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium", timeStyle: "short", timeZone: "Europe/Paris" }).format(new Date(value));
 }
+
+function formatCurrency(value: number, currency?: string | null): string { return new Intl.NumberFormat("fr-FR", { style: "currency", currency: currency || "EUR", maximumFractionDigits: 2 }).format(value); }

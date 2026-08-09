@@ -289,7 +289,16 @@ export interface PipelineOpportunity {
   readonly campaignId: string | null;
   readonly stage: "qualified" | "meeting_requested" | "meeting_booked" | "meeting_no_show" | "meeting_completed" | "won" | "lost";
   readonly column: "qualified" | "meeting" | "follow_up" | "closed";
+  readonly amount?: number | null;
+  readonly currency?: string | null;
+  readonly probability: number;
+  readonly ownerUserId?: string | null;
   readonly nextAction: string | null;
+  readonly expectedCloseDate?: string | null;
+  readonly closedAt?: string | null;
+  readonly lostReason?: string | null;
+  readonly lostComment?: string | null;
+  readonly offerVersionId?: string | null;
   readonly firstName: string;
   readonly lastName: string;
   readonly companyName: string | null;
@@ -338,6 +347,48 @@ export async function changeOpportunityStage(
     method: "POST",
     body: input,
   });
+}
+
+export interface PipelineForecastRow {
+  readonly period: string;
+  readonly stage: string;
+  readonly ownerUserId: string | null;
+  readonly amount?: number;
+  readonly weightedRevenue?: number;
+  readonly count: number;
+}
+export async function updateOpportunity(workspaceSlug: string, opportunityId: string, input: {
+  amount?: number | null;
+  currency?: string | null;
+  probability?: number;
+  ownerUserId?: string | null;
+  nextAction?: string | null;
+  expectedCloseDate?: string | null;
+}): Promise<PipelineOpportunity> {
+  return crmFetch(workspaceSlug, `/api/v1/opportunities/${opportunityId}`, { method: "PATCH", body: input });
+}
+export async function closeOpportunity(workspaceSlug: string, opportunityId: string, input: {
+  stage: "won" | "lost";
+  amount?: number | null;
+  currency?: string | null;
+  offerVersionId?: string | null;
+  lostReason?: string | null;
+  lostComment?: string | null;
+}): Promise<PipelineOpportunity> {
+  return crmFetch(workspaceSlug, `/api/v1/opportunities/${opportunityId}/actions/close`, { method: "POST", body: input });
+}
+export async function reopenOpportunity(workspaceSlug: string, opportunityId: string): Promise<PipelineOpportunity> {
+  return crmFetch(workspaceSlug, `/api/v1/opportunities/${opportunityId}/actions/reopen`, { method: "POST", body: {} });
+}
+export async function getPipelineForecast(workspaceSlug: string, options: { from?: string; to?: string } = {}): Promise<{ data: PipelineForecastRow[] }> {
+  const query = new URLSearchParams();
+  if (options.from) query.set("from", new Date(options.from).toISOString());
+  if (options.to) query.set("to", new Date(options.to).toISOString());
+  const suffix = query.toString();
+  return crmFetch(workspaceSlug, `/api/v1/pipeline/forecast${suffix ? `?${suffix}` : ""}`);
+}
+export async function listLostReasons(workspaceSlug: string, workspaceId: string): Promise<{ data: { key: string; label: string }[] }> {
+  return crmFetch(workspaceSlug, `/api/v1/workspaces/${workspaceId}/lost-reasons`);
 }
 
 export async function createResearchRun(
@@ -2371,12 +2422,12 @@ async function apiFetch(
 
 async function throwApiError(response: Response): Promise<never> {
   const body = (await response.json().catch(() => null)) as
-    | { code?: string; detail?: string; message?: string; errors?: unknown; blockedClaimIds?: unknown; blockers?: unknown; warnings?: unknown; campaignId?: unknown; campaignName?: unknown; reason?: unknown; channel?: unknown; suppressionId?: unknown; contactId?: unknown }
+    | { code?: string; detail?: string; message?: string; errors?: unknown; field?: unknown; blockedClaimIds?: unknown; blockers?: unknown; warnings?: unknown; campaignId?: unknown; campaignName?: unknown; reason?: unknown; channel?: unknown; suppressionId?: unknown; contactId?: unknown }
     | null;
   throw new OutboundApiError(
     response.status,
     body?.code ?? "UPSTREAM_ERROR",
     body?.detail ?? body?.message ?? "Le serveur n’a pas pu traiter la demande.",
-    body ? { errors: body.errors, blockedClaimIds: body.blockedClaimIds, blockers: body.blockers, warnings: body.warnings, campaignId: body.campaignId, campaignName: body.campaignName, reason: body.reason, channel: body.channel, suppressionId: body.suppressionId, contactId: body.contactId } : null,
+    body ? { errors: body.errors, field: body.field, blockedClaimIds: body.blockedClaimIds, blockers: body.blockers, warnings: body.warnings, campaignId: body.campaignId, campaignName: body.campaignName, reason: body.reason, channel: body.channel, suppressionId: body.suppressionId, contactId: body.contactId } : null,
   );
 }
