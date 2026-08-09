@@ -1488,17 +1488,17 @@ export interface AnalyticsFunnel {
 export interface AnalyticsBreakdownRow {
   readonly key: string;
   readonly label: string;
-  readonly prospectsFound: number;
-  readonly profilesEnriched: number;
-  readonly actionsPlanned: number;
-  readonly attempts: number;
-  readonly actionsSent: number;
-  readonly actionsAccepted: number;
-  readonly responded: number;
-  readonly positiveReplies: number;
-  readonly meetingsBooked: number;
-  readonly opportunities: number;
-  readonly revenue: number;
+  readonly prospectsFound: number | null;
+  readonly profilesEnriched: number | null;
+  readonly actionsPlanned: number | null;
+  readonly attempts: number | null;
+  readonly actionsSent: number | null;
+  readonly actionsAccepted: number | null;
+  readonly responded: number | null;
+  readonly positiveReplies: number | null;
+  readonly meetingsBooked: number | null;
+  readonly opportunities: number | null;
+  readonly revenue: number | null;
 }
 export interface AnalyticsBreakdown {
   readonly period: { readonly from: string; readonly to: string };

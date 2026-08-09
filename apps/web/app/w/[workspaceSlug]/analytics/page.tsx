@@ -192,7 +192,11 @@ function BreakdownRow({ row, isPrivileged }: { row: AnalyticsBreakdownRow; isPri
 }
 
 function isForbidden(error: unknown): boolean { return Boolean(error && typeof error === "object" && "status" in error && (error as OutboundApiError).status === 403); }
-function formatNumber(value: number): string { return new Intl.NumberFormat("fr-FR").format(value); }
-function formatCurrency(value: number): string { return new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 2 }).format(value); }
+function formatNumber(value: number | null): string {
+  return value === null ? "n/d" : new Intl.NumberFormat("fr-FR").format(value);
+}
+function formatCurrency(value: number | null): string {
+  return value === null ? "n/d" : new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 2 }).format(value);
+}
 function dateInputValue(value: string): string { return value.slice(0, 10); }
 function formatPeriod(from: string, to: string): string { return `Période : ${new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium" }).format(new Date(from))} → ${new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium" }).format(new Date(to))}`; }
