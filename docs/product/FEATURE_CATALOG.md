@@ -43,7 +43,10 @@ techniques sans changer son identifiant produit.
 | F-042 | livré (socle) | classification K3, réponses autonomes |
 | F-043 | partiel | Cal.com : connexions, bookings, propositions de RDV |
 | F-044 | partiel | opportunités, historique d’étapes, vue pipeline |
-| F-050 à F-053 | non commencé | — |
+| F-050 | non commencé | — |
+| F-051 | partiel | socle de faits et events en place, dashboard autopilot campagne ; projections workspace et page analytics à livrer |
+| F-052 | non commencé | — |
+| F-053 | non commencé | — |
 
 ## Epic 1 — Socle multi-workspace
 
@@ -676,6 +679,9 @@ signal/canal/variante, attribution et export.
 
 **Dépendances** : F-003, F-031, F-034, F-040, F-044.  
 **Surface** : dashboard et analytics.
+
+**Spécification** :
+[`F-051-ANALYTICS.md`](features/F-051-ANALYTICS.md).
 
 ### F-052 — Onboarding guidé (`P1`)
 
