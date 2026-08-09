@@ -29,9 +29,9 @@ techniques sans changer son identifiant produit.
 | F-022 | livré | import CSV prévisualisé et idempotent |
 | F-023 | livré | découverte Unipile, import avec provenance |
 | F-024 | livré | candidats de fusion, merge réversible |
-| F-025 | partiel | ports d’enrichissement, observations téléphone/WhatsApp |
+| F-025 | livré | enrichissement à la demande, jobs idempotents, provenance par champ, vérification email, couverture |
 | F-026 | livré | suppressions, éligibilité canal, lift justifié |
-| F-027 | non commencé | — |
+| F-027 | livré | signaux typés avec expiration, déduplication multi-sources, collecte idempotente |
 | F-030 | livré | éditeur de séquences, versions immuables |
 | F-031 | livré | campagnes, snapshot immuable, préflight |
 | F-032 | livré | scoring déterministe, enrollment, plans de prospection |
