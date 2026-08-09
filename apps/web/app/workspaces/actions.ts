@@ -14,6 +14,6 @@ export async function createWorkspaceAction(returnPath: string, formData: FormDa
   } catch (error) {
     errorCode = error instanceof OutboundApiError ? error.code : "UPSTREAM_ERROR";
   }
-  if (workspaceSlug) redirect(`/w/${workspaceSlug}/strategy/product-reading`);
+  if (workspaceSlug) redirect(`/onboarding?workspace=${encodeURIComponent(workspaceSlug)}`);
   redirect(`${returnPath}?error=${encodeURIComponent(errorCode ?? "UPSTREAM_ERROR")}`);
 }

@@ -717,6 +717,10 @@ signal/canal/variante, attribution et export.
 
 **Valeur** : rendre un nouveau workspace opérationnel rapidement.
 
+**État** : livré — progression partagée et persistée en 7 étapes, prérequis
+calculés depuis les données réelles, validation/saut idempotents, page
+reprenable et bandeau de reprise dans le shell.
+
 **Périmètre** : création workspace, première offre, premier ICP, import ou
 connexion, checklist et reprise.
 

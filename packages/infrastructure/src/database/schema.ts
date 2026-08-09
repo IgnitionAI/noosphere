@@ -171,6 +171,22 @@ export const connectionOnboardingStepEnum = pgEnum("connection_onboarding_step",
   "verification",
 ]);
 
+export const workspaceOnboardingStepEnum = pgEnum("workspace_onboarding_step", [
+  "workspace",
+  "product",
+  "icp",
+  "sending_account",
+  "calendar",
+  "prerequisites",
+  "autopilot",
+]);
+
+export const workspaceOnboardingStatusEnum = pgEnum("workspace_onboarding_status", [
+  "pending",
+  "completed",
+  "skipped",
+]);
+
 export const accountHealthAlertStatusEnum = pgEnum("account_health_alert_status", [
   "active",
   "acknowledged",
@@ -337,6 +353,25 @@ export const workspaceDataSettings = pgTable("workspace_data_settings", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+export const workspaceOnboarding = pgTable(
+  "workspace_onboarding",
+  {
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    step: workspaceOnboardingStepEnum("step").notNull(),
+    status: workspaceOnboardingStatusEnum("status").notNull().default("pending"),
+    actorUserId: uuid("actor_user_id").references(() => authUsers.id, { onDelete: "set null" }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.workspaceId, table.step] }),
+    index("workspace_onboarding_workspace_status_idx").on(table.workspaceId, table.status, table.updatedAt),
+  ],
+);
 
 export const workspaceExports = pgTable(
   "workspace_exports",

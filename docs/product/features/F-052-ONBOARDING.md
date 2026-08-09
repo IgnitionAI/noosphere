@@ -16,14 +16,13 @@ l’avait quitté, et chaque prérequis manquant est dit explicitement.
 
 ## État d’implémentation
 
-Non commencé en tant que parcours. Existant revérifié : la page
-`/onboarding` est un stub — elle redirige vers la lecture produit si un
-workspace existe, sinon affiche « aucun workspace actif » (bootstrap CLI ou
-invitation). Aucune progression persistée, aucune checklist. Toutes les
-features cibles du parcours existent par ailleurs : workspaces (F-002),
-lecture produit (F-009), ICP (F-011), comptes connectés (F-035), calendrier
-(F-043 partiel), campagnes/autopilote (F-031/F-012). Reste à livrer : la
-progression persistée, les 7 étapes et leurs prérequis, la reprise.
+Livré. `/onboarding` expose les sept étapes persistées par workspace et
+reprend à la première étape incomplète. Les prérequis sont recalculés côté
+serveur depuis les données canoniques (workspace actif, lecture produit ou
+offre publiée, ICP publiée, compte Unipile connecté, calendrier, politique
+IA et campagne active). Le calendrier peut être sauté explicitement ; le
+shell affiche un bandeau de reprise jusqu’à la complétion. La validation et
+le saut sont idempotents, isolés par workspace et contrôlés par rôle.
 
 ## Périmètre
 
@@ -135,9 +134,9 @@ le shell tant que le parcours est incomplet (« Reprendre la configuration —
 
 | Méthode | Route | Usage | État |
 |---|---|---|---|
-| GET | `/api/v1/workspaces/:id/onboarding` | progression (étapes, statuts, prérequis calculés) | à spécifier |
-| POST | `/api/v1/workspaces/:id/onboarding/steps/:step/actions/complete` | validation d’étape (vérifiée serveur, idempotente) | à spécifier |
-| POST | `/api/v1/workspaces/:id/onboarding/steps/:step/actions/skip` | saut d’étape optionnelle (tracé) | à spécifier |
+| GET | `/api/v1/workspaces/:id/onboarding` | progression (étapes, statuts, prérequis calculés) | livré |
+| POST | `/api/v1/workspaces/:id/onboarding/steps/:step/actions/complete` | validation d’étape (vérifiée serveur, idempotente) | livré |
+| POST | `/api/v1/workspaces/:id/onboarding/steps/:step/actions/skip` | saut d’étape optionnelle (tracé) | livré |
 
 **Événements sortants** : `OnboardingStepCompleted`,
 `OnboardingCompleted` — un seul envoi par étape.

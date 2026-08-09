@@ -54,6 +54,8 @@ import { PostgresEvaluationService } from "@outbound/infrastructure/ai/postgres-
 import { createEvaluationHttpHandler, isEvaluationRoute } from "@outbound/interface/http/evaluation-handler";
 import { PostgresOperatorConsole } from "@outbound/infrastructure/operations/postgres-operator-console";
 import { createOperatorConsoleHttpHandler, isOperatorConsoleRoute } from "@outbound/interface/http/operator-console-handler";
+import { PostgresWorkspaceOnboarding } from "@outbound/infrastructure/workspaces/postgres-workspace-onboarding";
+import { createWorkspaceOnboardingHttpHandler, isWorkspaceOnboardingRoute } from "@outbound/interface/http/workspace-onboarding-handler";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
@@ -113,6 +115,10 @@ const evaluation = createEvaluationHttpHandler({
 const operatorConsole = createOperatorConsoleHttpHandler({
   contextResolver: auth.contextResolver,
   service: new PostgresOperatorConsole(database.db, clock, ids),
+});
+const workspaceOnboarding = createWorkspaceOnboardingHttpHandler({
+  contextResolver: auth.contextResolver,
+  service: new PostgresWorkspaceOnboarding(database.db),
 });
 const workspaceAiSettings = createWorkspaceAiSettingsHttpHandler({
   application: new WorkspaceAiSettingsApplication(
@@ -270,6 +276,7 @@ const server = Bun.serve({
     if (isKnowledgeRoute(pathname)) return knowledge(request);
     if (isEvaluationRoute(pathname)) return evaluation(request);
     if (isOperatorConsoleRoute(pathname)) return operatorConsole(request);
+    if (isWorkspaceOnboardingRoute(pathname)) return workspaceOnboarding(request);
     if (isWorkspaceDataRoute(pathname, request.method)) return workspaceData(request);
     if (pathname.startsWith("/api/v1/opportunities") || pathname === "/api/v1/pipeline/forecast" || pathname.startsWith("/api/v1/workspaces/") && pathname.endsWith("/lost-reasons")) return opportunityHandler(request);
     if (pathname.includes("/actions/enrich") || pathname.startsWith("/api/v1/enrichment-jobs/") || pathname.endsWith("/enrichment")) return enrichment(request);

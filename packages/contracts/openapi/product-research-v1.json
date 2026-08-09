@@ -59,6 +59,18 @@
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceId" }, { "$ref": "#/components/parameters/WorkspaceSlug" }],
       "patch": { "operationId": "updateWorkspaceProfile", "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string", "minLength": 1, "maxLength": 200 } } } } } }, "responses": { "200": { "description": "Workspace profile updated", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Workspace" } } } }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" } } }
     },
+    "/api/v1/workspaces/{workspaceId}/onboarding": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceId" }, { "$ref": "#/components/parameters/WorkspaceSlug" }],
+      "get": { "operationId": "getWorkspaceOnboarding", "summary": "Read or initialize the resumable seven-step workspace onboarding", "responses": { "200": { "description": "Live onboarding progression and server-calculated prerequisites", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkspaceOnboardingProgress" } } } }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" } } }
+    },
+    "/api/v1/workspaces/{workspaceId}/onboarding/steps/{step}/actions/complete": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceId" }, { "$ref": "#/components/parameters/WorkspaceSlug" }, { "name": "step", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/WorkspaceOnboardingStep" } }],
+      "post": { "operationId": "completeWorkspaceOnboardingStep", "summary": "Idempotently complete a step after checking its real prerequisite", "responses": { "200": { "description": "Updated progression", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkspaceOnboardingProgress" } } } }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" }, "409": { "$ref": "#/components/responses/Conflict" } } }
+    },
+    "/api/v1/workspaces/{workspaceId}/onboarding/steps/{step}/actions/skip": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceId" }, { "$ref": "#/components/parameters/WorkspaceSlug" }, { "name": "step", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/WorkspaceOnboardingStep" } }],
+      "post": { "operationId": "skipOptionalWorkspaceOnboardingStep", "summary": "Idempotently skip the optional calendar step", "responses": { "200": { "description": "Updated progression", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkspaceOnboardingProgress" } } } }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" }, "409": { "$ref": "#/components/responses/Conflict" } } }
+    },
     "/api/v1/workspaces/{workspaceId}/sending-preferences": {
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceId" }, { "$ref": "#/components/parameters/WorkspaceSlug" }],
       "get": { "operationId": "getWorkspaceSendingPreferences", "responses": { "200": { "description": "Sending preferences", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkspaceSendingPreferencesEnvelope" } } } } } },
@@ -1663,6 +1675,19 @@
           "name": { "type": "string" },
           "status": { "type": "string", "enum": ["active", "suspended"] },
           "role": { "$ref": "#/components/schemas/WorkspaceRole" }
+        }
+      },
+      "WorkspaceOnboardingStep": { "type": "string", "enum": ["workspace", "product", "icp", "sending_account", "calendar", "prerequisites", "autopilot"] },
+      "WorkspaceOnboardingProgress": {
+        "type": "object",
+        "required": ["workspaceId", "currentStep", "completed", "completedCount", "steps", "nextAction"],
+        "properties": {
+          "workspaceId": { "type": "string", "format": "uuid" },
+          "currentStep": { "oneOf": [{ "$ref": "#/components/schemas/WorkspaceOnboardingStep" }, { "type": "null" }] },
+          "completed": { "type": "boolean" },
+          "completedCount": { "type": "integer", "minimum": 0, "maximum": 7 },
+          "steps": { "type": "array", "minItems": 7, "maxItems": 7, "items": { "type": "object", "required": ["key", "position", "title", "description", "optional", "status", "canMutate", "requiredRole", "prerequisite", "actorUserId", "completedAt"], "properties": { "key": { "$ref": "#/components/schemas/WorkspaceOnboardingStep" }, "position": { "type": "integer", "minimum": 1, "maximum": 7 }, "title": { "type": "string" }, "description": { "type": "string" }, "optional": { "type": "boolean" }, "status": { "type": "string", "enum": ["pending", "completed", "skipped"] }, "canMutate": { "type": "boolean" }, "requiredRole": { "type": "string", "enum": ["member", "owner_or_admin"] }, "prerequisite": { "type": "object", "required": ["satisfied", "code", "message", "href"], "properties": { "satisfied": { "type": "boolean" }, "code": { "type": "string" }, "message": { "type": "string" }, "href": { "type": "string", "format": "uri-reference" } } }, "actorUserId": { "type": ["string", "null"], "format": "uuid" }, "completedAt": { "type": ["string", "null"], "format": "date-time" } } } },
+          "nextAction": { "type": "object", "required": ["label", "href"], "properties": { "label": { "type": "string" }, "href": { "type": "string", "format": "uri-reference" } } }
         }
       },
       "WorkspaceList": { "type": "object", "required": ["data"], "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/Workspace" } } } },

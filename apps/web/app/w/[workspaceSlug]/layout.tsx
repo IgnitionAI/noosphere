@@ -2,7 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import type { ReactNode } from "react";
 import { AppShell } from "@/components/app-shell";
 import { acknowledgeHealthAlertAction } from "./integrations/actions";
-import { getSession, listAccountHealthAlerts, listWorkspaces } from "@/lib/api";
+import { getSession, getWorkspaceOnboarding, listAccountHealthAlerts, listWorkspaces } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
@@ -27,9 +27,10 @@ export default async function WorkspaceLayout({
         : {}),
     }))).catch(() => [])
     : [];
+  const onboardingProgress = await getWorkspaceOnboarding(workspace.slug, workspace.id).catch(() => null);
 
   return (
-    <AppShell healthAlerts={healthAlerts} session={session} workspace={workspace} workspaces={workspaces}>
+    <AppShell healthAlerts={healthAlerts} onboardingProgress={onboardingProgress} session={session} workspace={workspace} workspaces={workspaces}>
       {children}
     </AppShell>
   );

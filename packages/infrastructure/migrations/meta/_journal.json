@@ -428,6 +428,13 @@
       "when": 1788300000000,
       "tag": "0060_calendar_history_immutability",
       "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1788386400000,
+      "tag": "0061_workspace_onboarding",
+      "breakpoints": true
     }
   ]
 }

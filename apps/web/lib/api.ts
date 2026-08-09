@@ -22,6 +22,28 @@ export interface Workspace {
   readonly lastSelectedAt: string | null;
 }
 
+export type WorkspaceOnboardingStep = "workspace" | "product" | "icp" | "sending_account" | "calendar" | "prerequisites" | "autopilot";
+export interface WorkspaceOnboardingProgress {
+  readonly workspaceId: string;
+  readonly currentStep: WorkspaceOnboardingStep | null;
+  readonly completed: boolean;
+  readonly completedCount: number;
+  readonly steps: readonly {
+    readonly key: WorkspaceOnboardingStep;
+    readonly position: number;
+    readonly title: string;
+    readonly description: string;
+    readonly optional: boolean;
+    readonly status: "pending" | "completed" | "skipped";
+    readonly canMutate: boolean;
+    readonly requiredRole: "member" | "owner_or_admin";
+    readonly prerequisite: { readonly satisfied: boolean; readonly code: string; readonly message: string; readonly href: string };
+    readonly actorUserId: string | null;
+    readonly completedAt: string | null;
+  }[];
+  readonly nextAction: { readonly label: string; readonly href: string };
+}
+
 export type WorkspaceRole = Workspace["role"];
 export type WorkspaceMemberStatus = "active" | "disabled";
 
@@ -379,6 +401,18 @@ export async function listWorkspaces(): Promise<readonly Workspace[]> {
 
 export async function createWorkspace(input: { name: string; slug?: string }): Promise<Workspace> {
   return crmFetch("", "/api/v1/workspaces", { method: "POST", body: input });
+}
+
+export async function getWorkspaceOnboarding(workspaceSlug: string, workspaceId: string): Promise<WorkspaceOnboardingProgress> {
+  return crmFetch(workspaceSlug, `/api/v1/workspaces/${workspaceId}/onboarding`);
+}
+
+export async function completeWorkspaceOnboardingStep(workspaceSlug: string, workspaceId: string, step: WorkspaceOnboardingStep): Promise<WorkspaceOnboardingProgress> {
+  return crmFetch(workspaceSlug, `/api/v1/workspaces/${workspaceId}/onboarding/steps/${step}/actions/complete`, { method: "POST", body: {} });
+}
+
+export async function skipWorkspaceOnboardingStep(workspaceSlug: string, workspaceId: string, step: WorkspaceOnboardingStep): Promise<WorkspaceOnboardingProgress> {
+  return crmFetch(workspaceSlug, `/api/v1/workspaces/${workspaceId}/onboarding/steps/${step}/actions/skip`, { method: "POST", body: {} });
 }
 
 export async function listWorkspaceMembers(

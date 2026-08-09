@@ -71,6 +71,10 @@ const calendarBookingsResponse = await fetch(`${apiUrl}/api/v1/calendar-bookings
 if (!calendarBookingsResponse.ok) throw new Error(`Calendar bookings lookup failed: ${calendarBookingsResponse.status}`);
 const calendarMeetingTypesResponse = await fetch(`${apiUrl}/api/v1/calendar-connection/meeting-types`, { headers });
 if (!calendarMeetingTypesResponse.ok) throw new Error(`Calendar meeting types lookup failed: ${calendarMeetingTypesResponse.status}`);
+const onboardingResponse = await fetch(`${apiUrl}/api/v1/workspaces/${workspace.id}/onboarding`, { headers });
+if (!onboardingResponse.ok) throw new Error(`Workspace onboarding lookup failed: ${onboardingResponse.status}`);
+const onboarding = await onboardingResponse.json() as { steps: unknown[]; currentStep: string | null };
+if (onboarding.steps.length !== 7) throw new Error("Workspace onboarding must expose seven persisted steps");
 const settingsResponse = await fetch(`${apiUrl}/api/v1/workspace-ai-settings`, {
   headers,
 });
@@ -158,6 +162,10 @@ const calendarSettingsPage = await fetch(`${webUrl}/w/${workspace.slug}/settings
 const calendarSettingsHtml = await calendarSettingsPage.text();
 if (!calendarSettingsPage.ok || !calendarSettingsHtml.includes("Agenda du Setter IA")) throw new Error(`Calendar settings page smoke test failed: ${calendarSettingsPage.status}`);
 
+const onboardingPage = await fetch(`${webUrl}/onboarding?workspace=${workspace.slug}`, { headers: { cookie } });
+const onboardingHtml = await onboardingPage.text();
+if (!onboardingPage.ok || !onboardingHtml.includes("Configuration guidée") || !onboardingHtml.includes("7 étapes")) throw new Error(`Workspace onboarding page smoke test failed: ${onboardingPage.status}`);
+
 console.info(
   JSON.stringify({
     event: "development_smoke_passed",
@@ -172,6 +180,7 @@ console.info(
     aiStudio: "readable",
     operatorConsole: "readable",
     calendarProduct: "readable",
+    workspaceOnboarding: "resumable",
   }),
 );
 

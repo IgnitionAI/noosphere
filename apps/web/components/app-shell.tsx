@@ -2,6 +2,7 @@
 
 import {
   Activity,
+  ArrowRight,
   Bell,
   BarChart3,
   BookOpenCheck,
@@ -30,19 +31,21 @@ import {
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState, type ReactNode } from "react";
-import type { AccountHealthAlert, Session, Workspace } from "@/lib/api";
+import type { AccountHealthAlert, Session, Workspace, WorkspaceOnboardingProgress } from "@/lib/api";
 
 export function AppShell({
   workspace,
   workspaces,
   session,
   healthAlerts = [],
+  onboardingProgress = null,
   children,
 }: {
   workspace: Workspace;
   workspaces: readonly Workspace[];
   session: Session;
   healthAlerts?: readonly (AccountHealthAlert & { readonly acknowledgeAction?: (formData: FormData) => Promise<void> })[];
+  onboardingProgress?: WorkspaceOnboardingProgress | null;
   children: ReactNode;
 }) {
   const pathname = usePathname();
@@ -418,6 +421,7 @@ export function AppShell({
           </div>
         </header>
         <main className="mx-auto w-full max-w-[1680px] px-4 py-6 sm:px-6 md:px-8 md:py-8">
+          {onboardingProgress && !onboardingProgress.completed ? <Link className="mb-5 flex items-center justify-between gap-4 rounded-lg border border-brand-blue/25 bg-blue-50 px-4 py-3 text-sm text-navy" href={`/onboarding?workspace=${workspace.slug}#${onboardingProgress.currentStep ?? "workspace"}`}><span><strong>Reprendre la configuration</strong><span className="ml-2 text-muted">Étape {Math.min(onboardingProgress.completedCount + 1, 7)}/7</span></span><ArrowRight size={16} /></Link> : null}
           {healthAlerts.length ? (
             <div className="mb-5 space-y-2" aria-label="Alertes de santé des comptes">
               {healthAlerts.map((alert) => (

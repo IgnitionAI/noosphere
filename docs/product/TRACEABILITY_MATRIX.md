@@ -66,7 +66,7 @@ Elle ne remplace pas les DTO OpenAPI à écrire avant chaque vertical slice.
 | F-044 | `GET /opportunities`, `POST /opportunities/:id/actions/change-stage` | projection pipeline et historique immuable |
 | F-050 | `GET/POST /knowledge-sources`, validation/retrait, `GET/POST /knowledge-claims` | FTS PostgreSQL, fraîcheur, claims et injection agents |
 | F-051 | campaign/pipeline analytics | export et metric definitions |
-| F-052 | endpoints métier existants | onboarding progress |
+| F-052 | `GET /workspaces/:id/onboarding`, actions `complete`/`skip` | progression 7 étapes, prérequis réels et reprise |
 | F-053 | workspace endpoints | audit read, export et anonymize |
 
 ## Features et événements
