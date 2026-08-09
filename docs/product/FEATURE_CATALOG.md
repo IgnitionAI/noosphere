@@ -525,6 +525,12 @@ capacités, quotas, erreurs, reconnexion et webhooks.
 **Dépendances** : F-002, F-003.  
 **Surface** : `/w/[workspaceSlug]/integrations`.
 
+**Spécifications** :
+[`F-035-CONNECTED-ACCOUNTS.md`](features/F-035-CONNECTED-ACCOUNTS.md)
+(socle livré) ;
+[`F-035-SUITE-ONBOARDING-ALERTS.md`](features/F-035-SUITE-ONBOARDING-ALERTS.md)
+(onboarding guidé, quotas par canal, alertes de dégradation).
+
 ## Epic 5 — Conversations et revenu
 
 ### F-040 — Conversations contextualisées dans la campagne (`P0`)
@@ -644,6 +650,9 @@ rattachement prospect/campagne/ICP/rendez-vous, transitions automatiques depuis
 le Setter et le calendrier, historique immuable et action explicite de
 changement d’étape. Montants, probabilités, ownership et clôture financière
 restent hors du lot initial.
+
+**Spécification** (complétion : édition, clôture, prévisions) :
+[`F-044-PIPELINE.md`](features/F-044-PIPELINE.md).
 
 ## Epic 6 — Pilotage et administration
 
