@@ -46,7 +46,7 @@ techniques sans changer son identifiant produit.
 | F-050 | non commencé | — |
 | F-051 | livré | entonnoir déterministe, breakdowns 5 dimensions, coûts et export owner/admin |
 | F-052 | non commencé | — |
-| F-053 | non commencé | — |
+| F-053 | partiel | paramètres IA/canaux/calendrier et audit écrit ; profil, rétention, export, anonymisation et lecture d’audit à livrer |
 
 ## Epic 1 — Socle multi-workspace
 
@@ -94,6 +94,9 @@ dernier workspace, bootstrap owner (voir le tableau d’implémentation).
 **État** : partiel — workspaces, memberships, rôles, désactivation et
 résolution du slug de route livrés. Invitations, administration des membres,
 audit des rôles et protection du dernier owner restent à livrer.
+
+**Spécification** :
+[`F-002-WORKSPACES-MEMBERS.md`](features/F-002-WORKSPACES-MEMBERS.md).
 
 ### F-003 — Audit, jobs et outbox (`P0`)
 
@@ -718,6 +721,9 @@ anonymisation, audit visible et préférences.
 
 **Dépendances** : F-002, F-003, F-026.  
 **Surface** : settings.
+
+**Spécification** :
+[`F-053-SETTINGS-SECURITY.md`](features/F-053-SETTINGS-SECURITY.md).
 
 ## Epic 7 — Capacités IA d’évaluation et d’optimisation
 
