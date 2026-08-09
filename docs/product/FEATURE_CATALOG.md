@@ -44,7 +44,7 @@ techniques sans changer son identifiant produit.
 | F-043 | partiel | Cal.com : connexions, bookings, propositions de RDV |
 | F-044 | partiel | opportunités, historique d’étapes, vue pipeline |
 | F-050 | non commencé | — |
-| F-051 | partiel | socle de faits et events en place, dashboard autopilot campagne ; projections workspace et page analytics à livrer |
+| F-051 | livré | entonnoir déterministe, breakdowns 5 dimensions, coûts et export owner/admin |
 | F-052 | non commencé | — |
 | F-053 | non commencé | — |
 
