@@ -18,7 +18,7 @@ techniques sans changer son identifiant produit.
 |---|---|---|
 | F-001 | livré | login, sessions, bootstrap owner, redirection workspace |
 | F-002 | partiel | rôles et slug livrés ; invitations et protection du dernier owner à livrer |
-| F-003 | livré | jobs PostgreSQL, outbox dispatchée, audit log |
+| F-003 | livré (moteur) | jobs PostgreSQL, outbox dispatchée, audit log ; console opérateur à livrer |
 | F-004 | livré | shell Next.js, navigation par rôle |
 | F-009 | livré | workflow V2/V3, rapport sourcé, publication ICP |
 | F-010 | livré | offres, versions immuables, claims |
@@ -45,7 +45,7 @@ techniques sans changer son identifiant produit.
 | F-044 | partiel | opportunités, historique d’étapes, vue pipeline |
 | F-050 | non commencé | fiche DoR prête ; briques réutilisables (documents F-009, claims F-010) présentes |
 | F-051 | livré | entonnoir déterministe, breakdowns 5 dimensions, coûts et export owner/admin |
-| F-052 | non commencé | — |
+| F-052 | non commencé | page stub de redirection ; fiche DoR prête (parcours 7 étapes) |
 | F-053 | partiel | paramètres IA/canaux/calendrier et audit écrit ; profil, rétention, export, anonymisation et lecture d’audit à livrer |
 
 ## Epic 1 — Socle multi-workspace
@@ -116,6 +116,9 @@ retries bornés, dead letters, idempotence et corrélation.
 
 **Dépendances** : F-001, F-002.  
 **Surface** : health endpoints, administration technique.
+
+**Spécification** (console opérateur) :
+[`F-003-OPERATOR-CONSOLE.md`](features/F-003-OPERATOR-CONSOLE.md).
 
 ### F-004 — Design system et shell applicatif (`P0`)
 
@@ -627,6 +630,9 @@ reste une extension produit.
 
 **Surface** : `/w/[workspaceSlug]/settings/calendar` et fiche prospect.
 
+**Spécification** (complétion : déplacements/annulations UI, no-shows,
+multi types, OAuth) : [`F-043-CALENDAR.md`](features/F-043-CALENDAR.md).
+
 ### F-044 — Pipeline et opportunités (`P1`)
 
 **Valeur** : suivre la prospection jusqu’au revenu gagné ou perdu.
@@ -715,6 +721,9 @@ connexion, checklist et reprise.
 
 **Dépendances** : F-002, F-010, F-011, F-022, F-035.  
 **Surface** : `/onboarding`.
+
+**Spécification** :
+[`F-052-ONBOARDING.md`](features/F-052-ONBOARDING.md).
 
 ### F-053 — Paramètres, sécurité et cycle de vie des données (`P1`)
 
