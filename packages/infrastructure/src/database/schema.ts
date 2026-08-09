@@ -74,6 +74,12 @@ export const workspaceMemberStatusEnum = pgEnum("workspace_member_status", [
   "active",
   "disabled",
 ]);
+export const workspaceInvitationStatusEnum = pgEnum("workspace_invitation_status", [
+  "pending",
+  "accepted",
+  "revoked",
+  "expired",
+]);
 export const workspaceRoleEnum = pgEnum("workspace_role", [
   "viewer",
   "operator",
@@ -224,6 +230,33 @@ export const workspaceMembers = pgTable(
   (table) => [
     primaryKey({ columns: [table.workspaceId, table.userId] }),
     index("workspace_members_user_status_idx").on(table.userId, table.status),
+  ],
+);
+
+export const workspaceInvitations = pgTable(
+  "workspace_invitations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    email: varchar("email", { length: 320 }).notNull(),
+    proposedRole: workspaceRoleEnum("proposed_role").notNull(),
+    status: workspaceInvitationStatusEnum("status").notNull().default("pending"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    invitedBy: uuid("invited_by").references(() => authUsers.id, { onDelete: "set null" }),
+    acceptedBy: uuid("accepted_by").references(() => authUsers.id, { onDelete: "set null" }),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique("workspace_invitations_workspace_id_uq").on(table.workspaceId, table.id),
+    index("workspace_invitations_workspace_status_idx").on(table.workspaceId, table.status, table.createdAt),
+    uniqueIndex("workspace_invitations_pending_email_uq")
+      .on(table.workspaceId, sql`lower(${table.email})`)
+      .where(sql`${table.status} = 'pending'`),
   ],
 );
 

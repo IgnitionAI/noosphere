@@ -43,6 +43,7 @@ import { CrawlerSignalSource } from "@outbound/infrastructure/crm/crawler-signal
 import { createSignalHttpHandler } from "@outbound/interface/http/signal-handler";
 import { createConnectedAccountHttpHandler } from "@outbound/interface/http/connected-account-handler";
 import { HttpUnipileClient, UnavailableUnipileClient } from "@outbound/infrastructure/integrations/unipile-client";
+import { PostgresWorkspaceRepository } from "@outbound/infrastructure/workspaces/postgres-workspace-repository";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
@@ -79,6 +80,8 @@ const productResearch = createProductResearchHttpHandler({
 const workspace = createWorkspaceHttpHandler({
   sessions: auth.sessions,
   memberships: auth.memberships,
+  contextResolver: auth.contextResolver,
+  management: new PostgresWorkspaceRepository(database.db),
 });
 const workspaceAiSettingsRepository = new PostgresWorkspaceAiSettingsRepository(database.db);
 const workspaceAiSettings = createWorkspaceAiSettingsHttpHandler({
@@ -234,7 +237,7 @@ const server = Bun.serve({
     if (pathname.startsWith("/api/v1/signals") || pathname.startsWith("/api/v1/settings/signals") || pathname.includes("/signals")) return signals(request);
     if (pathname.startsWith("/api/v1/opportunities") || pathname === "/api/v1/pipeline/forecast" || pathname.startsWith("/api/v1/workspaces/") && pathname.endsWith("/lost-reasons")) return opportunityHandler(request);
     if (pathname.includes("/actions/enrich") || pathname.startsWith("/api/v1/enrichment-jobs/") || pathname.endsWith("/enrichment")) return enrichment(request);
-    if (pathname === "/api/v1/workspaces") return workspace(request);
+    if (pathname === "/api/v1/workspaces" || pathname.startsWith("/api/v1/workspaces/") || pathname.startsWith("/api/v1/invitations/")) return workspace(request);
     if (pathname === "/api/v1/workspace-ai-settings") return workspaceAiSettings(request);
     if (pathname.startsWith("/api/v1/messaging-strategies") || pathname.startsWith("/api/v1/ai-policies")) {
       return messagingStrategyHandler(request);
