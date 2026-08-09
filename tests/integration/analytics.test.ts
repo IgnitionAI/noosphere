@@ -70,13 +70,18 @@ databaseDescribe("F-051 deterministic workspace analytics", () => {
     const response = await handle(new Request("http://localhost/api/v1/analytics/funnel?from=2026-08-01T00:00:00Z&to=2026-09-01T00:00:00Z"));
     expect(response.status).toBe(200);
     expect((await response.json() as { metrics: { opportunities: number; revenue: number } }).metrics).toMatchObject({ opportunities: 1, revenue: 1250.5 });
+    const breakdown = await handle(new Request("http://localhost/api/v1/analytics/breakdown?dimension=campaign&from=2026-08-01T00:00:00Z&to=2026-09-01T00:00:00Z"));
+    expect(breakdown.status).toBe(200);
+    expect((await breakdown.json() as { data: Array<{ key: string; opportunities: number | null; revenue: number | null }> }).data).toMatchObject([{ key: "unknown", opportunities: 1, revenue: 1250.5 }]);
   });
 
   test("supports every deterministic breakdown dimension", async () => {
     for (const dimension of ["campaign", "icp", "channel", "role", "signal"]) {
       const response = await handle(new Request(`http://localhost/api/v1/analytics/breakdown?dimension=${dimension}&from=2026-08-01T00:00:00Z&to=2026-09-01T00:00:00Z`));
       expect(response.status).toBe(200);
-      expect((await response.json() as { data: unknown[] }).data).toEqual([]);
+      const body = await response.json() as { data: unknown[] };
+      if (dimension === "channel") expect(body.data).toEqual([]);
+      else expect(body.data).toHaveLength(1);
     }
   });
 });

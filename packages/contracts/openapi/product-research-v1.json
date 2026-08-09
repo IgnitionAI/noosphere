@@ -1139,15 +1139,15 @@
     },
     "/api/v1/analytics/funnel": {
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
-      "get": { "operationId": "getAnalyticsFunnel", "responses": { "200": { "description": "Deterministic workspace funnel" }, "400": { "description": "Invalid period" } } }
+      "get": { "operationId": "getAnalyticsFunnel", "responses": { "200": { "description": "Deterministic workspace funnel", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AnalyticsFunnel" } } } }, "400": { "description": "Invalid period" } } }
     },
     "/api/v1/analytics/breakdown": {
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
-      "get": { "operationId": "getAnalyticsBreakdown", "parameters": [{ "name": "dimension", "in": "query", "required": true, "schema": { "$ref": "#/components/schemas/AnalyticsDimension" } }], "responses": { "200": { "description": "Deterministic analytics breakdown" } } }
+      "get": { "operationId": "getAnalyticsBreakdown", "parameters": [{ "name": "dimension", "in": "query", "required": true, "schema": { "$ref": "#/components/schemas/AnalyticsDimension" } }], "responses": { "200": { "description": "Deterministic analytics breakdown", "content": { "application/json": { "schema": { "type": "object", "required": ["period", "dimension", "data"], "properties": { "period": { "type": "object" }, "dimension": { "$ref": "#/components/schemas/AnalyticsDimension" }, "data": { "type": "array", "items": { "$ref": "#/components/schemas/AnalyticsBreakdownRow" } } } } } } } } }
     },
     "/api/v1/analytics/costs": {
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
-      "get": { "operationId": "getAnalyticsCosts", "responses": { "200": { "description": "AI costs and unit costs" }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" } } }
+      "get": { "operationId": "getAnalyticsCosts", "responses": { "200": { "description": "AI costs and unit costs", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AnalyticsCosts" } } } }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" } } }
     },
     "/api/v1/analytics/export": {
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
@@ -2449,6 +2449,7 @@
       "SignalSettings": { "type": "object", "additionalProperties": false, "required": ["signalTypes"], "properties": { "signalTypes": { "type": "array", "minItems": 1, "items": { "$ref": "#/components/schemas/SignalType" } } } },
       "AnalyticsDimension": { "type": "string", "enum": ["campaign", "icp", "channel", "role", "signal"] },
       "AnalyticsFunnel": { "type": "object", "required": ["period", "metrics"], "properties": { "period": { "type": "object", "required": ["from", "to"], "properties": { "from": { "type": "string", "format": "date-time" }, "to": { "type": "string", "format": "date-time" } } }, "metrics": { "type": "object", "additionalProperties": { "type": "number" } } } },
+      "AnalyticsBreakdownRow": { "type": "object", "required": ["key", "label", "actionsPlanned", "attempts", "actionsSent", "actionsAccepted", "responded"], "description": "Dimension metrics. Nullable facts indicate that the source tables do not provide unambiguous attribution for that dimension; null is not zero.", "properties": { "key": { "type": "string" }, "label": { "type": "string" }, "prospectsFound": { "type": ["number", "null"] }, "profilesEnriched": { "type": ["number", "null"] }, "actionsPlanned": { "type": "number" }, "attempts": { "type": "number" }, "actionsSent": { "type": "number" }, "actionsAccepted": { "type": "number" }, "responded": { "type": "number" }, "positiveReplies": { "type": ["number", "null"] }, "meetingsBooked": { "type": ["number", "null"] }, "opportunities": { "type": ["number", "null"] }, "revenue": { "type": ["number", "null"] } } },
       "AnalyticsCosts": { "type": "object", "required": ["totalAiCost", "costPerProspect", "costPerMeeting"], "properties": { "totalAiCost": { "type": "number" }, "costPerProspect": { "type": "number" }, "costPerMeeting": { "type": "number" } } },
       "Problem": {
         "type": "object",

@@ -31,9 +31,20 @@ export interface AnalyticsFunnel {
   readonly metrics: FunnelMetrics;
 }
 
-export interface AnalyticsBreakdownRow extends FunnelMetrics {
+export interface AnalyticsBreakdownRow {
   readonly key: string;
   readonly label: string;
+  readonly prospectsFound: number | null;
+  readonly profilesEnriched: number | null;
+  readonly actionsPlanned: number;
+  readonly attempts: number;
+  readonly actionsSent: number;
+  readonly actionsAccepted: number;
+  readonly responded: number;
+  readonly positiveReplies: number | null;
+  readonly meetingsBooked: number | null;
+  readonly opportunities: number | null;
+  readonly revenue: number | null;
 }
 
 export interface AnalyticsCosts {
