@@ -56,7 +56,11 @@ d’opportunité), les coûts consolidés et l’export.
   « dernière campagne touchée » (l’opportunité porte déjà `campaign_id`) ;
 - dashboards temps réel (rafraîchissement à la requête) ;
 - benchmarks inter-workspaces ou partage de métriques entre tenants ;
-- recommandations automatiques (AI-140 consommera ces métriques plus tard).
+- recommandations automatiques (AI-140 consommera ces métriques plus tard) ;
+- drill-down d’un chiffre vers la liste des faits sources : différé — le
+  contrat expose des agrégats uniquement et l’UI l’affiche explicitement ;
+  les listes filtrées existantes (prospects, campagnes) servent de
+  vérification manuelle.
 
 ## Parcours principal
 
@@ -65,9 +69,7 @@ d’opportunité), les coûts consolidés et l’export.
 2. il filtre par campagne, ICP, canal, rôle ou signal : toutes les métriques
    se recalculent de façon déterministe ;
 3. il compare deux segments (ex. prospects avec signal « recrute » vs sans) ;
-4. un owner/admin exporte la vue courante en CSV ;
-5. chaque chiffre est cliquable vers la liste des faits sources (prospects,
-   actions, réponses) pour vérification.
+4. un owner/admin exporte la vue courante en CSV.
 
 ## Règles métier et invariants
 
@@ -186,13 +188,12 @@ existante est documentée comme source d’audit, pas de comptage.
 - aucune nouvelle table de faits ; extension additive : `opportunities.amount`
   (numeric) + `opportunities.currency` (varchar(3)), nullables, sans
   rétroactivité ;
-- données personnelles : les vues agrégées n’exposent aucune PII ; le drill
-  down vers les faits respecte les permissions existantes des listes
-  (F-020/F-021) ; le viewer n’a accès qu’aux agrégats ;
+- données personnelles : les vues agrégées n’exposent aucune PII et le
+  viewer n’a accès qu’aux agrégats ; si le drill-down est introduit plus
+  tard, il respectera les permissions existantes des listes (F-020/F-021) ;
 - rétention : les métriques suivent la durée de vie des faits ; une
   suppression F-026 ne réécrit pas l’historique (les faits d’envoi passés
-  restent comptabilisés, la personne n’est plus identifiable dans le drill
-  down après anonymisation) ;
+  restent comptabilisés, sans lien vers la personne après anonymisation) ;
 - audit : l’export CSV est audité (F-003) ; les lectures simples ne le sont
   pas.
 
