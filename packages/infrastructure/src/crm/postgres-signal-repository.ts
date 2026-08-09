@@ -1,5 +1,5 @@
 import { and, desc, eq, gt, inArray, isNull } from "drizzle-orm";
-import type { SignalSource, SignalSourceObservation } from "@outbound/application/crm/signal-source";
+import type { SignalSource, SignalSourceObservation, SignalTarget } from "@outbound/application/crm/signal-source";
 import type { Clock } from "@outbound/application/shared/ports";
 import {
   assertSignal,
@@ -13,6 +13,7 @@ import type { JobQueue, LeasedJob } from "@outbound/application/jobs/job-queue";
 import {
   auditLogs,
   companies,
+  contactEmployments,
   contactSuppressions,
   contacts,
   outboxEvents,
@@ -116,9 +117,15 @@ export class PostgresSignalRepository {
       if (started.contactId && await this.isSuppressed(input.workspaceId, started.contactId)) {
         return (await this.finishRun(started.id, "succeeded", null))!;
       }
+      const target = await this.resolveTarget({
+        workspaceId: input.workspaceId,
+        companyId: started.companyId,
+        contactId: started.contactId,
+      });
       const observations = await input.source.collect({
         workspaceId: input.workspaceId, entityType: started.companyId ? "company" : "contact",
         entityId: started.companyId ?? started.contactId!, companyId: started.companyId, contactId: started.contactId,
+        target,
         signalTypes: input.signalTypes.filter((type) => input.source.supportedTypes.includes(type)),
         correlationId: input.correlationId ?? crypto.randomUUID(), requestKey: started.requestKey,
       });
@@ -178,6 +185,57 @@ export class PostgresSignalRepository {
     const [suppression] = await this.db.select({ id: contactSuppressions.id }).from(contactSuppressions)
       .where(and(eq(contactSuppressions.workspaceId, workspaceId), eq(contactSuppressions.contactId, contactId), isNull(contactSuppressions.liftedAt))).limit(1);
     return Boolean(suppression);
+  }
+
+  private async resolveTarget(input: {
+    workspaceId: string;
+    companyId: string | null;
+    contactId: string | null;
+  }): Promise<SignalTarget> {
+    if (input.companyId) {
+      const [company] = await this.db.select({
+        name: companies.name,
+        domain: companies.normalizedDomain,
+      }).from(companies).where(and(
+        eq(companies.workspaceId, input.workspaceId),
+        eq(companies.id, input.companyId),
+      )).limit(1);
+      if (!company) throw new Error("COMPANY_NOT_FOUND");
+      return {
+        displayName: company.name,
+        aliases: [company.name],
+        domains: company.domain ? [company.domain] : [],
+      };
+    }
+
+    const [contact] = await this.db.select({
+      firstName: contacts.firstName,
+      lastName: contacts.lastName,
+      title: contactEmployments.title,
+      companyName: companies.name,
+      companyDomain: companies.normalizedDomain,
+    }).from(contacts)
+      .leftJoin(contactEmployments, and(
+        eq(contactEmployments.workspaceId, contacts.workspaceId),
+        eq(contactEmployments.contactId, contacts.id),
+        eq(contactEmployments.isCurrent, true),
+      ))
+      .leftJoin(companies, and(
+        eq(companies.workspaceId, contactEmployments.workspaceId),
+        eq(companies.id, contactEmployments.companyId),
+      ))
+      .where(and(
+        eq(contacts.workspaceId, input.workspaceId),
+        eq(contacts.id, input.contactId!),
+      )).limit(1);
+    if (!contact) throw new Error("CONTACT_NOT_FOUND");
+    const displayName = `${contact.firstName} ${contact.lastName}`.trim();
+    return {
+      displayName,
+      aliases: [displayName],
+      domains: contact.companyDomain ? [contact.companyDomain] : [],
+      contextTerms: [contact.companyName, contact.title].filter((value): value is string => Boolean(value?.trim())),
+    };
   }
 
   private async finishRun(runId: string, status: "succeeded" | "failed", error: string | null) {

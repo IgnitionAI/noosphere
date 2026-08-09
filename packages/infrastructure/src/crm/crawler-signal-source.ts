@@ -1,4 +1,4 @@
-import type { SignalSource, SignalSourceObservation } from "@outbound/application/crm/signal-source";
+import type { SignalSource, SignalSourceObservation, SignalTarget } from "@outbound/application/crm/signal-source";
 import { expirationForSignalType, type SignalType } from "@outbound/domain/crm/intent-signal";
 import type { CrawlerSearchResult } from "@outbound/infrastructure/ai/crawler-client";
 
@@ -37,9 +37,12 @@ export class CrawlerSignalSource implements SignalSource {
   constructor(private readonly crawler: SignalCrawler) {}
 
   async collect(input: Parameters<SignalSource["collect"]>[0]): Promise<readonly SignalSourceObservation[]> {
-    const requested = input.signalTypes.filter((type): type is Exclude<SignalType, "competitor"> => type !== "competitor" && type in patterns);
+    const requested = input.signalTypes.filter((type): type is Exclude<SignalType, "competitor"> =>
+      type !== "competitor" && type in patterns && !(input.entityType === "contact" && type === "funding")
+    );
     const groups = await Promise.all(requested.map((type) => this.crawler.search({
-      query: queries[type], limit: 10, correlationId: `${input.correlationId}:${type}`, searchDepth: "advanced",
+      query: buildTargetedQuery(input.target, input.entityType, queries[type]),
+      limit: 10, correlationId: `${input.correlationId}:${type}`, searchDepth: "advanced",
     })));
     const seen = new Set<string>();
     const observations: SignalSourceObservation[] = [];
@@ -48,6 +51,7 @@ export class CrawlerSignalSource implements SignalSource {
       for (const result of groups[index] ?? []) {
         const haystack = `${result.title} ${result.description} ${result.markdown ?? ""}`;
         if (!patterns[type].test(haystack)) continue;
+        if (!evidenceMatchesTarget(input.target, input.entityType, result, patterns[type])) continue;
         const observedAt = result.collectedAt ? new Date(result.collectedAt) : new Date();
         if (Number.isNaN(observedAt.getTime())) continue;
         const deduplicationKey = `${input.entityType}:${input.entityId}:${type}:${result.canonicalUrl ?? result.url}:${observedAt.toISOString().slice(0, 10)}`.slice(0, 700);
@@ -65,4 +69,73 @@ export class CrawlerSignalSource implements SignalSource {
     }
     return observations;
   }
+}
+
+function buildTargetedQuery(target: SignalTarget, entityType: "company" | "contact", signalQuery: string): string {
+  const aliases = uniqueSearchTerms(target.aliases.length > 0 ? target.aliases : [target.displayName]);
+  const domains = uniqueSearchTerms(target.domains.map(normalizeDomain).filter(Boolean));
+  const identity = entityType === "company"
+    ? [...aliases.map(quoteSearchTerm), ...domains.map((domain) => `site:${domain}`)].join(" OR ")
+    : aliases.map(quoteSearchTerm).join(" OR ");
+  const context = entityType === "contact"
+    ? uniqueSearchTerms([...(target.contextTerms ?? []), ...domains]).map(quoteSearchTerm).join(" OR ")
+    : "";
+  return `(${identity})${context ? ` (${context})` : ""} ${signalQuery}`.trim();
+}
+
+function evidenceMatchesTarget(
+  target: SignalTarget,
+  entityType: "company" | "contact",
+  result: Pick<CrawlerSearchResult, "url" | "canonicalUrl" | "title" | "description" | "markdown">,
+  signalPattern: RegExp,
+): boolean {
+  const aliases = uniqueSearchTerms(target.aliases.length > 0 ? target.aliases : [target.displayName]);
+  const normalizedAliases = aliases.map(normalizeComparable).filter(Boolean);
+  const segments = evidenceSegments(result);
+  if (segments.some((segment) => {
+    if (!signalPattern.test(segment)) return false;
+    const normalizedSegment = normalizeComparable(segment);
+    return normalizedAliases.some((alias) => containsNormalizedPhrase(normalizedSegment, alias));
+  })) return true;
+  if (entityType === "contact") return false;
+  const resultHost = safeHostname(result.canonicalUrl ?? result.url);
+  return target.domains.some((domain) => hostMatchesDomain(resultHost, normalizeDomain(domain)))
+    && segments.some((segment) => signalPattern.test(segment));
+}
+
+function evidenceSegments(result: Pick<CrawlerSearchResult, "title" | "description" | "markdown">): string[] {
+  const summary = `${result.title} ${result.description}`.trim();
+  const markdownSegments = (result.markdown ?? "").split(/\n{2,}|(?<=[.!?])\s+/).map((part) => part.trim()).filter(Boolean);
+  return [summary, ...markdownSegments].filter(Boolean);
+}
+
+function uniqueSearchTerms(values: readonly string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+
+function quoteSearchTerm(value: string): string {
+  const safe = value.replace(/["\\\r\n()]/g, " ").replace(/\s+/g, " ").trim().slice(0, 200);
+  return `"${safe}"`;
+}
+
+function normalizeComparable(value: string): string {
+  return value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("en-US").replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function containsNormalizedPhrase(evidence: string, phrase: string): boolean {
+  return Boolean(phrase && ` ${evidence} `.includes(` ${phrase} `));
+}
+
+function normalizeDomain(value: string): string {
+  const candidate = value.trim().toLocaleLowerCase("en-US").replace(/^https?:\/\//, "").split("/")[0]?.replace(/^www\./, "") ?? "";
+  return candidate.replace(/[^a-z0-9.-]/g, "");
+}
+
+function safeHostname(value: string): string {
+  try { return new URL(value).hostname.toLocaleLowerCase("en-US").replace(/^www\./, ""); }
+  catch { return ""; }
+}
+
+function hostMatchesDomain(host: string, domain: string): boolean {
+  return Boolean(host && domain && (host === domain || host.endsWith(`.${domain}`)));
 }

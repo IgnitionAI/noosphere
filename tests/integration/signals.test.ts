@@ -18,11 +18,13 @@ databaseDescribe("F-027 intent signals", () => {
   const companyId = crypto.randomUUID();
   const contactId = crypto.randomUUID();
   let calls = 0;
+  let collectedTarget: { displayName: string; aliases: readonly string[]; domains: readonly string[] } | null = null;
   const source: SignalSource = {
     name: "fake-public-source",
     supportedTypes: ["hiring", "job_change"],
     async collect(input) {
       calls += 1;
+      collectedTarget = input.target;
       return [{ signalType: "hiring", entityType: input.entityType, entityId: input.entityId, companyId: input.companyId, contactId: input.contactId, source: "fake-public-source", providerEventId: "provider-1", evidenceUrl: "https://example.test/careers", evidenceSnippet: "Hiring engineers", observedAt: new Date("2026-08-01T00:00:00Z"), expiresAt: new Date("2026-09-15T00:00:00Z"), confidence: "medium", deduplicationKey: `hiring:${input.entityId}:2026-08-01`, legalBasis: "public_professional_information", sourceAuthorized: true }];
     },
   };
@@ -59,6 +61,7 @@ databaseDescribe("F-027 intent signals", () => {
     expect((await request()).status).toBe(202);
     expect((await request()).status).toBe(200);
     expect(calls).toBe(1);
+    expect(collectedTarget).toMatchObject({ displayName: "Signal Co", aliases: ["Signal Co"], domains: [`signals-${companyId}.example`] });
     const listed = await handle(new Request(`http://localhost/api/v1/companies/${companyId}/signals`));
     expect(listed.status).toBe(200);
     expect((await listed.json() as { data: unknown[] }).data).toHaveLength(1);

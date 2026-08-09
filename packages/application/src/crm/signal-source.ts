@@ -1,5 +1,12 @@
 import type { SignalConfidence, SignalEntityType, SignalType } from "@outbound/domain/crm/intent-signal";
 
+export interface SignalTarget {
+  readonly displayName: string;
+  readonly aliases: readonly string[];
+  readonly domains: readonly string[];
+  readonly contextTerms?: readonly string[];
+}
+
 export interface SignalSourceObservation {
   readonly signalType: SignalType;
   readonly entityType: SignalEntityType;
@@ -26,6 +33,7 @@ export interface SignalSource {
     entityId: string;
     companyId: string | null;
     contactId: string | null;
+    target: SignalTarget;
     signalTypes: readonly SignalType[];
     correlationId: string;
     requestKey: string;
