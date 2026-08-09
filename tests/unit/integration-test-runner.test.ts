@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { integrationTestDatabaseUrl } from "../../scripts/run-integration-tests";
+import { integrationTestDatabaseUrl, integrationTestEnvironment } from "../../scripts/run-integration-tests";
 
 describe("integration test database isolation", () => {
   test("derives a dedicated database when no explicit test URL exists", () => {
@@ -22,5 +22,24 @@ describe("integration test database isolation", () => {
       DATABASE_URL: "postgresql://user:password@localhost:5432/ignition_outbound",
       TEST_DATABASE_URL: "postgresql://user:password@localhost:5432/ignition_outbound",
     })).toThrow("TEST_DATABASE_URL must not target the development database");
+  });
+
+  test("refuses a reserved PostgreSQL database as integration target", () => {
+    expect(() => integrationTestDatabaseUrl({
+      TEST_DATABASE_URL: "postgresql://user:password@localhost:5432/postgres",
+    })).toThrow("Integration test database name is reserved");
+  });
+
+  test("uses an isolated encryption key instead of inheriting a local application secret", () => {
+    const result = integrationTestEnvironment(
+      {
+        APP_ENCRYPTION_KEY: "local-application-secret",
+        BETTER_AUTH_SECRET: "local-auth-secret",
+      },
+      "postgresql://user:password@localhost:5432/ignition_outbound_test",
+    );
+    expect(result.TEST_DATABASE_URL).toEndWith("/ignition_outbound_test");
+    expect(result.APP_ENCRYPTION_KEY).toBe("ignition-outbound-integration-tests-only");
+    expect(result.APP_ENCRYPTION_KEY).not.toBe("local-application-secret");
   });
 });
