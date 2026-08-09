@@ -586,6 +586,44 @@ export interface ContactDetail {
   }[];
 }
 
+export type SignalType = "hiring" | "funding" | "job_change" | "leadership_change" | "geographic_expansion" | "public_activity" | "technology" | "competitor";
+export type SignalEntityType = "company" | "contact";
+export type SignalConfidence = "high" | "medium" | "low";
+export interface IntentSignal {
+  readonly id: string;
+  readonly signalType: SignalType;
+  readonly entityType: SignalEntityType;
+  readonly entityId: string;
+  readonly companyId: string | null;
+  readonly contactId: string | null;
+  readonly source: string;
+  readonly sources: readonly string[];
+  readonly providerEventId: string | null;
+  readonly evidenceUrl: string | null;
+  readonly evidenceSnippet: string | null;
+  readonly observedAt: string;
+  readonly expiresAt: string;
+  readonly confidence: SignalConfidence;
+  readonly legalBasis: string;
+  readonly sourceAuthorized: boolean;
+}
+export type SignalCollectionRunStatus = "queued" | "running" | "succeeded" | "partial" | "failed";
+export interface SignalCollectionRun {
+  readonly id: string;
+  readonly workspaceId?: string;
+  readonly companyId: string | null;
+  readonly contactId: string | null;
+  readonly requestKey: string;
+  readonly status: SignalCollectionRunStatus;
+  readonly source: string;
+  readonly errorCode: string | null;
+  readonly errorMessage: string | null;
+  readonly startedAt: string | null;
+  readonly completedAt: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
 export type EnrichmentObservationStatus = "found" | "probable" | "verified" | "invalid";
 export type EnrichmentConfidence = "high" | "medium" | "low" | "none";
 export type EnrichmentPhoneKind = "public_company" | "personal";
@@ -655,6 +693,7 @@ export interface ProspectViewSummary extends ContactSummary {
     readonly candidateId: string;
     readonly headline: string | null;
     readonly companyName: string | null;
+    readonly scoreExplanation?: unknown;
   }[];
   readonly aiOpinion: {
     readonly score: number | null;
@@ -886,6 +925,38 @@ export async function getContact(
   contactId: string,
 ): Promise<ContactDetail> {
   return crmFetch(workspaceSlug, `/api/v1/contacts/${contactId}`);
+}
+
+export async function listSignals(
+  workspaceSlug: string,
+  options: { signalType?: SignalType; entityType?: SignalEntityType; entityId?: string; includeExpired?: boolean } = {},
+): Promise<{ data: IntentSignal[] }> {
+  const params = new URLSearchParams();
+  if (options.signalType) params.set("signalType", options.signalType);
+  if (options.entityType) params.set("entityType", options.entityType);
+  if (options.entityId) params.set("entityId", options.entityId);
+  if (options.includeExpired) params.set("includeExpired", "true");
+  const query = params.toString();
+  return crmFetch(workspaceSlug, `/api/v1/signals${query ? `?${query}` : ""}`);
+}
+
+export async function listCompanySignals(workspaceSlug: string, companyId: string, includeExpired = true): Promise<{ data: IntentSignal[] }> {
+  return crmFetch(workspaceSlug, `/api/v1/companies/${companyId}/signals${includeExpired ? "?includeExpired=true" : ""}`);
+}
+
+export async function listContactSignals(workspaceSlug: string, contactId: string, includeExpired = true): Promise<{ data: IntentSignal[] }> {
+  return crmFetch(workspaceSlug, `/api/v1/contacts/${contactId}/signals${includeExpired ? "?includeExpired=true" : ""}`);
+}
+
+export async function collectSignals(
+  workspaceSlug: string,
+  input: { companyId?: string; contactId?: string; requestKey: string; signalTypes?: readonly SignalType[] },
+): Promise<SignalCollectionRun> {
+  return crmFetch(workspaceSlug, "/api/v1/signals/actions/collect", { method: "POST", body: input });
+}
+
+export async function getSignalCollectionRun(workspaceSlug: string, runId: string): Promise<SignalCollectionRun> {
+  return crmFetch(workspaceSlug, `/api/v1/signal-collection-runs/${runId}`);
 }
 
 export async function getContactEnrichment(workspaceSlug: string, contactId: string): Promise<{ data: EnrichmentObservation[] }> {

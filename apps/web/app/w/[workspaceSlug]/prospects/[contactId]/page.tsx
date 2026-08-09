@@ -2,11 +2,13 @@ import { ArrowLeft, Ban, Briefcase, Plus, TriangleAlert, UserRound } from "lucid
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { CrmPermissionState } from "@/components/crm-states";
-import { getContact, getContactEnrichment, getEnrichmentJob, listCompanies, listContactMerges, listWorkspaces, OutboundApiError, type EnrichmentJobDetail, type EnrichmentObservation } from "@/lib/api";
+import { getContact, getContactEnrichment, getEnrichmentJob, getSignalCollectionRun, listCompanies, listContactMerges, listContactSignals, listWorkspaces, OutboundApiError, type EnrichmentJobDetail, type EnrichmentObservation, type IntentSignal, type SignalCollectionRun } from "@/lib/api";
 import { MutationForm } from "../../research/[runId]/report/mutation-form";
 import { resolveProspectReturn } from "@/lib/prospect-navigation";
 import { addEmploymentAction, addIdentityAction, enrichContactAction, retryEnrichmentJobAction, suppressContactAction, undoContactMergeAction, updateContactAction } from "../actions";
 import { EnrichmentPanel } from "./enrichment-panel";
+import { collectSignalsAction } from "../../signals-actions";
+import { SignalsPanel } from "@/components/signals-panel";
 
 export const metadata = { title: "Prospect" };
 export const dynamic = "force-dynamic";
@@ -16,10 +18,10 @@ export default async function ContactDetailPage({
   searchParams,
 }: {
   params: Promise<{ workspaceSlug: string; contactId: string }>;
-  searchParams: Promise<{ returnTo?: string; enrichmentJobId?: string }>;
+  searchParams: Promise<{ returnTo?: string; enrichmentJobId?: string; signalRunId?: string }>;
 }) {
   const { workspaceSlug, contactId } = await params;
-  const { returnTo, enrichmentJobId } = await searchParams;
+  const { returnTo, enrichmentJobId, signalRunId } = await searchParams;
   const returnLink = resolveProspectReturn(workspaceSlug, returnTo);
   let contact;
   try {
@@ -34,6 +36,9 @@ export default async function ContactDetailPage({
   let observations: EnrichmentObservation[] = [];
   let enrichmentJob: EnrichmentJobDetail | null = null;
   let enrichmentAccess = true;
+  let signals: IntentSignal[] = [];
+  let signalRun: SignalCollectionRun | null = null;
+  let signalAccess = true;
   if (contact.status !== "suppressed") {
     try {
       observations = (await getContactEnrichment(workspaceSlug, contactId)).data;
@@ -43,6 +48,12 @@ export default async function ContactDetailPage({
     }
     if (enrichmentJobId && enrichmentAccess) {
       try { enrichmentJob = await getEnrichmentJob(workspaceSlug, enrichmentJobId); }
+      catch (error) { if (!(error instanceof OutboundApiError && (error.status === 403 || error.status === 404))) throw error; }
+    }
+    try { signals = (await listContactSignals(workspaceSlug, contactId, true)).data; }
+    catch (error) { if (error instanceof OutboundApiError && (error.status === 401 || error.status === 403)) signalAccess = false; else throw error; }
+    if (signalRunId && signalAccess) {
+      try { signalRun = await getSignalCollectionRun(workspaceSlug, signalRunId); }
       catch (error) { if (!(error instanceof OutboundApiError && (error.status === 403 || error.status === 404))) throw error; }
     }
   }
@@ -69,6 +80,7 @@ export default async function ContactDetailPage({
   const update = updateContactAction.bind(null, workspaceSlug, contactId);
   const undo = undoContactMergeAction.bind(null, workspaceSlug, contactId);
   const enrich = enrichContactAction.bind(null, workspaceSlug, contactId);
+  const collect = collectSignalsAction.bind(null, workspaceSlug);
   const retry = enrichmentJob?.status === "failed" ? retryEnrichmentJobAction.bind(null, workspaceSlug, contactId, enrichmentJob.id) : null;
   const addIdentity = addIdentityAction.bind(null, workspaceSlug, contactId);
   const workspace = (await listWorkspaces()).find((item) => item.slug === workspaceSlug);
@@ -76,6 +88,7 @@ export default async function ContactDetailPage({
   const suppressed = contact.status === "suppressed";
   const currentCompanyId = contact.employments.find((employment) => employment.isCurrent)?.companyId;
   const requestKey = `contact-enrichment:${contactId}:${contact.updatedAt ?? contact.createdAt ?? "v1"}`;
+  const signalRequestKey = `contact-signals:${contactId}:${contact.updatedAt ?? contact.createdAt ?? "v1"}`;
 
   return (
     <>
@@ -194,6 +207,7 @@ export default async function ContactDetailPage({
           </aside>
         ) : null}
       </div>
+      {!suppressed && signalAccess ? <SignalsPanel canCollect={workspace ? ["admin", "owner"].includes(workspace.role) : false} collectAction={collect} entityId={contactId} entityType="contact" requestKey={signalRequestKey} run={signalRun} signals={signals} /> : null}
       {canEdit ? (
         <section className="panel mt-5">
           <div className="panel-header">
