@@ -27,15 +27,18 @@ databaseDescribe("F-035 connected accounts", () => {
     capabilities: { linkedin: { messaging: false }, email: { sending: true } },
     quotas: { daily: 100 },
   };
+  let hostedRequest: { channel: string; onboardingId: string; successRedirectUrl: string; failureRedirectUrl: string } | null = null;
   const client: UnipileClient = {
     async connect() { return snapshot; },
     async check() { return snapshot; },
+    async createHostedAuthLink(input) { hostedRequest = input; return { url: `https://account.unipile.test/${input.onboardingId}` }; },
   };
   const handle = createConnectedAccountHttpHandler({
     database: database.db,
     contextResolver: { async resolve() { return context; } },
     client,
     webhookSecret: secret,
+    publicAppBaseUrl: "http://localhost:3000",
   });
 
   beforeAll(async () => {
@@ -121,27 +124,32 @@ databaseDescribe("F-035 connected accounts", () => {
   });
 
   test("resumes onboarding idempotently and exposes provider-confirmed quota channels only", async () => {
+    hostedRequest = null;
     const first = await send("POST", "/api/v1/connected-accounts/onboarding", { channel: "email" });
     expect(first.status).toBe(201);
     const onboarding = await first.json() as { id: string; status: string; channel: string; hostedUrl: string };
     expect(onboarding.status).toBe("awaiting_callback");
     expect(onboarding.channel).toBe("email");
+    expect(onboarding.hostedUrl).toStartWith("https://account.unipile.test/");
     expect(onboarding.hostedUrl).not.toContain("token");
+    expect(hostedRequest).toMatchObject({ channel: "email", onboardingId: onboarding.id });
+    expect((await handle(new Request(`http://localhost:3000/api/v1/connected-accounts/onboarding/${onboarding.id}/callback`))).status).toBe(400);
+    expect((await handle(new Request(`http://localhost:3000/api/v1/connected-accounts/onboarding/${onboarding.id}/callback?token=invalid&result=success&account_id=x`))).status).toBe(404);
 
     const resumed = await send("POST", "/api/v1/connected-accounts/onboarding", { channel: "email" });
     expect(resumed.status).toBe(201);
     expect((await resumed.json() as { id: string }).id).toBe(onboarding.id);
 
-    const completed = await send("POST", `/api/v1/connected-accounts/onboarding/${onboarding.id}/actions/complete`, {
-      providerAccountId: `onboarded-${crypto.randomUUID()}`,
-      accessToken: "onboarding-secret",
-      displayName: "Onboarded sender",
-    });
-    expect(completed.status).toBe(201);
-    const completion = await completed.json() as { onboarding: { status: string }; account: { id: string } };
+    const callbackUrl = new URL(hostedRequest!.successRedirectUrl);
+    const callbackAccountId = `onboarded-${crypto.randomUUID()}`;
+    callbackUrl.searchParams.set("account_id", callbackAccountId);
+    const completed = await handle(new Request(callbackUrl));
+    expect(completed.status).toBe(303);
+    expect(completed.headers.get("location")).toBe(`http://localhost:3000/w/f035-a-${workspaceId}/integrations?onboardingId=${onboarding.id}&connection=completed`);
+    const completionResponse = await send("GET", `/api/v1/connected-accounts/onboarding/${onboarding.id}`);
+    const completion = { onboarding: await completionResponse.json() as { status: string }, account: (await (await send("GET", "/api/v1/connected-accounts")).json() as { data: { id: string; providerAccountId: string }[] }).data.find((account) => account.providerAccountId === callbackAccountId)! };
     expect(completion.onboarding.status).toBe("completed");
     expect(completion.account.id).toBeString();
-    expect(JSON.stringify(completion)).not.toContain("onboarding-secret");
 
     const quota = await send("GET", `/api/v1/connected-accounts/${completion.account.id}/quotas`);
     expect(quota.status).toBe(200);

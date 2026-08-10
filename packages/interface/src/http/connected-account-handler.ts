@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { recordRejectedUnipileWebhook } from "@outbound/infrastructure/campaigns/unipile-webhook-ingestor";
 import { z, ZodError } from "zod";
 import type { RequestContextResolver } from "./request-context";
@@ -32,6 +32,7 @@ const connectSchema = z.object({
 const accountPath = /^\/api\/v1\/connected-accounts\/([^/]+)$/;
 const actionPath = /^\/api\/v1\/connected-accounts\/([^/]+)\/actions\/(check|reconnect)$/;
 const onboardingPath = /^\/api\/v1\/connected-accounts\/onboarding\/([^/]+)$/;
+const onboardingCallbackPath = /^\/api\/v1\/connected-accounts\/onboarding\/([^/]+)\/callback$/;
 const onboardingActionPath = /^\/api\/v1\/connected-accounts\/onboarding\/([^/]+)\/actions\/complete$/;
 const quotasPath = /^\/api\/v1\/connected-accounts\/([^/]+)\/quotas$/;
 const impactPath = /^\/api\/v1\/connected-accounts\/([^/]+)\/impact$/;
@@ -44,6 +45,7 @@ export interface ConnectedAccountHttpDependencies {
   readonly contextResolver: RequestContextResolver;
   readonly client: UnipileClient;
   readonly webhookSecret: string;
+  readonly publicAppBaseUrl: string;
 }
 
 export function createConnectedAccountHttpHandler(dependencies: ConnectedAccountHttpDependencies) {
@@ -52,17 +54,46 @@ export function createConnectedAccountHttpHandler(dependencies: ConnectedAccount
     const url = new URL(request.url);
     try {
       if (url.pathname === "/api/v1/webhooks/unipile") return await handleWebhook(request, dependencies, repository);
+      const onboardingCallback = onboardingCallbackPath.exec(url.pathname);
+      if (onboardingCallback && request.method === "GET") {
+        return await handleOnboardingCallback(request, uuidSchema.parse(onboardingCallback[1]), dependencies, repository);
+      }
       const context = await resolveContext(dependencies.contextResolver, request);
 
       if (url.pathname === "/api/v1/connected-accounts/onboarding" && request.method === "POST") {
         requireAdmin(context.role);
         const body = onboardingSchema.parse(await request.json());
+        const expiresAt = new Date(Date.now() + 15 * 60_000);
+        const active = await repository.findActiveOnboarding({ workspaceId: context.workspaceId, channel: body.channel, now: new Date() });
+        const onboardingId = active?.id ?? crypto.randomUUID();
+        const callbackToken = randomBytes(32).toString("base64url");
+        const callback = new URL(`/api/v1/connected-accounts/onboarding/${onboardingId}/callback`, dependencies.publicAppBaseUrl);
+        callback.searchParams.set("token", callbackToken);
+        const successRedirect = new URL(callback);
+        successRedirect.searchParams.set("result", "success");
+        const failureRedirect = new URL(callback);
+        failureRedirect.searchParams.set("result", "failure");
+        let hostedUrl: string;
+        try {
+          hostedUrl = (await dependencies.client.createHostedAuthLink({
+            channel: body.channel,
+            onboardingId,
+            expiresAt,
+            successRedirectUrl: successRedirect.toString(),
+            failureRedirectUrl: failureRedirect.toString(),
+          })).url;
+        } catch (error) {
+          if (error instanceof ProviderUnavailableError) return problem(503, "PROVIDER_UNAVAILABLE", error.message);
+          throw error;
+        }
         const onboarding = await repository.startOnboarding({
-          id: crypto.randomUUID(),
+          id: onboardingId,
           workspaceId: context.workspaceId,
           channel: body.channel,
           createdBy: context.userId,
-          expiresAt: new Date(Date.now() + 15 * 60_000),
+          expiresAt,
+          hostedUrl,
+          callbackTokenHash: hashCallbackToken(callbackToken),
         });
         return json(onboarding, 201);
       }
@@ -228,6 +259,7 @@ export function createConnectedAccountHttpHandler(dependencies: ConnectedAccount
       if (error instanceof WorkspaceContextRequiredError) return problem(400, "WORKSPACE_CONTEXT_REQUIRED", error.message);
       if (error instanceof WorkspaceAccessDeniedError) return problem(403, "WORKSPACE_FORBIDDEN", error.message);
       if (isUniqueViolation(error)) return problem(409, "CONNECTED_ACCOUNT_ALREADY_EXISTS", "This provider account is already connected in the workspace");
+      console.error(JSON.stringify({ event: "connected_account_http_error", path: url.pathname, method: request.method, error: error instanceof Error ? error.message : String(error) }));
       return problem(500, "INTERNAL_ERROR", "An unexpected error occurred");
     }
   };
@@ -273,6 +305,73 @@ async function handleWebhook(
     snapshot,
   });
   return json({ accepted: true, duplicate: result.duplicate }, 202);
+}
+
+async function handleOnboardingCallback(
+  request: Request,
+  onboardingId: string,
+  dependencies: ConnectedAccountHttpDependencies,
+  repository: PostgresConnectedAccountRepository,
+): Promise<Response> {
+  const url = new URL(request.url);
+  const token = url.searchParams.get("token");
+  if (!token || token.length > 200) return problem(400, "INVALID_ONBOARDING_CALLBACK", "The onboarding callback token is missing or invalid");
+  const resolved = await repository.getOnboardingForCallback({ id: onboardingId, callbackTokenHash: hashCallbackToken(token) });
+  if (!resolved) return problem(404, "CONNECTION_ONBOARDING_NOT_FOUND", "Connection onboarding not found");
+  const destination = new URL(`/w/${encodeURIComponent(resolved.workspaceSlug)}/integrations`, dependencies.publicAppBaseUrl);
+  destination.searchParams.set("onboardingId", onboardingId);
+
+  if (resolved.onboarding.expiresAt <= new Date()) {
+    await repository.failOnboarding({ workspaceId: resolved.workspaceId, id: onboardingId, errorCode: "HOSTED_AUTH_EXPIRED", errorMessage: "Le lien de connexion a expiré." });
+    destination.searchParams.set("connection", "failed");
+    destination.searchParams.set("error", "HOSTED_AUTH_EXPIRED");
+    return redirect(destination);
+  }
+  const providerResult = url.searchParams.get("result");
+  if (providerResult === "failure") {
+    const providerError = safeProviderError(url.searchParams.get("error"));
+    await repository.failOnboarding({ workspaceId: resolved.workspaceId, id: onboardingId, errorCode: "HOSTED_AUTH_FAILED", errorMessage: providerError });
+    destination.searchParams.set("connection", "failed");
+    destination.searchParams.set("error", "HOSTED_AUTH_FAILED");
+    return redirect(destination);
+  }
+  if (providerResult !== "success") return problem(400, "INVALID_ONBOARDING_CALLBACK", "The provider callback result is invalid");
+  const providerAccountId = url.searchParams.get("account_id");
+  if (!providerAccountId || providerAccountId.length > 300) {
+    return problem(400, "INVALID_ONBOARDING_CALLBACK", "The provider account id is missing or invalid");
+  }
+  try {
+    const snapshot = await dependencies.client.check({ providerAccountId, accessToken: "" });
+    await repository.completeOnboarding({
+      workspaceId: resolved.workspaceId,
+      onboardingId,
+      providerAccountId,
+      displayName: snapshot.displayName,
+      encryptedSecret: encryptSecret("unipile-hosted-auth"),
+      snapshot,
+      actorUserId: resolved.createdBy,
+    });
+    destination.searchParams.set("connection", "completed");
+  } catch (error) {
+    if (!(error instanceof ProviderUnavailableError)) throw error;
+    await repository.failOnboarding({ workspaceId: resolved.workspaceId, id: onboardingId, errorCode: "PROVIDER_UNAVAILABLE", errorMessage: error.message });
+    destination.searchParams.set("connection", "failed");
+    destination.searchParams.set("error", "PROVIDER_UNAVAILABLE");
+  }
+  return redirect(destination);
+}
+
+function hashCallbackToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
+
+function safeProviderError(value: string | null): string {
+  if (!value) return "La connexion au fournisseur a échoué.";
+  return value.replace(/[\r\n\0]/g, " ").slice(0, 500);
+}
+
+function redirect(url: URL): Response {
+  return new Response(null, { status: 303, headers: { location: url.toString() } });
 }
 
 function isValidSignature(raw: string, supplied: string, secret: string): boolean {
@@ -344,6 +443,7 @@ async function resolveContext(resolver: RequestContextResolver, request: Request
 function allowedMethods(pathname: string): string | null {
   if (pathname === "/api/v1/connected-accounts") return "GET, POST";
   if (pathname === "/api/v1/connected-accounts/onboarding") return "POST";
+  if (onboardingCallbackPath.test(pathname)) return "GET";
   if (onboardingPath.test(pathname) || onboardingActionPath.test(pathname)) return "GET, POST";
   if (quotasPath.test(pathname) || impactPath.test(pathname)) return "GET";
   if (pathname === "/api/v1/account-health-alerts") return "GET";

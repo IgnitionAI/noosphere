@@ -1276,6 +1276,20 @@
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/OnboardingId" }],
       "get": { "operationId": "getConnectedAccountOnboarding", "responses": { "200": { "description": "Onboarding status", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConnectionOnboarding" } } } }, "404": { "description": "Onboarding not found" } } }
     },
+    "/api/v1/connected-accounts/onboarding/{onboardingId}/callback": {
+      "security": [],
+      "parameters": [{ "$ref": "#/components/parameters/OnboardingId" }],
+      "get": {
+        "operationId": "completeHostedConnectedAccountOnboarding",
+        "description": "Public browser redirect from Unipile Hosted Auth. A short-lived opaque token binds the callback to its workspace onboarding; the token is never returned by the onboarding API.",
+        "parameters": [
+          { "name": "token", "in": "query", "required": true, "schema": { "type": "string" } },
+          { "name": "result", "in": "query", "required": true, "schema": { "type": "string", "enum": ["success", "failure"] } },
+          { "name": "account_id", "in": "query", "required": false, "schema": { "type": "string" } }
+        ],
+        "responses": { "303": { "description": "Redirect to the workspace integration page" }, "400": { "$ref": "#/components/responses/InvalidRequest" }, "404": { "description": "Onboarding or token not found" } }
+      }
+    },
     "/api/v1/connected-accounts/{connectedAccountId}/quotas": {
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/ConnectedAccountId" }],
       "get": { "operationId": "getConnectedAccountQuotas", "description": "Daily usage is projected from outreach_actions in UTC. Channels are returned only when the provider confirms sending capability.", "responses": { "200": { "description": "Normalized account quotas", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AccountQuota" } } } }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" } } }

@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, lte, sql } from "drizzle-orm";
 import type { Database } from "@outbound/infrastructure/database/client";
 import {
   auditLogs,
@@ -7,6 +7,7 @@ import {
   connectedAccounts,
   connectionOnboardings,
   outboxEvents,
+  workspaces,
 } from "@outbound/infrastructure/database/schema";
 import type { ConnectedAccountStatus, UnipileAccountSnapshot } from "./unipile-client";
 
@@ -218,21 +219,42 @@ export class PostgresConnectedAccountRepository {
     });
   }
 
-  async startOnboarding(input: { id: string; workspaceId: string; channel: string; createdBy: string; expiresAt: Date }): Promise<ConnectionOnboardingView> {
+  async findActiveOnboarding(input: { workspaceId: string; channel: string; now: Date }): Promise<ConnectionOnboardingView | null> {
+    return this.db.transaction(async (tx) => {
+      await tx.update(connectionOnboardings).set({ status: "expired", errorCode: "HOSTED_AUTH_EXPIRED", errorMessage: "Le lien de connexion a expiré.", updatedAt: input.now }).where(and(
+        eq(connectionOnboardings.workspaceId, input.workspaceId),
+        eq(connectionOnboardings.channel, input.channel),
+        sql`${connectionOnboardings.status} in ('initiated', 'awaiting_callback', 'verifying')`,
+        lte(connectionOnboardings.expiresAt, input.now),
+      ));
+      const [row] = await tx.select().from(connectionOnboardings).where(and(
+        eq(connectionOnboardings.workspaceId, input.workspaceId),
+        eq(connectionOnboardings.channel, input.channel),
+        sql`${connectionOnboardings.status} in ('initiated', 'awaiting_callback', 'verifying')`,
+      )).limit(1);
+      return row ? toOnboardingView(row) : null;
+    });
+  }
+
+  async startOnboarding(input: { id: string; workspaceId: string; channel: string; createdBy: string; expiresAt: Date; hostedUrl: string; callbackTokenHash: string }): Promise<ConnectionOnboardingView> {
     return this.db.transaction(async (tx) => {
       const existing = await tx.select().from(connectionOnboardings).where(and(
         eq(connectionOnboardings.workspaceId, input.workspaceId),
         eq(connectionOnboardings.channel, input.channel),
         sql`${connectionOnboardings.status} in ('initiated', 'awaiting_callback', 'verifying')`,
       )).limit(1);
-      if (existing[0]) return toOnboardingView(existing[0]);
+      if (existing[0]) {
+        const [refreshed] = await tx.update(connectionOnboardings).set({ hostedUrl: input.hostedUrl, expiresAt: input.expiresAt, result: { callbackTokenHash: input.callbackTokenHash }, errorCode: null, errorMessage: null, updatedAt: new Date() }).where(and(eq(connectionOnboardings.workspaceId, input.workspaceId), eq(connectionOnboardings.id, existing[0].id))).returning();
+        return toOnboardingView(refreshed ?? existing[0]);
+      }
       const rows = await tx.insert(connectionOnboardings).values({
         id: input.id,
         workspaceId: input.workspaceId,
         channel: input.channel,
         step: "callback",
         status: "awaiting_callback",
-        hostedUrl: `/api/v1/connected-accounts/onboarding/${input.id}/callback`,
+        hostedUrl: input.hostedUrl,
+        result: { callbackTokenHash: input.callbackTokenHash },
         expiresAt: input.expiresAt,
         createdBy: input.createdBy,
       }).onConflictDoNothing().returning();
@@ -258,6 +280,14 @@ export class PostgresConnectedAccountRepository {
     return rows[0] ? toOnboardingView(rows[0]) : null;
   }
 
+  async getOnboardingForCallback(input: { id: string; callbackTokenHash: string }): Promise<null | { onboarding: ConnectionOnboardingView; workspaceId: string; workspaceSlug: string; createdBy: string | null }> {
+    const [row] = await this.db.select({ onboarding: connectionOnboardings, workspaceSlug: workspaces.slug }).from(connectionOnboardings).innerJoin(workspaces, eq(workspaces.id, connectionOnboardings.workspaceId)).where(and(
+      eq(connectionOnboardings.id, input.id),
+      sql`${connectionOnboardings.result}->>'callbackTokenHash' = ${input.callbackTokenHash}`,
+    )).limit(1);
+    return row ? { onboarding: toOnboardingView(row.onboarding), workspaceId: row.onboarding.workspaceId, workspaceSlug: row.workspaceSlug, createdBy: row.onboarding.createdBy } : null;
+  }
+
   async completeOnboarding(input: {
     workspaceId: string;
     onboardingId: string;
@@ -265,7 +295,7 @@ export class PostgresConnectedAccountRepository {
     displayName: string | null;
     encryptedSecret: string;
     snapshot: UnipileAccountSnapshot;
-    actorUserId: string;
+    actorUserId: string | null;
   }): Promise<{ onboarding: ConnectionOnboardingView; account: ConnectedAccountView }> {
     return this.db.transaction(async (tx) => {
       const rows = await tx.select().from(connectionOnboardings).where(and(
@@ -300,7 +330,7 @@ export class PostgresConnectedAccountRepository {
         step: "verification",
         status: "completed",
         providerAccountId: input.providerAccountId,
-        result: { status: input.snapshot.status, capabilities: input.snapshot.capabilities, quotas: input.snapshot.quotas },
+        result: { status: input.snapshot.status, capabilities: input.snapshot.capabilities, quotas: input.snapshot.quotas, callbackTokenHash: callbackTokenHash(onboarding.result) },
         errorCode: null,
         errorMessage: null,
         updatedAt: new Date(),
@@ -582,13 +612,25 @@ function toOnboardingView(row: typeof connectionOnboardings.$inferSelect): Conne
     status: row.status,
     hostedUrl: row.hostedUrl,
     providerAccountId: row.providerAccountId,
-    result: row.result,
+    result: redactOnboardingResult(row.result),
     errorCode: row.errorCode,
     errorMessage: row.errorMessage,
     expiresAt: row.expiresAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
+}
+
+function callbackTokenHash(value: unknown): string | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const token = (value as Record<string, unknown>).callbackTokenHash;
+  return typeof token === "string" ? token : null;
+}
+
+function redactOnboardingResult(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const { callbackTokenHash: _callbackTokenHash, ...safe } = value as Record<string, unknown>;
+  return safe;
 }
 
 function toAlertView(row: typeof accountHealthAlerts.$inferSelect): AccountHealthAlertView {

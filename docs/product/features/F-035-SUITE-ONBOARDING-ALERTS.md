@@ -150,15 +150,17 @@ sur toutes les pages, renvoyant vers `/integrations`).
 
 | Méthode | Route | Usage | État |
 |---|---|---|---|
-| POST | `/api/v1/connected-accounts/onboarding` | initie un onboarding guidé (canal) | à spécifier |
-| GET | `/api/v1/connected-accounts/onboarding/:id` | progression de l’assistant | à spécifier |
-| GET | `/api/v1/connected-accounts/:id/quotas` | limites lues + consommation du jour par canal | à spécifier |
-| GET | `/api/v1/account-health-alerts` | alertes actives du workspace | à spécifier |
-| POST | `/api/v1/account-health-alerts/:id/actions/acknowledge` | acquittement | à spécifier |
+| POST | `/api/v1/connected-accounts/onboarding` | crée ou renouvelle un vrai lien Hosted Auth Unipile | livré |
+| GET | `/api/v1/connected-accounts/onboarding/:id` | progression de l’assistant | livré |
+| GET | `/api/v1/connected-accounts/onboarding/:id/callback` | callback public signé, vérification puis redirection workspace | livré |
+| GET | `/api/v1/connected-accounts/:id/quotas` | limites lues + consommation du jour par canal | livré |
+| GET | `/api/v1/account-health-alerts` | alertes actives du workspace | livré |
+| POST | `/api/v1/account-health-alerts/:id/actions/acknowledge` | acquittement | livré |
 
-Les endpoints du socle (liste, initiation simple, check, reconnect, webhook)
-restent inchangés ; l’onboarding guidé réutilise l’initiation et le callback
-existants.
+Le backend crée le lien Hosted Auth auprès d’Unipile. Le callback navigateur
+est relayé par Next.js vers l’API et lié à l’onboarding par un jeton aléatoire
+dont seul le hash est stocké. L’URL Hosted Auth exposée au navigateur ne
+contient pas ce jeton.
 
 **Événements sortants** : `ConnectedAccountStatusChanged` (existant) reste
 la source ; `AccountHealthAlertRaised` / `AccountHealthAlertResolved` à

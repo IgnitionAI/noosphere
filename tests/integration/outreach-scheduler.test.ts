@@ -33,6 +33,7 @@ databaseDescribe("F-034 outreach scheduler", () => {
   const policyVersionId = crypto.randomUUID();
   let sends = 0;
   const provider: UnipileClient = {
+    async createHostedAuthLink() { return { url: "https://account.unipile.test/onboarding" }; },
     async connect() { return snapshot; },
     async check() { return snapshot; },
     async send() { sends += 1; await Bun.sleep(25); return { providerMessageId: `provider-${sends}` }; },

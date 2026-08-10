@@ -232,6 +232,7 @@ const connectedAccounts = createConnectedAccountHttpHandler({
   contextResolver: auth.contextResolver,
   client: connectedAccountClient,
   webhookSecret: process.env.UNIPILE_WEBHOOK_SECRET ?? "",
+  publicAppBaseUrl: requiredEnvironment("BETTER_AUTH_URL"),
 });
 const calendarSigningKey = process.env.CALENDAR_WEBHOOK_SIGNING_KEY
   ?? requiredSecretEnvironment("BETTER_AUTH_SECRET");

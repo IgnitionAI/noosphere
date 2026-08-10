@@ -11,6 +11,13 @@ export interface UnipileAccountSnapshot {
 }
 
 export interface UnipileClient {
+  createHostedAuthLink(input: {
+    channel: "email" | "linkedin" | "whatsapp";
+    onboardingId: string;
+    expiresAt: Date;
+    successRedirectUrl: string;
+    failureRedirectUrl: string;
+  }): Promise<{ url: string }>;
   connect(input: { providerAccountId: string; accessToken: string }): Promise<UnipileAccountSnapshot>;
   check(input: { providerAccountId: string; accessToken: string }): Promise<UnipileAccountSnapshot>;
   send?(input: { providerAccountId: string; accessToken: string; recipient: string; subject: string | null; body: string; idempotencyKey?: string }): Promise<{ providerMessageId: string }>;
@@ -25,6 +32,44 @@ export class HttpUnipileClient implements UnipileClient {
     return this.request(input.providerAccountId, input.accessToken);
   }
 
+  async createHostedAuthLink(input: {
+    channel: "email" | "linkedin" | "whatsapp";
+    onboardingId: string;
+    expiresAt: Date;
+    successRedirectUrl: string;
+    failureRedirectUrl: string;
+  }): Promise<{ url: string }> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.options.timeoutMs);
+    try {
+      const dsn = this.options.dsn.replace(/\/$/, "");
+      const response = await fetch(`${dsn}/api/v1/hosted/accounts/link`, {
+        method: "POST",
+        headers: { accept: "application/json", "content-type": "application/json", "X-API-KEY": this.options.apiKey },
+        body: JSON.stringify({
+          type: "create",
+          providers: hostedAuthProviders(input.channel),
+          api_url: dsn,
+          expiresOn: input.expiresAt.toISOString(),
+          success_redirect_url: input.successRedirectUrl,
+          failure_redirect_url: input.failureRedirectUrl,
+          name: input.onboardingId,
+        }),
+        signal: controller.signal,
+      });
+      const body = await response.json().catch(() => ({})) as Record<string, unknown>;
+      if (!response.ok || typeof body.url !== "string" || !body.url.startsWith("https://")) {
+        throw new ProviderUnavailableError(`Unipile hosted authentication failed (${response.status})`, null);
+      }
+      return { url: body.url };
+    } catch (error) {
+      if (error instanceof ProviderUnavailableError) throw error;
+      throw new ProviderUnavailableError(`Unipile hosted authentication failed: ${error instanceof Error ? error.message : String(error)}`, null);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   async check(input: { providerAccountId: string; accessToken: string }): Promise<UnipileAccountSnapshot> {
     return this.request(input.providerAccountId, input.accessToken);
   }
@@ -35,7 +80,7 @@ export class HttpUnipileClient implements UnipileClient {
     try {
       const response = await fetch(`${this.options.dsn.replace(/\/$/, "")}/api/v1/messages`, {
         method: "POST",
-        headers: { accept: "application/json", "content-type": "application/json", "X-API-KEY": this.options.apiKey, "X-ACCOUNT-TOKEN": input.accessToken },
+        headers: { accept: "application/json", "content-type": "application/json", "X-API-KEY": this.options.apiKey },
         body: JSON.stringify({ account_id: input.providerAccountId, provider: "email", to: input.recipient, subject: input.subject, body: input.body, idempotency_key: input.idempotencyKey }),
         signal: controller.signal,
       });
@@ -60,7 +105,6 @@ export class HttpUnipileClient implements UnipileClient {
         headers: {
           accept: "application/json",
           "X-API-KEY": this.options.apiKey,
-          "X-ACCOUNT-TOKEN": accessToken,
         },
         signal: controller.signal,
       });
@@ -80,6 +124,9 @@ export class HttpUnipileClient implements UnipileClient {
 }
 
 export class UnavailableUnipileClient implements UnipileClient {
+  async createHostedAuthLink(): Promise<{ url: string }> {
+    throw new ProviderUnavailableError("Unipile is not configured", null);
+  }
   async connect(): Promise<UnipileAccountSnapshot> {
     throw new ProviderUnavailableError("Unipile is not configured", null);
   }
@@ -89,6 +136,12 @@ export class UnavailableUnipileClient implements UnipileClient {
   async send(): Promise<{ providerMessageId: string }> {
     throw new UnipileSendError("PROVIDER_UNAVAILABLE", "Unipile is not configured");
   }
+}
+
+export function hostedAuthProviders(channel: "email" | "linkedin" | "whatsapp"): readonly string[] {
+  if (channel === "linkedin") return ["LINKEDIN"];
+  if (channel === "whatsapp") return ["WHATSAPP"];
+  return ["GOOGLE", "OUTLOOK", "MAIL"];
 }
 
 export class UnipileSendError extends Error {
