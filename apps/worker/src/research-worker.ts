@@ -8,6 +8,8 @@ export interface ResearchWorkerOptions {
   readonly leaseMs: number;
   readonly batchSize: number;
   readonly pollIntervalMs: number;
+  readonly jobTypes?: readonly string[];
+  readonly excludedJobTypes?: readonly string[];
 }
 
 export interface OutboxDispatcher {
@@ -68,9 +70,7 @@ export class ResearchWorker {
       await this.maintenance.reconcile();
     }
     if (this.outreachProcessor) await this.outreachProcessor.markDue({ now, queue: this.queue });
-    const jobs = await this.queue.lease({
-      workerId: this.options.workerId,
-      types: [
+    const availableTypes = [
         "research.stage.execute",
         "research.document.process",
         ...(this.discoveryProcessor ? ["prospect.discovery.execute"] : []),
@@ -90,7 +90,14 @@ export class ResearchWorker {
         ...(this.knowledgeExpirationProcessor ? ["knowledge.source.expire"] : []),
         ...(this.evaluationRunProcessor ? ["ai.evaluation.execute"] : []),
         ...(this.prospectDecisionProcessor ? ["prospect.decision.execute"] : []),
-      ],
+    ];
+    const allowed = this.options.jobTypes ? new Set(this.options.jobTypes) : null;
+    const excluded = new Set(this.options.excludedJobTypes ?? []);
+    const jobTypes = availableTypes.filter((type) => (!allowed || allowed.has(type)) && !excluded.has(type));
+    if (jobTypes.length === 0) throw new Error("WORKER_JOB_TYPES_EMPTY");
+    const jobs = await this.queue.lease({
+      workerId: this.options.workerId,
+      types: jobTypes,
       limit: this.options.batchSize,
       leaseMs: this.options.leaseMs,
       now: this.clock.now(),

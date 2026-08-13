@@ -4,14 +4,21 @@
 
 ```bash
 bun run db:migrate
-bun run worker
+bun run worker:general
+bun run worker:decision
 ```
 
-Le worker consomme `prospect.decision.execute`. `WORKER_ONCE=1` exécute un
-tick. `JOB_LEASE_MS`, `JOB_BATCH_SIZE` et `JOB_POLL_INTERVAL_MS` règlent la
-prise de travail. `PROSPECT_DECISION_MODEL` sélectionne le modèle Kimi parmi
+Le worker de décisions consomme exclusivement `prospect.decision.execute` afin
+qu'une recherche ICP ou un sourcing long ne bloque jamais une décision
+commerciale. `WORKER_ONCE=1` exécute un tick. `JOB_LEASE_MS`,
+`JOB_BATCH_SIZE` et `JOB_POLL_INTERVAL_MS` règlent la prise de travail.
+`PROSPECT_DECISION_MODEL` sélectionne le modèle Kimi parmi
 ceux autorisés comme fallback d'environnement; le premier modèle de recherche
 enregistré pour le workspace reste prioritaire.
+
+Sur VPS, déployer au minimum un processus `worker:general` et un processus
+`worker:decision`. Le worker général exclut les décisions ; le worker dédié
+désactive maintenance, outbox et scheduler pour ne pas dupliquer ces boucles.
 
 ## Diagnostic
 

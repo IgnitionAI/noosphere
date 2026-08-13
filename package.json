@@ -26,6 +26,8 @@
     "bootstrap:owner": "bun scripts/bootstrap-owner.ts",
     "api": "bun apps/api/src/index.ts",
     "worker": "bun apps/worker/src/index.ts",
+    "worker:general": "WORKER_EXCLUDED_JOB_TYPES=prospect.decision.execute bun apps/worker/src/index.ts",
+    "worker:decision": "WORKER_ID=prospect-decision-worker WORKER_JOB_TYPES=prospect.decision.execute WORKER_DISABLE_MAINTENANCE=true WORKER_DISABLE_OUTBOX=true WORKER_DISABLE_OUTREACH_SCHEDULER=true bun apps/worker/src/index.ts",
     "evaluate:ignitionrag-icp": "bun scripts/evaluate-ignitionrag-icp-run.ts",
     "web": "next dev apps/web --port 3000",
     "web:start": "bun apps/web/.next/standalone/apps/web/server.js"

@@ -146,4 +146,56 @@ describe("ResearchWorker job leases", () => {
     await worker.tick();
     expect(processed).toBe(true);
   });
+
+  // Regression: ISSUE-002 — long sourcing jobs must not starve prospect decisions.
+  // Found by /qa on 2026-08-13.
+  test("can reserve a worker exclusively for prospect decisions", async () => {
+    const now = new Date();
+    let leasedTypes: readonly string[] = [];
+    const queue: JobQueue = {
+      async enqueue() { return { inserted: true }; },
+      async lease(request) {
+        leasedTypes = request.types;
+        return [];
+      },
+      async renewLease() { return true; },
+      async acknowledge() {},
+      async retry() { return "scheduled"; },
+    };
+    const worker = new ResearchWorker(
+      queue,
+      { async process() {} } as unknown as ResearchOrchestrator,
+      { now: () => now },
+      {
+        workerId: "decision-worker",
+        leaseMs: 60_000,
+        batchSize: 1,
+        pollIntervalMs: 1,
+        jobTypes: ["prospect.decision.execute"],
+      },
+      undefined,
+      { async process() { throw new Error("discovery must stay isolated"); } },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { async process() {} },
+    );
+
+    await worker.tick();
+    expect(leasedTypes).toEqual(["prospect.decision.execute"]);
+  });
 });

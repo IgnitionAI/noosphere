@@ -315,7 +315,9 @@ const worker = new ResearchWorker(queue, orchestrator, clock, {
   leaseMs: positiveIntegerEnvironment("JOB_LEASE_MS", 60_000),
   batchSize: positiveIntegerEnvironment("JOB_BATCH_SIZE", 4),
   pollIntervalMs: positiveIntegerEnvironment("JOB_POLL_INTERVAL_MS", 1_000),
-}, documentService, discoveryProcessor, channelAssessmentProcessor, campaignAutomationProcessor, campaignCompositionProcessor, outreachDispatchProcessor, inboundReplyProcessor, automatedReplySendProcessor, conversationCommandProcessor, maintenance, outboxDispatcher, importService, outreachScheduler, enrichmentProcessor, signalProcessor, workspaceExportProcessor, retentionPurgeProcessor, knowledgeExpirationProcessor, evaluationRunProcessor, prospectDecisionProcessor);
+  ...optionalJobTypes("WORKER_JOB_TYPES"),
+  ...optionalExcludedJobTypes("WORKER_EXCLUDED_JOB_TYPES"),
+}, documentService, discoveryProcessor, channelAssessmentProcessor, campaignAutomationProcessor, campaignCompositionProcessor, outreachDispatchProcessor, inboundReplyProcessor, automatedReplySendProcessor, conversationCommandProcessor, process.env.WORKER_DISABLE_MAINTENANCE === "true" ? undefined : maintenance, process.env.WORKER_DISABLE_OUTBOX === "true" ? undefined : outboxDispatcher, importService, process.env.WORKER_DISABLE_OUTREACH_SCHEDULER === "true" ? undefined : outreachScheduler, enrichmentProcessor, signalProcessor, workspaceExportProcessor, retentionPurgeProcessor, knowledgeExpirationProcessor, evaluationRunProcessor, prospectDecisionProcessor);
 
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
   process.once(signal, () => {
@@ -353,6 +355,27 @@ function positiveIntegerEnvironment(name: string, fallback: number): number {
   const value = Number(raw);
   if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${name} must be a positive integer`);
   return value;
+}
+
+function optionalJobTypes(name: string): { readonly jobTypes?: readonly string[] } {
+  const values = commaSeparatedEnvironment(name);
+  return values.length > 0 ? { jobTypes: values } : {};
+}
+
+function optionalExcludedJobTypes(name: string): { readonly excludedJobTypes?: readonly string[] } {
+  const values = commaSeparatedEnvironment(name);
+  return values.length > 0 ? { excludedJobTypes: values } : {};
+}
+
+function commaSeparatedEnvironment(name: string): readonly string[] {
+  const values = (process.env[name] ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  if (values.some((value) => !/^[a-z0-9._-]+$/.test(value))) {
+    throw new Error(`${name} contains an invalid job type`);
+  }
+  return [...new Set(values)];
 }
 
 function createProspectSource(workspaceId?: string): ProspectSource {
