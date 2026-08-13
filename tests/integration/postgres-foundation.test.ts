@@ -138,6 +138,27 @@ databaseDescribe("PostgreSQL F-009 foundation", () => {
     );
   });
 
+  test("leases the highest-priority due job first inside one workspace", async () => {
+    const now = new Date();
+    const jobType = `integration.priority.${crypto.randomUUID()}`;
+    await queue.enqueue({
+      id: ids.generate(), workspaceId: workspaceA, type: jobType, payload: { priority: "low" },
+      idempotencyKey: crypto.randomUUID(), correlationId: "priority", maxAttempts: 3,
+      availableAt: new Date(now.getTime() - 60_000), priority: 1,
+    });
+    await queue.enqueue({
+      id: ids.generate(), workspaceId: workspaceA, type: jobType, payload: { priority: "high" },
+      idempotencyKey: crypto.randomUUID(), correlationId: "priority", maxAttempts: 3,
+      availableAt: now, priority: 100,
+    });
+    const [leased] = await queue.lease({
+      workerId: "priority-worker", types: [jobType], limit: 1, leaseMs: 30_000, now,
+    });
+    expect(leased?.payload).toEqual({ priority: "high" });
+    expect(leased?.priority).toBe(100);
+    await queue.acknowledge(leased!.id, leased!.lockedBy, now);
+  });
+
   test("allows only one active research run per workspace", async () => {
     const create = new CreateProductResearchRun(repository, ids, clock);
     const start = new StartProductResearchRun(repository, ids, clock);

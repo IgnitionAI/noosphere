@@ -56,6 +56,7 @@ const assessmentRetryPath =
   /^\/api\/v1\/channel-assessments\/([^/]+)\/actions\/retry$/;
 const campaignAutopilotPolicyPatchSchema = z.object({
   enabled: z.boolean().optional(),
+  executionMode: z.enum(["dry_run", "live"]).optional(),
   schedule: z.object({
     activeDays: z.array(z.number().int().min(1).max(7)).max(7).optional(),
     windowStart: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/).optional(),

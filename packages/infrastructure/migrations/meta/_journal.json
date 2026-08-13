@@ -435,6 +435,13 @@
       "when": 1788386400000,
       "tag": "0061_workspace_onboarding",
       "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1788472800000,
+      "tag": "0062_durable_prospect_decisions",
+      "breakpoints": true
     }
   ]
 }

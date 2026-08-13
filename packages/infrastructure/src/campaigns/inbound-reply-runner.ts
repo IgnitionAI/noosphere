@@ -17,6 +17,7 @@ import {
 import { PostgresMeetingProposalManager } from "@outbound/infrastructure/calendar/meeting-proposal-manager";
 import {
   automatedReplies,
+  approvalItems,
   campaignProspects,
   campaigns,
   contactIdentities,
@@ -28,6 +29,7 @@ import {
   jobs,
   messages,
   outreachActions,
+  prospectDecisions,
   prospectDiscoveryCandidates,
   replyClassifications,
   campaignEnrollments,
@@ -84,9 +86,19 @@ export class InboundReplyJobProcessor {
         matched,
       });
       if (!persisted.created) {
-        await this.#finishEvent(payload, "processed");
-        await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
-        return;
+        const [existingDecision] = await this.database
+          .select({ id: replyClassifications.id })
+          .from(replyClassifications)
+          .where(and(
+            eq(replyClassifications.workspaceId, payload.workspaceId),
+            eq(replyClassifications.messageId, persisted.messageId),
+          ))
+          .limit(1);
+        if (existingDecision) {
+          await this.#finishEvent(payload, "processed");
+          await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
+          return;
+        }
       }
       const history = await this.database
         .select({ direction: messages.direction, body: messages.body })
@@ -151,7 +163,7 @@ export class InboundReplyJobProcessor {
           contactId: matched.contactId,
         })
         ?? this.bookingUrl;
-      const decision = await this.agent.decide({
+      const decision = classifyPriorityInbound(event.payload, incoming, this.clock.now()) ?? await this.agent.decide({
         workspaceId: payload.workspaceId,
         channel: incoming.channel,
         contactName: context ? `${context.firstName} ${context.lastName}` : "Contact",
@@ -403,6 +415,16 @@ export class InboundReplyJobProcessor {
         receivedAt: input.incoming.occurredAt,
         createdAt: now,
       }).onConflictDoNothing().returning({ id: messages.id });
+      const [existingMessage] = insertedMessage ? [] : await tx
+        .select({ id: messages.id })
+        .from(messages)
+        .where(and(
+          eq(messages.workspaceId, input.workspaceId),
+          eq(messages.providerMessageId, input.incoming.messageId),
+        ))
+        .limit(1);
+      const persistedMessageId = insertedMessage?.id ?? existingMessage?.id;
+      if (!persistedMessageId) throw new Error("INBOUND_MESSAGE_PERSIST_FAILED");
       await tx
         .update(campaignEnrollments)
         .set({ status: "cancelled", completedAt: now })
@@ -420,12 +442,12 @@ export class InboundReplyJobProcessor {
           and(
             eq(outreachActions.workspaceId, input.workspaceId),
             eq(outreachActions.contactId, input.matched.contactId),
-            eq(outreachActions.status, "scheduled"),
+            inArray(outreachActions.status, ["scheduled", "awaiting_approval", "executing"]),
           ),
         );
       return {
         created: Boolean(insertedMessage),
-        messageId: insertedMessage?.id ?? messageId,
+        messageId: persistedMessageId,
         conversationId: persistedConversationId,
       };
     });
@@ -553,6 +575,70 @@ export class InboundReplyJobProcessor {
         metadata: input.decision.metadata,
         createdAt: now,
       }).onConflictDoNothing();
+      if (input.decision.action === "wait") {
+        const resumeAt = input.decision.resumeAt ? new Date(input.decision.resumeAt) : new Date(now.getTime() + 30 * 86_400_000);
+        if (Number.isNaN(resumeAt.getTime()) || resumeAt <= now) throw new Error("INBOUND_RESUME_DATE_INVALID");
+        const [resumeAction] = await tx
+          .select({ id: outreachActions.id, enrollmentId: outreachActions.enrollmentId })
+          .from(outreachActions)
+          .where(and(
+            eq(outreachActions.workspaceId, input.workspaceId),
+            eq(outreachActions.contactId, input.contactId),
+            eq(outreachActions.status, "cancelled"),
+            eq(outreachActions.lastErrorCode, "PROSPECT_REPLIED"),
+          ))
+          .orderBy(asc(outreachActions.dueAt))
+          .limit(1);
+        if (resumeAction) {
+          await tx.update(campaignEnrollments).set({ status: "active", completedAt: null }).where(and(
+            eq(campaignEnrollments.workspaceId, input.workspaceId),
+            eq(campaignEnrollments.id, resumeAction.enrollmentId),
+          ));
+          await tx.update(outreachActions).set({
+            status: "scheduled",
+            dueAt: resumeAt,
+            cancelledAt: null,
+            lastErrorCode: null,
+            lastErrorMessage: null,
+            updatedAt: now,
+          }).where(and(eq(outreachActions.workspaceId, input.workspaceId), eq(outreachActions.id, resumeAction.id)));
+          const decisionId = crypto.randomUUID();
+          const decisionJobId = crypto.randomUUID();
+          const idempotencyKey = `${input.messageId}:resume:v1`;
+          await tx.insert(jobs).values({
+            id: decisionJobId,
+            workspaceId: input.workspaceId,
+            type: "prospect.decision.execute",
+            payload: { workspaceId: input.workspaceId, decisionId },
+            idempotencyKey: `${idempotencyKey}:execute`,
+            correlationId: `conversation:${input.conversationId}`,
+            maxAttempts: 5,
+            priority: 80,
+            availableAt: resumeAt,
+            createdAt: now,
+            updatedAt: now,
+          }).onConflictDoNothing();
+          await tx.insert(prospectDecisions).values({
+            id: decisionId,
+            workspaceId: input.workspaceId,
+            contactId: input.contactId,
+            campaignId: input.campaignId,
+            outreachActionId: resumeAction.id,
+            jobId: decisionJobId,
+            kind: input.decision.intent === "out_of_office" ? "out_of_office_return" : "not_now_recheck",
+            reason: input.decision.suggestedNextAction ?? input.decision.rationale,
+            observation: { intent: input.decision.intent, evidence: input.decision.evidence ?? [] },
+            dueAt: resumeAt,
+            priority: 80,
+            maxAttempts: 5,
+            idempotencyKey,
+            correlationId: `conversation:${input.conversationId}`,
+            payload: { inboundMessageId: input.messageId },
+            createdAt: now,
+            updatedAt: now,
+          }).onConflictDoNothing();
+        }
+      }
       if (input.decision.action === "stop") {
         await tx.insert(contactSuppressions).values({
           id: crypto.randomUUID(),
@@ -561,8 +647,19 @@ export class InboundReplyJobProcessor {
           channel: input.decision.intent === "unsubscribe" ? "global" : input.incoming.channel,
           reason: `Réponse classée ${input.decision.intent}`,
           createdAt: now,
-        });
+        }).onConflictDoNothing();
+        if (input.decision.intent === "bounce" && input.incoming.channel === "email") {
+          await tx.update(contactIdentities).set({ verificationStatus: "invalid", updatedAt: now }).where(and(
+            eq(contactIdentities.workspaceId, input.workspaceId),
+            eq(contactIdentities.contactId, input.contactId),
+            eq(contactIdentities.type, "email"),
+          ));
+        }
       } else if (input.autoReplyEnabled) {
+        if (["wait", "handoff"].includes(input.decision.action)) {
+          // These decisions intentionally create no automatic reply. The
+          // persisted decision or operator handoff is the next action.
+        } else {
         if (!input.decision.replyBody) throw new Error("AUTOMATED_REPLY_BODY_MISSING");
         const replyId = crypto.randomUUID();
         const [inserted] = await tx.insert(automatedReplies).values({
@@ -592,6 +689,26 @@ export class InboundReplyJobProcessor {
             updatedAt: now,
           });
         }
+        }
+      }
+      if (input.decision.requiresHuman || input.decision.action === "handoff" || ["positive", "meeting_request"].includes(input.decision.intent)) {
+        await tx.insert(approvalItems).values({
+          id: crypto.randomUUID(),
+          workspaceId: input.workspaceId,
+          campaignId: input.campaignId,
+          contactId: input.contactId,
+          itemType: "inbound_handoff",
+          channel: input.incoming.channel,
+          contentOriginal: {
+            intent: input.decision.intent,
+            reason: input.decision.rationale,
+            suggestedNextAction: input.decision.suggestedNextAction ?? null,
+          },
+          context: { conversationId: input.conversationId, messageId: input.messageId },
+          sourceUpdatedAt: now,
+          createdAt: now,
+          updatedAt: now,
+        });
       }
       if (input.decision.action === "booking" && !input.decision.metadata.calendarBookingId) {
         const nextAction = input.bookingUrl
@@ -656,6 +773,8 @@ export function normalizeInboundWebhook(payload: unknown): NormalizedInbound | n
     : accountType === "WHATSAPP"
       ? "whatsapp"
       : "email";
+  const providerEventId = firstString(data, [["webhook_id"], ["event_id"], ["id"]]);
+  const providerBounce = Boolean(eventType && (eventType.includes("bounce") || eventType.includes("delivery_failed")));
   const threadId = firstString(data, [
     ["chat_id"],
     ["thread_id"],
@@ -664,9 +783,10 @@ export function normalizeInboundWebhook(payload: unknown): NormalizedInbound | n
     ["in_reply_to", "id"],
     ["provider_id"],
     ["email_id"],
-  ]);
+  ]) ?? (providerBounce ? providerEventId : null);
   const messageId = firstString(data, [["message_id"], ["email_id"], ["id"], ["message", "id"], ["email", "id"], ["data", "id"]]);
-  const body = firstString(data, [["text"], ["message"], ["body_plain"], ["body"], ["message", "text"], ["message", "body"], ["email", "body"]]);
+  const body = firstString(data, [["text"], ["message"], ["body_plain"], ["body"], ["message", "text"], ["message", "body"], ["email", "body"], ["subject"], ["error", "message"]])
+    ?? (providerBounce ? eventType : null);
   if (!accountId || !threadId || !messageId || !body) return null;
   const senderProviderId = firstString(data, [["sender", "attendee_provider_id"], ["sender", "provider_id"], ["from", "provider_id"]]);
   const senderValue = firstString(data, [["from_attendee", "identifier"], ["sender", "identifier"], ["from", "identifier"], ["sender", "phone"], ["sender", "email"]]);
@@ -680,6 +800,113 @@ export function normalizeInboundWebhook(payload: unknown): NormalizedInbound | n
   const rawDate = firstString(data, [["timestamp"], ["received_at"], ["date"]]);
   const occurredAt = rawDate && !Number.isNaN(Date.parse(rawDate)) ? new Date(rawDate) : new Date();
   return { accountId, channel, threadId, messageId, body, senderValue, senderProviderId, occurredAt, inbound };
+}
+
+export function classifyPriorityInbound(
+  payload: unknown,
+  incoming: NormalizedInbound,
+  now: Date,
+): Awaited<ReturnType<InboundReplyAgent["decide"]>> | null {
+  const record = payload && typeof payload === "object" && !Array.isArray(payload)
+    ? payload as Record<string, unknown>
+    : {};
+  const event = firstString(record, [["event"], ["type"]])?.toLowerCase() ?? "";
+  const subject = firstString(record, [["subject"], ["email", "subject"]]) ?? "";
+  const content = `${subject}\n${incoming.body}`.trim();
+  const lower = content.toLocaleLowerCase("fr");
+  const base = {
+    confidence: 1,
+    evidence: [event || "message_body"],
+    referredPerson: null,
+    requiresHuman: false,
+    suggestedNextAction: null,
+    calendarAction: null,
+    selectedSlotStart: null,
+    replyBody: null,
+    metadata: { provider: "deterministic", model: "rules", promptVersion: "inbound-priority-rules-v1" },
+  } as const;
+
+  if (event.includes("bounce") || event.includes("delivery_failed") || /\b(mail delivery subsystem|undeliverable|delivery status notification|adresse introuvable)\b/i.test(content)) {
+    return {
+      ...base,
+      intent: "bounce",
+      action: "stop",
+      rationale: "Le provider ou le contenu identifie un échec permanent de livraison.",
+      suggestedNextAction: "Invalider cette adresse email et arrêter ses relances.",
+    };
+  }
+  if (/\b(unsubscribe|désabonnez|désinscri(?:re|vez)|ne (?:me|nous) contactez plus|stop emailing)\b/i.test(content)) {
+    return {
+      ...base,
+      intent: "unsubscribe",
+      action: "stop",
+      rationale: "Le prospect demande explicitement de ne plus être contacté.",
+      suggestedNextAction: "Créer une suppression globale immédiate.",
+    };
+  }
+  const outOfOffice = /\b(out of office|automatic reply|réponse automatique|absent(?:e)? du bureau|en congé|de retour le)\b/i.test(content);
+  if (outOfOffice) {
+    const resumeAt = extractResumeAt(content, now) ?? new Date(now.getTime() + 7 * 86_400_000);
+    return {
+      ...base,
+      intent: /automatic reply|réponse automatique/i.test(content) && !/absent|congé|out of office|de retour/i.test(content)
+        ? "auto_reply"
+        : "out_of_office",
+      action: "wait",
+      resumeAt: resumeAt.toISOString(),
+      rationale: "Une réponse automatique d’absence suspend les relances jusqu’au retour.",
+      suggestedNextAction: `Réexaminer le prospect après ${resumeAt.toISOString()}.`,
+    };
+  }
+  if (/\b(pas (?:le bon|la bonne) (?:personne|interlocuteur)|wrong person|not the right person)\b/i.test(content)) {
+    return {
+      ...base,
+      intent: "wrong_person",
+      action: "handoff",
+      rationale: "Le destinataire indique qu’il n’est pas le bon interlocuteur.",
+      requiresHuman: true,
+      suggestedNextAction: "Identifier le bon décideur à partir de cette réponse sans recontacter la mauvaise personne.",
+    };
+  }
+  if (/\b(contactez|contacter|voyez avec|parlez à|reach out to)\b/i.test(content) && /@|linkedin|collègue|responsable|directeur|directrice/i.test(content)) {
+    return {
+      ...base,
+      intent: "referral",
+      action: "handoff",
+      rationale: "La réponse contient une orientation explicite vers un autre interlocuteur.",
+      referredPerson: content.slice(0, 300),
+      requiresHuman: true,
+      suggestedNextAction: "Vérifier la personne recommandée et conserver cette réponse comme provenance.",
+    };
+  }
+  if (/\b(pas maintenant|plus tard|recontactez[- ]moi|revenez vers moi|not now|circle back|next quarter|prochain trimestre)\b/i.test(content)) {
+    const resumeAt = extractResumeAt(content, now) ?? new Date(now.getTime() + 30 * 86_400_000);
+    return {
+      ...base,
+      intent: "not_now",
+      action: "wait",
+      resumeAt: resumeAt.toISOString(),
+      rationale: "Le prospect demande explicitement un contact ultérieur.",
+      suggestedNextAction: `Réexaminer le prospect à la date demandée : ${resumeAt.toISOString()}.`,
+    };
+  }
+  return null;
+}
+
+function extractResumeAt(content: string, now: Date): Date | null {
+  const iso = content.match(/\b(20\d{2}-\d{2}-\d{2})\b/)?.[1];
+  if (iso) {
+    const parsed = new Date(`${iso}T09:00:00.000Z`);
+    if (!Number.isNaN(parsed.getTime()) && parsed > now) return parsed;
+  }
+  const day = content.match(/\b(?:le\s+)?(\d{1,2})[\/.-](\d{1,2})[\/.-](20\d{2})\b/);
+  if (day) {
+    const parsed = new Date(Date.UTC(Number(day[3]), Number(day[2]) - 1, Number(day[1]), 9));
+    if (!Number.isNaN(parsed.getTime()) && parsed > now) return parsed;
+  }
+  const days = content.match(/\b(?:dans|in)\s+(\d{1,3})\s+(?:jours?|days?)\b/i)?.[1];
+  if (days) return new Date(now.getTime() + Number(days) * 86_400_000);
+  return null;
 }
 
 function normalizeSenderIdentity(incoming: NormalizedInbound): string | null {

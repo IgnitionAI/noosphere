@@ -1293,6 +1293,8 @@ export interface ProspectViewDetail extends ProspectViewSummary {
   readonly identities: ContactDetail["identities"];
   readonly employments: ContactDetail["employments"];
   readonly activity: readonly ProspectActivity[];
+  readonly nextDecision: ProspectDecisionView | null;
+  readonly decisions: readonly ProspectDecisionView[];
   readonly conversation: (NonNullable<ProspectViewSummary["conversation"]> & {
     readonly messages: readonly {
       readonly id?: string;
@@ -1315,6 +1317,30 @@ export interface ProspectViewDetail extends ProspectViewSummary {
   }) | null;
 }
 
+export interface ProspectDecisionView {
+  readonly id: string;
+  readonly campaignId: string | null;
+  readonly outreachActionId: string | null;
+  readonly kind: string;
+  readonly reason: string;
+  readonly observation: unknown;
+  readonly proposedAction: "send" | "wait" | "research" | "pause" | "stop" | "handoff" | null;
+  readonly dueAt: string;
+  readonly priority: number;
+  readonly status: string;
+  readonly attempts: number;
+  readonly maxAttempts: number;
+  readonly correlationId: string;
+  readonly result: unknown;
+  readonly policyDecision: unknown;
+  readonly lastErrorCode: string | null;
+  readonly lastErrorMessage: string | null;
+  readonly startedAt: string | null;
+  readonly completedAt: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
 export async function listProspectViews(
   workspaceSlug: string,
   filters: { search?: string; icpVersionId?: string; channel?: string } = {},
@@ -1331,6 +1357,17 @@ export async function getProspectView(
   contactId: string,
 ): Promise<ProspectViewDetail> {
   return crmFetch(workspaceSlug, `/api/v1/prospects/${contactId}`);
+}
+
+export async function requestProspectDryRun(
+  workspaceSlug: string,
+  contactId: string,
+  reason: string,
+): Promise<{ decisionId: string; status: string; dryRun: true }> {
+  return crmFetch(workspaceSlug, `/api/v1/prospects/${contactId}/actions/dry-run`, {
+    method: "POST",
+    body: { reason, requestKey: crypto.randomUUID() },
+  });
 }
 
 export async function sendConversationCommand(
@@ -2521,6 +2558,7 @@ export interface CampaignSummary {
 export interface CampaignAutopilotPolicy {
   readonly version: 1;
   readonly enabled: boolean;
+  readonly executionMode: "dry_run" | "live";
   readonly schedule: {
     readonly activeDays: readonly number[];
     readonly windowStart: string;
@@ -2747,7 +2785,7 @@ export async function getCampaign(
 export async function getCampaignAutopilotPolicy(
   workspaceSlug: string,
   campaignId: string,
-): Promise<{ policy: CampaignAutopilotPolicy; editable: boolean }> {
+): Promise<{ policy: CampaignAutopilotPolicy; editable: boolean; executionModeEditable: boolean }> {
   return crmFetch(workspaceSlug, `/api/v1/campaigns/${campaignId}/autopilot-policy`);
 }
 
@@ -2755,7 +2793,7 @@ export async function updateCampaignAutopilotPolicy(
   workspaceSlug: string,
   campaignId: string,
   patch: Partial<CampaignAutopilotPolicy>,
-): Promise<{ policy: CampaignAutopilotPolicy; editable: boolean }> {
+): Promise<{ policy: CampaignAutopilotPolicy; editable: boolean; executionModeEditable: boolean }> {
   return crmFetch(workspaceSlug, `/api/v1/campaigns/${campaignId}/autopilot-policy`, {
     method: "PATCH",
     body: patch,

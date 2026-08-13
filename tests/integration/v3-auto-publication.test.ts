@@ -35,12 +35,14 @@ import {
   outboxEvents,
   prospectDiscoveryRuns,
   prospectingPlans,
+  prospectDecisions,
   sequences,
   sequenceSteps,
   campaignEnrollments,
   sequenceVersions,
   contacts,
   authUsers,
+  approvalItems,
   workspaces,
 } from "@outbound/infrastructure/database/schema";
 import { PostgresProductResearchRepository } from "@outbound/infrastructure/gtm/postgres-product-research-repository";
@@ -62,6 +64,8 @@ import { validOutputFor } from "../fixtures/research-agent-fixtures";
 import { CampaignSourcingReconciler } from "@outbound/infrastructure/campaigns/campaign-sourcing-reconciler";
 import { PostgresProspectViewRepository } from "@outbound/infrastructure/crm/postgres-prospect-view-repository";
 import { PostgresChannelCapabilityReassessment } from "@outbound/infrastructure/campaigns/channel-capability-reassessment";
+import { ProspectDecisionJobProcessor } from "@outbound/infrastructure/campaigns/prospect-decision-runner";
+import { PostgresApprovalRepository } from "@outbound/infrastructure/approvals/postgres-approval-repository";
 
 const databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
 const databaseDescribe = databaseUrl ? describe : describe.skip;
@@ -565,6 +569,64 @@ databaseDescribe("V3 automatic ICP publication", () => {
       }),
     );
     expect(lockedPolicyUpdate.status).toBe(409);
+    const [leasedFirstDecision] = await queue.lease({
+      workerId: "prospect-decision-worker",
+      types: ["prospect.decision.execute"],
+      limit: 1,
+      leaseMs: 30_000,
+      now: clock.now(),
+    });
+    expect(leasedFirstDecision).toBeDefined();
+    await new ProspectDecisionJobProcessor(
+      database.db,
+      queue,
+      {
+        async decide() {
+          return {
+            observation: "Première action arrivée à échéance, sans réponse entrante.",
+            action: "send",
+            reason: "Le prospect est actif et la campagne autorise le contact.",
+            nextDueAt: null,
+            nextReason: null,
+          };
+        },
+      },
+      clock,
+    ).process(leasedFirstDecision!);
+    const [dryRunApproval] = await database.db
+      .select()
+      .from(approvalItems)
+      .where(and(
+        eq(approvalItems.workspaceId, workspaceId),
+        eq(approvalItems.itemType, "prospect_decision_send"),
+      ));
+    expect(dryRunApproval).toMatchObject({ status: "pending" });
+    const dispatchBeforeApproval = await database.db
+      .select()
+      .from(jobs)
+      .where(and(eq(jobs.workspaceId, workspaceId), eq(jobs.type, "outreach.dispatch")));
+    expect(dispatchBeforeApproval).toHaveLength(0);
+    await expect(new PostgresApprovalRepository(database.db, () => clock.now()).decide({
+      workspaceId,
+      itemId: dryRunApproval!.id,
+      decision: "approve",
+      userId: campaignUserId,
+    })).rejects.toMatchObject({ code: "PROSPECT_DECISION_LIVE_MODE_REQUIRED" });
+    const liveModeResponse = await campaignHandler(
+      new Request(`http://localhost/api/v1/campaigns/${firstCampaign.id}/autopilot-policy`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ executionMode: "live" }),
+      }),
+    );
+    expect(liveModeResponse.status).toBe(200);
+    expect(await liveModeResponse.json()).toMatchObject({ policy: { executionMode: "live" } });
+    await new PostgresApprovalRepository(database.db, () => clock.now()).decide({
+      workspaceId,
+      itemId: dryRunApproval!.id,
+      decision: "approve",
+      userId: campaignUserId,
+    });
     const [dispatchJob] = await database.db
       .select()
       .from(jobs)
@@ -636,6 +698,46 @@ databaseDescribe("V3 automatic ICP publication", () => {
         },
       })
       .where(and(eq(outreachActions.workspaceId, workspaceId), eq(outreachActions.id, followUpAction!.id)));
+    const [followUpDecision] = await database.db
+      .select()
+      .from(prospectDecisions)
+      .where(and(
+        eq(prospectDecisions.workspaceId, workspaceId),
+        eq(prospectDecisions.outreachActionId, followUpAction!.id),
+      ));
+    expect(followUpDecision).toBeDefined();
+    await database.db
+      .update(prospectDecisions)
+      .set({ dueAt: clock.now() })
+      .where(and(eq(prospectDecisions.workspaceId, workspaceId), eq(prospectDecisions.id, followUpDecision!.id)));
+    await database.db
+      .update(jobs)
+      .set({ availableAt: clock.now() })
+      .where(and(eq(jobs.workspaceId, workspaceId), eq(jobs.id, followUpDecision!.jobId)));
+    const [leasedFollowUpDecision] = await queue.lease({
+      workerId: "prospect-follow-up-decision-worker",
+      types: ["prospect.decision.execute"],
+      limit: 1,
+      leaseMs: 30_000,
+      now: clock.now(),
+    });
+    expect(leasedFollowUpDecision).toBeDefined();
+    await new ProspectDecisionJobProcessor(
+      database.db,
+      queue,
+      {
+        async decide() {
+          return {
+            observation: "La première prise de contact est partie et aucune réponse n’est enregistrée.",
+            action: "send",
+            reason: "La relance personnalisée est due dans la fenêtre autorisée.",
+            nextDueAt: null,
+            nextReason: null,
+          };
+        },
+      },
+      clock,
+    ).process(leasedFollowUpDecision!);
     const dispatchJobs = await database.db
       .select()
       .from(jobs)
@@ -713,6 +815,11 @@ databaseDescribe("V3 automatic ICP publication", () => {
     expect(webhookResponse.status).toBe(202);
     const ingested = (await webhookResponse.json()) as { duplicate: boolean; eventId: string };
     expect(ingested.duplicate).toBe(false);
+    const [cancelledBeforeClassification] = await database.db
+      .select()
+      .from(outreachActions)
+      .where(and(eq(outreachActions.workspaceId, workspaceId), eq(outreachActions.id, followUpAction!.id)));
+    expect(cancelledBeforeClassification).toMatchObject({ status: "cancelled", lastErrorCode: "PROSPECT_REPLIED" });
     const duplicateWebhook = await webhookHandler(new Request(
       "http://localhost/api/v1/webhooks/unipile",
       {
@@ -734,6 +841,32 @@ databaseDescribe("V3 automatic ICP publication", () => {
     await new InboundReplyJobProcessor(
       database.db,
       queue,
+      { async decide() { throw new Error("fixture transient model failure"); } },
+      clock,
+      "https://cal.example.com/ignition",
+    ).process(inboundJob!);
+    const messagesAfterFailedAttempt = await database.db
+      .select()
+      .from(messages)
+      .where(eq(messages.workspaceId, workspaceId));
+    expect(messagesAfterFailedAttempt).toHaveLength(1);
+    expect(await database.db
+      .select()
+      .from(replyClassifications)
+      .where(eq(replyClassifications.workspaceId, workspaceId))).toHaveLength(0);
+
+    currentTime = new Date(currentTime.getTime() + 30_000);
+    const [retriedInboundJob] = await queue.lease({
+      workerId: "inbound-reply-worker-retry",
+      types: ["inbound.reply.process"],
+      limit: 1,
+      leaseMs: 30_000,
+      now: clock.now(),
+    });
+    expect(retriedInboundJob).toBeDefined();
+    await new InboundReplyJobProcessor(
+      database.db,
+      queue,
       {
         async decide() {
           return {
@@ -748,7 +881,7 @@ databaseDescribe("V3 automatic ICP publication", () => {
       },
       clock,
       "https://cal.example.com/ignition",
-    ).process(inboundJob!);
+    ).process(retriedInboundJob!);
     const [processedEvent] = await database.db
       .select()
       .from(integrationEvents)

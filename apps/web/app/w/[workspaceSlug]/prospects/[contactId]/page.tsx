@@ -1,11 +1,11 @@
-import { ArrowLeft, Ban, Briefcase, Fingerprint, Plus, TriangleAlert, UserRound } from "lucide-react";
+import { ArrowLeft, Ban, Bot, Briefcase, Fingerprint, Plus, TriangleAlert, UserRound } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { CrmPermissionState } from "@/components/crm-states";
-import { getContact, getContactEnrichment, getEnrichmentJob, getSignalCollectionRun, listCalendarBookings, listCompanies, listContactMerges, listContactSignals, listWorkspaces, OutboundApiError, type EnrichmentJobDetail, type EnrichmentObservation, type IntentSignal, type SignalCollectionRun } from "@/lib/api";
+import { getContact, getContactEnrichment, getEnrichmentJob, getProspectView, getSignalCollectionRun, listCalendarBookings, listCompanies, listContactMerges, listContactSignals, listWorkspaces, OutboundApiError, type EnrichmentJobDetail, type EnrichmentObservation, type IntentSignal, type SignalCollectionRun } from "@/lib/api";
 import { MutationForm } from "../../research/[runId]/report/mutation-form";
 import { resolveProspectReturn } from "@/lib/prospect-navigation";
-import { addEmploymentAction, addIdentityAction, anonymizeContactAction, enrichContactAction, retryEnrichmentJobAction, suppressContactAction, undoContactMergeAction, updateContactAction } from "../actions";
+import { addEmploymentAction, addIdentityAction, anonymizeContactAction, enrichContactAction, requestProspectDryRunAction, retryEnrichmentJobAction, suppressContactAction, undoContactMergeAction, updateContactAction } from "../actions";
 import { EnrichmentPanel } from "./enrichment-panel";
 import { collectSignalsAction } from "../../signals-actions";
 import { SignalsPanel } from "@/components/signals-panel";
@@ -35,6 +35,7 @@ export default async function ContactDetailPage({
     throw error;
   }
   let observations: EnrichmentObservation[] = [];
+  const prospectView = await getProspectView(workspaceSlug, contactId);
   let enrichmentJob: EnrichmentJobDetail | null = null;
   let enrichmentAccess = true;
   let signals: IntentSignal[] = [];
@@ -85,6 +86,7 @@ export default async function ContactDetailPage({
   const collect = collectSignalsAction.bind(null, workspaceSlug);
   const retry = enrichmentJob?.status === "failed" ? retryEnrichmentJobAction.bind(null, workspaceSlug, contactId, enrichmentJob.id) : null;
   const addIdentity = addIdentityAction.bind(null, workspaceSlug, contactId);
+  const requestDryRun = requestProspectDryRunAction.bind(null, workspaceSlug, contactId);
   const workspace = (await listWorkspaces()).find((item) => item.slug === workspaceSlug);
   const canEdit = workspace ? ["operator", "admin", "owner"].includes(workspace.role) : false;
   const canAdminister = workspace ? ["admin", "owner"].includes(workspace.role) : false;
@@ -130,6 +132,49 @@ export default async function ContactDetailPage({
 
       <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
         <main className="min-w-0 space-y-4">
+          {prospectView ? (
+            <section className="panel">
+              <div className="panel-header">
+                <h2 className="flex items-center gap-2 font-semibold"><Bot size={15} className="text-brand-blue" /> Pilotage agentique</h2>
+                <span className="badge">{prospectView.decisions.length} décision(s)</span>
+              </div>
+              <div className="panel-body">
+                {prospectView.nextDecision ? (
+                  <div className="rounded-lg border border-brand-blue/20 bg-blue-50/40 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <strong className="text-sm">Prochaine action : {prospectDecisionLabel(prospectView.nextDecision.proposedAction)}</strong>
+                      <span className={prospectView.nextDecision.status === "awaiting_approval" ? "badge badge-warning" : "badge badge-success"}>{prospectView.nextDecision.status}</span>
+                    </div>
+                    <p className="mt-2 text-xs leading-5 text-slate-700">{prospectView.nextDecision.reason}</p>
+                    <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-[11px] text-muted">
+                      <span>Prévue {formatDecisionDate(prospectView.nextDecision.dueAt)}</span>
+                      <span>Tentative {prospectView.nextDecision.attempts}/{prospectView.nextDecision.maxAttempts}</span>
+                      <span className="font-mono">{prospectView.nextDecision.correlationId}</span>
+                    </div>
+                    {prospectView.nextDecision.lastErrorMessage ? <p className="mt-2 text-xs text-danger">{prospectView.nextDecision.lastErrorMessage}</p> : null}
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted">Aucune action agentique en attente. Le dernier événement a clôturé ou suspendu le cycle actuel.</p>
+                )}
+                {prospectView.decisions[0] ? (
+                  <details className="mt-3">
+                    <summary className="cursor-pointer text-xs font-semibold text-brand-blue">Voir la dernière décision et son audit</summary>
+                    <div className="mt-2 rounded-lg border border-line p-3 text-xs">
+                      <p><strong>{prospectDecisionLabel(prospectView.decisions[0].proposedAction)}</strong> · {prospectView.decisions[0].status}</p>
+                      <p className="mt-1 leading-5 text-muted">{prospectView.decisions[0].reason}</p>
+                      {prospectView.decisions[0].lastErrorCode ? <p className="mt-1 text-danger">{prospectView.decisions[0].lastErrorCode}</p> : null}
+                    </div>
+                  </details>
+                ) : null}
+                {canEdit && !suppressed ? (
+                  <MutationForm action={requestDryRun} className="mt-4 flex flex-col gap-2 sm:flex-row" successMessage="La réévaluation dry-run a été planifiée.">
+                    <input className="control min-w-0 flex-1" name="reason" placeholder="Raison de la réévaluation (optionnel)" />
+                    <button className="button" type="submit">Réévaluer maintenant · dry-run</button>
+                  </MutationForm>
+                ) : null}
+              </div>
+            </section>
+          ) : null}
           {enrichmentAccess ? <EnrichmentPanel addIdentityAction={addIdentity} canEnrich={canEdit} contact={contact} enrichAction={enrich} job={enrichmentJob} observations={observations} requestKey={requestKey} retryAction={retry} workspaceSlug={workspaceSlug} /> : <section className="panel"><div className="panel-header"><h2 className="font-semibold">Coordonnées</h2></div><div className="panel-body text-sm text-muted">Les coordonnées enrichies ne sont pas accessibles avec vos droits.</div></section>}
           <CalendarBookingsPanel bookings={calendarBookings} canMutate={canEdit} workspaceSlug={workspaceSlug} />
 
@@ -261,6 +306,14 @@ export default async function ContactDetailPage({
       ) : null}
     </>
   );
+}
+
+function prospectDecisionLabel(value: string | null): string {
+  return ({ send: "envoyer", wait: "attendre", research: "rechercher", pause: "mettre en pause", stop: "arrêter", handoff: "transmettre" } as Record<string, string>)[value ?? ""] ?? "à déterminer";
+}
+
+function formatDecisionDate(value: string): string {
+  return new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium", timeStyle: "short", timeZone: "Europe/Paris" }).format(new Date(value));
 }
 
 function formatMergeDate(value: string): string {

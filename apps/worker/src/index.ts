@@ -75,6 +75,8 @@ import { EvaluationRunProcessor } from "@outbound/infrastructure/ai/evaluation-r
 import { LangChainEvaluationExecutor } from "@outbound/infrastructure/ai/langchain-evaluation-executor";
 import { PostgresActiveAiConfigurationReader } from "@outbound/infrastructure/ai/postgres-active-ai-configuration-reader";
 import { PostgresAiRunRecorder } from "@outbound/infrastructure/ai/postgres-ai-run-recorder";
+import { ProspectDecisionJobProcessor } from "@outbound/infrastructure/campaigns/prospect-decision-runner";
+import { LangChainProspectDecisionAgent } from "@outbound/infrastructure/campaigns/langchain-prospect-decision-agent";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
@@ -217,6 +219,12 @@ const campaignCompositionProcessor = new CampaignCompositionJobProcessor(
   new UnipileCampaignChannelReadiness(createProspectSource),
   clock,
 );
+const prospectDecisionProcessor = new ProspectDecisionJobProcessor(
+  database.db,
+  queue,
+  new LangChainProspectDecisionAgent(process.env, workspaceAiSettings),
+  clock,
+);
 const outreachDispatchProcessor = new OutreachDispatchJobProcessor(
   database.db,
   queue,
@@ -230,6 +238,7 @@ const outreachDispatchProcessor = new OutreachDispatchJobProcessor(
   campaignContentGenerator,
   createReachabilityResolver,
   workspaceDataLifecycle,
+  new UnipileCampaignChannelReadiness(createProspectSource),
 );
 const inboundReplyAgent = new LangChainInboundReplyAgent(process.env, workspaceAiSettings, knowledgeRetriever, activeAiConfigurations, aiRunRecorder);
 const inboundReplyProcessor = new InboundReplyJobProcessor(
@@ -306,7 +315,7 @@ const worker = new ResearchWorker(queue, orchestrator, clock, {
   leaseMs: positiveIntegerEnvironment("JOB_LEASE_MS", 60_000),
   batchSize: positiveIntegerEnvironment("JOB_BATCH_SIZE", 4),
   pollIntervalMs: positiveIntegerEnvironment("JOB_POLL_INTERVAL_MS", 1_000),
-}, documentService, discoveryProcessor, channelAssessmentProcessor, campaignAutomationProcessor, campaignCompositionProcessor, outreachDispatchProcessor, inboundReplyProcessor, automatedReplySendProcessor, conversationCommandProcessor, maintenance, outboxDispatcher, importService, outreachScheduler, enrichmentProcessor, signalProcessor, workspaceExportProcessor, retentionPurgeProcessor, knowledgeExpirationProcessor, evaluationRunProcessor);
+}, documentService, discoveryProcessor, channelAssessmentProcessor, campaignAutomationProcessor, campaignCompositionProcessor, outreachDispatchProcessor, inboundReplyProcessor, automatedReplySendProcessor, conversationCommandProcessor, maintenance, outboxDispatcher, importService, outreachScheduler, enrichmentProcessor, signalProcessor, workspaceExportProcessor, retentionPurgeProcessor, knowledgeExpirationProcessor, evaluationRunProcessor, prospectDecisionProcessor);
 
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
   process.once(signal, () => {

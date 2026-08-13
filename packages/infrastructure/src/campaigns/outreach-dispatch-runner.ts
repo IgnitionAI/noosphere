@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, inArray, lt, or } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import type {
   OutboundChannelGateway,
   OutboundSendRequest,
@@ -18,6 +18,7 @@ import {
   campaigns,
   campaignProspects,
   contacts,
+  contactIdentities,
   contactSuppressions,
   icpVersions,
   outboxEvents,
@@ -25,6 +26,7 @@ import {
   outreachAttempts,
   prospectDiscoveryCandidates,
   campaignEnrollments,
+  workspaces,
 } from "@outbound/infrastructure/database/schema";
 import { suppressionFingerprint } from "@outbound/infrastructure/crm/suppression-fingerprint";
 
@@ -38,6 +40,12 @@ export interface WorkspaceDispatchPolicyReader {
   readDispatchPolicy(workspaceId: string): Promise<{ limits: OutreachDispatchLimits; timezone: string }>;
 }
 
+export interface OutboundSenderReadiness {
+  resolveHealthyAccount(workspaceId: string, channel: ClaimedAction["channel"]): Promise<{
+    readonly accountId: string;
+  }>;
+}
+
 export class OutreachDispatchJobProcessor {
   constructor(
     private readonly database: Database,
@@ -48,6 +56,7 @@ export class OutreachDispatchJobProcessor {
     private readonly generator?: CampaignContentGenerator,
     private readonly reachabilityResolver?: (workspaceId: string) => WhatsappReachabilityResolver,
     private readonly workspacePolicy?: WorkspaceDispatchPolicyReader,
+    private readonly senderReadiness?: OutboundSenderReadiness,
   ) {}
 
   async process(job: LeasedJob): Promise<void> {
@@ -122,6 +131,30 @@ export class OutreachDispatchJobProcessor {
       ? await this.#revalidateWhatsapp(claimed, content.recipient.normalizedValue, job)
       : claimed;
     if (!deliveryAction) return;
+    if (this.senderReadiness) {
+      try {
+        const sender = await this.senderReadiness.resolveHealthyAccount(deliveryAction.workspaceId, deliveryAction.channel);
+        if (sender.accountId !== deliveryAction.providerAccountId) {
+          await this.#defer(
+            deliveryAction,
+            job,
+            new Date(this.clock.now().getTime() + 15 * 60_000),
+            "SENDER_ACCOUNT_CHANGED",
+            "Le compte d’envoi préparé n’est plus le compte sain sélectionné pour ce canal.",
+          );
+          return;
+        }
+      } catch {
+        await this.#defer(
+          deliveryAction,
+          job,
+          new Date(this.clock.now().getTime() + 15 * 60_000),
+          "SENDER_UNAVAILABLE",
+          "Aucun compte d’envoi sain n’est disponible pour ce canal.",
+        );
+        return;
+      }
+    }
     if (await this.#dailyLimitReached(deliveryAction)) {
       const availableAt = schedule
         ? nextAllowedCampaignSendAt({
@@ -157,6 +190,10 @@ export class OutreachDispatchJobProcessor {
         errorCode: "DAILY_CHANNEL_LIMIT",
         errorMessage: "Daily channel limit reached",
       });
+      return;
+    }
+    if (!await this.#finalSendGate(deliveryAction, content.recipient.normalizedValue)) {
+      await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
       return;
     }
     const attemptId = crypto.randomUUID();
@@ -337,6 +374,108 @@ export class OutreachDispatchJobProcessor {
         ),
       );
     return sent.length >= policy.limits[action.channel];
+  }
+
+  async #finalSendGate(action: ClaimedAction, normalizedRecipient: string): Promise<boolean> {
+    return this.database.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`${action.workspaceId}:${action.contactId}:outbound`}, 0))`);
+      const [current] = await tx
+        .select({
+          actionStatus: outreachActions.status,
+          enrollmentStatus: campaignEnrollments.status,
+          campaignStatus: campaigns.status,
+          campaignChannel: campaigns.channel,
+          campaignPolicy: campaigns.autopilotPolicy,
+          contactStatus: contacts.status,
+          workspaceStatus: workspaces.status,
+        })
+        .from(outreachActions)
+        .innerJoin(
+          campaignEnrollments,
+          and(eq(campaignEnrollments.workspaceId, outreachActions.workspaceId), eq(campaignEnrollments.id, outreachActions.enrollmentId)),
+        )
+        .innerJoin(
+          campaigns,
+          and(eq(campaigns.workspaceId, outreachActions.workspaceId), eq(campaigns.id, outreachActions.campaignId)),
+        )
+        .innerJoin(
+          contacts,
+          and(eq(contacts.workspaceId, outreachActions.workspaceId), eq(contacts.id, outreachActions.contactId)),
+        )
+        .innerJoin(workspaces, eq(workspaces.id, outreachActions.workspaceId))
+        .where(and(eq(outreachActions.workspaceId, action.workspaceId), eq(outreachActions.id, action.id)))
+        .limit(1);
+      const [suppression] = await tx
+        .select({ id: contactSuppressions.id })
+        .from(contactSuppressions)
+        .where(and(
+          eq(contactSuppressions.workspaceId, action.workspaceId),
+          inArray(contactSuppressions.channel, ["global", action.channel]),
+          isNull(contactSuppressions.liftedAt),
+          or(
+            eq(contactSuppressions.contactId, action.contactId),
+            eq(contactSuppressions.normalizedValue, normalizedRecipient),
+          ),
+        ))
+        .limit(1);
+      const [invalidIdentity] = await tx
+        .select({ id: contactIdentities.id })
+        .from(contactIdentities)
+        .where(and(
+          eq(contactIdentities.workspaceId, action.workspaceId),
+          eq(contactIdentities.contactId, action.contactId),
+          eq(contactIdentities.normalizedValue, normalizedRecipient),
+          eq(contactIdentities.verificationStatus, "invalid"),
+        ))
+        .limit(1);
+      const campaignPolicy = current
+        ? resolveCampaignAutopilotPolicy(current.campaignPolicy, current.campaignChannel ?? action.channel)
+        : null;
+      if (
+        current?.actionStatus === "executing"
+        && current.enrollmentStatus === "active"
+        && current.campaignStatus === "active"
+        && current.contactStatus === "active"
+        && current.workspaceStatus === "active"
+        && campaignPolicy?.enabled === true
+        && campaignPolicy.executionMode === "live"
+        && !suppression
+        && !invalidIdentity
+      ) return true;
+
+      const blockCode = suppression
+        ? "CONTACT_SUPPRESSED"
+        : invalidIdentity
+          ? "RECIPIENT_IDENTITY_INVALID"
+          : campaignPolicy?.executionMode !== "live"
+            ? "CAMPAIGN_DRY_RUN"
+            : "FINAL_POLICY_GATE_BLOCKED";
+      const [blocked] = await tx.update(outreachActions).set({
+        status: current?.actionStatus === "cancelled" ? "cancelled" : "skipped",
+        lastErrorCode: current?.actionStatus === "cancelled" ? "PROSPECT_REPLIED" : blockCode,
+        lockedAt: null,
+        lockedUntil: null,
+        lockedBy: null,
+        updatedAt: this.clock.now(),
+      }).where(and(
+        eq(outreachActions.workspaceId, action.workspaceId),
+        eq(outreachActions.id, action.id),
+        inArray(outreachActions.status, ["scheduled", "executing", "cancelled"]),
+      )).returning({ id: outreachActions.id });
+      if (blocked) {
+        await tx.insert(outboxEvents).values({
+          id: crypto.randomUUID(),
+          workspaceId: action.workspaceId,
+          aggregateType: "OutreachAction",
+          aggregateId: action.id,
+          eventType: "OutreachActionBlockedByFinalPolicyGate",
+          payload: { actionId: action.id, campaignId: action.campaignId, contactId: action.contactId, code: blockCode },
+          availableAt: this.clock.now(),
+          createdAt: this.clock.now(),
+        });
+      }
+      return false;
+    });
   }
 
   async #prepareContentIfNeeded(action: ClaimedAction): Promise<unknown> {

@@ -1,8 +1,10 @@
 import { AlertTriangle, ArrowLeft, Building2, Clock3, ExternalLink, Mail, Phone, RefreshCw, Search, Send, UserRound } from "lucide-react";
 import Link from "next/link";
-import { getCampaign } from "@/lib/api";
+import { getCampaign, getCampaignAutopilotPolicy } from "@/lib/api";
 import { prospectDetailHref } from "@/lib/prospect-navigation";
 import { CampaignAutoRefresh } from "../campaign-auto-refresh";
+import { setCampaignExecutionModeAction } from "../actions";
+import { MutationForm } from "../../research/[runId]/report/mutation-form";
 
 export const metadata = { title: "Campagne ICP" };
 export const dynamic = "force-dynamic";
@@ -14,6 +16,9 @@ export default async function CampaignDetailPage({
 }) {
   const { workspaceSlug, campaignId } = await params;
   const campaign = await getCampaign(workspaceSlug, campaignId);
+  const execution = campaign.channel
+    ? await getCampaignAutopilotPolicy(workspaceSlug, campaignId)
+    : null;
   const campaignPath = `/w/${workspaceSlug}/campaigns/${campaignId}`;
   const refreshing = ["sourcing", "enriching", "composing"].includes(campaign.automationStage);
 
@@ -39,6 +44,11 @@ export default async function CampaignDetailPage({
                     : "faisabilité mesurée"}
             </span>
             {campaign.channel ? <span className="badge capitalize">{campaign.channel}</span> : null}
+            {execution ? (
+              <span className={execution.policy.executionMode === "live" ? "badge badge-danger" : "badge badge-success"}>
+                {execution.policy.executionMode === "live" ? "envois réels activés" : "dry-run sécurisé"}
+              </span>
+            ) : null}
           </div>
           <h1 className="page-title">{campaign.icpName}</h1>
           <p className="mt-2 text-sm text-muted">
@@ -116,6 +126,24 @@ export default async function CampaignDetailPage({
         </section>
 
         <aside className="space-y-5">
+          {execution ? <section className="panel">
+            <div className="panel-header"><h2 className="font-semibold">Mode d’exécution</h2></div>
+            <div className="panel-body">
+              <p className="text-xs leading-5 text-muted">
+                En dry-run, chaque décision d’envoi devient une approbation sans appeler le provider. Le passage en réel est explicite et réversible.
+              </p>
+              <MutationForm
+                action={setCampaignExecutionModeAction.bind(null, workspaceSlug, campaignId, execution.policy.executionMode === "live" ? "dry_run" : "live")}
+                className="mt-3"
+                {...(execution.policy.executionMode === "live" ? {} : { confirmation: "Activer les envois réels pour cette campagne ?" })}
+                successMessage="Le mode d’exécution de la campagne a été mis à jour."
+              >
+                <button className={execution.policy.executionMode === "live" ? "button w-full" : "button button-signal w-full"} type="submit">
+                  {execution.policy.executionMode === "live" ? "Revenir en dry-run" : "Activer les envois réels"}
+                </button>
+              </MutationForm>
+            </div>
+          </section> : null}
           <section className="panel">
             <div className="panel-header"><h2 className="flex items-center gap-2 font-semibold"><Send size={15} /> Séquence préparée</h2></div>
             <div className="panel-body">
@@ -131,7 +159,7 @@ export default async function CampaignDetailPage({
                   </li>
                 ))}
               </ol>
-              <p className="mt-3 text-[11px] leading-4 text-muted">Aucune validation intermédiaire : l’autopilote contrôle les identités, les suppressions, les quotas et suspend les relances dès qu’un prospect répond.</p>
+              <p className="mt-3 text-[11px] leading-4 text-muted">L’agent motive chaque prochaine action. Le policy guard contrôle les identités, les suppressions, les quotas et suspend les relances dès l’ingestion d’une réponse.</p>
             </div>
           </section>
         </aside>

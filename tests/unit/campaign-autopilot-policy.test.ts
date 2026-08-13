@@ -8,6 +8,11 @@ import {
 } from "@outbound/domain/campaigns/campaign-autopilot-policy";
 
 describe("campaign autopilot policy", () => {
+  test("defaults new campaigns to dry-run and requires an explicit live mode", () => {
+    expect(defaultCampaignAutopilotPolicy("email").executionMode).toBe("dry_run");
+    expect(resolveCampaignAutopilotPolicy({ executionMode: "live" }, "email").executionMode).toBe("live");
+    expect(resolveCampaignAutopilotPolicy({ executionMode: "unknown" }, "email").executionMode).toBe("dry_run");
+  });
   test("uses a recipient-timezone weekday window by default", () => {
     const policy = defaultCampaignAutopilotPolicy("email");
 

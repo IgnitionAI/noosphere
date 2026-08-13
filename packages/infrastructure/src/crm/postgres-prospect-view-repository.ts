@@ -15,6 +15,7 @@ import {
   opportunities,
   outreachActions,
   prospectDiscoveryCandidates,
+  prospectDecisions,
   replyClassifications,
 } from "@outbound/infrastructure/database/schema";
 
@@ -79,7 +80,7 @@ export class PostgresProspectViewRepository {
     if (!contact) return null;
     const [summary] = await this.#hydrate(input.workspaceId, [contact]);
     if (!summary) return null;
-    const [identities, employments, outreachRows] = await Promise.all([
+    const [identities, employments, outreachRows, decisionRows] = await Promise.all([
       this.db
         .select()
         .from(contactIdentities)
@@ -116,6 +117,37 @@ export class PostgresProspectViewRepository {
           eq(outreachActions.contactId, input.contactId),
         ))
         .orderBy(outreachActions.dueAt),
+      this.db
+        .select({
+          id: prospectDecisions.id,
+          campaignId: prospectDecisions.campaignId,
+          outreachActionId: prospectDecisions.outreachActionId,
+          kind: prospectDecisions.kind,
+          reason: prospectDecisions.reason,
+          observation: prospectDecisions.observation,
+          proposedAction: prospectDecisions.proposedAction,
+          dueAt: prospectDecisions.dueAt,
+          priority: prospectDecisions.priority,
+          status: prospectDecisions.status,
+          attempts: prospectDecisions.attempts,
+          maxAttempts: prospectDecisions.maxAttempts,
+          correlationId: prospectDecisions.correlationId,
+          result: prospectDecisions.result,
+          policyDecision: prospectDecisions.policyDecision,
+          lastErrorCode: prospectDecisions.lastErrorCode,
+          lastErrorMessage: prospectDecisions.lastErrorMessage,
+          startedAt: prospectDecisions.startedAt,
+          completedAt: prospectDecisions.completedAt,
+          createdAt: prospectDecisions.createdAt,
+          updatedAt: prospectDecisions.updatedAt,
+        })
+        .from(prospectDecisions)
+        .where(and(
+          eq(prospectDecisions.workspaceId, input.workspaceId),
+          eq(prospectDecisions.contactId, input.contactId),
+        ))
+        .orderBy(desc(prospectDecisions.createdAt))
+        .limit(50),
     ]);
     const conversationDetail = summary.conversation
       ? await this.#conversationDetail(input.workspaceId, summary.conversation.id)
@@ -130,7 +162,10 @@ export class PostgresProspectViewRepository {
       ...outreachRows.map(outreachActivityView),
       ...conversationActivity,
     ].sort((left, right) => left.occurredAt.getTime() - right.occurredAt.getTime());
-    return { ...summary, identities, employments, conversation, activity };
+    const nextDecision = decisionRows
+      .filter((decision) => ["pending", "running", "awaiting_approval"].includes(decision.status))
+      .sort((left, right) => left.dueAt.getTime() - right.dueAt.getTime())[0] ?? null;
+    return { ...summary, identities, employments, conversation, activity, decisions: decisionRows, nextDecision };
   }
 
   async #hydrate(workspaceId: string, rows: readonly typeof contacts.$inferSelect[]) {

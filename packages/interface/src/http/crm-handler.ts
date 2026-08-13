@@ -8,6 +8,7 @@ import {
 import type { Database } from "@outbound/infrastructure/database/client";
 import { PostgresCrmRepository } from "@outbound/infrastructure/crm/postgres-crm-repository";
 import { PostgresProspectViewRepository } from "@outbound/infrastructure/crm/postgres-prospect-view-repository";
+import { PostgresProspectDecisionScheduler } from "@outbound/infrastructure/campaigns/postgres-prospect-decision-scheduler";
 import {
   RequestAuthenticationError,
   WorkspaceAccessDeniedError,
@@ -114,15 +115,23 @@ const contactIdentitiesPath = /^\/api\/v1\/contacts\/([^/]+)\/identities$/;
 const contactEmploymentsPath = /^\/api\/v1\/contacts\/([^/]+)\/employments$/;
 const contactSuppressPath = /^\/api\/v1\/contacts\/([^/]+)\/actions\/suppress$/;
 const prospectPath = /^\/api\/v1\/prospects\/([^/]+)$/;
+const prospectDryRunPath = /^\/api\/v1\/prospects\/([^/]+)\/actions\/dry-run$/;
+const prospectDryRunSchema = z.object({
+  reason: z.string().trim().min(3).max(2_000).default("Réévaluation manuelle demandée depuis la fiche prospect."),
+  requestKey: z.string().uuid(),
+}).strict();
 
 export interface CrmHttpDependencies {
   readonly contextResolver: RequestContextResolver;
   readonly database: Database;
+  readonly now?: () => Date;
 }
 
 export function createCrmHttpHandler(dependencies: CrmHttpDependencies) {
   const repository = new PostgresCrmRepository(dependencies.database);
   const prospectViews = new PostgresProspectViewRepository(dependencies.database);
+  const now = dependencies.now ?? (() => new Date());
+  const prospectDecisions = new PostgresProspectDecisionScheduler(dependencies.database, { now });
   return async function handle(request: Request): Promise<Response> {
     try {
       const url = new URL(request.url);
@@ -212,6 +221,29 @@ export function createCrmHttpHandler(dependencies: CrmHttpDependencies) {
         });
         if (!prospect) return problem(404, "PROSPECT_NOT_FOUND", "Prospect not found");
         return json(prospect);
+      }
+
+      const prospectDryRunMatch = prospectDryRunPath.exec(url.pathname);
+      if (prospectDryRunMatch && request.method === "POST") {
+        requireOperator(context.role);
+        const contactId = uuidSchema.parse(prospectDryRunMatch[1]);
+        const body = prospectDryRunSchema.parse(await request.json());
+        const prospect = await prospectViews.get({ workspaceId: context.workspaceId, contactId });
+        if (!prospect) return problem(404, "PROSPECT_NOT_FOUND", "Prospect not found");
+        const scheduledAt = now();
+        const scheduled = await prospectDecisions.schedule({
+          id: crypto.randomUUID(),
+          workspaceId: context.workspaceId,
+          contactId,
+          kind: "manual_dry_run",
+          reason: body.reason,
+          dueAt: scheduledAt,
+          priority: 90,
+          idempotencyKey: `${contactId}:manual-dry-run:${body.requestKey}`,
+          correlationId: `manual-dry-run:${body.requestKey}`,
+          payload: { simulationOnly: true, requestedBy: context.userId },
+        });
+        return json({ decisionId: scheduled.decision.id, status: scheduled.decision.status, dryRun: true }, 202);
       }
 
       if (url.pathname === "/api/v1/companies") {
@@ -552,6 +584,7 @@ function decodeCursor(raw: string | null): { createdAt: Date; id: string } | und
 
 function allowedMethods(pathname: string): string | null {
   if (pathname === "/api/v1/prospects" || prospectPath.test(pathname)) return "GET";
+  if (prospectDryRunPath.test(pathname)) return "POST";
   if (pathname === "/api/v1/companies" || pathname === "/api/v1/contacts") return "GET, POST";
   if (companyPath.test(pathname) || contactPath.test(pathname)) return "GET, PATCH";
   if (

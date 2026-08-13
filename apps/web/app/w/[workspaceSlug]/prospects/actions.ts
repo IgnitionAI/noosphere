@@ -12,9 +12,21 @@ import {
   suppressContact,
   sendConversationCommand,
   retryEnrichmentJob,
+  requestProspectDryRun,
   undoContactMerge,
   updateContact,
 } from "@/lib/api";
+
+export async function requestProspectDryRunAction(
+  workspaceSlug: string,
+  contactId: string,
+  formData: FormData,
+) {
+  const reason = String(formData.get("reason") ?? "").trim()
+    || "Réévaluation manuelle demandée depuis la fiche prospect.";
+  await requestProspectDryRun(workspaceSlug, contactId, reason);
+  revalidatePath(`/w/${workspaceSlug}/prospects/${contactId}`);
+}
 
 export async function improveProspectMessageAction(
   workspaceSlug: string,

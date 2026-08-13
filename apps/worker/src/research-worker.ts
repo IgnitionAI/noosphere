@@ -47,6 +47,7 @@ export class ResearchWorker {
     private readonly retentionPurgeProcessor?: { process(job: LeasedJob): Promise<void> },
     private readonly knowledgeExpirationProcessor?: { process(job: LeasedJob): Promise<void> },
     private readonly evaluationRunProcessor?: { process(job: LeasedJob): Promise<void> },
+    private readonly prospectDecisionProcessor?: { process(job: LeasedJob): Promise<void> },
   ) {}
 
   stop(): void {
@@ -88,6 +89,7 @@ export class ResearchWorker {
         ...(this.retentionPurgeProcessor ? ["workspace.retention.purge"] : []),
         ...(this.knowledgeExpirationProcessor ? ["knowledge.source.expire"] : []),
         ...(this.evaluationRunProcessor ? ["ai.evaluation.execute"] : []),
+        ...(this.prospectDecisionProcessor ? ["prospect.decision.execute"] : []),
       ],
       limit: this.options.batchSize,
       leaseMs: this.options.leaseMs,
@@ -142,6 +144,8 @@ export class ResearchWorker {
         await this.knowledgeExpirationProcessor.process(job);
       } else if (job.type === "ai.evaluation.execute" && this.evaluationRunProcessor) {
         await this.evaluationRunProcessor.process(job);
+      } else if (job.type === "prospect.decision.execute" && this.prospectDecisionProcessor) {
+        await this.prospectDecisionProcessor.process(job);
       } else {
         await this.orchestrator.process(job);
       }

@@ -1,12 +1,23 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { INBOUND_REPLY_PROCESS_JOB_TYPE } from "@outbound/application/campaigns/autonomous-prospecting";
 import type { Database } from "@outbound/infrastructure/database/client";
 import {
   connectedAccounts,
+  approvalItems,
+  campaignEnrollments,
+  campaignProspects,
+  contactIdentities,
+  conversations,
   integrationEvents,
   jobs,
+  outboxEvents,
   outreachActions,
+  prospectDecisions,
+  prospectDiscoveryCandidates,
+  workspaceChannelAccounts,
 } from "@outbound/infrastructure/database/schema";
+import { normalizeInboundWebhook } from "./inbound-reply-runner";
+import { normalizeEmail, normalizePhone } from "@outbound/domain/crm/normalization";
 
 export class UnipileWebhookIngestor {
   constructor(
@@ -18,13 +29,8 @@ export class UnipileWebhookIngestor {
     const payload = parseJsonObject(rawBody);
     const accountId = stringAt(payload, "account_id") ?? stringAt(payload, "accountId");
     if (!accountId) throw new UnipileWebhookError("WEBHOOK_ACCOUNT_MISSING", 400);
-    const [accountAction] = await this.database
-      .select({ workspaceId: outreachActions.workspaceId })
-      .from(outreachActions)
-      .where(eq(outreachActions.providerAccountId, accountId))
-      .orderBy(desc(outreachActions.createdAt))
-      .limit(1);
-    if (!accountAction) throw new UnipileWebhookError("WEBHOOK_ACCOUNT_UNMAPPED", 409);
+    const workspaceId = await resolveWebhookWorkspace(this.database, accountId);
+    if (!workspaceId) throw new UnipileWebhookError("WEBHOOK_ACCOUNT_UNMAPPED", 409);
     const providerEventId = webhookEventId(payload, rawBody);
     const eventType = stringAt(payload, "event")
       ?? stringAt(payload, "type")
@@ -34,7 +40,7 @@ export class UnipileWebhookIngestor {
     return this.database.transaction(async (tx) => {
       const [inserted] = await tx.insert(integrationEvents).values({
         id: eventId,
-        workspaceId: accountAction.workspaceId,
+        workspaceId,
         provider: "unipile",
         providerEventId,
         eventType,
@@ -48,7 +54,7 @@ export class UnipileWebhookIngestor {
           .from(integrationEvents)
           .where(
             and(
-              eq(integrationEvents.workspaceId, accountAction.workspaceId),
+              eq(integrationEvents.workspaceId, workspaceId),
               eq(integrationEvents.provider, "unipile"),
               eq(integrationEvents.providerEventId, providerEventId),
             ),
@@ -58,9 +64,9 @@ export class UnipileWebhookIngestor {
       }
       await tx.insert(jobs).values({
         id: crypto.randomUUID(),
-        workspaceId: accountAction.workspaceId,
+        workspaceId,
         type: INBOUND_REPLY_PROCESS_JOB_TYPE,
-        payload: { workspaceId: accountAction.workspaceId, integrationEventId: eventId },
+        payload: { workspaceId, integrationEventId: eventId },
         idempotencyKey: `${eventId}:process:v1`,
         correlationId: `unipile-event:${eventId}`,
         maxAttempts: 3,
@@ -68,6 +74,70 @@ export class UnipileWebhookIngestor {
         createdAt: now,
         updatedAt: now,
       });
+      const incoming = normalizeInboundWebhook(payload);
+      if (incoming?.inbound) {
+        const match = await matchInboundContact(tx, workspaceId, incoming);
+        if (match) {
+          await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`${workspaceId}:${match.contactId}:outbound`}, 0))`);
+          await tx.update(campaignEnrollments).set({ status: "cancelled", completedAt: now }).where(and(
+            eq(campaignEnrollments.workspaceId, workspaceId),
+            eq(campaignEnrollments.contactId, match.contactId),
+            eq(campaignEnrollments.status, "active"),
+          ));
+          await tx.update(outreachActions).set({
+            status: "cancelled",
+            responseReceivedAt: incoming.occurredAt,
+            cancelledAt: now,
+            lastErrorCode: "PROSPECT_REPLIED",
+            lastErrorMessage: "Une réponse entrante a invalidé cette action avant son envoi.",
+            lockedAt: null,
+            lockedUntil: null,
+            lockedBy: null,
+            updatedAt: now,
+          }).where(and(
+            eq(outreachActions.workspaceId, workspaceId),
+            eq(outreachActions.contactId, match.contactId),
+            inArray(outreachActions.status, ["scheduled", "awaiting_approval", "executing"]),
+          ));
+          await tx.update(prospectDecisions).set({
+            status: "cancelled",
+            invalidatedAt: now,
+            completedAt: now,
+            lastErrorCode: "PROSPECT_REPLIED",
+            lastErrorMessage: "Décision invalidée atomiquement à l’ingestion de la réponse.",
+            updatedAt: now,
+          }).where(and(
+            eq(prospectDecisions.workspaceId, workspaceId),
+            eq(prospectDecisions.contactId, match.contactId),
+            inArray(prospectDecisions.status, ["pending", "running", "awaiting_approval"]),
+          ));
+          await tx.update(approvalItems).set({
+            status: "invalidated",
+            invalidationReason: "prospect_replied",
+            updatedAt: now,
+          }).where(and(
+            eq(approvalItems.workspaceId, workspaceId),
+            eq(approvalItems.contactId, match.contactId),
+            eq(approvalItems.status, "pending"),
+            inArray(approvalItems.itemType, ["prospect_decision_send", "first_contact"]),
+          ));
+          await tx.insert(outboxEvents).values({
+            id: crypto.randomUUID(),
+            workspaceId,
+            aggregateType: "Contact",
+            aggregateId: match.contactId,
+            eventType: "PendingOutreachInvalidatedByInbound",
+            payload: {
+              contactId: match.contactId,
+              campaignId: match.campaignId,
+              integrationEventId: eventId,
+              occurredAt: incoming.occurredAt.toISOString(),
+            },
+            availableAt: now,
+            createdAt: now,
+          });
+        }
+      }
       return { duplicate: false, eventId };
     });
   }
@@ -77,6 +147,93 @@ export class UnipileWebhookIngestor {
   }
 }
 
+async function resolveWebhookWorkspace(database: Database, accountId: string): Promise<string | null> {
+  const candidates = new Set<string>();
+  const [selected, connected, action] = await Promise.all([
+    database
+      .selectDistinct({ workspaceId: workspaceChannelAccounts.workspaceId })
+      .from(workspaceChannelAccounts)
+      .where(and(eq(workspaceChannelAccounts.provider, "unipile"), eq(workspaceChannelAccounts.providerAccountId, accountId))),
+    database
+      .selectDistinct({ workspaceId: connectedAccounts.workspaceId })
+      .from(connectedAccounts)
+      .where(and(eq(connectedAccounts.provider, "unipile"), eq(connectedAccounts.providerAccountId, accountId))),
+    database
+      .selectDistinct({ workspaceId: outreachActions.workspaceId })
+      .from(outreachActions)
+      .where(and(eq(outreachActions.provider, "unipile"), eq(outreachActions.providerAccountId, accountId))),
+  ]);
+  for (const row of [...selected, ...connected, ...action]) candidates.add(row.workspaceId);
+  if (candidates.size > 1) throw new UnipileWebhookError("WEBHOOK_ACCOUNT_AMBIGUOUS", 409);
+  return candidates.values().next().value ?? null;
+}
+
+async function matchInboundContact(
+  tx: Parameters<Parameters<Database["transaction"]>[0]>[0],
+  workspaceId: string,
+  incoming: NonNullable<ReturnType<typeof normalizeInboundWebhook>>,
+): Promise<{ contactId: string; campaignId: string | null } | null> {
+  const [conversation] = await tx
+    .select({ contactId: conversations.contactId, campaignId: conversations.campaignId })
+    .from(conversations)
+    .where(and(
+      eq(conversations.workspaceId, workspaceId),
+      eq(conversations.providerAccountId, incoming.accountId),
+      eq(conversations.providerThreadId, incoming.threadId),
+    ))
+    .limit(1);
+  if (conversation) return conversation;
+
+  if (incoming.senderValue && incoming.channel !== "linkedin") {
+    try {
+      const normalized = incoming.channel === "email"
+        ? normalizeEmail(incoming.senderValue)
+        : normalizePhone(incoming.senderValue);
+      const [identity] = await tx
+        .select({ contactId: contactIdentities.contactId })
+        .from(contactIdentities)
+        .where(and(
+          eq(contactIdentities.workspaceId, workspaceId),
+          eq(contactIdentities.normalizedValue, normalized),
+        ))
+        .limit(1);
+      if (identity) return { contactId: identity.contactId, campaignId: null };
+    } catch {
+      // Invalid provider identities are still processed asynchronously and
+      // recorded as unmatched rather than weakening the ingestion barrier.
+    }
+  }
+
+  if (incoming.senderProviderId) {
+    const [candidate] = await tx
+      .select({ contactId: campaignProspects.contactId, campaignId: campaignProspects.campaignId })
+      .from(campaignProspects)
+      .innerJoin(
+        prospectDiscoveryCandidates,
+        and(
+          eq(prospectDiscoveryCandidates.workspaceId, campaignProspects.workspaceId),
+          eq(prospectDiscoveryCandidates.id, campaignProspects.candidateId),
+        ),
+      )
+      .where(and(
+        eq(campaignProspects.workspaceId, workspaceId),
+        sql`${prospectDiscoveryCandidates.providerData}->>'providerId' = ${incoming.senderProviderId}`,
+      ))
+      .limit(1);
+    if (candidate?.contactId) return { contactId: candidate.contactId, campaignId: candidate.campaignId };
+  }
+  const [sentAction] = await tx
+    .select({ contactId: outreachActions.contactId, campaignId: outreachActions.campaignId })
+    .from(outreachActions)
+    .where(and(
+      eq(outreachActions.workspaceId, workspaceId),
+      eq(outreachActions.providerRequestId, incoming.messageId),
+    ))
+    .limit(1);
+  if (sentAction) return sentAction;
+  return null;
+}
+
 export async function recordRejectedUnipileWebhook(database: Database, rawBody: string, reasonCode: string, now = new Date()): Promise<boolean> {
   try {
     const payload = tryParseJsonObject(rawBody);
@@ -84,9 +241,7 @@ export async function recordRejectedUnipileWebhook(database: Database, rawBody: 
     const accountId = stringAt(payload, "account_id") ?? stringAt(payload, "accountId")
       ?? nestedString(payload, "account", "id") ?? nestedString(payload, "data", "account_id") ?? nestedString(payload, "data", "accountId");
     if (!accountId) return false;
-    const [connected] = await database.select({ workspaceId: connectedAccounts.workspaceId }).from(connectedAccounts).where(eq(connectedAccounts.providerAccountId, accountId)).orderBy(desc(connectedAccounts.createdAt)).limit(1);
-    const [action] = connected ? [] : await database.select({ workspaceId: outreachActions.workspaceId }).from(outreachActions).where(eq(outreachActions.providerAccountId, accountId)).orderBy(desc(outreachActions.createdAt)).limit(1);
-    const workspaceId = connected?.workspaceId ?? action?.workspaceId;
+    const workspaceId = await resolveWebhookWorkspace(database, accountId);
     if (!workspaceId) return false;
     const bodyHash = new Bun.CryptoHasher("sha256").update(rawBody).digest("hex");
     const accountHash = new Bun.CryptoHasher("sha256").update(accountId).digest("hex").slice(0, 24);

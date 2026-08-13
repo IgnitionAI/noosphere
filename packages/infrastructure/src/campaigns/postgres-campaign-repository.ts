@@ -450,6 +450,7 @@ export class PostgresCampaignRepository {
     return {
       policy: resolveCampaignAutopilotPolicy(campaign.autopilotPolicy, campaign.channel),
       editable: ["sourcing", "enriching", "composing"].includes(campaign.automationStage),
+      executionModeEditable: true,
     };
   }
 
@@ -469,7 +470,8 @@ export class PostgresCampaignRepository {
       .where(and(eq(campaigns.workspaceId, input.workspaceId), eq(campaigns.id, input.campaignId)))
       .limit(1);
     if (!campaign?.channel) return null;
-    if (!["sourcing", "enriching", "composing"].includes(campaign.automationStage)) {
+    const executionModeOnly = isExecutionModeOnlyPatch(input.patch);
+    if (!executionModeOnly && !["sourcing", "enriching", "composing"].includes(campaign.automationStage)) {
       throw new CampaignAutopilotPolicyLockedError();
     }
     const policy = mergeCampaignAutopilotPolicy(
@@ -481,7 +483,11 @@ export class PostgresCampaignRepository {
       .update(campaigns)
       .set({ autopilotPolicy: policy, updatedAt: input.now })
       .where(and(eq(campaigns.workspaceId, input.workspaceId), eq(campaigns.id, input.campaignId)));
-    return { policy, editable: true };
+    return {
+      policy,
+      editable: ["sourcing", "enriching", "composing"].includes(campaign.automationStage),
+      executionModeEditable: true,
+    };
   }
 
   async #lockedCampaign(tx: any, workspaceId: string, campaignId: string) {
@@ -528,6 +534,12 @@ export class PostgresCampaignRepository {
       warnings: [{ code: "NO_VERIFIED_SENDER_ACCOUNT", message: "No verified sending account is connected; sending remains unavailable until a channel is configured" }],
     };
   }
+}
+
+function isExecutionModeOnlyPatch(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const keys = Object.keys(value as Record<string, unknown>);
+  return keys.length === 1 && keys[0] === "executionMode";
 }
 
 export class CampaignAutopilotPolicyLockedError extends Error {

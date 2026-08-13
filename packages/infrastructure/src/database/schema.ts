@@ -3056,6 +3056,7 @@ export const jobs = pgTable(
     status: jobStatusEnum("status").notNull().default("pending"),
     attempts: integer("attempts").notNull().default(0),
     maxAttempts: integer("max_attempts").notNull(),
+    priority: integer("priority").notNull().default(0),
     availableAt: timestamp("available_at", { withTimezone: true }).notNull(),
     lockedAt: timestamp("locked_at", { withTimezone: true }),
     lockedUntil: timestamp("locked_until", { withTimezone: true }),
@@ -3067,6 +3068,7 @@ export const jobs = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
+    unique("jobs_workspace_id_uq").on(table.workspaceId, table.id),
     uniqueIndex("jobs_workspace_type_idempotency_uq").on(
       table.workspaceId,
       table.type,
@@ -3074,6 +3076,67 @@ export const jobs = pgTable(
     ),
     index("jobs_lease_idx").on(table.status, table.availableAt, table.lockedUntil),
     index("jobs_workspace_status_idx").on(table.workspaceId, table.status),
+  ],
+);
+
+export const prospectDecisions = pgTable(
+  "prospect_decisions",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    contactId: uuid("contact_id").notNull(),
+    campaignId: uuid("campaign_id"),
+    outreachActionId: uuid("outreach_action_id"),
+    jobId: uuid("job_id").notNull(),
+    kind: varchar("kind", { length: 120 }).notNull(),
+    reason: text("reason").notNull(),
+    observation: jsonb("observation").notNull().default({}),
+    proposedAction: varchar("proposed_action", { length: 40 }),
+    dueAt: timestamp("due_at", { withTimezone: true }).notNull(),
+    priority: integer("priority").notNull().default(0),
+    status: varchar("status", { length: 40 }).notNull().default("pending"),
+    attempts: integer("attempts").notNull().default(0),
+    maxAttempts: integer("max_attempts").notNull().default(5),
+    idempotencyKey: varchar("idempotency_key", { length: 500 }).notNull(),
+    correlationId: varchar("correlation_id", { length: 200 }).notNull(),
+    payload: jsonb("payload").notNull().default({}),
+    result: jsonb("result"),
+    policyDecision: jsonb("policy_decision"),
+    lastErrorCode: varchar("last_error_code", { length: 160 }),
+    lastErrorMessage: text("last_error_message"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    invalidatedAt: timestamp("invalidated_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.workspaceId, table.contactId],
+      foreignColumns: [contacts.workspaceId, contacts.id],
+      name: "prospect_decisions_contact_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.workspaceId, table.campaignId],
+      foreignColumns: [campaigns.workspaceId, campaigns.id],
+      name: "prospect_decisions_campaign_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.workspaceId, table.outreachActionId],
+      foreignColumns: [outreachActions.workspaceId, outreachActions.id],
+      name: "prospect_decisions_outreach_action_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.workspaceId, table.jobId],
+      foreignColumns: [jobs.workspaceId, jobs.id],
+      name: "prospect_decisions_job_fk",
+    }).onDelete("cascade"),
+    unique("prospect_decisions_workspace_id_uq").on(table.workspaceId, table.id),
+    uniqueIndex("prospect_decisions_workspace_key_uq").on(table.workspaceId, table.idempotencyKey),
+    uniqueIndex("prospect_decisions_workspace_job_uq").on(table.workspaceId, table.jobId),
+    index("prospect_decisions_due_idx").on(table.workspaceId, table.status, table.priority, table.dueAt),
+    index("prospect_decisions_contact_idx").on(table.workspaceId, table.contactId, table.createdAt),
+    index("prospect_decisions_campaign_idx").on(table.workspaceId, table.campaignId, table.createdAt),
   ],
 );
 

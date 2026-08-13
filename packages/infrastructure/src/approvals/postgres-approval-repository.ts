@@ -1,7 +1,18 @@
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { decideApprovalItem, type ApprovalDecision } from "@outbound/domain/campaigns/approval-item";
+import { resolveCampaignAutopilotPolicy } from "@outbound/domain/campaigns/campaign-autopilot-policy";
 import type { Database } from "@outbound/infrastructure/database/client";
-import { approvalItems, auditLogs, contactSuppressions, contacts, outboxEvents } from "@outbound/infrastructure/database/schema";
+import {
+  approvalItems,
+  auditLogs,
+  campaigns,
+  contactSuppressions,
+  contacts,
+  jobs,
+  outboxEvents,
+  outreachActions,
+  prospectDecisions,
+} from "@outbound/infrastructure/database/schema";
 
 export class ApprovalRepositoryError extends Error {
   constructor(readonly code: string, readonly details: Readonly<Record<string, unknown>> = {}) { super(code); }
@@ -29,7 +40,10 @@ export interface ApprovalItemView {
 }
 
 export class PostgresApprovalRepository {
-  constructor(private readonly db: Database) {}
+  constructor(
+    private readonly db: Database,
+    private readonly now: () => Date = () => new Date(),
+  ) {}
 
   async list(input: { workspaceId: string; campaignId?: string; status?: "pending" | "approved" | "rejected" | "invalidated"; limit: number }) {
     const conditions = [eq(approvalItems.workspaceId, input.workspaceId)];
@@ -67,7 +81,7 @@ export class PostgresApprovalRepository {
       id: input.id ?? crypto.randomUUID(), workspaceId: input.workspaceId,
       campaignId: input.campaignId ?? null, contactId: input.contactId ?? null, enrollmentId: input.enrollmentId ?? null,
       itemType: input.itemType, channel: input.channel, stepPosition: input.stepPosition ?? null,
-      contentOriginal: input.contentOriginal, context: input.context ?? {}, sourceUpdatedAt: input.sourceUpdatedAt ?? new Date(),
+      contentOriginal: input.contentOriginal, context: input.context ?? {}, sourceUpdatedAt: input.sourceUpdatedAt ?? this.now(),
     }).returning();
     return toView(rows[0]!);
   }
@@ -80,7 +94,7 @@ export class PostgresApprovalRepository {
       const current = await this.invalidateIfStale(tx, item);
       if (current.status === "invalidated") throw new ApprovalRepositoryError("APPROVAL_ITEM_INVALIDATED");
       if (current.status !== "pending") throw new ApprovalRepositoryError("APPROVAL_ITEM_DECISION_CONFLICT");
-      const rows = await tx.update(approvalItems).set({ contentEdited: input.contentEdited, updatedAt: new Date() }).where(eq(approvalItems.id, input.itemId)).returning();
+      const rows = await tx.update(approvalItems).set({ contentEdited: input.contentEdited, updatedAt: this.now() }).where(eq(approvalItems.id, input.itemId)).returning();
       return toView(rows[0]!);
     });
   }
@@ -115,9 +129,70 @@ export class PostgresApprovalRepository {
     try { transition = decideApprovalItem(current.status, input.decision, input.justification); }
     catch (error) { throw new ApprovalRepositoryError(error instanceof Error ? error.message : "APPROVAL_ITEM_DECISION_FAILED"); }
     if (!transition.changed) return toView(current);
-    const decidedAt = new Date();
+    const decidedAt = this.now();
+    const decisionContext = current.itemType === "prospect_decision_send"
+      ? decisionApprovalContext(current.context)
+      : null;
+    if (current.itemType === "prospect_decision_send" && !decisionContext) {
+      throw new ApprovalRepositoryError("PROSPECT_DECISION_APPROVAL_CONTEXT_INVALID");
+    }
+    if (decisionContext && input.decision === "approve") {
+      const [campaign] = current.campaignId
+        ? await tx.select({ channel: campaigns.channel, autopilotPolicy: campaigns.autopilotPolicy })
+            .from(campaigns)
+            .where(and(eq(campaigns.workspaceId, input.workspaceId), eq(campaigns.id, current.campaignId)))
+            .limit(1)
+        : [];
+      if (!campaign || resolveCampaignAutopilotPolicy(campaign.autopilotPolicy, campaign.channel ?? "email").executionMode !== "live") {
+        throw new ApprovalRepositoryError("PROSPECT_DECISION_LIVE_MODE_REQUIRED");
+      }
+    }
     const rows = await tx.update(approvalItems).set({ status: transition.status, decisionBy: input.userId, decidedAt, ...(input.decision === "reject" ? { rejectionJustification: input.justification!.trim() } : {}), updatedAt: decidedAt }).where(eq(approvalItems.id, input.itemId)).returning();
     const updated = rows[0]!;
+    if (updated.itemType === "prospect_decision_send") {
+      const context = decisionContext!;
+      if (input.decision === "approve") {
+        const [action] = await tx
+          .update(outreachActions)
+          .set({ status: "scheduled", approvalItemId: updated.id, updatedAt: decidedAt })
+          .where(and(
+            eq(outreachActions.workspaceId, input.workspaceId),
+            eq(outreachActions.id, context.actionId),
+            eq(outreachActions.status, "awaiting_approval"),
+          ))
+          .returning({ dueAt: outreachActions.dueAt });
+        if (!action) throw new ApprovalRepositoryError("PROSPECT_DECISION_ACTION_NOT_APPROVABLE");
+        await tx.insert(jobs).values({
+          id: crypto.randomUUID(),
+          workspaceId: input.workspaceId,
+          type: "outreach.dispatch",
+          payload: { workspaceId: input.workspaceId, actionId: context.actionId },
+          idempotencyKey: `${context.actionId}:dispatch:v2`,
+          correlationId: context.correlationId,
+          maxAttempts: 5,
+          availableAt: action.dueAt > decidedAt ? action.dueAt : decidedAt,
+          createdAt: decidedAt,
+          updatedAt: decidedAt,
+        }).onConflictDoNothing();
+        await tx.update(prospectDecisions).set({ status: "completed", completedAt: decidedAt, updatedAt: decidedAt }).where(and(
+          eq(prospectDecisions.workspaceId, input.workspaceId),
+          eq(prospectDecisions.id, context.decisionId),
+        ));
+      } else {
+        await tx.update(outreachActions).set({
+          status: "cancelled",
+          cancelledAt: decidedAt,
+          lastErrorCode: "DRY_RUN_REJECTED",
+          updatedAt: decidedAt,
+        }).where(and(eq(outreachActions.workspaceId, input.workspaceId), eq(outreachActions.id, context.actionId)));
+        await tx.update(prospectDecisions).set({
+          status: "cancelled",
+          invalidatedAt: decidedAt,
+          completedAt: decidedAt,
+          updatedAt: decidedAt,
+        }).where(and(eq(prospectDecisions.workspaceId, input.workspaceId), eq(prospectDecisions.id, context.decisionId)));
+      }
+    }
     const eventType = input.decision === "approve" ? "ApprovalItemApproved" : "ApprovalItemRejected";
     const payload = { type: eventType, approvalItemId: input.itemId, workspaceId: input.workspaceId, campaignId: updated.campaignId, contactId: updated.contactId, contentOriginal: updated.contentOriginal, contentEdited: updated.contentEdited, ...(input.decision === "reject" ? { justification: input.justification } : {}) };
     const [event] = await tx.insert(outboxEvents).values({ workspaceId: input.workspaceId, aggregateType: "ApprovalItem", aggregateId: input.itemId, eventType, payload }).returning({ id: outboxEvents.id });
@@ -135,7 +210,7 @@ export class PostgresApprovalRepository {
     if (row.status !== "pending") return row;
     let reason: string | null = row.contactId ? null : "contact_deleted";
     if (!reason && row.contactId) {
-      const contactRows = await executor.select({ updatedAt: contacts.updatedAt }).from(contacts).where(eq(contacts.id, row.contactId)).limit(1);
+      const contactRows = await executor.select({ updatedAt: contacts.updatedAt }).from(contacts).where(and(eq(contacts.workspaceId, row.workspaceId), eq(contacts.id, row.contactId))).limit(1);
       const contact = contactRows[0];
       if (!contact) reason = "contact_deleted";
       else if (row.sourceUpdatedAt && contact.updatedAt > row.sourceUpdatedAt) reason = "contact_data_changed";
@@ -145,9 +220,19 @@ export class PostgresApprovalRepository {
       }
     }
     if (!reason) return row;
-    const rows = await executor.update(approvalItems).set({ status: "invalidated", invalidationReason: reason, updatedAt: new Date() }).where(and(eq(approvalItems.id, row.id), eq(approvalItems.status, "pending"))).returning();
+    const rows = await executor.update(approvalItems).set({ status: "invalidated", invalidationReason: reason, updatedAt: this.now() }).where(and(eq(approvalItems.id, row.id), eq(approvalItems.status, "pending"))).returning();
     return rows[0] ?? row;
   }
+}
+
+function decisionApprovalContext(value: unknown): { decisionId: string; actionId: string; correlationId: string } | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const context = value as Record<string, unknown>;
+  return typeof context.decisionId === "string"
+    && typeof context.actionId === "string"
+    && typeof context.correlationId === "string"
+    ? { decisionId: context.decisionId, actionId: context.actionId, correlationId: context.correlationId }
+    : null;
 }
 
 function toView(row: typeof approvalItems.$inferSelect): ApprovalItemView {

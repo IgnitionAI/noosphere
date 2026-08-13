@@ -7,12 +7,14 @@ export interface NewJob<TPayload = unknown> {
   readonly correlationId: string;
   readonly maxAttempts: number;
   readonly availableAt: Date;
+  readonly priority?: number;
 }
 
 export interface LeasedJob<TPayload = unknown> extends NewJob<TPayload> {
   readonly attempts: number;
   readonly lockedBy: string;
   readonly lockedUntil: Date;
+  readonly priority?: number;
 }
 
 export interface LeaseJobsRequest {

@@ -14,6 +14,7 @@ import {
   retryOutreachAction,
   retryChannelAssessment,
   updateCampaign,
+  updateCampaignAutopilotPolicy,
 } from "@/lib/api";
 
 const root = (workspaceSlug: string) => `/w/${workspaceSlug}/campaigns`;
@@ -36,6 +37,16 @@ export async function updateCampaignAction(workspaceSlug: string, campaignId: st
     if (value) input[key] = value;
   }
   await updateCampaign(workspaceSlug, campaignId, input);
+  revalidatePath(`${root(workspaceSlug)}/${campaignId}`);
+}
+
+export async function setCampaignExecutionModeAction(
+  workspaceSlug: string,
+  campaignId: string,
+  mode: "dry_run" | "live",
+  _formData: FormData,
+) {
+  await updateCampaignAutopilotPolicy(workspaceSlug, campaignId, { executionMode: mode });
   revalidatePath(`${root(workspaceSlug)}/${campaignId}`);
 }
 

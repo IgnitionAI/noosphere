@@ -16,6 +16,7 @@ interface JobRow {
   correlation_id: string;
   attempts: number;
   max_attempts: number;
+  priority: number;
   available_at: Date;
   locked_by: string;
   locked_until: Date;
@@ -29,10 +30,10 @@ export class PostgresJobQueue implements JobQueue {
     const rows = await this.sql`
       insert into jobs (
         id, workspace_id, type, payload, idempotency_key, correlation_id,
-        max_attempts, available_at
+        max_attempts, priority, available_at
       ) values (
         ${job.id}, ${job.workspaceId}, ${job.type}, ${payload},
-        ${job.idempotencyKey}, ${job.correlationId}, ${job.maxAttempts}, ${job.availableAt}
+        ${job.idempotencyKey}, ${job.correlationId}, ${job.maxAttempts}, ${job.priority ?? 0}, ${job.availableAt}
       )
       on conflict (workspace_id, type, idempotency_key) do nothing
       returning id
@@ -56,7 +57,7 @@ export class PostgresJobQueue implements JobQueue {
                  created_at,
                  row_number() over (
                    partition by workspace_id
-                   order by available_at asc, created_at asc, id asc
+                   order by priority desc, available_at asc, created_at asc, id asc
                  ) as workspace_rank
           from jobs
           where type = any(${typeArrayLiteral}::text[])
@@ -70,6 +71,7 @@ export class PostgresJobQueue implements JobQueue {
           from jobs
           join ranked on ranked.id = jobs.id
           order by ranked.workspace_rank asc,
+                   jobs.priority desc,
                    ranked.available_at asc,
                    ranked.created_at asc,
                    jobs.id asc
@@ -154,6 +156,7 @@ function toLeasedJob(row: JobRow): LeasedJob {
     attempts: row.attempts,
     maxAttempts: row.max_attempts,
     availableAt: row.available_at,
+    priority: row.priority,
     lockedBy: row.locked_by,
     lockedUntil: row.locked_until,
   };

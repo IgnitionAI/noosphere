@@ -4,15 +4,26 @@ export type InboundReplyIntent =
   | "positive"
   | "question"
   | "objection"
+  | "not_now"
+  | "wrong_person"
+  | "referral"
   | "not_interested"
   | "unsubscribe"
+  | "out_of_office"
+  | "bounce"
+  | "auto_reply"
   | "meeting_request"
   | "other";
 
 export interface InboundReplyDecision {
   readonly intent: InboundReplyIntent;
   readonly confidence: number;
-  readonly action: "reply" | "stop" | "booking";
+  readonly action: "reply" | "stop" | "booking" | "wait" | "handoff";
+  readonly evidence?: readonly string[];
+  readonly resumeAt?: string | null;
+  readonly referredPerson?: string | null;
+  readonly requiresHuman?: boolean;
+  readonly suggestedNextAction?: string | null;
   readonly calendarAction?: "propose_slots" | "book" | "reschedule" | "cancel" | null;
   readonly selectedSlotStart?: string | null;
   readonly replyBody: string | null;

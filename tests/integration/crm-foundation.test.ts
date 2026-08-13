@@ -2,9 +2,11 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { createDatabase } from "@outbound/infrastructure/database/client";
-import { authUsers, contactSuppressions, workspaces } from "@outbound/infrastructure/database/schema";
+import { approvalItems, authUsers, contacts, contactSuppressions, enrichmentJobs, jobs, prospectDecisions, workspaces } from "@outbound/infrastructure/database/schema";
 import { eq } from "drizzle-orm";
 import { createCrmHttpHandler } from "@outbound/interface/http/crm-handler";
+import { PostgresJobQueue } from "@outbound/infrastructure/jobs/postgres-job-queue";
+import { ProspectDecisionJobProcessor } from "@outbound/infrastructure/campaigns/prospect-decision-runner";
 
 const databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
 const databaseDescribe = databaseUrl ? describe : describe.skip;
@@ -45,6 +47,8 @@ databaseDescribe("F-020/F-021 CRM foundation", () => {
     await database.client`drop trigger if exists audit_logs_immutable_trg on audit_logs`;
     await database.client`delete from audit_logs where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`delete from outbox_events where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
+    await database.client`delete from prospect_decisions where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
+    await database.client`delete from jobs where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`delete from contact_suppressions where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`delete from companies where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`delete from contacts where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
@@ -150,6 +154,72 @@ databaseDescribe("F-020/F-021 CRM foundation", () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ data: [], filters: { icps: [] } });
+  });
+
+  test("schedules a tenant-scoped manual decision in simulation-only mode", async () => {
+    const contactId = crypto.randomUUID();
+    await database.db.insert(contacts).values({
+      id: contactId,
+      workspaceId,
+      firstName: "Dry",
+      lastName: "Run",
+    });
+    const requestKey = crypto.randomUUID();
+    const response = await postJson(`/api/v1/prospects/${contactId}/actions/dry-run`, {
+      reason: "Vérifier la prochaine action sans effet externe.",
+      requestKey,
+    });
+    expect(response.status).toBe(202);
+    const result = await response.json() as { decisionId: string; dryRun: boolean };
+    expect(result.dryRun).toBe(true);
+    const [decision] = await database.db.select().from(prospectDecisions).where(eq(prospectDecisions.id, result.decisionId));
+    expect(decision).toMatchObject({
+      workspaceId,
+      contactId,
+      kind: "manual_dry_run",
+      payload: { simulationOnly: true, requestedBy: userId },
+    });
+    const [job] = await database.db.select().from(jobs).where(eq(jobs.id, decision!.jobId));
+    expect(job).toMatchObject({ workspaceId, type: "prospect.decision.execute", priority: 90 });
+    const simulatedAt = new Date("2030-01-01T10:00:00.000Z");
+    const queue = new PostgresJobQueue(database.client);
+    const [leased] = await queue.lease({
+      workerId: "manual-dry-run-worker",
+      types: ["prospect.decision.execute"],
+      limit: 1,
+      leaseMs: 30_000,
+      now: simulatedAt,
+    });
+    expect(leased).toBeDefined();
+    await new ProspectDecisionJobProcessor(
+      database.db,
+      queue,
+      {
+        async decide() {
+          return {
+            observation: "Le dossier bénéficierait d'une recherche complémentaire.",
+            action: "research",
+            reason: "Les informations actuellement disponibles sont insuffisantes.",
+            nextDueAt: "2030-01-02T10:00:00.000Z",
+            nextReason: "Réexaminer après enrichissement.",
+          };
+        },
+      },
+      { now: () => simulatedAt },
+    ).process(leased!);
+    const [completed] = await database.db.select().from(prospectDecisions).where(eq(prospectDecisions.id, result.decisionId));
+    expect(completed).toMatchObject({ status: "completed", proposedAction: "research" });
+    expect(await database.db.select().from(enrichmentJobs).where(eq(enrichmentJobs.workspaceId, workspaceId))).toHaveLength(0);
+    expect(await database.db.select().from(approvalItems).where(eq(approvalItems.workspaceId, workspaceId))).toHaveLength(0);
+    expect((await database.db.select().from(jobs).where(eq(jobs.workspaceId, workspaceId)))
+      .filter((row) => row.type === "outreach.dispatch")).toHaveLength(0);
+
+    context.workspaceId = otherWorkspaceId;
+    expect((await postJson(`/api/v1/prospects/${contactId}/actions/dry-run`, {
+      reason: "Tentative cross-tenant interdite.",
+      requestKey: crypto.randomUUID(),
+    })).status).toBe(404);
+    context.workspaceId = workspaceId;
   });
 
   test("contacts: employment history, identity uniqueness, persistent suppression", async () => {

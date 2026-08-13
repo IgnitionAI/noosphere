@@ -4,7 +4,7 @@ import type {
   CampaignContentGenerator,
   PersonalizedCampaignStep,
 } from "@outbound/application/campaigns/campaign-content-generator";
-import { OUTREACH_DISPATCH_JOB_TYPE } from "@outbound/application/campaigns/autonomous-prospecting";
+import { PROSPECT_DECISION_JOB_TYPE } from "@outbound/application/campaigns/prospect-decision";
 import type { JobQueue, LeasedJob } from "@outbound/application/jobs/job-queue";
 import type { Clock } from "@outbound/application/shared/ports";
 import type { ProspectingChannel } from "@outbound/domain/campaigns/prospecting-plan";
@@ -29,6 +29,7 @@ import {
   jobs,
   outboxEvents,
   outreachActions,
+  prospectDecisions,
   prospectDiscoveryCandidates,
   campaignEnrollments,
   sequences,
@@ -363,7 +364,8 @@ export class CampaignCompositionJobProcessor {
           previousDueAt = dueAt;
           if (!earliestDueAt || dueAt < earliestDueAt) earliestDueAt = dueAt;
           const actionId = crypto.randomUUID();
-          await tx.insert(outreachActions).values({
+          const actionIdempotencyKey = `${input.campaignId}:${prospect.contactId}:step:${step.position}:v1`;
+          const [insertedAction] = await tx.insert(outreachActions).values({
             id: actionId,
             workspaceId: input.workspaceId,
             enrollmentId,
@@ -376,7 +378,7 @@ export class CampaignCompositionJobProcessor {
             stepPosition: step.position,
             stepKind: step.kind,
             status: "scheduled",
-            idempotencyKey: `${input.campaignId}:${prospect.contactId}:step:${step.position}:v1`,
+            idempotencyKey: actionIdempotencyKey,
             dueAt,
             contentSnapshot: {
               subject: step.subject,
@@ -410,16 +412,61 @@ export class CampaignCompositionJobProcessor {
             },
             createdAt: now,
             updatedAt: now,
-          }).onConflictDoNothing();
-          await tx.insert(jobs).values({
-            id: crypto.randomUUID(),
+          }).onConflictDoNothing().returning({ id: outreachActions.id });
+          const [storedAction] = insertedAction
+            ? [insertedAction]
+            : await tx
+                .select({ id: outreachActions.id })
+                .from(outreachActions)
+                .where(and(
+                  eq(outreachActions.workspaceId, input.workspaceId),
+                  eq(outreachActions.idempotencyKey, actionIdempotencyKey),
+                ))
+                .limit(1);
+          if (!storedAction) throw new Error("OUTREACH_ACTION_IDEMPOTENCY_CONFLICT");
+          const decisionIdempotencyKey = `${actionIdempotencyKey}:decision:v1`;
+          const decisionId = crypto.randomUUID();
+          const decisionJobId = crypto.randomUUID();
+          const [insertedJob] = await tx.insert(jobs).values({
+            id: decisionJobId,
             workspaceId: input.workspaceId,
-            type: OUTREACH_DISPATCH_JOB_TYPE,
-            payload: { workspaceId: input.workspaceId, actionId },
-            idempotencyKey: `${actionId}:dispatch:v1`,
+            type: PROSPECT_DECISION_JOB_TYPE,
+            payload: { workspaceId: input.workspaceId, decisionId },
+            idempotencyKey: `${decisionIdempotencyKey}:execute`,
             correlationId: `campaign:${input.campaignId}`,
             maxAttempts: 5,
+            priority: step.position === 1 ? 50 : 20,
             availableAt: dueAt,
+            createdAt: now,
+            updatedAt: now,
+          }).onConflictDoNothing().returning({ id: jobs.id });
+          const [storedJob] = insertedJob
+            ? [insertedJob]
+            : await tx
+                .select({ id: jobs.id })
+                .from(jobs)
+                .where(and(
+                  eq(jobs.workspaceId, input.workspaceId),
+                  eq(jobs.type, PROSPECT_DECISION_JOB_TYPE),
+                  eq(jobs.idempotencyKey, `${decisionIdempotencyKey}:execute`),
+                ))
+                .limit(1);
+          if (!storedJob) throw new Error("PROSPECT_DECISION_JOB_IDEMPOTENCY_CONFLICT");
+          await tx.insert(prospectDecisions).values({
+            id: decisionId,
+            workspaceId: input.workspaceId,
+            contactId: prospect.contactId,
+            campaignId: input.campaignId,
+            outreachActionId: storedAction.id,
+            jobId: storedJob.id,
+            kind: "outreach_action_due",
+            reason: `Évaluer l’étape ${step.position} de la séquence avant toute action externe.`,
+            dueAt,
+            priority: step.position === 1 ? 50 : 20,
+            maxAttempts: 5,
+            idempotencyKey: decisionIdempotencyKey,
+            correlationId: `campaign:${input.campaignId}`,
+            payload: { sequenceVersionId, stepPosition: step.position },
             createdAt: now,
             updatedAt: now,
           }).onConflictDoNothing();
