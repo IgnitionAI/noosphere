@@ -1363,10 +1363,11 @@ export async function requestProspectDryRun(
   workspaceSlug: string,
   contactId: string,
   reason: string,
+  campaignId: string | null = null,
 ): Promise<{ decisionId: string; status: string; dryRun: true }> {
   return crmFetch(workspaceSlug, `/api/v1/prospects/${contactId}/actions/dry-run`, {
     method: "POST",
-    body: { reason, requestKey: crypto.randomUUID() },
+    body: { reason, requestKey: crypto.randomUUID(), ...(campaignId ? { campaignId } : {}) },
   });
 }
 

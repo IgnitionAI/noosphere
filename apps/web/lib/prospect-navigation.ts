@@ -32,3 +32,25 @@ export function resolveProspectReturn(
     return fallback;
   }
 }
+
+export function prospectCampaignIdFromReturnTo(
+  workspaceSlug: string,
+  returnTo?: string,
+): string | null {
+  if (!returnTo || returnTo.includes("\\")) return null;
+  try {
+    const resolved = new URL(returnTo, "http://ignition-outbound.local");
+    const campaignRoot = `/w/${encodeURIComponent(workspaceSlug)}/campaigns/`;
+    if (
+      resolved.origin !== "http://ignition-outbound.local"
+      || !resolved.pathname.startsWith(campaignRoot)
+    ) return null;
+    const remainder = resolved.pathname.slice(campaignRoot.length);
+    if (remainder.includes("/")) return null;
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(remainder)
+      ? remainder
+      : null;
+  } catch {
+    return null;
+  }
+}

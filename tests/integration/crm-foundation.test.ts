@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { createDatabase } from "@outbound/infrastructure/database/client";
-import { approvalItems, authUsers, contacts, contactSuppressions, enrichmentJobs, jobs, prospectDecisions, workspaces } from "@outbound/infrastructure/database/schema";
+import { approvalItems, authUsers, campaignProspects, campaigns, contacts, contactSuppressions, enrichmentJobs, icps, icpVersions, jobs, prospectDecisions, prospectDiscoveryCandidates, prospectDiscoveryRuns, workspaces } from "@outbound/infrastructure/database/schema";
 import { eq } from "drizzle-orm";
 import { createCrmHttpHandler } from "@outbound/interface/http/crm-handler";
 import { PostgresJobQueue } from "@outbound/infrastructure/jobs/postgres-job-queue";
@@ -45,15 +45,23 @@ databaseDescribe("F-020/F-021 CRM foundation", () => {
 
   afterAll(async () => {
     await database.client`drop trigger if exists audit_logs_immutable_trg on audit_logs`;
+    await database.client`drop trigger if exists icp_versions_immutable_trg on icp_versions`;
     await database.client`delete from audit_logs where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`delete from outbox_events where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`delete from prospect_decisions where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`delete from jobs where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
+    await database.client`delete from campaign_prospects where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
+    await database.client`delete from prospect_discovery_candidates where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
+    await database.client`delete from prospect_discovery_runs where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
+    await database.client`delete from campaigns where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
+    await database.client`delete from icp_versions where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
+    await database.client`delete from icps where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`delete from contact_suppressions where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`delete from companies where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`delete from contacts where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`delete from auth_users where id = ${userId}`;
     await database.client`delete from workspaces where id in (${workspaceId}, ${otherWorkspaceId})`;
+    await database.client`create trigger icp_versions_immutable_trg before update or delete on icp_versions for each row execute function reject_icp_version_mutation()`;
     await database.client`create trigger audit_logs_immutable_trg before update or delete on audit_logs for each row execute function reject_audit_log_mutation()`;
     await database.close();
   });
@@ -220,6 +228,101 @@ databaseDescribe("F-020/F-021 CRM foundation", () => {
       requestKey: crypto.randomUUID(),
     })).status).toBe(404);
     context.workspaceId = workspaceId;
+  });
+
+  // Regression: ISSUE-001 — campaign context must be verified and persisted.
+  // Found by /qa on 2026-08-13.
+  test("keeps a verified campaign context on a manual prospect dry-run", async () => {
+    const contactId = crypto.randomUUID();
+    const icpId = crypto.randomUUID();
+    const icpVersionId = crypto.randomUUID();
+    const campaignId = crypto.randomUUID();
+    const runId = crypto.randomUUID();
+    const candidateId = crypto.randomUUID();
+    await database.db.insert(contacts).values({ id: contactId, workspaceId, firstName: "Campaign", lastName: "Context" });
+    await database.db.insert(icps).values({ id: icpId, workspaceId, name: "Campaign context ICP" });
+    await database.db.insert(icpVersions).values({
+      id: icpVersionId,
+      workspaceId,
+      icpId,
+      version: 1,
+      name: "Campaign context ICP",
+      confidence: "0.9000",
+      criteria: [],
+      buyingCommittee: [],
+      problems: [],
+      signals: [],
+      exclusions: [],
+      unknowns: [],
+      unresolvedContradictions: [],
+      blockedFindings: [],
+      publishedAt: new Date(),
+    });
+    await database.db.insert(campaigns).values({
+      id: campaignId,
+      workspaceId,
+      icpVersionId,
+      name: "Campaign context test",
+      status: "draft",
+      channel: "linkedin",
+      sequenceId: crypto.randomUUID(),
+    });
+    await database.db.insert(prospectDiscoveryRuns).values({
+      id: runId,
+      workspaceId,
+      icpVersionId,
+      campaignId,
+      channel: "linkedin",
+      filters: {},
+      status: "completed",
+      completedAt: new Date(),
+    });
+    await database.db.insert(prospectDiscoveryCandidates).values({
+      id: candidateId,
+      workspaceId,
+      runId,
+      fullName: "Campaign Context",
+      linkedinUrl: "https://www.linkedin.com/in/campaign-context",
+      linkedinNormalized: "https://www.linkedin.com/in/campaign-context",
+      channels: {
+        linkedin: {
+          value: "https://www.linkedin.com/in/campaign-context",
+          normalizedValue: "linkedin.com/in/campaign-context",
+          status: "verified",
+          confidence: "high",
+          source: "release_qa_fixture",
+        },
+        email: { value: null, normalizedValue: null, status: "unavailable", confidence: "none", source: null },
+        whatsapp: { value: null, normalizedValue: null, status: "unavailable", confidence: "none", source: null },
+      },
+      providerData: {},
+      icpFit: { matches: [], gaps: [] },
+      importedContactId: contactId,
+    });
+    await database.db.insert(campaignProspects).values({
+      workspaceId,
+      campaignId,
+      contactId,
+      candidateId,
+      score: 80,
+      eligible: true,
+    });
+
+    const accepted = await postJson(`/api/v1/prospects/${contactId}/actions/dry-run`, {
+      reason: "Conserver le contexte de campagne.",
+      requestKey: crypto.randomUUID(),
+      campaignId,
+    });
+    expect(accepted.status).toBe(202);
+    const result = await accepted.json() as { decisionId: string };
+    const [decision] = await database.db.select().from(prospectDecisions).where(eq(prospectDecisions.id, result.decisionId));
+    expect(decision?.campaignId).toBe(campaignId);
+
+    expect((await postJson(`/api/v1/prospects/${contactId}/actions/dry-run`, {
+      reason: "Refuser un contexte non lié.",
+      requestKey: crypto.randomUUID(),
+      campaignId: crypto.randomUUID(),
+    })).status).toBe(404);
   });
 
   test("contacts: employment history, identity uniqueness, persistent suppression", async () => {

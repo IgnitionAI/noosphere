@@ -20,11 +20,12 @@ import {
 export async function requestProspectDryRunAction(
   workspaceSlug: string,
   contactId: string,
+  campaignId: string | null,
   formData: FormData,
 ) {
   const reason = String(formData.get("reason") ?? "").trim()
     || "Réévaluation manuelle demandée depuis la fiche prospect.";
-  await requestProspectDryRun(workspaceSlug, contactId, reason);
+  await requestProspectDryRun(workspaceSlug, contactId, reason, campaignId);
   revalidatePath(`/w/${workspaceSlug}/prospects/${contactId}`);
 }
 

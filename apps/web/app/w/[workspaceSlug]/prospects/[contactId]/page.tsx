@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { CrmPermissionState } from "@/components/crm-states";
 import { getContact, getContactEnrichment, getEnrichmentJob, getProspectView, getSignalCollectionRun, listCalendarBookings, listCompanies, listContactMerges, listContactSignals, listWorkspaces, OutboundApiError, type EnrichmentJobDetail, type EnrichmentObservation, type IntentSignal, type SignalCollectionRun } from "@/lib/api";
 import { MutationForm } from "../../research/[runId]/report/mutation-form";
-import { resolveProspectReturn } from "@/lib/prospect-navigation";
+import { prospectCampaignIdFromReturnTo, resolveProspectReturn } from "@/lib/prospect-navigation";
 import { addEmploymentAction, addIdentityAction, anonymizeContactAction, enrichContactAction, requestProspectDryRunAction, retryEnrichmentJobAction, suppressContactAction, undoContactMergeAction, updateContactAction } from "../actions";
 import { EnrichmentPanel } from "./enrichment-panel";
 import { collectSignalsAction } from "../../signals-actions";
@@ -24,6 +24,7 @@ export default async function ContactDetailPage({
   const { workspaceSlug, contactId } = await params;
   const { returnTo, enrichmentJobId, signalRunId } = await searchParams;
   const returnLink = resolveProspectReturn(workspaceSlug, returnTo);
+  const returnCampaignId = prospectCampaignIdFromReturnTo(workspaceSlug, returnTo);
   let contact;
   try {
     [contact] = await Promise.all([getContact(workspaceSlug, contactId)]);
@@ -86,7 +87,7 @@ export default async function ContactDetailPage({
   const collect = collectSignalsAction.bind(null, workspaceSlug);
   const retry = enrichmentJob?.status === "failed" ? retryEnrichmentJobAction.bind(null, workspaceSlug, contactId, enrichmentJob.id) : null;
   const addIdentity = addIdentityAction.bind(null, workspaceSlug, contactId);
-  const requestDryRun = requestProspectDryRunAction.bind(null, workspaceSlug, contactId);
+  const requestDryRun = requestProspectDryRunAction.bind(null, workspaceSlug, contactId, returnCampaignId);
   const workspace = (await listWorkspaces()).find((item) => item.slug === workspaceSlug);
   const canEdit = workspace ? ["operator", "admin", "owner"].includes(workspace.role) : false;
   const canAdminister = workspace ? ["admin", "owner"].includes(workspace.role) : false;

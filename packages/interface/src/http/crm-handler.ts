@@ -119,6 +119,7 @@ const prospectDryRunPath = /^\/api\/v1\/prospects\/([^/]+)\/actions\/dry-run$/;
 const prospectDryRunSchema = z.object({
   reason: z.string().trim().min(3).max(2_000).default("Réévaluation manuelle demandée depuis la fiche prospect."),
   requestKey: z.string().uuid(),
+  campaignId: uuidSchema.optional(),
 }).strict();
 
 export interface CrmHttpDependencies {
@@ -230,11 +231,15 @@ export function createCrmHttpHandler(dependencies: CrmHttpDependencies) {
         const body = prospectDryRunSchema.parse(await request.json());
         const prospect = await prospectViews.get({ workspaceId: context.workspaceId, contactId });
         if (!prospect) return problem(404, "PROSPECT_NOT_FOUND", "Prospect not found");
+        if (body.campaignId && !prospect.icpMatches.some((match) => match.campaignId === body.campaignId)) {
+          return problem(404, "PROSPECT_CAMPAIGN_NOT_FOUND", "Prospect campaign not found");
+        }
         const scheduledAt = now();
         const scheduled = await prospectDecisions.schedule({
           id: crypto.randomUUID(),
           workspaceId: context.workspaceId,
           contactId,
+          ...(body.campaignId ? { campaignId: body.campaignId } : {}),
           kind: "manual_dry_run",
           reason: body.reason,
           dueAt: scheduledAt,
