@@ -148,8 +148,7 @@ export class UnipileWebhookIngestor {
 }
 
 async function resolveWebhookWorkspace(database: Database, accountId: string): Promise<string | null> {
-  const candidates = new Set<string>();
-  const [selected, connected, action] = await Promise.all([
+  const [selected, connected] = await Promise.all([
     database
       .selectDistinct({ workspaceId: workspaceChannelAccounts.workspaceId })
       .from(workspaceChannelAccounts)
@@ -158,14 +157,19 @@ async function resolveWebhookWorkspace(database: Database, accountId: string): P
       .selectDistinct({ workspaceId: connectedAccounts.workspaceId })
       .from(connectedAccounts)
       .where(and(eq(connectedAccounts.provider, "unipile"), eq(connectedAccounts.providerAccountId, accountId))),
-    database
-      .selectDistinct({ workspaceId: outreachActions.workspaceId })
-      .from(outreachActions)
-      .where(and(eq(outreachActions.provider, "unipile"), eq(outreachActions.providerAccountId, accountId))),
   ]);
-  for (const row of [...selected, ...connected, ...action]) candidates.add(row.workspaceId);
+  const candidates = new Set([...selected, ...connected].map((row) => row.workspaceId));
   if (candidates.size > 1) throw new UnipileWebhookError("WEBHOOK_ACCOUNT_AMBIGUOUS", 409);
-  return candidates.values().next().value ?? null;
+  const currentWorkspaceId = candidates.values().next().value;
+  if (currentWorkspaceId) return currentWorkspaceId;
+
+  const action = await database
+    .selectDistinct({ workspaceId: outreachActions.workspaceId })
+    .from(outreachActions)
+    .where(and(eq(outreachActions.provider, "unipile"), eq(outreachActions.providerAccountId, accountId)));
+  const historicalCandidates = new Set(action.map((row) => row.workspaceId));
+  if (historicalCandidates.size > 1) throw new UnipileWebhookError("WEBHOOK_ACCOUNT_AMBIGUOUS", 409);
+  return historicalCandidates.values().next().value ?? null;
 }
 
 async function matchInboundContact(

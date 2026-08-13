@@ -578,20 +578,24 @@ export class InboundReplyJobProcessor {
       if (input.decision.action === "wait") {
         const resumeAt = input.decision.resumeAt ? new Date(input.decision.resumeAt) : new Date(now.getTime() + 30 * 86_400_000);
         if (Number.isNaN(resumeAt.getTime()) || resumeAt <= now) throw new Error("INBOUND_RESUME_DATE_INVALID");
-        const [resumeAction] = await tx
-          .select({ id: outreachActions.id, enrollmentId: outreachActions.enrollmentId })
-          .from(outreachActions)
-          .where(and(
-            eq(outreachActions.workspaceId, input.workspaceId),
-            eq(outreachActions.contactId, input.contactId),
-            eq(outreachActions.status, "cancelled"),
-            eq(outreachActions.lastErrorCode, "PROSPECT_REPLIED"),
-          ))
-          .orderBy(asc(outreachActions.dueAt))
-          .limit(1);
+        const [resumeAction] = input.campaignId
+          ? await tx
+            .select({ id: outreachActions.id, enrollmentId: outreachActions.enrollmentId })
+            .from(outreachActions)
+            .where(and(
+              eq(outreachActions.workspaceId, input.workspaceId),
+              eq(outreachActions.campaignId, input.campaignId),
+              eq(outreachActions.contactId, input.contactId),
+              eq(outreachActions.status, "cancelled"),
+              eq(outreachActions.lastErrorCode, "PROSPECT_REPLIED"),
+            ))
+            .orderBy(asc(outreachActions.dueAt))
+            .limit(1)
+          : [];
         if (resumeAction) {
           await tx.update(campaignEnrollments).set({ status: "active", completedAt: null }).where(and(
             eq(campaignEnrollments.workspaceId, input.workspaceId),
+            eq(campaignEnrollments.campaignId, input.campaignId!),
             eq(campaignEnrollments.id, resumeAction.enrollmentId),
           ));
           await tx.update(outreachActions).set({
@@ -601,7 +605,11 @@ export class InboundReplyJobProcessor {
             lastErrorCode: null,
             lastErrorMessage: null,
             updatedAt: now,
-          }).where(and(eq(outreachActions.workspaceId, input.workspaceId), eq(outreachActions.id, resumeAction.id)));
+          }).where(and(
+            eq(outreachActions.workspaceId, input.workspaceId),
+            eq(outreachActions.campaignId, input.campaignId!),
+            eq(outreachActions.id, resumeAction.id),
+          ));
           const decisionId = crypto.randomUUID();
           const decisionJobId = crypto.randomUUID();
           const idempotencyKey = `${input.messageId}:resume:v1`;

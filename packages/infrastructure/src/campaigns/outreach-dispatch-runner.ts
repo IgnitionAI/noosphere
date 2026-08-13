@@ -192,21 +192,13 @@ export class OutreachDispatchJobProcessor {
       });
       return;
     }
-    if (!await this.#finalSendGate(deliveryAction, content.recipient.normalizedValue)) {
-      await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
-      return;
-    }
     const attemptId = crypto.randomUUID();
-    await this.database.insert(outreachAttempts).values({
-      id: attemptId,
-      workspaceId: claimed.workspaceId,
-      outreachActionId: claimed.id,
-      attemptNumber: job.attempts,
-      status: "executing",
-      attemptedAt: this.clock.now(),
-    }).onConflictDoNothing();
-    try {
-      const result = await this.gateway.send({
+    const sendOutcome = await this.#sendWithFinalGate(
+      deliveryAction,
+      content.recipient.normalizedValue,
+      attemptId,
+      job.attempts,
+      {
         accountId: deliveryAction.providerAccountId,
         channel: claimed.channel,
         stepKind: claimed.stepKind,
@@ -214,10 +206,18 @@ export class OutreachDispatchJobProcessor {
         subject: content.subject,
         body: content.body,
         idempotencyKey: claimed.idempotencyKey,
-      });
-      await this.#markSent(claimed, attemptId, result);
+      },
+    );
+    if (sendOutcome.kind === "blocked") {
       await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
-    } catch (error) {
+      return;
+    }
+    if (sendOutcome.kind === "sent") {
+      await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
+      return;
+    }
+    const error = sendOutcome.error;
+    {
       if (
         error instanceof OutboundDeliveryError &&
         error.deliveryState === "not_sent" &&
@@ -376,9 +376,43 @@ export class OutreachDispatchJobProcessor {
     return sent.length >= policy.limits[action.channel];
   }
 
-  async #finalSendGate(action: ClaimedAction, normalizedRecipient: string): Promise<boolean> {
+  async #sendWithFinalGate(
+    action: ClaimedAction,
+    normalizedRecipient: string,
+    attemptId: string,
+    attemptNumber: number,
+    request: OutboundSendRequest,
+  ): Promise<
+    | { readonly kind: "blocked" }
+    | { readonly kind: "sent" }
+    | { readonly kind: "error"; readonly error: unknown }
+  > {
     return this.database.transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`${action.workspaceId}:${action.contactId}:outbound`}, 0))`);
+      if (!await this.#finalSendGate(tx, action, normalizedRecipient)) return { kind: "blocked" as const };
+      await tx.insert(outreachAttempts).values({
+        id: attemptId,
+        workspaceId: action.workspaceId,
+        outreachActionId: action.id,
+        attemptNumber,
+        status: "executing",
+        attemptedAt: this.clock.now(),
+      }).onConflictDoNothing();
+      try {
+        const result = await this.gateway.send(request);
+        await this.#markSent(tx, action, attemptId, result);
+        return { kind: "sent" as const };
+      } catch (error) {
+        return { kind: "error" as const, error };
+      }
+    });
+  }
+
+  async #finalSendGate(
+    tx: Parameters<Parameters<Database["transaction"]>[0]>[0],
+    action: ClaimedAction,
+    normalizedRecipient: string,
+  ): Promise<boolean> {
       const [current] = await tx
         .select({
           actionStatus: outreachActions.status,
@@ -475,7 +509,6 @@ export class OutreachDispatchJobProcessor {
         });
       }
       return false;
-    });
   }
 
   async #prepareContentIfNeeded(action: ClaimedAction): Promise<unknown> {
@@ -654,12 +687,12 @@ export class OutreachDispatchJobProcessor {
   }
 
   async #markSent(
+    tx: Parameters<Parameters<Database["transaction"]>[0]>[0],
     action: ClaimedAction,
     attemptId: string,
     result: { providerRequestId: string; conversationId: string | null },
   ) {
     const now = this.clock.now();
-    await this.database.transaction(async (tx) => {
       await tx
         .update(outreachAttempts)
         .set({ status: "sent", providerRequestId: result.providerRequestId })
@@ -743,7 +776,6 @@ export class OutreachDispatchJobProcessor {
           conversationId: result.conversationId,
         },
       });
-    });
   }
 
   async #resetForRetry(action: ClaimedAction, attemptId: string, error: OutboundDeliveryError) {

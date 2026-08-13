@@ -20,7 +20,7 @@ Verdict : approuvé pour merge et exploitation en `dry_run`; activation live blo
 |---|---:|
 | Unitaires et HTTP | 318 réussis, 0 échec |
 | Crawler Python | 40 réussis, 0 échec |
-| PostgreSQL intégration | 101 réussis, 0 échec |
+| PostgreSQL intégration | 104 réussis, 0 échec |
 | TypeScript | réussi |
 | Build API et worker | réussi |
 | Build Next.js production | réussi |
@@ -68,6 +68,20 @@ Un worker unique attendait la fin de recherches longues avant de relire la file,
 
 Le workflow GitHub ne ciblait que les PR vers `preprod` et `prod`. La branche `dev` est maintenant incluse.
 
+### ISSUE-004, reprise d'une mauvaise campagne après une réponse `wait`
+
+Pour un contact présent dans plusieurs campagnes, la reprise sélectionnait auparavant la première action annulée du contact. Elle est désormais strictement filtrée par workspace, campagne, contact et motif `PROSPECT_REPLIED`; sans campagne résolue, aucune reprise automatique n'est créée.
+
+### ISSUE-005, course entre webhook entrant et envoi provider
+
+Le contrôle final relâchait auparavant son verrou transactionnel avant l'appel d'envoi. Le verrou advisory du contact couvre maintenant le contrôle final, la tentative provider et la persistance atomique du succès. Un webhook concurrent attend la fin de l'envoi déjà engagé, puis annule les actions futures sans pouvoir laisser partir un envoi contrôlé sur un état périmé.
+
+### ISSUE-006, ancien historique Unipile pouvant bloquer un webhook
+
+La résolution du workspace mélangeait les affectations actuelles et les anciens envois. Une réaffectation de compte pouvait donc produire une ambiguïté permanente. Les affectations `workspace_channel_accounts` et `connected_accounts` sont maintenant prioritaires; l'historique des actions n'est consulté qu'en fallback.
+
+Trois tests d'intégration dédiés couvrent ces invariants. Une revue indépendante finale du diff corrigé conclut : `No actionable findings`.
+
 ## Blocage externe live
 
 La campagne réelle testée expose correctement :
@@ -83,4 +97,3 @@ Le produit reste en `dry_run` et n'envoie rien. C'est le comportement sûr atten
 - Merge vers `dev` : **APPROUVÉ** après CI GitHub verte.
 - Staging et dry-run : **APPROUVÉ**.
 - Activation live générale : **NON APPROUVÉE** tant que le quota Unipile est dépassé.
-
