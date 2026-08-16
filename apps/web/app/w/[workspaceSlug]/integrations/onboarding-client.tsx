@@ -15,8 +15,8 @@ const STATUS: Record<string, { label: string; className: string }> = {
   expired: { label: "expiré", className: "badge badge-danger" },
 };
 
-export function OnboardingStartForm({ action }: { action: (formData: FormData) => Promise<void> }) {
-  return <form action={action} className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end"><label className="text-xs font-semibold text-muted">Canal<select className="control mt-1 w-full" defaultValue="email" name="channel">{CHANNELS.map((channel) => <option key={channel} value={channel}>{channelLabel(channel)}</option>)}</select></label><button className="button button-signal" type="submit"><ExternalLink size={14} /> Démarrer l’assistant</button></form>;
+export function OnboardingStartForm({ action, defaultChannel = "email" }: { action: (formData: FormData) => Promise<void>; defaultChannel?: (typeof CHANNELS)[number] }) {
+  return <form action={action} className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end"><label className="text-xs font-semibold text-muted">Canal<select className="control mt-1 w-full" defaultValue={defaultChannel} name="channel">{CHANNELS.map((channel) => <option key={channel} value={channel}>{channelLabel(channel)}</option>)}</select></label><button className="button button-signal" type="submit"><ExternalLink size={14} /> Démarrer l’assistant</button></form>;
 }
 
 export function OnboardingProgress({ onboarding, workspaceSlug }: { onboarding: ConnectionOnboarding; workspaceSlug: string }) {

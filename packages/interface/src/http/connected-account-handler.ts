@@ -327,15 +327,25 @@ async function handleOnboardingCallback(
     destination.searchParams.set("error", "HOSTED_AUTH_EXPIRED");
     return redirect(destination);
   }
+  // Unipile's documented Hosted Auth callback reports critical provider
+  // failures as error_type/error_title/error_detail. Do not require our
+  // private result marker here: a valid success callback may contain only
+  // account_id and provider, and a failure callback may omit result entirely.
+  const providerErrorType = url.searchParams.get("error_type");
   const providerResult = url.searchParams.get("result");
-  if (providerResult === "failure") {
-    const providerError = safeProviderError(url.searchParams.get("error"));
-    await repository.failOnboarding({ workspaceId: resolved.workspaceId, id: onboardingId, errorCode: "HOSTED_AUTH_FAILED", errorMessage: providerError });
+  if (providerErrorType || providerResult === "failure") {
+    const errorCode = providerErrorType ? hostedAuthFailureCode(providerErrorType) : "HOSTED_AUTH_FAILED";
+    const providerError = safeProviderError(
+      url.searchParams.get("error_detail")
+      ?? url.searchParams.get("error_title")
+      ?? url.searchParams.get("error"),
+    );
+    await repository.failOnboarding({ workspaceId: resolved.workspaceId, id: onboardingId, errorCode, errorMessage: providerError });
     destination.searchParams.set("connection", "failed");
-    destination.searchParams.set("error", "HOSTED_AUTH_FAILED");
+    destination.searchParams.set("error", errorCode);
     return redirect(destination);
   }
-  if (providerResult !== "success") return problem(400, "INVALID_ONBOARDING_CALLBACK", "The provider callback result is invalid");
+  if (providerResult && providerResult !== "success") return problem(400, "INVALID_ONBOARDING_CALLBACK", "The provider callback result is invalid");
   const providerAccountId = url.searchParams.get("account_id");
   if (!providerAccountId || providerAccountId.length > 300) {
     return problem(400, "INVALID_ONBOARDING_CALLBACK", "The provider account id is missing or invalid");
@@ -368,6 +378,12 @@ function hashCallbackToken(token: string): string {
 function safeProviderError(value: string | null): string {
   if (!value) return "La connexion au fournisseur a échoué.";
   return value.replace(/[\r\n\0]/g, " ").slice(0, 500);
+}
+
+function hostedAuthFailureCode(errorType: string): string {
+  if (errorType === "api/already_exists") return "HOSTED_AUTH_ACCOUNT_ALREADY_EXISTS";
+  if (errorType === "api/restricted_account") return "HOSTED_AUTH_ACCOUNT_RESTRICTED";
+  return "HOSTED_AUTH_FAILED";
 }
 
 function redirect(url: URL): Response {

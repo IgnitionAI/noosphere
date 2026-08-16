@@ -161,5 +161,36 @@ databaseDescribe("F-035 connected accounts", () => {
     context.role = "viewer";
     expect((await send("GET", `/api/v1/connected-accounts/${completion.account.id}/quotas`)).status).toBe(403);
     context.role = "admin";
+
+    const linkedinStart = await send("POST", "/api/v1/connected-accounts/onboarding", { channel: "linkedin" });
+    expect(linkedinStart.status).toBe(201);
+    const linkedinOnboarding = await linkedinStart.json() as { id: string; status: string; channel: string };
+    expect(linkedinOnboarding.channel).toBe("linkedin");
+
+    // Unipile's documented success callback contains account_id/provider and
+    // does not require our private result marker to be present.
+    const linkedinSuccessUrl = new URL(hostedRequest!.successRedirectUrl);
+    linkedinSuccessUrl.searchParams.delete("result");
+    linkedinSuccessUrl.searchParams.set("account_id", `linkedin-${crypto.randomUUID()}`);
+    linkedinSuccessUrl.searchParams.set("provider", "LINKEDIN");
+    const linkedinCompleted = await handle(new Request(linkedinSuccessUrl));
+    expect(linkedinCompleted.status).toBe(303);
+
+    const restrictedStart = await send("POST", "/api/v1/connected-accounts/onboarding", { channel: "linkedin" });
+    expect(restrictedStart.status).toBe(201);
+    const restrictedOnboarding = await restrictedStart.json() as { id: string };
+    const restrictedUrl = new URL(hostedRequest!.failureRedirectUrl);
+    restrictedUrl.searchParams.delete("result");
+    restrictedUrl.searchParams.set("error_type", "api/restricted_account");
+    restrictedUrl.searchParams.set("error_title", "Restricted account");
+    restrictedUrl.searchParams.set("error_detail", "LinkedIn requires a new connection");
+    const restrictedResponse = await handle(new Request(restrictedUrl));
+    expect(restrictedResponse.status).toBe(303);
+    expect(restrictedResponse.headers.get("location")).toContain(`onboardingId=${restrictedOnboarding.id}`);
+    const restrictedState = await send("GET", `/api/v1/connected-accounts/onboarding/${restrictedOnboarding.id}`);
+    const restrictedBody = await restrictedState.json() as { status: string; errorCode: string | null; errorMessage: string | null };
+    expect(restrictedBody.status).toBe("failed");
+    expect(restrictedBody.errorCode).toBe("HOSTED_AUTH_ACCOUNT_RESTRICTED");
+    expect(restrictedBody.errorMessage).toContain("LinkedIn requires");
   });
 });

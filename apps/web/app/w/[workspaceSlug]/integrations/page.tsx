@@ -32,10 +32,10 @@ export default async function IntegrationsPage({
   searchParams,
 }: {
   params: Promise<{ workspaceSlug: string }>;
-  searchParams: Promise<{ onboardingId?: string }>;
+  searchParams: Promise<{ onboardingId?: string; channel?: string }>;
 }) {
   const { workspaceSlug } = await params;
-  const { onboardingId } = await searchParams;
+  const { onboardingId, channel } = await searchParams;
   const workspace = (await listWorkspaces()).find((item) => item.slug === workspaceSlug);
   if (!workspace) return <CrmPermissionState resource="les intégrations" />;
   let accounts: ConnectedAccount[];
@@ -47,6 +47,7 @@ export default async function IntegrationsPage({
   }
   const canManage = ["admin", "owner"].includes(workspace.role);
   const canReadOperations = ["operator", "admin", "owner"].includes(workspace.role);
+  const defaultChannel = channel === "email" || channel === "linkedin" || channel === "whatsapp" ? channel : undefined;
   const onboarding = canManage && onboardingId ? await loadOnboarding(workspaceSlug, onboardingId) : null;
   const quotaEntries = canReadOperations
     ? await Promise.all(accounts.map(async (account) => [account.id, await loadQuota(workspaceSlug, account.id)] as const))
@@ -66,7 +67,7 @@ export default async function IntegrationsPage({
         <p className="mt-2 max-w-3xl text-sm leading-6 text-muted">Suivez la santé et les capacités réelles de vos comptes d’envoi. L’assistant utilise un lien hébergé : aucun secret ne transite par le navigateur.</p>
       </header>
 
-      {canManage ? <OnboardingSection action={start} /> : <p className="mb-5 rounded-lg border border-line bg-slate-50 p-3 text-xs text-muted">Votre rôle peut consulter la santé des comptes. La connexion, reconnexion et déconnexion sont réservées aux admins et owners.</p>}
+      {canManage ? <OnboardingSection action={start} {...(defaultChannel ? { defaultChannel } : {})} /> : <p className="mb-5 rounded-lg border border-line bg-slate-50 p-3 text-xs text-muted">Votre rôle peut consulter la santé des comptes. La connexion, reconnexion et déconnexion sont réservées aux admins et owners.</p>}
       {onboarding ? <OnboardingProgress onboarding={onboarding} workspaceSlug={workspaceSlug} /> : null}
 
       <section className="panel">
@@ -79,8 +80,8 @@ export default async function IntegrationsPage({
   );
 }
 
-function OnboardingSection({ action }: { action: (formData: FormData) => Promise<void> }) {
-  return <section className="panel mb-5"><div className="panel-header"><div><h2 className="flex items-center gap-2 font-semibold"><Link2 size={15} className="text-brand-blue" /> Connecter un compte</h2><p className="mt-1 text-xs text-muted">Choisissez un canal. Un onboarding actif pour ce canal sera repris automatiquement.</p></div></div><div className="panel-body"><OnboardingStartForm action={action} /></div></section>;
+function OnboardingSection({ action, defaultChannel }: { action: (formData: FormData) => Promise<void>; defaultChannel?: "email" | "linkedin" | "whatsapp" }) {
+  return <section className="panel mb-5" id="connect-account"><div className="panel-header"><div><h2 className="flex items-center gap-2 font-semibold"><Link2 size={15} className="text-brand-blue" /> Connecter un compte</h2><p className="mt-1 text-xs text-muted">Choisissez un canal. Un onboarding actif pour ce canal sera repris automatiquement.</p></div></div><div className="panel-body"><OnboardingStartForm action={action} {...(defaultChannel ? { defaultChannel } : {})} /></div></section>;
 }
 
 function AccountCard({ account, canManage, workspaceSlug, quota, impact }: { account: ConnectedAccount; canManage: boolean; workspaceSlug: string; quota: AccountQuota | null; impact: AccountSuspensionImpact | null }) {
