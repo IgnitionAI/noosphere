@@ -5,6 +5,7 @@ import { getProspectView, listProspectViews, type ProspectViewSummary } from "@/
 import {
   buildInboxChannelHref,
   buildInboxHref,
+  buildInboxScopeHref,
   inboxPeriod,
   inboxReadState,
   inboxScope,
@@ -107,6 +108,25 @@ export default async function InboxPage({
         />
       </nav>
 
+      <nav aria-label="Périmètre de campagne" className="mb-5 flex flex-wrap items-center gap-2">
+        <span className="mr-1 text-xs font-semibold uppercase tracking-wide text-muted">Périmètre</span>
+        <InboxScopeTab
+          active={scope === "all"}
+          href={buildInboxScopeHref(workspaceSlug, query, "all")}
+          label="Toutes"
+        />
+        <InboxScopeTab
+          active={scope === "campaign"}
+          href={buildInboxScopeHref(workspaceSlug, query, "campaign")}
+          label="En campagne"
+        />
+        <InboxScopeTab
+          active={scope === "outside_campaign"}
+          href={buildInboxScopeHref(workspaceSlug, query, "outside_campaign")}
+          label="Hors campagne"
+        />
+      </nav>
+
       <section className="panel mb-5">
         <form className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-4" method="get">
           <label className="relative sm:col-span-2 xl:col-span-2">
@@ -172,7 +192,7 @@ export default async function InboxPage({
                       <div className="flex flex-wrap items-center gap-2">
                         <strong className="text-sm">{prospect.firstName} {prospect.lastName}</strong>
                         {isHot(prospect) ? <span className="badge badge-success">chaud</span> : null}
-                        {prospect.conversation?.channel === "linkedin" && !prospect.conversation.campaignId ? <span className="badge">hors campagne</span> : null}
+                        {prospectCampaignId(prospect) ? <span className="badge badge-success">campagne</span> : <span className="badge">hors campagne</span>}
                         {(prospect.conversation?.unreadCount ?? 0) > 0 ? <span className="badge badge-signal">{prospect.conversation!.unreadCount} non lu{prospect.conversation!.unreadCount > 1 ? "s" : ""}</span> : null}
                       </div>
                       <p className="mt-1 truncate text-xs text-muted">{prospect.currentEmployment ? `${prospect.currentEmployment.title} · ${prospect.currentEmployment.companyName}` : prospect.icpMatches[0]?.companyName ?? "Entreprise à confirmer"}</p>
@@ -223,12 +243,28 @@ function InboxChannelTab({
   );
 }
 
+function InboxScopeTab({ active, href, label }: { active: boolean; href: string; label: string }) {
+  return (
+    <Link
+      aria-current={active ? "page" : undefined}
+      className={`rounded-lg border px-3 py-2 text-xs font-semibold transition ${active ? "border-navy bg-navy text-white" : "border-line bg-white text-muted hover:border-navy/30 hover:text-navy"}`}
+      href={href}
+    >
+      {label}
+    </Link>
+  );
+}
+
 function matchesView(prospect: ProspectViewSummary, view: InboxView): boolean {
   if (view === "all") return true;
   if (view === "replies") return prospect.latestActivity?.direction === "inbound";
   if (view === "hot") return isHot(prospect);
   if (view === "waiting") return !prospect.conversation && prospect.latestActivity?.direction === "outbound";
   return prospect.latestActivity?.status === "failed";
+}
+
+function prospectCampaignId(prospect: ProspectViewSummary): string | null {
+  return prospect.latestActivity?.campaignId ?? prospect.conversation?.campaignId ?? null;
 }
 
 function isHot(prospect: ProspectViewSummary): boolean {

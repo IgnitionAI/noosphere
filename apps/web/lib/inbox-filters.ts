@@ -18,6 +18,17 @@ export interface InboxFilterQuery {
   readonly read?: string;
 }
 
+export function buildInboxScopeHref(
+  workspaceSlug: string,
+  query: InboxFilterQuery,
+  scope: InboxScope,
+): string {
+  const params = inboxParams(query);
+  params.delete("scope");
+  if (scope !== "all") params.set("scope", scope);
+  return `/w/${workspaceSlug}/inbox${params.size ? `?${params.toString()}` : ""}`;
+}
+
 export function inboxScope(value: string | undefined): InboxScope {
   return value === "campaign" || value === "outside_campaign" ? value : "all";
 }
@@ -37,13 +48,14 @@ export function matchesInboxScope(
   scope: InboxScope,
 ): boolean {
   if (scope === "all") return true;
-  const belongsToCampaign = (
-    prospect.conversation?.campaignId !== null
-    && prospect.conversation?.campaignId !== undefined
-  ) || prospect.icpMatches.length > 0;
+  // An ICP match is not a campaign membership. A contact can match an ICP
+  // while the current conversation remains outside any campaign. The inbox
+  // scope follows the activity/conversation that is actually being shown.
+  const campaignId = prospect.latestActivity?.campaignId ?? prospect.conversation?.campaignId ?? null;
+  const belongsToCampaign = Boolean(campaignId);
   return scope === "campaign"
     ? belongsToCampaign
-    : Boolean(prospect.conversation && prospect.conversation.campaignId === null);
+    : !belongsToCampaign;
 }
 
 export function matchesInboxPeriod(

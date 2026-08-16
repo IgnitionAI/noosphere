@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildInboxChannelHref,
+  buildInboxScopeHref,
   matchesInboxPeriod,
   matchesInboxReadState,
   matchesInboxScope,
@@ -11,7 +12,9 @@ describe("inbox filters", () => {
     expect(matchesInboxScope(prospect({ campaignId: null }), "outside_campaign")).toBe(true);
     expect(matchesInboxScope(prospect({ campaignId: "campaign-1" }), "outside_campaign")).toBe(false);
     expect(matchesInboxScope(prospect({ campaignId: "campaign-1" }), "campaign")).toBe(true);
-    expect(matchesInboxScope(prospect({ icpMatches: [{}] }), "campaign")).toBe(true);
+    expect(matchesInboxScope(prospect({ icpMatches: [{}] }), "campaign")).toBe(false);
+    expect(matchesInboxScope(prospect({ activityCampaignId: "campaign-2", icpMatches: [] }), "campaign")).toBe(true);
+    expect(matchesInboxScope(prospect({ activityCampaignId: "campaign-2", campaignId: null }), "outside_campaign")).toBe(false);
   });
 
   test("filters unread conversations and activity periods", () => {
@@ -36,10 +39,24 @@ describe("inbox filters", () => {
       "/w/ignition-ai/inbox?search=martin&view=replies&scope=outside_campaign&period=7d&read=unread&channel=linkedin",
     );
   });
+
+  test("keeps every active filter when switching campaign scope", () => {
+    expect(buildInboxScopeHref("ignition-ai", {
+      search: "martin",
+      channel: "linkedin",
+      view: "replies",
+      scope: "campaign",
+      period: "7d",
+      read: "unread",
+    }, "outside_campaign")).toBe(
+      "/w/ignition-ai/inbox?search=martin&channel=linkedin&view=replies&period=7d&read=unread&scope=outside_campaign",
+    );
+  });
 });
 
 function prospect(input: {
   campaignId?: string | null;
+  activityCampaignId?: string | null;
   icpMatches?: unknown[];
   occurredAt?: string;
   unreadCount?: number;
@@ -49,6 +66,8 @@ function prospect(input: {
       ? null
       : { campaignId: input.campaignId ?? null, unreadCount: input.unreadCount ?? 0 },
     icpMatches: input.icpMatches ?? [],
-    latestActivity: input.occurredAt ? { occurredAt: input.occurredAt } : null,
+    latestActivity: input.occurredAt || input.activityCampaignId
+      ? { occurredAt: input.occurredAt ?? "2026-08-04T12:00:00.000Z", campaignId: input.activityCampaignId ?? null }
+      : null,
   } as never;
 }
