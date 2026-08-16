@@ -178,7 +178,7 @@ function providerChannel(type: string): ProspectingChannel | null {
   const normalized = type.toUpperCase();
   if (normalized === "LINKEDIN") return "linkedin";
   if (normalized === "WHATSAPP") return "whatsapp";
-  if (["GOOGLE", "MICROSOFT", "IMAP"].includes(normalized)) return "email";
+  if (["GOOGLE", "GOOGLE_OAUTH", "MICROSOFT", "OUTLOOK", "IMAP"].includes(normalized)) return "email";
   return null;
 }
 

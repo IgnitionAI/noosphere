@@ -79,6 +79,11 @@ databaseDescribe("F-035 connected accounts", () => {
     expect(stored).toHaveLength(0);
     const row = await database.client<{ id: string; encrypted_secret: string }[]>`select id, encrypted_secret from connected_accounts where workspace_id = ${workspaceId} and provider_account_id = ${providerAccountId}`;
     expect(row[0]?.encrypted_secret).not.toContain("top-secret-token");
+    await database.client`update connected_accounts set status = 'unknown', capabilities = '{}'::jsonb where workspace_id = ${workspaceId} and provider_account_id = ${providerAccountId}`;
+    const refreshed = await send("GET", "/api/v1/connected-accounts");
+    const refreshedAccount = ((await refreshed.json()) as { data: { providerAccountId: string; status: string; capabilities: Record<string, unknown> }[] }).data.find((account) => account.providerAccountId === providerAccountId);
+    expect(refreshedAccount?.status).toBe("connected");
+    expect(refreshedAccount?.capabilities).toEqual(snapshot.capabilities);
     expect((await send("POST", "/api/v1/connected-accounts", { providerAccountId, accessToken: "another-token" })).status).toBe(409);
 
     context.role = "operator";
@@ -102,7 +107,7 @@ databaseDescribe("F-035 connected accounts", () => {
     const status = await database.client<{ status: string }[]>`select status from connected_accounts where workspace_id = ${workspaceId} and provider_account_id = ${providerAccountId}`;
     expect(status[0]?.status).toBe("degraded");
     const events = await database.client<{ count: number }[]>`select count(*)::int as count from outbox_events where workspace_id = ${workspaceId} and event_type = 'ConnectedAccountStatusChanged'`;
-    expect(events[0]?.count).toBe(2);
+    expect(events[0]?.count).toBe(3);
 
     const invalid = await handle(new Request("http://localhost/api/v1/webhooks/unipile", { method: "POST", headers: { "x-unipile-signature": "00", "content-type": "application/json" }, body }));
     expect(invalid.status).toBe(401);

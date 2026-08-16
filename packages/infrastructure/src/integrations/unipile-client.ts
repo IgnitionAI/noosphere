@@ -154,13 +154,16 @@ function retryAfter(value: string | null): number | undefined {
   return Number.isFinite(seconds) ? Math.max(1_000, seconds * 1_000) : undefined;
 }
 
-function mapSnapshot(providerAccountId: string, body: Record<string, unknown>): UnipileAccountSnapshot {
+export function mapSnapshot(providerAccountId: string, body: Record<string, unknown>): UnipileAccountSnapshot {
+  const sources = sourceSnapshots(body.sources);
+  const providerType = typeof body.type === "string" ? body.type.toUpperCase() : "";
+  const declaredCapabilities = objectValue(body.capabilities ?? body.supported_channels ?? body.channels);
   return {
     providerAccountId,
     displayName: typeof body.name === "string" ? body.name : typeof body.username === "string" ? body.username : null,
-    status: normalizeStatus(body.status),
-    capabilities: objectValue(body.capabilities ?? body.supported_channels ?? body.channels),
-    quotas: objectValue(body.quotas ?? body.limits),
+    status: normalizeStatus(body.status ?? statusFromSources(sources)),
+    capabilities: declaredCapabilities ?? derivedCapabilities(providerType, sources),
+    quotas: objectValue(body.quotas ?? body.limits) ?? {},
   };
 }
 
@@ -172,7 +175,46 @@ export function normalizeStatus(value: unknown): ConnectedAccountStatus {
   return "unknown";
 }
 
-function objectValue(value: unknown): Readonly<Record<string, unknown>> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+function objectValue(value: unknown): Readonly<Record<string, unknown>> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   return value as Readonly<Record<string, unknown>>;
+}
+
+interface UnipileSourceSnapshot {
+  readonly id: string | null;
+  readonly status: string;
+}
+
+function sourceSnapshots(value: unknown): readonly UnipileSourceSnapshot[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+    const source = item as Record<string, unknown>;
+    return [{
+      id: typeof source.id === "string" ? source.id : null,
+      status: typeof source.status === "string" ? source.status.toUpperCase() : "",
+    }];
+  });
+}
+
+function statusFromSources(sources: readonly UnipileSourceSnapshot[]): ConnectedAccountStatus {
+  if (sources.some((source) => ["DISCONNECTED", "REVOKED", "REMOVED"].includes(source.status))) return "disconnected";
+  if (sources.some((source) => ["ERROR", "FAILED", "KO", "DOWN"].includes(source.status))) return "degraded";
+  if (sources.some((source) => ["OK", "CONNECTED", "ACTIVE", "READY"].includes(source.status))) return "connected";
+  return "unknown";
+}
+
+function derivedCapabilities(providerType: string, sources: readonly UnipileSourceSnapshot[]): Readonly<Record<string, unknown>> {
+  const healthy = sources.some((source) => source.status === "OK");
+  if (!healthy) return {};
+  const hasSource = (suffix: string): boolean => sources.some((source) => source.id?.toUpperCase().endsWith(suffix));
+  if (providerType === "LINKEDIN") return { linkedin: { sending: hasSource("_MESSAGING") } };
+  if (providerType === "WHATSAPP") return { whatsapp: { sending: true } };
+  if (["GOOGLE", "GOOGLE_OAUTH", "MICROSOFT", "OUTLOOK", "IMAP"].includes(providerType)) {
+    return {
+      email: { sending: hasSource("_MAIL") || hasSource("_MAILS") || providerType === "IMAP" || providerType === "OUTLOOK", receiving: hasSource("_MAIL") || hasSource("_MAILS") },
+      ...(hasSource("_CALENDAR") ? { calendar: { booking: true } } : {}),
+    };
+  }
+  return {};
 }

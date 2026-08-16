@@ -8,7 +8,7 @@ import {
   WorkspaceContextRequiredError,
 } from "./request-context";
 import type { Database } from "@outbound/infrastructure/database/client";
-import { PostgresConnectedAccountRepository } from "@outbound/infrastructure/integrations/postgres-connected-account-repository";
+import { PostgresConnectedAccountRepository, type ConnectedAccountView } from "@outbound/infrastructure/integrations/postgres-connected-account-repository";
 import {
   normalizeStatus,
   type UnipileAccountSnapshot,
@@ -138,7 +138,11 @@ export function createConnectedAccountHttpHandler(dependencies: ConnectedAccount
       if (url.pathname === "/api/v1/connected-accounts") {
         if (request.method === "GET") {
           requireViewer(context.role);
-          return json({ data: (await repository.list(context.workspaceId)).map((account) => viewForRole(account, context.role)) });
+          const accounts = await repository.list(context.workspaceId);
+          const refreshed = ["admin", "owner"].includes(context.role)
+            ? await Promise.all(accounts.map((account) => refreshAccount({ account, workspaceId: context.workspaceId, actorUserId: context.userId, client: dependencies.client, repository })))
+            : accounts;
+          return json({ data: refreshed.map((account) => viewForRole(account, context.role)) });
         }
         if (request.method === "POST") {
           requireAdmin(context.role);
@@ -263,6 +267,46 @@ export function createConnectedAccountHttpHandler(dependencies: ConnectedAccount
       return problem(500, "INTERNAL_ERROR", "An unexpected error occurred");
     }
   };
+}
+
+async function refreshAccount(input: {
+  account: ConnectedAccountView;
+  workspaceId: string;
+  actorUserId: string;
+  client: UnipileClient;
+  repository: PostgresConnectedAccountRepository;
+}): Promise<ConnectedAccountView> {
+  const stored = await input.repository.getWithSecret({ workspaceId: input.workspaceId, id: input.account.id });
+  if (!stored) return input.account;
+  try {
+    const snapshot = await input.client.check({
+      providerAccountId: stored.providerAccountId,
+      accessToken: decryptSecret(stored.encryptedSecret),
+    });
+    return await input.repository.updateFromProvider({
+      workspaceId: input.workspaceId,
+      accountId: input.account.id,
+      snapshot,
+      actorUserId: input.actorUserId,
+    }) ?? input.account;
+  } catch (error) {
+    if (!(error instanceof ProviderUnavailableError)) throw error;
+    const unknown: UnipileAccountSnapshot = {
+      providerAccountId: stored.providerAccountId,
+      displayName: stored.displayName,
+      status: "unknown",
+      capabilities: asRecord(stored.capabilities),
+      quotas: asRecord(stored.quotas),
+    };
+    return await input.repository.updateFromProvider({
+      workspaceId: input.workspaceId,
+      accountId: input.account.id,
+      snapshot: unknown,
+      errorCode: "PROVIDER_UNAVAILABLE",
+      errorMessage: error.message,
+      actorUserId: input.actorUserId,
+    }) ?? input.account;
+  }
 }
 
 async function handleWebhook(
