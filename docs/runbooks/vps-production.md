@@ -25,6 +25,7 @@ Le mot de passe PostgreSQL doit rester URL-safe, car il est injecté dans
 
 ```bash
 chmod 600 .env
+ENV_FILE=.env bash deploy/validate-production-env.sh
 docker compose --env-file .env \
   -f compose.infrastructure.yml -f compose.production.yml \
   build
