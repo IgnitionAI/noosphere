@@ -37,6 +37,8 @@ Puis vérifier :
 
 ```bash
 bash deploy/healthcheck.sh
+set -a; source .env; set +a
+bash deploy/provider-readiness.sh
 ```
 
 ## Sauvegarder
