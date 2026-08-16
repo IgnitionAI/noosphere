@@ -61,4 +61,17 @@ Avant toute campagne live, vérifier `GET /api/v1/accounts`, la santé du compte
 LinkedIn et du compte WhatsApp, puis envoyer un seul message vers une
 destination interne explicitement autorisée. Le canary doit confirmer
 l'absence de `422 limit_exceeded`; sinon laisser les campagnes en dry-run et
-corriger le quota fournisseur.
+corriger le quota fournisseur. Le script refuse tout envoi sans confirmation
+explicite :
+
+```bash
+CANARY_CONFIRM=SEND_ONE_LIVE_CANARY \
+CANARY_CHANNEL=whatsapp \
+CANARY_ACCOUNT_ID="$UNIPILE_WHATSAPP_ACCOUNT_ID" \
+CANARY_RECIPIENT=33600000000 \
+CANARY_MESSAGE='Canary Ignition Outbound — merci de ne pas répondre.' \
+bash deploy/unipile-canary.sh
+```
+
+Une réponse `422 limit_exceeded` arrête le script et interdit l’activation des
+campagnes autonomes.
