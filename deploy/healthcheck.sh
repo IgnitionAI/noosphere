@@ -3,8 +3,9 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
+ENV_FILE="${ENV_FILE:-.env}"
 
-docker compose --env-file .env \
+docker compose --env-file "$ENV_FILE" \
   -f compose.infrastructure.yml -f compose.production.yml ps
 
 BASE_URL="${PUBLIC_WEBHOOK_BASE_URL:?PUBLIC_WEBHOOK_BASE_URL is required}"
