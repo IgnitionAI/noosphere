@@ -100,6 +100,26 @@ databaseDescribe("F-052 workspace onboarding", () => {
   });
 
   test("completes autopilot idempotently and isolates another workspace", async () => {
+    const automaticCampaignId = crypto.randomUUID();
+    await database.db.insert(campaigns).values({
+      id: automaticCampaignId,
+      workspaceId,
+      name: "F-052 automatic campaign",
+      objective: "Configuration générée par l’IA",
+      status: "draft",
+      icpVersionId,
+      channel: "email",
+      sequenceId: crypto.randomUUID(),
+      autopilotPolicy: { enabled: true },
+      createdBy: ownerId,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const automaticProgress = await service.getProgress({ workspaceId, actorUserId: ownerId, role: "owner", now });
+    const [automaticCampaign] = await database.db.select({ aiPolicyVersionId: campaigns.aiPolicyVersionId }).from(campaigns).where(eq(campaigns.id, automaticCampaignId));
+    expect(automaticCampaign?.aiPolicyVersionId).not.toBeNull();
+    expect(automaticProgress).toMatchObject({ completed: true, currentStep: null });
+
     await database.db.insert(aiPolicies).values({ id: policyId, workspaceId, name: "F-052 policy", currentVersion: 1, draftRules: {}, createdBy: ownerId, createdAt: now, updatedAt: now });
     await database.db.insert(aiPolicyVersions).values({ id: policyVersionId, workspaceId, policyId, version: 1, rules: {}, publishedBy: ownerId, publishedAt: now, createdAt: now });
     await database.db.insert(campaigns).values({ id: crypto.randomUUID(), workspaceId, name: "F-052 campaign", objective: "Première campagne", status: "active", icpVersionId, aiPolicyVersionId: policyVersionId, channel: "email", sequenceId: crypto.randomUUID(), autopilotPolicy: { enabled: true }, createdBy: ownerId, activatedBy: ownerId, activatedAt: now, createdAt: now, updatedAt: now });

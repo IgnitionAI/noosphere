@@ -1,7 +1,8 @@
-import { and, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import type { Database } from "@outbound/infrastructure/database/client";
 import {
   aiPolicyVersions,
+  aiPolicies,
   calendarConnections,
   campaigns,
   connectedAccounts,
@@ -29,6 +30,7 @@ export type WorkspaceOnboardingStep = (typeof WORKSPACE_ONBOARDING_STEPS)[number
 export type WorkspaceOnboardingStatus = "pending" | "completed" | "skipped";
 
 type Executor = Database | Parameters<Parameters<Database["transaction"]>[0]>[0];
+type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
 
 export interface WorkspaceOnboardingStepView {
   readonly key: WorkspaceOnboardingStep;
@@ -69,7 +71,9 @@ export class PostgresWorkspaceOnboarding {
   constructor(private readonly database: Database) {}
 
   async getProgress(input: { workspaceId: string; actorUserId: string; role: WorkspaceRole; now?: Date }): Promise<WorkspaceOnboardingProgress> {
-    await this.#ensureStarted(input.workspaceId, input.actorUserId, input.now ?? new Date());
+    const now = input.now ?? new Date();
+    await this.#ensureStarted(input.workspaceId, input.actorUserId, now);
+    await this.#reconcileAutopilot(input.workspaceId, input.actorUserId, now);
     return this.#readProgress(this.database, input.workspaceId, input.role);
   }
 
@@ -79,6 +83,9 @@ export class PostgresWorkspaceOnboarding {
     await this.database.transaction(async (tx) => {
       await lockWorkspace(tx, input.workspaceId);
       await ensureRows(tx, input.workspaceId, now);
+      if (input.step === "autopilot") {
+        await ensureAutopilot(tx, input.workspaceId, input.actorUserId, now);
+      }
       const rows = await tx.select().from(workspaceOnboarding).where(eq(workspaceOnboarding.workspaceId, input.workspaceId));
       const current = rows.find((row) => row.step === input.step);
       if (!current) throw new WorkspaceOnboardingError("ONBOARDING_STEP_NOT_FOUND", 404);
@@ -105,6 +112,43 @@ export class PostgresWorkspaceOnboarding {
       if (input.step === "autopilot") await recordCompletion(tx, input.workspaceId, input.actorUserId, now);
     });
     return this.#readProgress(this.database, input.workspaceId, input.role);
+  }
+
+  async #reconcileAutopilot(workspaceId: string, actorUserId: string, now: Date): Promise<void> {
+    await this.database.transaction(async (tx) => {
+      await lockWorkspace(tx, workspaceId);
+      await ensureRows(tx, workspaceId, now);
+      await ensureAutopilot(tx, workspaceId, actorUserId, now);
+      const rows = await tx.select().from(workspaceOnboarding).where(eq(workspaceOnboarding.workspaceId, workspaceId));
+      const autopilot = rows.find((row) => row.step === "autopilot");
+      if (!autopilot || autopilot.status !== "pending") return;
+      try {
+        assertPreviousStepsCompleted(rows, "autopilot");
+      } catch {
+        return;
+      }
+      const prerequisites = await readPrerequisites(tx, workspaceId);
+      if (!prerequisites.autopilotReady) return;
+      await tx.update(workspaceOnboarding).set({
+        status: "completed",
+        actorUserId,
+        completedAt: now,
+        updatedAt: now,
+      }).where(and(
+        eq(workspaceOnboarding.workspaceId, workspaceId),
+        eq(workspaceOnboarding.step, "autopilot"),
+        eq(workspaceOnboarding.status, "pending"),
+      ));
+      await tx.insert(outboxEvents).values({
+        workspaceId,
+        aggregateType: "WorkspaceOnboarding",
+        aggregateId: workspaceId,
+        eventType: "OnboardingStepCompleted",
+        payload: { workspaceId, step: "autopilot", actorUserId, source: "ai_autopilot" },
+        createdAt: now,
+      });
+      await recordCompletion(tx, workspaceId, actorUserId, now);
+    });
   }
 
   async skipOptionalStep(input: { workspaceId: string; step: WorkspaceOnboardingStep; actorUserId: string; role: WorkspaceRole; now?: Date }): Promise<WorkspaceOnboardingProgress> {
@@ -194,7 +238,7 @@ const STEP_DEFINITIONS: Record<WorkspaceOnboardingStep, { title: string; descrip
   sending_account: { title: "Compte d’envoi", description: "Connectez et vérifiez au moins un compte Unipile.", optional: false, requiredRole: "owner_or_admin" },
   calendar: { title: "Calendrier", description: "Connectez Cal.com pour proposer et réserver des rendez-vous.", optional: true, requiredRole: "owner_or_admin" },
   prerequisites: { title: "Prérequis", description: "Vérifiez les éléments obligatoires avant l’activation.", optional: false, requiredRole: "member" },
-  autopilot: { title: "Autopilote", description: "Activez une première campagne avec une politique IA publiée.", optional: false, requiredRole: "member" },
+  autopilot: { title: "Autopilote", description: "L’IA prépare une première campagne prête à démarrer.", optional: false, requiredRole: "member" },
 };
 
 type Prerequisites = Awaited<ReturnType<typeof readPrerequisites>>;
@@ -208,7 +252,7 @@ async function readPrerequisites(executor: Executor, workspaceId: string) {
     executor.select({ id: connectedAccounts.id }).from(connectedAccounts).where(and(eq(connectedAccounts.workspaceId, workspaceId), eq(connectedAccounts.provider, "unipile"), eq(connectedAccounts.status, "connected"))).limit(1),
     executor.select({ id: calendarConnections.id }).from(calendarConnections).where(and(eq(calendarConnections.workspaceId, workspaceId), eq(calendarConnections.status, "active"))).limit(1),
     executor.select({ id: aiPolicyVersions.id }).from(aiPolicyVersions).where(eq(aiPolicyVersions.workspaceId, workspaceId)).limit(1),
-    executor.select({ id: campaigns.id }).from(campaigns).where(and(eq(campaigns.workspaceId, workspaceId), eq(campaigns.status, "active"), isNotNull(campaigns.aiPolicyVersionId))).limit(1),
+    executor.select({ id: campaigns.id }).from(campaigns).where(and(eq(campaigns.workspaceId, workspaceId), inArray(campaigns.status, ["draft", "active"]), isNotNull(campaigns.aiPolicyVersionId))).limit(1),
   ]);
   const workspaceReady = Boolean(workspace[0]?.name.trim());
   const productReady = Boolean(productResearch[0] || offer[0]);
@@ -217,6 +261,156 @@ async function readPrerequisites(executor: Executor, workspaceId: string) {
   const calendarReady = Boolean(calendar[0]);
   const autopilotReady = Boolean(autopilotPolicy[0] && campaign[0]);
   return { workspaceReady, productReady, icpReady, sendingReady, calendarReady, prerequisitesReady: workspaceReady && productReady && icpReady && sendingReady, autopilotReady };
+}
+
+const DEFAULT_AUTOPILOT_POLICY_RULES = {
+  firstContactRequiresHumanApproval: true,
+  responsesRequireHumanApproval: true,
+  followUpsMayBeAutomated: false,
+} as const;
+
+/**
+ * The onboarding flow is deliberately self-serve: the agent can publish a
+ * conservative policy and wire it to a campaign without asking the operator
+ * to copy IDs between five editors. Sending remains safe because first
+ * contacts and replies still require human approval and campaign execution
+ * defaults to dry-run.
+ */
+async function ensureAutopilot(
+  tx: Transaction,
+  workspaceId: string,
+  actorUserId: string,
+  now: Date,
+): Promise<{ policyVersionId: string | null; attachedCampaignIds: readonly string[] }> {
+  const candidates = await tx
+    .select({ id: campaigns.id })
+    .from(campaigns)
+    .where(and(
+      eq(campaigns.workspaceId, workspaceId),
+      // Active snapshots are immutable. A draft is the safe hand-off point for
+      // the agent; the campaign worker will activate it when its population is
+      // ready, without another configuration screen.
+      eq(campaigns.status, "draft"),
+      isNull(campaigns.aiPolicyVersionId),
+    ));
+  if (!candidates.length) return { policyVersionId: null, attachedCampaignIds: [] };
+
+  const [latest] = await tx
+    .select({ id: aiPolicyVersions.id })
+    .from(aiPolicyVersions)
+    .where(eq(aiPolicyVersions.workspaceId, workspaceId))
+    .orderBy(desc(aiPolicyVersions.publishedAt))
+    .limit(1);
+
+  let policyVersionId = latest?.id ?? null;
+  if (!policyVersionId) {
+    const [existingPolicy] = await tx
+      .select()
+      .from(aiPolicies)
+      .where(and(eq(aiPolicies.workspaceId, workspaceId), isNull(aiPolicies.deletedAt)))
+      .orderBy(desc(aiPolicies.updatedAt))
+      .limit(1);
+    const policyId = existingPolicy?.id ?? crypto.randomUUID();
+    const rules = safeAutopilotPolicyRules(existingPolicy?.draftRules);
+    if (!existingPolicy) {
+      await tx.insert(aiPolicies).values({
+        id: policyId,
+        workspaceId,
+        name: "Politique IA autopilote",
+        currentVersion: 0,
+        draftRules: rules,
+        createdBy: null,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+    policyVersionId = crypto.randomUUID();
+    await tx.insert(aiPolicyVersions).values({
+      id: policyVersionId,
+      workspaceId,
+      policyId,
+      version: 1,
+      rules,
+      publishedBy: null,
+      publishedAt: now,
+      createdAt: now,
+    });
+    await tx.update(aiPolicies).set({ currentVersion: 1, updatedAt: now }).where(and(
+      eq(aiPolicies.workspaceId, workspaceId),
+      eq(aiPolicies.id, policyId),
+    ));
+    const [event] = await tx.insert(outboxEvents).values({
+      workspaceId,
+      aggregateType: "AIPolicy",
+      aggregateId: policyId,
+      eventType: "AIPolicyVersionPublished",
+      payload: {
+        type: "AIPolicyVersionPublished",
+        policyId,
+        version: 1,
+        versionId: policyVersionId,
+        workspaceId,
+        actorUserId,
+        source: "ai_autopilot",
+      },
+      createdAt: now,
+    }).returning({ id: outboxEvents.id });
+    if (event) {
+      await tx.insert(auditLogs).values({
+        workspaceId,
+        actorUserId,
+        action: "AIPolicyVersionPublished",
+        subjectType: "AIPolicy",
+        subjectId: policyId,
+        changes: { version: 1, versionId: policyVersionId, source: "ai_autopilot" },
+        sourceEventId: event.id,
+        correlationId: `workspace-onboarding:${workspaceId}`,
+        createdAt: now,
+      });
+    }
+  }
+
+  if (!policyVersionId) return { policyVersionId, attachedCampaignIds: [] };
+
+  // This only adds an immutable policy reference; it does not rewrite any
+  // already scheduled or sent action. Existing active campaigns can therefore
+  // be repaired without changing their message content or delivery state.
+  const attachedCampaignIds: string[] = [];
+  for (const candidate of candidates) {
+    const [updated] = await tx.update(campaigns).set({
+      aiPolicyVersionId: policyVersionId,
+      updatedAt: now,
+    }).where(and(
+      eq(campaigns.workspaceId, workspaceId),
+      eq(campaigns.id, candidate.id),
+      isNull(campaigns.aiPolicyVersionId),
+    )).returning({ id: campaigns.id });
+    if (!updated) continue;
+    attachedCampaignIds.push(updated.id);
+    await tx.insert(outboxEvents).values({
+      workspaceId,
+      aggregateType: "Campaign",
+      aggregateId: updated.id,
+      eventType: "CampaignAutopilotPolicyAttached",
+      payload: { campaignId: updated.id, aiPolicyVersionId: policyVersionId, source: "ai_autopilot" },
+      createdAt: now,
+    });
+  }
+  return { policyVersionId, attachedCampaignIds };
+}
+
+function safeAutopilotPolicyRules(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return DEFAULT_AUTOPILOT_POLICY_RULES;
+  const source = value as Record<string, unknown>;
+  return {
+    // These two invariants cannot be disabled by an AI-generated policy.
+    firstContactRequiresHumanApproval: true,
+    responsesRequireHumanApproval: true,
+    followUpsMayBeAutomated: source.followUpsMayBeAutomated === true,
+    ...(source.escalationRules && typeof source.escalationRules === "object" && !Array.isArray(source.escalationRules)
+      ? { escalationRules: source.escalationRules }
+      : {}),
+  };
 }
 
 function prerequisiteFor(step: WorkspaceOnboardingStep, value: Prerequisites) {
