@@ -216,6 +216,18 @@ class CrawlerEngine:
 
             self._results.append(page)
 
+            # Progress counts successfully persisted pages, not pages that
+            # merely started. Update it after the result is built so callers
+            # do not observe a completed crawl with pagesCompleted still at 0.
+            job_manager.update_progress(
+                self.job.id,
+                pages_completed=len(self._results),
+                pages_total=min(
+                    len(self._queue) + len(self._results), self.job.limit
+                ),
+                current_url=url,
+            )
+
             # Emit page crawled event
             await self.emitter.emit_page_crawled(
                 url=url,
@@ -438,6 +450,16 @@ class SelectiveCrawlerEngine:
             )
 
             self._results.append(page)
+
+            # Keep the polling/SSE job projection aligned with the durable
+            # result. Failed or blocked pages never reach this point and are
+            # therefore not counted as completed.
+            job_manager.update_progress(
+                self.job.id,
+                pages_completed=len(self._results),
+                pages_total=len(self.urls),
+                current_url=url,
+            )
 
             await self.emitter.emit_page_crawled(
                 url=url,
