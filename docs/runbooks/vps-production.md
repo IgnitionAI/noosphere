@@ -42,6 +42,16 @@ set -a; source .env; set +a
 bash deploy/provider-readiness.sh
 ```
 
+Les mises à jour suivantes peuvent utiliser le script non destructif :
+
+```bash
+APP_DIR=/srv/ignition-outbound bash deploy/release.sh
+```
+
+Il refuse un checkout modifié, synchronise `origin/dev` uniquement en
+fast-forward, valide les variables avant le build et exécute le healthcheck
+après redémarrage.
+
 ## Sauvegarder
 
 Définir `BACKUP_DIR` sur un volume persistant et exécuter au minimum une fois
