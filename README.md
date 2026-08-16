@@ -74,6 +74,11 @@ ParadeDB, MinIO, Docling et le crawler, migrer la base, puis démarrer l’API e
 le worker. Le contrat machine des routes est
 [`product-research-v1.json`](packages/contracts/openapi/product-research-v1.json).
 
+Le déploiement VPS reproductible est décrit dans le [runbook production](docs/runbooks/vps-production.md).
+Il utilise `compose.infrastructure.yml` et `compose.production.yml`, avec
+Caddy pour TLS, deux workers séparés et des profils de sauvegarde PostgreSQL/
+MinIO.
+
 L’API monte Better Auth sous `/api/auth/*`. Les appels métier doivent envoyer
 le slug de la route dans `x-workspace-slug` ; le serveur vérifie ensuite la
 session et le membership PostgreSQL. Voir `.env.example` pour les variables

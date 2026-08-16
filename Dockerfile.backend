@@ -1,0 +1,28 @@
+FROM oven/bun:1.3.4-debian AS build
+
+WORKDIR /app
+
+COPY package.json bun.lock tsconfig.json drizzle.config.ts ./
+COPY apps ./apps
+COPY packages ./packages
+COPY scripts ./scripts
+
+RUN bun install --frozen-lockfile
+RUN mkdir -p dist/backend dist/migrate \
+  && bun build apps/api/src/index.ts apps/worker/src/index.ts --target bun --outdir dist/backend \
+  && bun build packages/infrastructure/src/database/migrate.ts --target bun --outdir dist/migrate
+
+FROM oven/bun:1.3.4-debian AS runtime
+
+WORKDIR /app
+ENV NODE_ENV=production
+
+COPY --from=build /app/dist/backend ./dist/backend
+COPY --from=build /app/dist/migrate ./dist/migrate
+COPY --from=build /app/packages/infrastructure/migrations ./migrations
+
+USER bun
+
+EXPOSE 3001
+
+CMD ["bun", "dist/backend/api/src/index.js"]
