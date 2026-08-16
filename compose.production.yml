@@ -5,7 +5,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.backend
-    command: ["bun", "dist/migrate/index.js"]
+    command: ["bun", "dist/migrate/migrate.js"]
     env_file: .env
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@database:5432/${POSTGRES_DB:-ignition_outbound}
