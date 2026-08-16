@@ -96,6 +96,7 @@ async def test_selective_crawl_reports_successfully_completed_pages():
 
     assert job.status is JobStatus.COMPLETED
     assert job.pages_completed == 1
+    assert job.to_dict()["pagesCompleted"] == 1
     assert job.result is not None
     assert job.result.pagesCount == 1
 
@@ -108,6 +109,7 @@ async def test_regular_crawl_reports_successfully_completed_pages():
 
     assert job.status is JobStatus.COMPLETED
     assert job.pages_completed == 1
+    assert job.to_dict()["pagesCompleted"] == 1
     assert job.result is not None
     assert job.result.pagesCount == 1
 
