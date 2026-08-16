@@ -75,11 +75,11 @@ export interface MessagingStrategy {
 }
 
 export interface AIPolicyRules {
-  /** Must remain true: first contact is always human approved. */
+  /** When true, the first contact is held for a human; false enables autopilot. */
   readonly firstContactRequiresHumanApproval?: boolean | undefined;
-  /** Must remain true: every response is always human approved. */
+  /** When true, every response is held for a human; false enables autopilot. */
   readonly responsesRequireHumanApproval?: boolean | undefined;
-  /** Only this class of action may be automated. */
+  /** Whether follow-ups may be sent without an approval queue. */
   readonly followUpsMayBeAutomated: boolean;
   readonly escalationRules?: Readonly<Record<string, unknown>> | undefined;
 }
@@ -148,17 +148,28 @@ export function validateMessagingStrategy(
 }
 
 export function assertHumanSupervisionPolicy(rules: AIPolicyRules): void {
-  if (rules.firstContactRequiresHumanApproval === false) {
-    throw new MessagingStrategyInvariantError("First contact always requires human approval");
+  // The policy is intentionally allowed to be fully autonomous. Keep this
+  // validator as the single boundary for callers that still use the legacy
+  // name, but only reject malformed values rather than forcing supervision.
+  if (rules.firstContactRequiresHumanApproval !== undefined && typeof rules.firstContactRequiresHumanApproval !== "boolean") {
+    throw new MessagingStrategyInvariantError("firstContactRequiresHumanApproval must be a boolean");
   }
-  if (rules.responsesRequireHumanApproval === false) {
-    throw new MessagingStrategyInvariantError("Responses always require human approval");
+  if (rules.responsesRequireHumanApproval !== undefined && typeof rules.responsesRequireHumanApproval !== "boolean") {
+    throw new MessagingStrategyInvariantError("responsesRequireHumanApproval must be a boolean");
+  }
+  if (typeof rules.followUpsMayBeAutomated !== "boolean") {
+    throw new MessagingStrategyInvariantError("followUpsMayBeAutomated must be a boolean");
   }
 }
 
 export function validateAIPolicyRules(rules: AIPolicyRules): readonly string[] {
   const errors: string[] = [];
-  if (rules.firstContactRequiresHumanApproval === false) errors.push("firstContactRequiresHumanApproval");
-  if (rules.responsesRequireHumanApproval === false) errors.push("responsesRequireHumanApproval");
+  if (rules.firstContactRequiresHumanApproval !== undefined && typeof rules.firstContactRequiresHumanApproval !== "boolean") {
+    errors.push("firstContactRequiresHumanApproval");
+  }
+  if (rules.responsesRequireHumanApproval !== undefined && typeof rules.responsesRequireHumanApproval !== "boolean") {
+    errors.push("responsesRequireHumanApproval");
+  }
+  if (typeof rules.followUpsMayBeAutomated !== "boolean") errors.push("followUpsMayBeAutomated");
   return errors;
 }

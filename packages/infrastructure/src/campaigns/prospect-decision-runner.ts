@@ -404,6 +404,42 @@ export class ProspectDecisionJobProcessor {
       return;
     }
 
+    if (state.campaign?.executionMode === "live") {
+      // A live autopilot has no human approval queue. When the agent cannot
+      // safely continue, stop this contact and close the decision instead of
+      // leaving the campaign blocked on an operator.
+      await this.database.transaction(async (tx) => {
+        await tx.update(outreachActions).set({
+          status: "cancelled",
+          lastErrorCode: "AGENT_HANDOFF_AUTOMATED",
+          lastErrorMessage: proposal.reason,
+          cancelledAt: now,
+          updatedAt: now,
+        }).where(and(
+          eq(outreachActions.workspaceId, decision.workspaceId),
+          eq(outreachActions.contactId, decision.contactId),
+          inArray(outreachActions.status, ["scheduled", "awaiting_approval", "executing"]),
+        ));
+        await tx.update(campaignEnrollments).set({ status: "cancelled", completedAt: now }).where(and(
+          eq(campaignEnrollments.workspaceId, decision.workspaceId),
+          eq(campaignEnrollments.contactId, decision.contactId),
+          eq(campaignEnrollments.status, "active"),
+        ));
+        await tx.insert(outboxEvents).values({
+          id: crypto.randomUUID(),
+          workspaceId: decision.workspaceId,
+          aggregateType: "ProspectDecision",
+          aggregateId: decision.id,
+          eventType: "ProspectDecisionAutonomouslyStopped",
+          payload: { decisionId: decision.id, contactId: decision.contactId, reason: proposal.reason },
+          availableAt: now,
+          createdAt: now,
+        });
+        await this.#finishInTransaction(tx, decision, proposal, policy, "completed", now);
+      });
+      return;
+    }
+
     await this.database.transaction(async (tx) => {
       await tx.insert(approvalItems).values({
         id: decision.id,

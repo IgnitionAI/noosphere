@@ -1,14 +1,19 @@
-import { and, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
+import { resolveCampaignAutopilotPolicy } from "@outbound/domain/campaigns/campaign-autopilot-policy";
 import type { Database } from "@outbound/infrastructure/database/client";
 import {
   aiPolicyVersions,
   aiPolicies,
+  approvalItems,
   calendarConnections,
   campaigns,
   connectedAccounts,
   icpVersions,
+  jobs,
   offerVersions,
   outboxEvents,
+  outreachActions,
+  prospectDecisions,
   productResearchRuns,
   workspaceOnboarding,
   workspaces,
@@ -264,17 +269,17 @@ async function readPrerequisites(executor: Executor, workspaceId: string) {
 }
 
 const DEFAULT_AUTOPILOT_POLICY_RULES = {
-  firstContactRequiresHumanApproval: true,
-  responsesRequireHumanApproval: true,
-  followUpsMayBeAutomated: false,
+  firstContactRequiresHumanApproval: false,
+  responsesRequireHumanApproval: false,
+  followUpsMayBeAutomated: true,
 } as const;
 
 /**
  * The onboarding flow is deliberately self-serve: the agent can publish a
- * conservative policy and wire it to a campaign without asking the operator
- * to copy IDs between five editors. Sending remains safe because first
- * contacts and replies still require human approval and campaign execution
- * defaults to dry-run.
+ * policy and wire it to a campaign without asking the operator to copy IDs
+ * between five editors. Autonomous campaigns are live by default; the
+ * dispatcher still enforces suppression, identity, account, quota and
+ * provider safety stops.
  */
 async function ensureAutopilot(
   tx: Transaction,
@@ -283,7 +288,7 @@ async function ensureAutopilot(
   now: Date,
 ): Promise<{ policyVersionId: string | null; attachedCampaignIds: readonly string[] }> {
   const candidates = await tx
-    .select({ id: campaigns.id })
+    .select({ id: campaigns.id, aiPolicyVersionId: campaigns.aiPolicyVersionId, channel: campaigns.channel, autopilotPolicy: campaigns.autopilotPolicy })
     .from(campaigns)
     .where(and(
       eq(campaigns.workspaceId, workspaceId),
@@ -291,27 +296,36 @@ async function ensureAutopilot(
       // the agent; the campaign worker will activate it when its population is
       // ready, without another configuration screen.
       eq(campaigns.status, "draft"),
-      isNull(campaigns.aiPolicyVersionId),
+      or(isNull(campaigns.aiPolicyVersionId), isNotNull(campaigns.planId)),
     ));
-  if (!candidates.length) return { policyVersionId: null, attachedCampaignIds: [] };
+  const autonomousCampaigns = await tx
+    .select({ id: campaigns.id, channel: campaigns.channel, autopilotPolicy: campaigns.autopilotPolicy })
+    .from(campaigns)
+    .where(and(
+      eq(campaigns.workspaceId, workspaceId),
+      isNotNull(campaigns.planId),
+      inArray(campaigns.status, ["draft", "active"]),
+    ));
+  if (!candidates.length && !autonomousCampaigns.length) return { policyVersionId: null, attachedCampaignIds: [] };
 
   const [latest] = await tx
-    .select({ id: aiPolicyVersions.id })
+    .select({ id: aiPolicyVersions.id, policyId: aiPolicyVersions.policyId, version: aiPolicyVersions.version, rules: aiPolicyVersions.rules })
     .from(aiPolicyVersions)
     .where(eq(aiPolicyVersions.workspaceId, workspaceId))
     .orderBy(desc(aiPolicyVersions.publishedAt))
     .limit(1);
 
   let policyVersionId = latest?.id ?? null;
-  if (!policyVersionId) {
+  if (!latest || !isAutonomousPolicyRules(latest.rules)) {
     const [existingPolicy] = await tx
       .select()
       .from(aiPolicies)
       .where(and(eq(aiPolicies.workspaceId, workspaceId), isNull(aiPolicies.deletedAt)))
       .orderBy(desc(aiPolicies.updatedAt))
       .limit(1);
-    const policyId = existingPolicy?.id ?? crypto.randomUUID();
-    const rules = safeAutopilotPolicyRules(existingPolicy?.draftRules);
+    const policyId = existingPolicy?.id ?? latest?.policyId ?? crypto.randomUUID();
+    const rules = safeAutopilotPolicyRules(existingPolicy?.draftRules ?? latest?.rules);
+    const version = (latest?.version ?? existingPolicy?.currentVersion ?? 0) + 1;
     if (!existingPolicy) {
       await tx.insert(aiPolicies).values({
         id: policyId,
@@ -329,13 +343,13 @@ async function ensureAutopilot(
       id: policyVersionId,
       workspaceId,
       policyId,
-      version: 1,
+      version,
       rules,
       publishedBy: null,
       publishedAt: now,
       createdAt: now,
     });
-    await tx.update(aiPolicies).set({ currentVersion: 1, updatedAt: now }).where(and(
+    await tx.update(aiPolicies).set({ currentVersion: version, draftRules: rules, updatedAt: now }).where(and(
       eq(aiPolicies.workspaceId, workspaceId),
       eq(aiPolicies.id, policyId),
     ));
@@ -347,7 +361,7 @@ async function ensureAutopilot(
       payload: {
         type: "AIPolicyVersionPublished",
         policyId,
-        version: 1,
+        version,
         versionId: policyVersionId,
         workspaceId,
         actorUserId,
@@ -362,7 +376,7 @@ async function ensureAutopilot(
         action: "AIPolicyVersionPublished",
         subjectType: "AIPolicy",
         subjectId: policyId,
-        changes: { version: 1, versionId: policyVersionId, source: "ai_autopilot" },
+        changes: { version, versionId: policyVersionId, source: "ai_autopilot" },
         sourceEventId: event.id,
         correlationId: `workspace-onboarding:${workspaceId}`,
         createdAt: now,
@@ -372,18 +386,17 @@ async function ensureAutopilot(
 
   if (!policyVersionId) return { policyVersionId, attachedCampaignIds: [] };
 
-  // This only adds an immutable policy reference; it does not rewrite any
-  // already scheduled or sent action. Existing active campaigns can therefore
-  // be repaired without changing their message content or delivery state.
   const attachedCampaignIds: string[] = [];
   for (const candidate of candidates) {
+    const autopilotPolicy = autonomousCampaignPolicy(candidate.autopilotPolicy, candidate.channel);
+    if (candidate.aiPolicyVersionId === policyVersionId && autopilotPolicy.executionMode === "live") continue;
     const [updated] = await tx.update(campaigns).set({
       aiPolicyVersionId: policyVersionId,
+      autopilotPolicy,
       updatedAt: now,
     }).where(and(
       eq(campaigns.workspaceId, workspaceId),
       eq(campaigns.id, candidate.id),
-      isNull(campaigns.aiPolicyVersionId),
     )).returning({ id: campaigns.id });
     if (!updated) continue;
     attachedCampaignIds.push(updated.id);
@@ -396,6 +409,17 @@ async function ensureAutopilot(
       createdAt: now,
     });
   }
+
+  // Campaigns created by an autonomous prospecting plan may already be active
+  // from a previous run. Their immutable snapshot references are untouched;
+  // only the execution mode is promoted and stale approval rows are released.
+  for (const campaign of autonomousCampaigns) {
+    await tx.update(campaigns).set({
+      autopilotPolicy: autonomousCampaignPolicy(campaign.autopilotPolicy, campaign.channel),
+      updatedAt: now,
+    }).where(and(eq(campaigns.workspaceId, workspaceId), eq(campaigns.id, campaign.id)));
+  }
+  await releaseAutonomousApprovals(tx, workspaceId, autonomousCampaigns.map(({ id }) => id), actorUserId, now);
   return { policyVersionId, attachedCampaignIds };
 }
 
@@ -403,14 +427,95 @@ function safeAutopilotPolicyRules(value: unknown) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return DEFAULT_AUTOPILOT_POLICY_RULES;
   const source = value as Record<string, unknown>;
   return {
-    // These two invariants cannot be disabled by an AI-generated policy.
-    firstContactRequiresHumanApproval: true,
-    responsesRequireHumanApproval: true,
-    followUpsMayBeAutomated: source.followUpsMayBeAutomated === true,
+    firstContactRequiresHumanApproval: false,
+    responsesRequireHumanApproval: false,
+    followUpsMayBeAutomated: true,
     ...(source.escalationRules && typeof source.escalationRules === "object" && !Array.isArray(source.escalationRules)
       ? { escalationRules: source.escalationRules }
       : {}),
   };
+}
+
+function isAutonomousPolicyRules(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const source = value as Record<string, unknown>;
+  return source.firstContactRequiresHumanApproval !== true
+    && source.responsesRequireHumanApproval !== true
+    && source.followUpsMayBeAutomated === true;
+}
+
+function autonomousCampaignPolicy(value: unknown, channel: "linkedin" | "email" | "whatsapp" | null) {
+  const resolved = resolveCampaignAutopilotPolicy(value, channel ?? "email");
+  return { ...resolved, executionMode: "live" as const };
+}
+
+async function releaseAutonomousApprovals(
+  tx: Transaction,
+  workspaceId: string,
+  campaignIds: readonly string[],
+  actorUserId: string,
+  now: Date,
+) {
+  if (!campaignIds.length) return;
+  const pending = await tx
+    .select({ id: approvalItems.id, campaignId: approvalItems.campaignId, itemType: approvalItems.itemType })
+    .from(approvalItems)
+    .where(and(
+      eq(approvalItems.workspaceId, workspaceId),
+      eq(approvalItems.status, "pending"),
+      inArray(approvalItems.campaignId, campaignIds),
+      inArray(approvalItems.itemType, ["first_contact", "prospect_decision_send"]),
+    ));
+  for (const item of pending) {
+    const actions = await tx
+      .select({ id: outreachActions.id, status: outreachActions.status, correlationId: prospectDecisions.correlationId })
+      .from(outreachActions)
+      .leftJoin(prospectDecisions, eq(prospectDecisions.outreachActionId, outreachActions.id))
+      .where(and(eq(outreachActions.workspaceId, workspaceId), eq(outreachActions.approvalItemId, item.id)))
+      .limit(1);
+    const action = actions[0];
+    await tx.update(approvalItems).set({
+      status: "invalidated",
+      invalidationReason: "autonomous_campaign_no_approval_required",
+      updatedAt: now,
+    }).where(eq(approvalItems.id, item.id));
+    if (!action || !["awaiting_approval", "scheduled"].includes(action.status)) continue;
+    const nextStatus = item.itemType === "first_contact" ? "planned" : "scheduled";
+    await tx.update(outreachActions).set({
+      status: nextStatus,
+      approvalItemId: null,
+      lastErrorCode: null,
+      lastErrorMessage: null,
+      updatedAt: now,
+    }).where(and(eq(outreachActions.workspaceId, workspaceId), eq(outreachActions.id, action.id)));
+    if (item.itemType === "prospect_decision_send") {
+      await tx.update(prospectDecisions).set({ status: "completed", completedAt: now, updatedAt: now }).where(and(
+        eq(prospectDecisions.workspaceId, workspaceId),
+        eq(prospectDecisions.outreachActionId, action.id),
+        eq(prospectDecisions.status, "awaiting_approval"),
+      ));
+      await tx.insert(jobs).values({
+        id: crypto.randomUUID(),
+        workspaceId,
+        type: "outreach.dispatch",
+        payload: { workspaceId, actionId: action.id },
+        idempotencyKey: `${action.id}:dispatch:v2`,
+        correlationId: action.correlationId ?? `campaign:${item.campaignId}`,
+        maxAttempts: 5,
+        availableAt: now,
+        createdAt: now,
+        updatedAt: now,
+      }).onConflictDoNothing();
+    }
+    await tx.insert(outboxEvents).values({
+      workspaceId,
+      aggregateType: "OutreachAction",
+      aggregateId: action.id,
+      eventType: "OutreachApprovalBypassedForAutopilot",
+      payload: { actionId: action.id, campaignId: item.campaignId, itemType: item.itemType, actorUserId },
+      createdAt: now,
+    });
+  }
 }
 
 function prerequisiteFor(step: WorkspaceOnboardingStep, value: Prerequisites) {

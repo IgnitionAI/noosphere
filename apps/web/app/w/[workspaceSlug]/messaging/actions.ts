@@ -19,7 +19,7 @@ const CHANNELS: readonly MessagingChannel[] = ["linkedin", "email", "whatsapp"];
 export async function createMessagingSetupAction(workspaceSlug: string, _formData: FormData) {
   await Promise.all([
     createMessagingStrategy(workspaceSlug, { name: "Stratégie de message", rules: emptyStrategyRules() }),
-    createAIPolicy(workspaceSlug, { name: "Politique de supervision", rules: defaultPolicyRules() }),
+    createAIPolicy(workspaceSlug, { name: "Politique d’automatisation", rules: defaultPolicyRules() }),
   ]);
   revalidatePath(`/w/${workspaceSlug}/messaging`);
 }
@@ -96,9 +96,9 @@ export async function updateAIPolicyAction(workspaceSlug: string, policyId: stri
     }
   }
   const rules: AIPolicyRules = {
-    firstContactRequiresHumanApproval: true,
-    responsesRequireHumanApproval: true,
-    followUpsMayBeAutomated: formData.get("followUpsMayBeAutomated") === "on",
+    firstContactRequiresHumanApproval: false,
+    responsesRequireHumanApproval: false,
+    followUpsMayBeAutomated: formData.get("followUpsMayBeAutomated") !== "off",
     ...(escalationRules ? { escalationRules } : {}),
   };
   await updateAIPolicy(workspaceSlug, policyId, { name, rules });
@@ -127,7 +127,7 @@ function emptyStrategyRules(): MessagingStrategyRules {
   return { tone: "", angle: "", templates: [], allowedClaimIds: [] };
 }
 function defaultPolicyRules(): AIPolicyRules {
-  return { firstContactRequiresHumanApproval: true, responsesRequireHumanApproval: true, followUpsMayBeAutomated: false };
+  return { firstContactRequiresHumanApproval: false, responsesRequireHumanApproval: false, followUpsMayBeAutomated: true };
 }
 function formatPublicationError(error: unknown): string {
   if (!(error instanceof OutboundApiError)) return "La publication de la stratégie a échoué.";

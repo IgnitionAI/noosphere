@@ -42,21 +42,21 @@ describe("messaging strategy domain", () => {
     expect(errors[0]?.variables).toEqual(["company.unknown", "contact.titre"]);
   });
 
-  test("cannot disable human review of first contact or responses", () => {
+  test("allows autonomous first contacts, responses and follow-ups", () => {
     expect(validateAIPolicyRules({
       firstContactRequiresHumanApproval: false,
       responsesRequireHumanApproval: false,
       followUpsMayBeAutomated: true,
-    })).toEqual(["firstContactRequiresHumanApproval", "responsesRequireHumanApproval"]);
+    })).toEqual([]);
     expect(() => assertHumanSupervisionPolicy({
       firstContactRequiresHumanApproval: false,
-      responsesRequireHumanApproval: true,
-      followUpsMayBeAutomated: true,
-    })).toThrow("First contact always requires human approval");
-    expect(() => assertHumanSupervisionPolicy({
-      firstContactRequiresHumanApproval: true,
       responsesRequireHumanApproval: false,
-      followUpsMayBeAutomated: false,
-    })).toThrow("Responses always require human approval");
+      followUpsMayBeAutomated: true,
+    })).not.toThrow();
+    expect(() => assertHumanSupervisionPolicy({
+      firstContactRequiresHumanApproval: "yes" as never,
+      responsesRequireHumanApproval: false,
+      followUpsMayBeAutomated: true,
+    })).toThrow("firstContactRequiresHumanApproval must be a boolean");
   });
 });

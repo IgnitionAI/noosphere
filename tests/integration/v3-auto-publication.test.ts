@@ -42,7 +42,6 @@ import {
   sequenceVersions,
   contacts,
   authUsers,
-  approvalItems,
   workspaces,
 } from "@outbound/infrastructure/database/schema";
 import { PostgresProductResearchRepository } from "@outbound/infrastructure/gtm/postgres-product-research-repository";
@@ -65,7 +64,6 @@ import { CampaignSourcingReconciler } from "@outbound/infrastructure/campaigns/c
 import { PostgresProspectViewRepository } from "@outbound/infrastructure/crm/postgres-prospect-view-repository";
 import { PostgresChannelCapabilityReassessment } from "@outbound/infrastructure/campaigns/channel-capability-reassessment";
 import { ProspectDecisionJobProcessor } from "@outbound/infrastructure/campaigns/prospect-decision-runner";
-import { PostgresApprovalRepository } from "@outbound/infrastructure/approvals/postgres-approval-repository";
 
 const databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
 const databaseDescribe = databaseUrl ? describe : describe.skip;
@@ -542,7 +540,11 @@ databaseDescribe("V3 automatic ICP publication", () => {
       .select()
       .from(campaigns)
       .where(and(eq(campaigns.workspaceId, workspaceId), eq(campaigns.id, firstCampaign.id)));
-    expect(activatedCampaign).toMatchObject({ status: "active", automationStage: "scheduled" });
+    expect(activatedCampaign).toMatchObject({
+      status: "active",
+      automationStage: "scheduled",
+      autopilotPolicy: { executionMode: "live" },
+    });
     expect(activatedCampaign!.sequenceVersionId).not.toBeNull();
     const enrollments = await database.db
       .select()
@@ -593,40 +595,11 @@ databaseDescribe("V3 automatic ICP publication", () => {
       },
       clock,
     ).process(leasedFirstDecision!);
-    const [dryRunApproval] = await database.db
-      .select()
-      .from(approvalItems)
-      .where(and(
-        eq(approvalItems.workspaceId, workspaceId),
-        eq(approvalItems.itemType, "prospect_decision_send"),
-      ));
-    expect(dryRunApproval).toMatchObject({ status: "pending" });
-    const dispatchBeforeApproval = await database.db
+    const autonomousDispatchJobs = await database.db
       .select()
       .from(jobs)
       .where(and(eq(jobs.workspaceId, workspaceId), eq(jobs.type, "outreach.dispatch")));
-    expect(dispatchBeforeApproval).toHaveLength(0);
-    await expect(new PostgresApprovalRepository(database.db, () => clock.now()).decide({
-      workspaceId,
-      itemId: dryRunApproval!.id,
-      decision: "approve",
-      userId: campaignUserId,
-    })).rejects.toMatchObject({ code: "PROSPECT_DECISION_LIVE_MODE_REQUIRED" });
-    const liveModeResponse = await campaignHandler(
-      new Request(`http://localhost/api/v1/campaigns/${firstCampaign.id}/autopilot-policy`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ executionMode: "live" }),
-      }),
-    );
-    expect(liveModeResponse.status).toBe(200);
-    expect(await liveModeResponse.json()).toMatchObject({ policy: { executionMode: "live" } });
-    await new PostgresApprovalRepository(database.db, () => clock.now()).decide({
-      workspaceId,
-      itemId: dryRunApproval!.id,
-      decision: "approve",
-      userId: campaignUserId,
-    });
+    expect(autonomousDispatchJobs).toHaveLength(1);
     const [dispatchJob] = await database.db
       .select()
       .from(jobs)

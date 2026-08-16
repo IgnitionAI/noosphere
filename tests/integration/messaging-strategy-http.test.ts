@@ -129,19 +129,19 @@ databaseDescribe("F-012 messaging strategy HTTP", () => {
     context.workspaceId = workspaceId;
   });
 
-  test("keeps first contact and responses human-approved for AI policies", async () => {
+  test("publishes a fully autonomous AI policy without an approval gate", async () => {
     context.role = "operator";
     const created = await handler(request("/api/v1/ai-policies", "POST", {
-      name: "Supervision",
-      rules: { followUpsMayBeAutomated: true },
+      name: "Autopilote autonome",
+      rules: {
+        firstContactRequiresHumanApproval: false,
+        responsesRequireHumanApproval: false,
+        followUpsMayBeAutomated: true,
+      },
     }));
     expect(created.status).toBe(201);
     const policyId = ((await created.json()) as { id: string }).id;
     expect((await handler(request(`/api/v1/ai-policies/${policyId}/actions/publish`, "POST", {}))).status).toBe(403);
-    const invalid = await handler(request(`/api/v1/ai-policies/${policyId}`, "PATCH", {
-      rules: { firstContactRequiresHumanApproval: false, responsesRequireHumanApproval: true, followUpsMayBeAutomated: true },
-    }));
-    expect(invalid.status).toBe(422);
     context.role = "admin";
     const published = await handler(request(`/api/v1/ai-policies/${policyId}/actions/publish`, "POST", {}));
     expect(published.status).toBe(201);

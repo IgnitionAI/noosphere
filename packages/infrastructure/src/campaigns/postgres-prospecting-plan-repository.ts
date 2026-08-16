@@ -419,7 +419,13 @@ async function ensureChannelCampaign(
   const discoveryRunId = crypto.randomUUID();
   const sourcingFilters = buildAutonomousSourcingFilters(input.channel, input.strategy);
   const channelLabel = label(input.channel);
-  const autopilotPolicy = await workspaceCampaignPolicy(tx, input.workspaceId, input.channel);
+  // Channel campaigns are created by the autonomous prospecting plan. They
+  // must be ready to run without an approval queue; safety stops are enforced
+  // by the dispatcher (suppression, invalid identity, account and quota).
+  const autopilotPolicy = {
+    ...(await workspaceCampaignPolicy(tx, input.workspaceId, input.channel)),
+    executionMode: "live" as const,
+  };
   await tx.insert(sequences).values({
     id: sequenceId,
     workspaceId: input.workspaceId,

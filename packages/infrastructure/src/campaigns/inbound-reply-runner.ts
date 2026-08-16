@@ -199,6 +199,7 @@ export class InboundReplyJobProcessor {
         bookingUrl,
         autoReplyEnabled: campaignId !== null && replyPolicy.autoReplyEnabled,
         replyDelayMinutes: replyPolicy.replyDelayMinutes,
+        autonomous: replyPolicy.autonomous,
       });
       await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
     } catch (error) {
@@ -536,17 +537,21 @@ export class InboundReplyJobProcessor {
   }) {
     if (!input.campaignId) {
       const defaults = resolveCampaignAutopilotPolicy(null, input.channel);
-      return input.channel === "email"
-        ? defaults.email
-        : { ...defaults.email, replyDelayMinutes: 0 };
+      return {
+        ...(input.channel === "email" ? defaults.email : { ...defaults.email, replyDelayMinutes: 0 }),
+        autonomous: false,
+      };
     }
     const [campaign] = await this.database
-      .select({ autopilotPolicy: campaigns.autopilotPolicy })
+      .select({ autopilotPolicy: campaigns.autopilotPolicy, channel: campaigns.channel })
       .from(campaigns)
       .where(and(eq(campaigns.workspaceId, input.workspaceId), eq(campaigns.id, input.campaignId)))
       .limit(1);
     const policy = resolveCampaignAutopilotPolicy(campaign?.autopilotPolicy, input.channel);
-    return input.channel === "email" ? policy.email : { ...policy.email, replyDelayMinutes: 0 };
+    return {
+      ...(input.channel === "email" ? policy.email : { ...policy.email, replyDelayMinutes: 0 }),
+      autonomous: policy.executionMode === "live",
+    };
   }
 
   async #persistDecision(input: {
@@ -561,6 +566,7 @@ export class InboundReplyJobProcessor {
     bookingUrl: string | null;
     autoReplyEnabled: boolean;
     replyDelayMinutes: number;
+    autonomous: boolean;
   }) {
     const now = this.clock.now();
     await this.database.transaction(async (tx) => {
@@ -699,7 +705,11 @@ export class InboundReplyJobProcessor {
         }
         }
       }
-      if (input.decision.requiresHuman || input.decision.action === "handoff" || ["positive", "meeting_request"].includes(input.decision.intent)) {
+      // Positive replies and meeting requests are handled by the setter and
+      // calendar flow automatically. Autonomous campaigns also keep
+      // ambiguous handoffs out of the approval queue; the inbound classifier
+      // and campaign cancellation remain the safety boundary.
+      if (!input.autonomous && (input.decision.requiresHuman || input.decision.action === "handoff")) {
         await tx.insert(approvalItems).values({
           id: crypto.randomUUID(),
           workspaceId: input.workspaceId,

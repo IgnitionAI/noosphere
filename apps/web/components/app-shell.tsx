@@ -220,7 +220,7 @@ export function AppShell({
             onClick={() => setOpen(false)}
           >
             <MessageSquareText size={17} />
-            Messages & supervision
+            Messages & automatisation
           </Link>
           <Link
             aria-current={analyticsActive ? "page" : undefined}

@@ -1,5 +1,6 @@
 import { and, asc, desc, eq, inArray, lte, isNull, sql } from "drizzle-orm";
 import { transitionOutreachAction, retryDelayMs } from "@outbound/domain/campaigns/outreach-action";
+import { resolveCampaignAutopilotPolicy } from "@outbound/domain/campaigns/campaign-autopilot-policy";
 import type { Database } from "@outbound/infrastructure/database/client";
 import type { NewJob } from "@outbound/application/jobs/job-queue";
 import { decryptSecret } from "@outbound/infrastructure/security/secret-crypto";
@@ -63,6 +64,11 @@ export class PostgresOutreachScheduler {
       const rows = await tx.select({ enrollment: campaignEnrollments, campaign: campaigns }).from(campaignEnrollments).innerJoin(campaigns, and(eq(campaignEnrollments.workspaceId, campaigns.workspaceId), eq(campaignEnrollments.campaignId, campaigns.id))).where(and(eq(campaignEnrollments.workspaceId, input.workspaceId), eq(campaignEnrollments.id, input.enrollmentId))).limit(1);
       const source = rows[0];
       if (!source) throw new OutreachSchedulerError("ENROLLMENT_NOT_FOUND");
+      const campaignPolicy = resolveCampaignAutopilotPolicy(
+        source.campaign.autopilotPolicy,
+        source.campaign.channel ?? "email",
+      );
+      const autonomous = campaignPolicy.executionMode === "live";
       const sequenceRows = await tx.select().from(sequenceVersions).where(and(eq(sequenceVersions.workspaceId, input.workspaceId), eq(sequenceVersions.id, source.enrollment.sequenceVersionId))).limit(1);
       const sequence = sequenceRows[0];
       if (!sequence) throw new OutreachSchedulerError("SEQUENCE_VERSION_NOT_FOUND");
@@ -87,7 +93,7 @@ export class PostgresOutreachScheduler {
         const existing = await tx.select({ id: outreachActions.id }).from(outreachActions).where(and(eq(outreachActions.workspaceId, input.workspaceId), eq(outreachActions.idempotencyKey, idempotencyKey))).limit(1);
         if (existing[0]) continue;
         let approvalItemId: string | null = null;
-        if (position === 1) {
+        if (position === 1 && !autonomous) {
           approvalItemId = crypto.randomUUID();
           await tx.insert(approvalItems).values({ id: approvalItemId, workspaceId: input.workspaceId, campaignId: source.enrollment.campaignId, contactId: contact.id, enrollmentId: input.enrollmentId, itemType: "first_contact", channel: "email", stepPosition: position, contentOriginal: { subject: typeof step.subject === "string" ? step.subject : null, body: typeof step.body === "string" ? step.body : "" }, context: { sequenceVersionId: source.enrollment.sequenceVersionId }, sourceUpdatedAt: contact.updatedAt });
         }
@@ -95,7 +101,9 @@ export class PostgresOutreachScheduler {
           id: crypto.randomUUID(), workspaceId: input.workspaceId, campaignId: source.enrollment.campaignId, enrollmentId: input.enrollmentId,
           contactId: contact.id, sequenceVersionId: source.enrollment.sequenceVersionId, approvalItemId, stepPosition: position, channel: "email" as const, recipient,
           subject: typeof step.subject === "string" ? step.subject : null, body: typeof step.body === "string" ? step.body : "",
-          idempotencyKey, scheduledAt, status: position === 1 ? "awaiting_approval" as const : "planned" as const,
+          idempotencyKey,
+          scheduledAt,
+          status: position === 1 && !autonomous ? "awaiting_approval" as const : "planned" as const,
         };
         const inserted = await tx.insert(outreachActions).values(values).onConflictDoNothing({ target: [outreachActions.workspaceId, outreachActions.idempotencyKey] }).returning();
         if (inserted[0]) planned.push(toView(inserted[0]));
@@ -143,17 +151,25 @@ export class PostgresOutreachScheduler {
       if (!action) throw new OutreachSchedulerError("OUTREACH_ACTION_NOT_FOUND");
       if (["sent", "cancelled", "awaiting_approval", "planned"].includes(action.status)) return toView(action);
       if (action.status !== "due") return toView(action);
-      const campaignRows = await tx.select({ status: campaigns.status }).from(campaigns).where(and(eq(campaigns.workspaceId, input.workspaceId), eq(campaigns.id, action.campaignId))).limit(1);
+      const campaignRows = await tx.select({
+        status: campaigns.status,
+        channel: campaigns.channel,
+        autopilotPolicy: campaigns.autopilotPolicy,
+      }).from(campaigns).where(and(eq(campaigns.workspaceId, input.workspaceId), eq(campaigns.id, action.campaignId))).limit(1);
       if (campaignRows[0]?.status !== "active") return this.suspend(tx, action, "CAMPAIGN_NOT_ACTIVE", now);
+      const autonomous = resolveCampaignAutopilotPolicy(
+        campaignRows[0].autopilotPolicy,
+        campaignRows[0].channel ?? "email",
+      ).executionMode === "live";
       const contactRows = await tx.select({ id: contacts.id }).from(contacts).where(and(eq(contacts.workspaceId, input.workspaceId), eq(contacts.id, action.contactId))).limit(1);
       if (!contactRows[0]) return this.cancelled(tx, action, "CONTACT_NOT_FOUND", now);
       const suppressionRows = await tx.select({ id: contactSuppressions.id }).from(contactSuppressions).where(and(eq(contactSuppressions.workspaceId, input.workspaceId), eq(contactSuppressions.contactId, action.contactId), eq(contactSuppressions.channel, "global"), isNull(contactSuppressions.liftedAt))).limit(1);
       if (suppressionRows[0]) return this.cancelled(tx, action, "CONTACT_SUPPRESSED", now);
       if (action.responseReceivedAt) return this.cancelled(tx, action, "RESPONSE_RECEIVED", now);
-      if (action.approvalItemId) {
+      if (!autonomous && action.approvalItemId) {
         const approvalRows = await tx.select({ status: approvalItems.status }).from(approvalItems).where(eq(approvalItems.id, action.approvalItemId)).limit(1);
         if (approvalRows[0]?.status !== "approved") return this.awaitingApproval(tx, action, now);
-      } else if (action.stepPosition === 1) return this.awaitingApproval(tx, action, now);
+      } else if (!autonomous && action.stepPosition === 1) return this.awaitingApproval(tx, action, now);
       const accounts = await tx.select().from(connectedAccounts).where(and(eq(connectedAccounts.workspaceId, input.workspaceId), eq(connectedAccounts.provider, "unipile"), eq(connectedAccounts.status, "connected"))).orderBy(desc(connectedAccounts.updatedAt)).limit(10);
       const account = accounts.find((candidate) => hasEmailCapability(candidate.capabilities));
       if (!account) return this.suspend(tx, action, "ACCOUNT_UNAVAILABLE", now);
