@@ -315,11 +315,9 @@ export class PostgresDiscoveryRepository {
             .update(campaigns)
             .set({
               prospectCount: persistedCandidates.length,
-              automationStage: persistedCandidates.length ? "enriching" : "attention",
-              automationErrorCode: persistedCandidates.length ? null : "NO_PROSPECTS_FOUND",
-              automationErrorMessage: persistedCandidates.length
-                ? null
-                : "Le sourcing n’a trouvé aucun prospect éligible.",
+              automationStage: persistedCandidates.length ? "enriching" : "sourcing",
+              automationErrorCode: null,
+              automationErrorMessage: null,
               updatedAt: now,
             })
             .where(
@@ -366,7 +364,7 @@ export class PostgresDiscoveryRepository {
             ? "CampaignDailySourcingCompleted"
             : persistedCandidates.length
               ? "CampaignSourcingCompleted"
-              : "CampaignAutomationNeedsAttention",
+              : "CampaignSourcingEmpty",
           payload: {
             campaignId,
             runId: input.runId,

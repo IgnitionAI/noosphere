@@ -19,7 +19,7 @@ import {
 } from "@/lib/api";
 import { CampaignAutoRefresh } from "./campaign-auto-refresh";
 
-export const metadata = { title: "Campagnes" };
+export const metadata = { title: "Prospection" };
 export const dynamic = "force-dynamic";
 
 export default async function CampaignsPage({
@@ -51,14 +51,18 @@ export default async function CampaignsPage({
         assessingCount > 0
         || campaigns.some((campaign) => ["sourcing", "enriching", "composing"].includes(campaign.automationStage))
       } />
-      <header className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <header className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="page-title">Campagnes</h1>
+          <div className="badge badge-signal w-fit"><Target size={13} /> Pipeline autonome</div>
+          <h1 className="page-title mt-3">Prospection</h1>
           <p className="mt-2 text-sm text-muted">
-            Chaque ICP devient une campagne autonome. Ouvrez-la pour suivre ses prospects et ses messages.
+            Lancez un ICP. La plateforme crée les campagnes, trouve les prospects, les contacte et réserve les appels.
           </p>
         </div>
-        <span className="badge">{plans.length} campagnes</span>
+        <div className="flex flex-wrap gap-2">
+          <Link className="button" href={`/w/${workspaceSlug}/prospects`}><Users size={14} /> Tous les prospects</Link>
+          <Link className="button button-primary" href={`/w/${workspaceSlug}/strategy/product-reading`}>Lancer un nouvel ICP <ArrowRight size={14} /></Link>
+        </div>
       </header>
 
       {assessingCount > 0 ? (
@@ -77,7 +81,7 @@ export default async function CampaignsPage({
               Lancez une étude ICP. L’autopilote choisira les canaux utiles et créera les campagnes sans configuration manuelle.
             </p>
             <Link className="button button-primary mt-5 inline-flex" href={`/w/${workspaceSlug}/strategy/product-reading`}>
-              Trouver mon ICP
+              Lancer mon premier ICP
             </Link>
           </div>
         </section>
@@ -176,7 +180,7 @@ function planStatus(plan: ProspectingPlanDetail, campaigns: readonly CampaignSum
   if (campaigns.some((campaign) => campaign.automationStage === "composing")) return "Personnalisation";
   if (campaigns.some((campaign) => campaign.automationStage === "enriching")) return "Enrichissement";
   if (campaigns.some((campaign) => campaign.discoveryStatus === "running")) return "Recherche en cours";
-  if (campaigns.some((campaign) => campaign.automationStage === "sourcing")) return "Recherche non lancée";
+  if (campaigns.some((campaign) => campaign.automationStage === "sourcing")) return "Recherche continue";
   return plan.status === "assessing" ? "Préparation" : "Prête";
 }
 

@@ -173,6 +173,7 @@ export class ProspectDecisionJobProcessor {
             id: outreachActions.id,
             status: outreachActions.status,
             stepPosition: outreachActions.stepPosition,
+            stepKind: outreachActions.stepKind,
             channel: outreachActions.channel,
             dueAt: outreachActions.dueAt,
           })
@@ -306,7 +307,10 @@ export class ProspectDecisionJobProcessor {
           payload: { workspaceId: decision.workspaceId, actionId: decision.outreachActionId },
           idempotencyKey: `${decision.outreachActionId}:dispatch:v2`,
           correlationId: decision.correlationId,
-          maxAttempts: 5,
+          maxAttempts: state.outreachAction?.channel === "linkedin"
+            && state.outreachAction.stepKind === "linkedin_message"
+            ? 90
+            : 5,
           priority: decision.priority,
           availableAt: policy.executeAt,
           createdAt: now,

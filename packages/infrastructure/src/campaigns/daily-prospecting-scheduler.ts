@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, lte, ne } from "drizzle-orm";
+import { and, asc, eq, inArray, lte, ne, or } from "drizzle-orm";
 import {
   buildAutonomousSourcingFilters,
   PROSPECT_DISCOVERY_JOB_TYPE,
@@ -126,7 +126,10 @@ export class DailyProspectingScheduler {
       .where(
         and(
           eq(campaigns.workspaceId, workspaceId),
-          eq(campaigns.status, "active"),
+          or(
+            eq(campaigns.status, "active"),
+            and(eq(campaigns.status, "draft"), eq(campaigns.automationStage, "sourcing")),
+          ),
           eq(prospectingPlans.status, "ready"),
           ne(campaigns.automationStage, "completed"),
           eq(channelAssessments.status, "completed"),

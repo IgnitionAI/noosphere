@@ -51,7 +51,8 @@ function fakeViews(calls: string[]): OperationalViewsPort {
     async getSummary(receivedWorkspaceId) { calls.push(`summary:${receivedWorkspaceId}`); return { asOf: new Date(), counts: { activeCampaigns: 0, prospects: 0, openConversations: 0, openOpportunities: 0, attention: 0 }, attention: [], jobs: { active: 0, failed: 0, running: [] }, nextAutomaticResearch: null, accountHealth: { connected: 0, degraded: 0, disconnected: 0, activeAlerts: 0 } }; },
     async getSetupReadiness() { return { ready: true, asOf: new Date(), items: [] }; },
     async getCampaignView() { return { campaign: {}, autopilot: {}, population: { total: 0, eligible: 0, contacted: 0, replies: 0 }, timeline: [], nextAction: null } as never; },
-    async listConversations(input) { calls.push(`conversations:${input.workspaceId}:${input.channel}:${input.scope}:${input.search}:${input.page}:${input.pageSize}`); return { data: [], pagination: { page: input.page, pageSize: input.pageSize, total: 0, hasNext: false } }; },
+    async listConversations(input) { calls.push(`conversations:${input.workspaceId}:${input.channel}:${input.scope}:${input.search}:${input.page}:${input.pageSize}`); return { data: [], pagination: { page: input.page, pageSize: input.pageSize, total: 0, hasNext: false }, sync: { totalAccounts: 0, readyAccounts: 0, backfillingAccounts: 0, errorAccounts: 0, lastSuccessAt: null } }; },
+    async getConversation() { return null; },
     async getPipeline() { return { data: [] }; },
   };
 }

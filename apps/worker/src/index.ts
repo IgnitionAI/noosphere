@@ -51,7 +51,7 @@ import { ConversationCommandJobProcessor } from "@outbound/infrastructure/campai
 import { ProspectAssessmentReconciler } from "@outbound/infrastructure/campaigns/prospect-assessment-reconciler";
 import { CampaignHealthReconciler } from "@outbound/infrastructure/campaigns/campaign-health-reconciler";
 import { UnipileWebhookIngestor } from "@outbound/infrastructure/campaigns/unipile-webhook-ingestor";
-import { UnipileChatSynchronizer } from "@outbound/infrastructure/campaigns/unipile-chat-synchronizer";
+import { UnipileAccountInboxSynchronizer } from "@outbound/infrastructure/inbox/unipile-account-inbox-synchronizer";
 import { PostgresCalendarIntegration } from "@outbound/infrastructure/calendar/postgres-calendar-integration";
 import { PostgresUnipileChannelConnections } from "@outbound/infrastructure/channels/postgres-unipile-channel-connections";
 import { PostgresImportService } from "@outbound/infrastructure/crm/postgres-import-service";
@@ -85,6 +85,9 @@ const unipileChannelConnections = process.env.UNIPILE_DSN && process.env.UNIPILE
       dsn: process.env.UNIPILE_DSN,
       apiKey: process.env.UNIPILE_API_KEY,
     })
+  : null;
+const campaignChannelReadiness = unipileChannelConnections
+  ? new UnipileCampaignChannelReadiness(unipileChannelConnections)
   : null;
 const queue = new PostgresJobQueue(database.client);
 const importService = new PostgresImportService(database.db, queue);
@@ -216,7 +219,7 @@ const campaignCompositionProcessor = new CampaignCompositionJobProcessor(
   database.db,
   queue,
   campaignContentGenerator,
-  new UnipileCampaignChannelReadiness(createProspectSource),
+  campaignChannelReadiness ?? unavailableChannelReadiness(),
   clock,
 );
 const prospectDecisionProcessor = new ProspectDecisionJobProcessor(
@@ -238,7 +241,7 @@ const outreachDispatchProcessor = new OutreachDispatchJobProcessor(
   campaignContentGenerator,
   createReachabilityResolver,
   workspaceDataLifecycle,
-  new UnipileCampaignChannelReadiness(createProspectSource),
+  campaignChannelReadiness ?? unavailableChannelReadiness(),
 );
 const inboundReplyAgent = new LangChainInboundReplyAgent(process.env, workspaceAiSettings, knowledgeRetriever, activeAiConfigurations, aiRunRecorder);
 const inboundReplyProcessor = new InboundReplyJobProcessor(
@@ -271,10 +274,11 @@ const dailyProspectingScheduler = new DailyProspectingScheduler(database.db, clo
 const prospectAssessmentReconciler = new ProspectAssessmentReconciler(database.db, clock);
 const campaignHealthReconciler = new CampaignHealthReconciler(database.db, clock);
 const sourcingRetentionReconciler = new SourcingRetentionReconciler(database.db, clock);
-const unipileChatSynchronizer = process.env.UNIPILE_DSN
+const unipileInboxSynchronizer = process.env.UNIPILE_DSN
   && process.env.UNIPILE_API_KEY
+  && process.env.UNIPILE_INBOX_SYNC_ENABLED !== "false"
   && process.env.UNIPILE_CHAT_SYNC_ENABLED !== "false"
-  ? new UnipileChatSynchronizer(
+  ? new UnipileAccountInboxSynchronizer(
       database.db,
       new UnipileWebhookIngestor(database.db),
       { dsn: process.env.UNIPILE_DSN, apiKey: process.env.UNIPILE_API_KEY },
@@ -287,10 +291,10 @@ const maintenance = {
       prospectAssessmentReconciler.reconcile(),
       campaignHealthReconciler.reconcile(),
       sourcingRetentionReconciler.reconcile(),
-      unipileChatSynchronizer?.reconcile() ?? Promise.resolve(0),
+      unipileInboxSynchronizer?.reconcile() ?? Promise.resolve(0),
     ]);
     if (inboundEvents > 0) {
-      console.info(JSON.stringify({ event: "unipile_chat_sync_ingested", count: inboundEvents }));
+      console.info(JSON.stringify({ event: "unipile_inbox_mirror_updated", importedMessages: inboundEvents }));
     }
     return dailyRuns + assessmentJobs + repairedCampaigns + retainedSourcing + inboundEvents;
   },
@@ -399,9 +403,23 @@ function createProspectSource(workspaceId?: string): ProspectSource {
       ? { whatsappAccountId: process.env.UNIPILE_WHATSAPP_ACCOUNT_ID }
       : {}),
     ...(workspaceId && unipileChannelConnections
-      ? { resolveWhatsappAccountId: () => unipileChannelConnections.selectedAccountId(workspaceId, "whatsapp") }
+      ? {
+          resolveLinkedinAccountId: () => unipileChannelConnections.resolveHealthyAccount(workspaceId, "linkedin").catch(() => null),
+          resolveWhatsappAccountId: () => unipileChannelConnections.resolveHealthyAccount(workspaceId, "whatsapp").catch(() => null),
+        }
       : {}),
   });
+}
+
+function unavailableChannelReadiness() {
+  return {
+    async resolveHealthyAccount() {
+      throw new ProviderUnavailableError(
+        "Unipile account readiness is not configured",
+        null,
+      );
+    },
+  };
 }
 
 function createOutboundGateway(): OutboundChannelGateway {

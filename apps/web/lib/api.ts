@@ -90,16 +90,41 @@ export interface WorkspaceConversationView {
   readonly lastName: string;
   readonly campaignId: string | null;
   readonly campaignName: string | null;
+  readonly connectedAccountId: string | null;
+  readonly accountName: string | null;
   readonly channel: "linkedin" | "email" | "whatsapp";
+  readonly origin: "campaign" | "outside_campaign";
+  readonly automationMode: "setter" | "human" | "disabled";
+  readonly subject: string | null;
   readonly status: string;
   readonly unreadCount: number;
   readonly lastMessage: { readonly body: string; readonly direction: string; readonly at: string } | null;
   readonly lastMessageAt: string;
 }
 
+export interface WorkspaceConversationDetail extends WorkspaceConversationView {
+  readonly messages: readonly {
+    readonly id: string;
+    readonly providerMessageId: string;
+    readonly direction: "inbound" | "outbound";
+    readonly senderType: string;
+    readonly body: string;
+    readonly at: string;
+  }[];
+  readonly decision: { readonly intent: string; readonly confidence: number; readonly action: string; readonly rationale: string; readonly createdAt: string } | null;
+  readonly latestCommand: { readonly id: string; readonly mode: "manual" | "setter"; readonly status: string; readonly errorMessage: string | null; readonly createdAt: string } | null;
+}
+
 export interface WorkspaceConversationPage {
   readonly data: readonly WorkspaceConversationView[];
   readonly pagination: { readonly page: number; readonly pageSize: number; readonly total: number; readonly hasNext: boolean };
+  readonly sync: {
+    readonly totalAccounts: number;
+    readonly readyAccounts: number;
+    readonly backfillingAccounts: number;
+    readonly errorAccounts: number;
+    readonly lastSuccessAt: string | null;
+  };
 }
 
 export async function getOperationalSummary(workspaceSlug: string): Promise<WorkspaceOperationalSummary> {
@@ -114,14 +139,32 @@ export async function getCampaignWorkspaceView(workspaceSlug: string, campaignId
   return crmFetch(workspaceSlug, `/api/v1/campaigns/${campaignId}/workspace-view`);
 }
 
-export async function listWorkspaceConversations(workspaceSlug: string, filters: { channel?: string; scope?: string; search?: string; page?: number; pageSize?: number } = {}): Promise<WorkspaceConversationPage> {
+export async function listWorkspaceConversations(workspaceSlug: string, filters: { channel?: string; scope?: string; search?: string; period?: string; read?: string; campaignId?: string; page?: number; pageSize?: number } = {}): Promise<WorkspaceConversationPage> {
   const params = new URLSearchParams();
   if (filters.channel) params.set("channel", filters.channel);
   if (filters.scope) params.set("scope", filters.scope);
   if (filters.search) params.set("search", filters.search);
+  if (filters.period) params.set("period", filters.period);
+  if (filters.read) params.set("read", filters.read);
+  if (filters.campaignId) params.set("campaignId", filters.campaignId);
   if (filters.page) params.set("page", String(filters.page));
   if (filters.pageSize) params.set("pageSize", String(filters.pageSize));
   return crmFetch(workspaceSlug, `/api/v1/conversations${params.size ? `?${params.toString()}` : ""}`);
+}
+
+export async function getWorkspaceConversation(workspaceSlug: string, conversationId: string): Promise<WorkspaceConversationDetail> {
+  return crmFetch(workspaceSlug, `/api/v1/conversations/${conversationId}`);
+}
+
+export async function setConversationAutomationMode(
+  workspaceSlug: string,
+  conversationId: string,
+  mode: "setter" | "human" | "disabled",
+): Promise<{ id: string; campaignId: string | null; automationMode: "setter" | "human" | "disabled" }> {
+  return crmFetch(workspaceSlug, `/api/v1/conversations/${conversationId}/automation`, {
+    method: "PATCH",
+    body: { mode },
+  });
 }
 
 export interface WorkspaceMember {

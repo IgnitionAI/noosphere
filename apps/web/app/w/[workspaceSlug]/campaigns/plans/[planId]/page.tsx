@@ -600,7 +600,7 @@ function campaignStatus(planStatus: string, campaigns: readonly CampaignDetail[]
   if (campaigns.some((campaign) => campaign.discoveryStatus === "running")) return "Recherche en cours";
   if (campaigns.length && campaigns.every((campaign) => campaign.automationErrorCode === "NO_PROSPECTS_FOUND")) return "Aucune cible trouvée";
   if (campaigns.length && campaigns.every((campaign) => ["completed", "attention"].includes(campaign.automationStage))) return "Prospection terminée";
-  if (campaigns.some((campaign) => campaign.automationStage === "sourcing")) return "Recherche non lancée";
+  if (campaigns.some((campaign) => campaign.automationStage === "sourcing")) return "Recherche continue";
   return planStatus === "assessing" ? "Préparation" : "Prête";
 }
 
@@ -615,7 +615,7 @@ function channelStatus(status: string | undefined, recommendation: string | null
   if (campaign && isActionableCampaignException(campaign)) return "incident";
   if (campaign?.automationErrorCode === "NO_PROSPECTS_FOUND") return "aucune cible";
   if (campaign?.discoveryStatus === "running") return "recherche";
-  if (campaign?.automationStage === "sourcing" && !campaign.discoveryRunId) return "non lancée";
+  if (campaign?.automationStage === "sourcing" && !campaign.discoveryRunId) return "programmée";
   if (campaign) return "actif";
   if (status === "running" || status === "pending") return "évaluation";
   if (status === "failed") return "indisponible";
@@ -625,7 +625,7 @@ function channelStatus(status: string | undefined, recommendation: string | null
 function channelDescription(status: string | undefined, campaign: CampaignDetail | undefined): string {
   if (!campaign) return status === "running" ? "Faisabilité en cours de mesure." : "Canal non retenu par l’autopilote.";
   if (campaign.discoveryStatus === "running") return "La recherche de prospects est réellement en cours.";
-  if (campaign.automationStage === "sourcing" && !campaign.discoveryRunId) return "La recherche n’a pas encore été lancée.";
+  if (campaign.automationStage === "sourcing" && !campaign.discoveryRunId) return "Le premier passage de recherche est programmé automatiquement.";
   if (campaign.automationErrorCode === "NO_PROSPECTS_FOUND") return "Recherche terminée sans prospect suffisamment fiable.";
   return `${campaign.prospects.length} cibles · ${campaign.steps.length} étapes · score ${campaign.assessmentScore ?? 0}/100`;
 }

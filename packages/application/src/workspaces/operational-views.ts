@@ -69,14 +69,51 @@ export interface ConversationWorkspaceView {
   readonly lastName: string;
   readonly campaignId: string | null;
   readonly campaignName: string | null;
+  readonly connectedAccountId: string | null;
+  readonly accountName: string | null;
   readonly channel: "linkedin" | "email" | "whatsapp";
+  readonly origin: "campaign" | "outside_campaign";
+  readonly automationMode: "setter" | "human" | "disabled";
+  readonly subject: string | null;
   readonly status: string;
   readonly unreadCount: number;
   readonly lastMessage: { readonly body: string; readonly direction: string; readonly at: Date } | null;
   readonly lastMessageAt: Date;
 }
 
+export interface ConversationWorkspaceDetail extends ConversationWorkspaceView {
+  readonly messages: readonly {
+    readonly id: string;
+    readonly providerMessageId: string;
+    readonly direction: "inbound" | "outbound";
+    readonly senderType: string;
+    readonly body: string;
+    readonly at: Date;
+  }[];
+  readonly decision: {
+    readonly intent: string;
+    readonly confidence: number;
+    readonly action: string;
+    readonly rationale: string;
+    readonly createdAt: Date;
+  } | null;
+  readonly latestCommand: {
+    readonly id: string;
+    readonly mode: "manual" | "setter";
+    readonly status: string;
+    readonly errorMessage: string | null;
+    readonly createdAt: Date;
+  } | null;
+}
+
 export interface ConversationWorkspacePage {
   readonly data: readonly ConversationWorkspaceView[];
   readonly pagination: { readonly page: number; readonly pageSize: number; readonly total: number; readonly hasNext: boolean };
+  readonly sync: {
+    readonly totalAccounts: number;
+    readonly readyAccounts: number;
+    readonly backfillingAccounts: number;
+    readonly errorAccounts: number;
+    readonly lastSuccessAt: Date | null;
+  };
 }

@@ -157,7 +157,11 @@ export class ConversationCommandJobProcessor {
         }).onConflictDoNothing();
         await tx
           .update(conversations)
-          .set({ lastMessageAt: now, updatedAt: now })
+          .set({
+            ...(command.mode === "manual" ? { automationMode: "human" as const } : {}),
+            lastMessageAt: now,
+            updatedAt: now,
+          })
           .where(
             and(
               eq(conversations.workspaceId, payload.workspaceId),

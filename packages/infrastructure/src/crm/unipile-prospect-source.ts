@@ -65,6 +65,7 @@ export class UnipileProspectSource implements ProspectSource {
   readonly #timeoutMs: number;
   #linkedinAccountId: string | null = null;
   #whatsappAccountId: string | null = null;
+  readonly #resolveLinkedinAccountIdForWorkspace: (() => Promise<string | null>) | null;
   readonly #resolveWhatsappAccountId: (() => Promise<string | null>) | null;
   #accounts: readonly UnipileAccount[] | null = null;
 
@@ -74,6 +75,7 @@ export class UnipileProspectSource implements ProspectSource {
     fetchImpl?: typeof fetch;
     accountId?: string;
     whatsappAccountId?: string;
+    resolveLinkedinAccountId?: () => Promise<string | null>;
     resolveWhatsappAccountId?: () => Promise<string | null>;
     timeoutMs?: number;
   }) {
@@ -83,6 +85,7 @@ export class UnipileProspectSource implements ProspectSource {
     this.#timeoutMs = Math.max(1_000, options.timeoutMs ?? 10_000);
     this.#linkedinAccountId = options.accountId ?? null;
     this.#whatsappAccountId = options.whatsappAccountId ?? null;
+    this.#resolveLinkedinAccountIdForWorkspace = options.resolveLinkedinAccountId ?? null;
     this.#resolveWhatsappAccountId = options.resolveWhatsappAccountId ?? null;
   }
 
@@ -213,6 +216,17 @@ export class UnipileProspectSource implements ProspectSource {
 
   async #resolveLinkedinAccountId(): Promise<string> {
     if (this.#linkedinAccountId) return this.#linkedinAccountId;
+    const selectedAccountId = await this.#resolveLinkedinAccountIdForWorkspace?.();
+    if (selectedAccountId) {
+      this.#linkedinAccountId = selectedAccountId;
+      return selectedAccountId;
+    }
+    if (this.#resolveLinkedinAccountIdForWorkspace) {
+      throw new ProviderUnavailableError(
+        "No LinkedIn account is selected for this workspace",
+        null,
+      );
+    }
     const account = (await this.#accountsList()).find(
       (item) => healthyAccount(item, "LINKEDIN"),
     );

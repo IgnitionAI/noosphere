@@ -140,9 +140,9 @@ describe("WhatsApp sourcing V1", () => {
       assessmentId,
       channel: "whatsapp",
       name: "WhatsApp · Cabinets indépendants",
-      status: "active",
+      status: "draft",
       sequenceId,
-      automationStage: "running",
+      automationStage: "sourcing",
       createdAt: now,
       updatedAt: now,
     });
@@ -283,7 +283,7 @@ describe("WhatsApp sourcing V1", () => {
     ]);
   });
 
-  test("runs the shared 06:00 pass into CRM without creating an outreach action", async () => {
+  test("keeps sourcing an initially empty draft campaign at 06:00 without creating an outreach action", async () => {
     const scheduled = await new DailyProspectingScheduler(database.db, clock).reconcile();
     expect(scheduled).toBe(1);
     expect(await new DailyProspectingScheduler(database.db, clock).reconcile()).toBe(0);

@@ -54,6 +54,9 @@ export class UnipileOutboundChannelGateway implements OutboundChannelGateway {
       );
       return responseIdentity(response);
     }
+    if (request.channel === "linkedin" && request.stepKind === "linkedin_message") {
+      await this.#requireLinkedinRelationship(request);
+    }
     const attendee = request.channel === "whatsapp"
       ? whatsappAttendee(request.recipient.normalizedValue)
       : request.recipient.providerUserId;
@@ -69,8 +72,36 @@ export class UnipileOutboundChannelGateway implements OutboundChannelGateway {
     body.set("account_id", request.accountId);
     body.set("text", request.body);
     body.set("attendees_ids", attendee);
-    const response = await this.#request("/api/v1/chats", { method: "POST", body });
-    return responseIdentity(response);
+    try {
+      const response = await this.#request("/api/v1/chats", { method: "POST", body });
+      return responseIdentity(response);
+    } catch (error) {
+      if (request.channel === "linkedin" && isMissingLinkedinRelationship(error)) {
+        throw linkedinRelationPending();
+      }
+      throw error;
+    }
+  }
+
+  async #requireLinkedinRelationship(request: OutboundSendRequest): Promise<void> {
+    if (!request.recipient.providerUserId) {
+      throw new OutboundDeliveryError(
+        "LINKEDIN_PROVIDER_USER_ID_MISSING",
+        "The LinkedIn provider user id is required before checking the relationship",
+        "not_sent",
+        false,
+      );
+    }
+    const url = new URL(`/api/v1/users/${encodeURIComponent(request.recipient.providerUserId)}`, `${this.#dsn}/`);
+    url.searchParams.set("account_id", request.accountId);
+    const profile = await this.#request(url.pathname + url.search, { method: "GET" });
+    const record = profile && typeof profile === "object" && !Array.isArray(profile)
+      ? profile as Record<string, unknown>
+      : {};
+    const firstDegree = record.is_relationship === true
+      || record.is_relationship === 1
+      || String(record.network_distance ?? "").toUpperCase() === "FIRST_DEGREE";
+    if (!firstDegree) throw linkedinRelationPending();
   }
 
   async #sendEmail(request: OutboundSendRequest) {
@@ -124,6 +155,17 @@ export class UnipileOutboundChannelGateway implements OutboundChannelGateway {
     }
     if (!response.ok) {
       const detail = (await response.text().catch(() => "")).replace(/\s+/g, " ").slice(0, 500);
+      if (
+        response.status === 422
+        && /limit_exceeded|usage limit set by the provider|provider.*limit/i.test(detail)
+      ) {
+        throw new OutboundDeliveryError(
+          "UNIPILE_PROVIDER_LIMIT",
+          `Unipile provider limit reached${detail ? `: ${detail}` : ""}`,
+          "not_sent",
+          true,
+        );
+      }
       throw new OutboundDeliveryError(
         `UNIPILE_${response.status}`,
         `Unipile returned ${response.status}${detail ? `: ${detail}` : ""}`,
@@ -168,4 +210,19 @@ function responseIdentity(value: unknown): { providerRequestId: string; conversa
 function whatsappAttendee(value: string): string | null {
   const digits = value.replace(/\D/g, "");
   return digits ? `${digits}@s.whatsapp.net` : null;
+}
+
+function linkedinRelationPending(): OutboundDeliveryError {
+  return new OutboundDeliveryError(
+    "LINKEDIN_RELATION_PENDING",
+    "The LinkedIn invitation has not been accepted yet",
+    "not_sent",
+    true,
+  );
+}
+
+function isMissingLinkedinRelationship(error: unknown): boolean {
+  return error instanceof OutboundDeliveryError
+    && error.code === "UNIPILE_422"
+    && /no_connection_with_recipient|first degree connection/i.test(error.message);
 }

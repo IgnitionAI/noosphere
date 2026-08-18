@@ -41,6 +41,7 @@ import {
   campaignEnrollments,
   sequenceVersions,
   contacts,
+  dailyProspectingSchedules,
   authUsers,
   workspaces,
 } from "@outbound/infrastructure/database/schema";
@@ -64,6 +65,7 @@ import { CampaignSourcingReconciler } from "@outbound/infrastructure/campaigns/c
 import { PostgresProspectViewRepository } from "@outbound/infrastructure/crm/postgres-prospect-view-repository";
 import { PostgresChannelCapabilityReassessment } from "@outbound/infrastructure/campaigns/channel-capability-reassessment";
 import { ProspectDecisionJobProcessor } from "@outbound/infrastructure/campaigns/prospect-decision-runner";
+import { DailyProspectingScheduler } from "@outbound/infrastructure/campaigns/daily-prospecting-scheduler";
 
 const databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
 const databaseDescribe = databaseUrl ? describe : describe.skip;
@@ -455,6 +457,43 @@ databaseDescribe("V3 automatic ICP publication", () => {
     await new PostgresDiscoveryRepository(database.db).completeRun({
       workspaceId,
       runId: firstRunId,
+      now: clock.now(),
+      candidates: [],
+    });
+    const [emptyCampaign] = await database.db
+      .select()
+      .from(campaigns)
+      .where(and(eq(campaigns.workspaceId, workspaceId), eq(campaigns.id, firstCampaign.id)));
+    expect(emptyCampaign).toMatchObject({
+      status: "draft",
+      automationStage: "sourcing",
+      automationErrorCode: null,
+    });
+    await database.db.insert(dailyProspectingSchedules).values({
+      workspaceId,
+      enabled: true,
+      localTime: "06:00",
+      timezone: "Europe/Paris",
+      nextRunAt: new Date(currentTime.getTime() - 1_000),
+      createdAt: clock.now(),
+      updatedAt: clock.now(),
+    }).onConflictDoUpdate({
+      target: dailyProspectingSchedules.workspaceId,
+      set: { nextRunAt: new Date(currentTime.getTime() - 1_000), updatedAt: clock.now() },
+    });
+    expect(await new DailyProspectingScheduler(database.db, clock).reconcile()).toBeGreaterThan(0);
+    const [dailyRecoveryRun] = await database.db
+      .select()
+      .from(prospectDiscoveryRuns)
+      .where(and(
+        eq(prospectDiscoveryRuns.workspaceId, workspaceId),
+        eq(prospectDiscoveryRuns.campaignId, firstCampaign.id),
+        eq(prospectDiscoveryRuns.trigger, "daily"),
+      ));
+    expect(dailyRecoveryRun).toBeDefined();
+    await new PostgresDiscoveryRepository(database.db).completeRun({
+      workspaceId,
+      runId: dailyRecoveryRun!.id,
       now: clock.now(),
       candidates: [{
         id: crypto.randomUUID(),
@@ -1101,6 +1140,15 @@ databaseDescribe("V3 automatic ICP publication", () => {
       providerMessageId: "human-outbound-fixture",
       direction: "outbound",
     });
+    const [humanOwnedConversation] = await database.db
+      .select({ automationMode: conversations.automationMode })
+      .from(conversations)
+      .where(and(
+        eq(conversations.workspaceId, workspaceId),
+        eq(conversations.providerThreadId, "chat-fixture"),
+      ))
+      .limit(1);
+    expect(humanOwnedConversation?.automationMode).toBe("human");
     const [cancelledReplyJob] = await queue.lease({
       workerId: "automated-reply-send-worker-2",
       types: ["inbound.reply.send"],

@@ -114,6 +114,35 @@ export class PostgresUnipileChannelConnections {
     return (await this.selectedAccount(workspaceId, channel))?.providerAccountId ?? null;
   }
 
+  async resolveHealthyAccount(workspaceId: string, channel: ProspectingChannel): Promise<string> {
+    const selected = await this.selectedAccount(workspaceId, channel);
+    if (!selected) {
+      throw new UnipileChannelConnectionError(
+        "UNIPILE_ACCOUNT_NOT_SELECTED",
+        409,
+        `No Unipile ${channel} account is selected for this workspace`,
+      );
+    }
+    const account = (await this.#providerAccounts()).find(
+      (candidate) => candidate.id === selected.providerAccountId && providerChannel(candidate.type) === channel,
+    );
+    if (!account) {
+      throw new UnipileChannelConnectionError(
+        "UNIPILE_ACCOUNT_NOT_FOUND",
+        404,
+        `The selected Unipile ${channel} account no longer exists`,
+      );
+    }
+    if (!account.healthy) {
+      throw new UnipileChannelConnectionError(
+        "UNIPILE_ACCOUNT_UNHEALTHY",
+        409,
+        `The selected Unipile ${channel} account is not connected`,
+      );
+    }
+    return account.id;
+  }
+
   async selectedAccount(workspaceId: string, channel: ProspectingChannel) {
     const [row] = await this.database
       .select({

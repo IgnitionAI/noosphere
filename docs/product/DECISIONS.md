@@ -1,5 +1,30 @@
 # Décisions d'architecture produit
 
+## D-007 — Une boucle métier, trois surfaces principales (2026-08-18)
+
+**Décision** : l’expérience quotidienne est réduite à `Prospection`, `Messages`
+et `Rendez-vous`. `Configuration` reste secondaire. Le chemin métier présenté
+à l’utilisateur est unique : lancer un ICP, laisser les campagnes travailler,
+puis prendre les appels réservés.
+
+**Invariants** :
+
+- `Prospection` est l’entrée par défaut du workspace et lance l’étude ICP ;
+- un ICP publié déclenche l’évaluation des canaux et les campagnes utiles sans
+  construction manuelle de séquence dans le chemin normal ;
+- `Messages` est un miroir tenant-scoped de tous les comptes LinkedIn, email et
+  WhatsApp réellement associés au workspace, et pas seulement des campagnes ;
+- `Rendez-vous` expose les réservations réelles et l’accès à l’appel ;
+- les pages CRM, pipeline, console et réglages spécialisés restent accessibles
+  depuis leur contexte mais ne sont plus des destinations principales ;
+- une activité humaine dans un thread suspend le Setter sur ce thread ;
+- une conversation hors campagne reste toujours en pilotage humain et ne peut
+  recevoir aucune réponse automatique implicite.
+
+**Conséquence d’architecture** : l’acquisition et le miroir des conversations
+sont deux sous-systèmes distincts. L’acquisition crée le contexte campagne ; le
+miroir part des comptes associés et rattache ce contexte lorsqu’il existe.
+
 ## D-006 — Inbox globale et conversations hors campagne (2026-08-04)
 
 **Décision** : la Messagerie devient une vue opérationnelle transverse, en

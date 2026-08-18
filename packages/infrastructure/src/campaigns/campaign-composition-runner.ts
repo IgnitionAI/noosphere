@@ -473,9 +473,10 @@ export class CampaignCompositionJobProcessor {
         }
       }
       if (!earliestDueAt) throw new Error("NO_OUTREACH_ACTIONS_SCHEDULED");
+      const activatesCampaign = !input.incremental || input.campaign.status === "draft";
       await tx
         .update(campaigns)
-        .set(input.incremental
+        .set(!activatesCampaign
           ? {
               sequenceVersionId,
               updatedAt: now,
@@ -493,7 +494,7 @@ export class CampaignCompositionJobProcessor {
         workspaceId: input.workspaceId,
         aggregateType: "Campaign",
         aggregateId: input.campaignId,
-        eventType: input.incremental
+        eventType: input.incremental && !activatesCampaign
           ? "CampaignDailyProspectsScheduled"
           : "CampaignActivatedAutomatically",
         payload: {

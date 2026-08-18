@@ -6,19 +6,20 @@ Le produit fonctionne en autopilote dans le chemin normal : le Setter IA peut
 rechercher, rédiger, envoyer, relancer, qualifier et proposer un rendez-vous
 lorsque la policy déterministe l’autorise. Une exception explicite (opt-out,
 prix, juridique, sécurité, négociation, quota, compte dégradé) arrête l’action
-et remonte dans « À traiter ».
+et remonte sur la campagne, la conversation ou la configuration concernée.
 
 ## Dégradations déterministes et fallback
 
 | Besoin futur | Fonctionnement initial | Évolution IA |
 |---|---|---|
-| lecture produit | segments réalistes simulés et éditables | détection de segments |
-| score prospect | règles et pondérations de l’ICP | score assisté et explication |
-| personnalisation | variables contrôlées + brouillon | message sourcé envoyé par le Setter |
-| qualification réponse | statut choisi par l’opérateur | classification proposée |
-| réponse | réponse manuelle | réponse IA autonome sous policy |
-| recherche connaissance | filtres et texte PostgreSQL | retrieval hybride/RAG |
-| optimisation campagne | analytics déterministes | recommandations évaluées |
+| lecture produit | brief et sources internes | Deep Agent sourcé, puis ICP publié automatiquement après audit |
+| score prospect | règles d’éligibilité déterministes | score K3 expliqué et preuves conservées |
+| personnalisation | faits contrôlés et policy publiée | message contextualisé envoyé par le Setter |
+| qualification réponse | thread complet et état durable | classification et prochaine action structurées |
+| réponse en campagne | policy, exclusions et compte sain | réponse IA autonome sous policy |
+| réponse hors campagne | pilotage humain uniquement | amélioration de brouillon ou commande Setter explicite, jamais d’automatisme continu |
+| recherche connaissance | filtres workspace et claims sourcés | retrieval hybride lorsque nécessaire |
+| optimisation campagne | métriques déterministes | recommandations évaluées |
 
 ## Contrats à prévoir dès le socle
 

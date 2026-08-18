@@ -297,6 +297,56 @@ databaseDescribe("outbound send safety", () => {
     await database.client`delete from workspaces where id = ${currentWorkspaceId}`;
   });
 
+  test("an unsent action follows the workspace current healthy sender without a retry", async () => {
+    await database.client`delete from jobs where workspace_id = ${workspaceId}`;
+    await database.db
+      .update(campaignEnrollments)
+      .set({ status: "cancelled", completedAt: now })
+      .where(and(eq(campaignEnrollments.workspaceId, workspaceId), eq(campaignEnrollments.contactId, contactId)));
+    const fixture = await campaignFixture("sender-rebind", `historical-sender-${workspaceId}`, "scheduled");
+    const currentProviderAccountId = `current-sender-${workspaceId}`;
+    const connectedAccountId = crypto.randomUUID();
+    await database.db.insert(connectedAccounts).values({
+      id: connectedAccountId,
+      workspaceId,
+      provider: "unipile",
+      providerAccountId: currentProviderAccountId,
+      displayName: "Current LinkedIn sender",
+      status: "connected",
+      encryptedSecret: "provider-managed",
+    });
+    const dispatchJob = await leasedJob(fixture.actionId, "sender-rebind-worker");
+    const sentWith: string[] = [];
+    await new OutreachDispatchJobProcessor(
+      database.db,
+      queue,
+      {
+        async send(request) {
+          sentWith.push(request.accountId);
+          return { providerRequestId: "sender-rebind-request", conversationId: "sender-rebind-chat" };
+        },
+      },
+      clock,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        async resolveHealthyAccount() {
+          return { accountId: currentProviderAccountId };
+        },
+      },
+    ).process(dispatchJob);
+
+    expect(sentWith).toEqual([currentProviderAccountId]);
+    expect(await action(fixture.actionId)).toMatchObject({
+      status: "sent",
+      providerAccountId: currentProviderAccountId,
+      connectedAccountId,
+      lastErrorCode: null,
+    });
+  });
+
   async function campaignFixture(
     label: string,
     accountId: string,

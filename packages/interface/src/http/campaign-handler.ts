@@ -49,6 +49,7 @@ const campaignDiscoveryPath = /^\/api\/v1\/campaigns\/([^/]+)\/actions\/discover
 const campaignArchivePath = /^\/api\/v1\/campaigns\/([^/]+)\/actions\/archive$/;
 const conversationMessagesPath = /^\/api\/v1\/conversations\/([^/]+)\/messages$/;
 const conversationDraftImprovementsPath = /^\/api\/v1\/conversations\/([^/]+)\/draft-improvements$/;
+const conversationAutomationPath = /^\/api\/v1\/conversations\/([^/]+)\/automation$/;
 const planPath = /^\/api\/v1\/prospecting-plans\/([^/]+)$/;
 const planEnableChannelPath =
   /^\/api\/v1\/prospecting-plans\/([^/]+)\/channels\/(linkedin|email|whatsapp)\/actions\/enable$/;
@@ -87,6 +88,9 @@ const conversationCommandSchema = z.object({
 });
 const conversationDraftImprovementSchema = z.object({
   draft: z.string().trim().min(1).max(5_000),
+}).strict();
+const conversationAutomationSchema = z.object({
+  mode: z.enum(["setter", "human", "disabled"]),
 }).strict();
 const campaignCreateSchema = z.object({
   name: z.string().trim().min(1).max(300),
@@ -133,6 +137,19 @@ export function createCampaignHttpHandler(dependencies: {
           workspaceId: context.workspaceId,
           conversationId,
           draft: body.draft,
+        }));
+      }
+
+      const conversationAutomationMatch = conversationAutomationPath.exec(url.pathname);
+      if (conversationAutomationMatch && request.method === "PATCH") {
+        requireOperator(context.role);
+        const conversationId = postgresUuidSchema.parse(conversationAutomationMatch[1]);
+        const body = conversationAutomationSchema.parse(await request.json());
+        return json(await conversationCommands.setAutomationMode({
+          workspaceId: context.workspaceId,
+          conversationId,
+          mode: body.mode,
+          now: new Date(),
         }));
       }
 
@@ -461,6 +478,9 @@ export function createCampaignHttpHandler(dependencies: {
       if (message === "CONVERSATION_COMMAND_ALREADY_PENDING") {
         return problem(409, message, "A message is already being prepared or sent for this conversation");
       }
+      if (message === "OUTSIDE_CAMPAIGN_SETTER_FORBIDDEN") {
+        return problem(409, message, "Automatic Setter mode is only available for campaign conversations");
+      }
       if (message === "CAMPAIGN_NOT_FOUND") return problem(404, message, "Campaign not found");
       if (message === "CAMPAIGN_SNAPSHOT_IMMUTABLE" || message.endsWith("_CONFLICT")) {
         return problem(409, message, "Campaign transition is not allowed");
@@ -494,6 +514,7 @@ function allowedMethods(pathname: string): string | null {
   if (campaignAutopilotPolicyPath.test(pathname)) return "GET, PATCH";
   if (conversationMessagesPath.test(pathname)) return "POST";
   if (conversationDraftImprovementsPath.test(pathname)) return "POST";
+  if (conversationAutomationPath.test(pathname)) return "PATCH";
   if (pathname === "/api/v1/campaigns") return "GET, POST";
   if (campaignPath.test(pathname)) return "GET, PATCH";
   if (campaignPreflightPath.test(pathname) || campaignTransitionPath.test(pathname)) return "POST";

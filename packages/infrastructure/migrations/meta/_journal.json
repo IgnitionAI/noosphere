@@ -442,6 +442,34 @@
       "when": 1788472800000,
       "tag": "0062_durable_prospect_decisions",
       "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1789772400000,
+      "tag": "0063_account_inbox_mirror",
+      "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1789858800000,
+      "tag": "0064_linkedin_relation_recovery",
+      "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "7",
+      "when": 1789945200000,
+      "tag": "0065_unipile_provider_limit_recovery",
+      "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1790031600000,
+      "tag": "0066_continuous_empty_campaign_sourcing",
+      "breakpoints": true
     }
   ]
 }

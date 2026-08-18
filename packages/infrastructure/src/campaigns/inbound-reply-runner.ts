@@ -197,7 +197,7 @@ export class InboundReplyJobProcessor {
         campaignId,
         decision: effectiveDecision,
         bookingUrl,
-        autoReplyEnabled: campaignId !== null && replyPolicy.autoReplyEnabled,
+        autoReplyEnabled: campaignId !== null && persisted.automationMode === "setter" && replyPolicy.autoReplyEnabled,
         replyDelayMinutes: replyPolicy.replyDelayMinutes,
         autonomous: replyPolicy.autonomous,
       });
@@ -395,6 +395,8 @@ export class InboundReplyJobProcessor {
         providerAccountId: input.incoming.accountId,
         providerThreadId: input.incoming.threadId,
         channel: input.incoming.channel,
+        origin: input.matched.campaignId ? "campaign" : "outside_campaign",
+        automationMode: input.matched.campaignId ? "setter" : "human",
         status: "open",
         lastMessageAt: input.incoming.occurredAt,
         createdAt: now,
@@ -402,7 +404,7 @@ export class InboundReplyJobProcessor {
       }).onConflictDoUpdate({
         target: [conversations.workspaceId, conversations.providerAccountId, conversations.providerThreadId],
         set: { lastMessageAt: input.incoming.occurredAt, updatedAt: now },
-      }).returning({ id: conversations.id });
+      }).returning({ id: conversations.id, automationMode: conversations.automationMode });
       const persistedConversationId = insertedConversation!.id;
       const messageId = crypto.randomUUID();
       const [insertedMessage] = await tx.insert(messages).values({
@@ -450,6 +452,7 @@ export class InboundReplyJobProcessor {
         created: Boolean(insertedMessage),
         messageId: persistedMessageId,
         conversationId: persistedConversationId,
+        automationMode: insertedConversation!.automationMode,
       };
     });
   }
@@ -518,7 +521,7 @@ export class InboundReplyJobProcessor {
         ));
       await tx
         .update(conversations)
-        .set({ lastMessageAt: input.outgoing.occurredAt, updatedAt: now })
+        .set({ automationMode: "human", lastMessageAt: input.outgoing.occurredAt, updatedAt: now })
         .where(and(eq(conversations.workspaceId, input.workspaceId), eq(conversations.id, conversation.id)));
       await tx
         .update(integrationEvents)

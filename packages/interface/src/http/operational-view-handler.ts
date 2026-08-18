@@ -9,17 +9,20 @@ import {
 import type {
   CampaignWorkspaceView,
   ConversationWorkspacePage,
+  ConversationWorkspaceDetail,
   SetupReadinessView,
   WorkspaceOperationalSummary,
 } from "@outbound/application/workspaces/operational-views";
 
 const campaignViewPath = /^\/api\/v1\/campaigns\/([^/]+)\/workspace-view$/;
+const conversationViewPath = /^\/api\/v1\/conversations\/([^/]+)$/;
 
 export type OperationalViewsPort = {
   getSummary(workspaceId: string): Promise<WorkspaceOperationalSummary>;
   getSetupReadiness(workspaceId: string): Promise<SetupReadinessView>;
   getCampaignView(workspaceId: string, campaignId: string): Promise<CampaignWorkspaceView | null>;
-  listConversations(input: { workspaceId: string; channel?: string; scope?: string; search?: string; page: number; pageSize: number }): Promise<ConversationWorkspacePage>;
+  listConversations(input: { workspaceId: string; channel?: string; scope?: string; search?: string; period?: string; read?: string; campaignId?: string; page: number; pageSize: number }): Promise<ConversationWorkspacePage>;
+  getConversation(workspaceId: string, conversationId: string): Promise<ConversationWorkspaceDetail | null>;
   getPipeline(workspaceId: string, role?: string): Promise<unknown>;
 };
 
@@ -52,14 +55,26 @@ export function createOperationalViewHttpHandler(input: {
         const pageSize = parsePositiveInt(url.searchParams.get("pageSize"), 25, 100);
         const channel = z.enum(["linkedin", "email", "whatsapp"]).optional().parse(url.searchParams.get("channel") || undefined);
         const scope = z.enum(["campaign", "outside_campaign"]).optional().parse(url.searchParams.get("scope") || undefined);
+        const period = z.enum(["today", "7d", "30d", "90d"]).optional().parse(url.searchParams.get("period") || undefined);
+        const read = z.literal("unread").optional().parse(url.searchParams.get("read") || undefined);
+        const campaignId = z.string().uuid().optional().parse(url.searchParams.get("campaignId") || undefined);
         return Response.json(await views.listConversations({
           workspaceId: context.workspaceId,
           page,
           pageSize,
           ...(channel ? { channel } : {}),
           ...(scope ? { scope } : {}),
+          ...(period ? { period } : {}),
+          ...(read ? { read } : {}),
+          ...(campaignId ? { campaignId } : {}),
           ...(url.searchParams.get("search") ? { search: url.searchParams.get("search")! } : {}),
         }));
+      }
+      const conversationMatch = conversationViewPath.exec(url.pathname);
+      if (conversationMatch) {
+        const conversationId = z.string().uuid().parse(conversationMatch[1]);
+        const conversation = await views.getConversation(context.workspaceId, conversationId);
+        return conversation ? Response.json(conversation) : problem(404, "CONVERSATION_NOT_FOUND", "Conversation not found");
       }
       if (url.pathname === "/api/v1/pipeline/view") {
         return Response.json(await views.getPipeline(context.workspaceId, context.role));

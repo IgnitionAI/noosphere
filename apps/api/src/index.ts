@@ -284,7 +284,14 @@ const server = Bun.serve({
     if (isOperatorConsoleRoute(pathname)) return operatorConsole(request);
     if (isWorkspaceOnboardingRoute(pathname)) return workspaceOnboarding(request);
     if (isWorkspaceDataRoute(pathname, request.method)) return workspaceData(request);
-    if (pathname === "/api/v1/workspace/operational-summary" || pathname === "/api/v1/workspace/setup-readiness" || pathname === "/api/v1/conversations" || pathname === "/api/v1/pipeline/view" || /^\/api\/v1\/campaigns\/[^/]+\/workspace-view$/.test(pathname)) return operationalViews(request);
+    if (
+      pathname === "/api/v1/workspace/operational-summary"
+      || pathname === "/api/v1/workspace/setup-readiness"
+      || pathname === "/api/v1/conversations"
+      || (request.method === "GET" && /^\/api\/v1\/conversations\/[^/]+$/.test(pathname))
+      || pathname === "/api/v1/pipeline/view"
+      || /^\/api\/v1\/campaigns\/[^/]+\/workspace-view$/.test(pathname)
+    ) return operationalViews(request);
     if (pathname.startsWith("/api/v1/opportunities") || pathname === "/api/v1/pipeline/forecast" || pathname.startsWith("/api/v1/workspaces/") && pathname.endsWith("/lost-reasons")) return opportunityHandler(request);
     if (pathname.includes("/actions/enrich") || pathname.startsWith("/api/v1/enrichment-jobs/") || pathname.endsWith("/enrichment")) return enrichment(request);
     if (pathname === "/api/v1/workspaces" || pathname.startsWith("/api/v1/workspaces/") || pathname.startsWith("/api/v1/invitations/")) return workspace(request);

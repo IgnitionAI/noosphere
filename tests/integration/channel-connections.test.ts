@@ -63,7 +63,10 @@ databaseDescribe("workspace Unipile channel connections", () => {
       now: new Date("2026-08-04T12:00:00.000Z"),
     });
     expect(await manager.selectedAccountId(workspaceId, "whatsapp")).toBe("wa-healthy");
+    expect(await manager.resolveHealthyAccount(workspaceId, "whatsapp")).toBe("wa-healthy");
     expect(await manager.selectedAccountId(otherWorkspaceId, "whatsapp")).toBeNull();
+    await expect(manager.resolveHealthyAccount(otherWorkspaceId, "whatsapp"))
+      .rejects.toMatchObject({ code: "UNIPILE_ACCOUNT_NOT_SELECTED", status: 409 });
 
     await expect(manager.select({
       workspaceId,

@@ -26,6 +26,7 @@ import {
   outreachAttempts,
   prospectDiscoveryCandidates,
   campaignEnrollments,
+  connectedAccounts,
   workspaces,
 } from "@outbound/infrastructure/database/schema";
 import { suppressionFingerprint } from "@outbound/infrastructure/crm/suppression-fingerprint";
@@ -127,7 +128,7 @@ export class OutreachDispatchJobProcessor {
       await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
       return;
     }
-    const deliveryAction = claimed.channel === "whatsapp"
+    let deliveryAction = claimed.channel === "whatsapp"
       ? await this.#revalidateWhatsapp(claimed, content.recipient.normalizedValue, job)
       : claimed;
     if (!deliveryAction) return;
@@ -135,14 +136,7 @@ export class OutreachDispatchJobProcessor {
       try {
         const sender = await this.senderReadiness.resolveHealthyAccount(deliveryAction.workspaceId, deliveryAction.channel);
         if (sender.accountId !== deliveryAction.providerAccountId) {
-          await this.#defer(
-            deliveryAction,
-            job,
-            new Date(this.clock.now().getTime() + 15 * 60_000),
-            "SENDER_ACCOUNT_CHANGED",
-            "Le compte d’envoi préparé n’est plus le compte sain sélectionné pour ce canal.",
-          );
-          return;
+          deliveryAction = await this.#rebindSenderAccount(deliveryAction, sender.accountId);
         }
       } catch {
         await this.#defer(
@@ -224,10 +218,13 @@ export class OutreachDispatchJobProcessor {
         error.retryable
       ) {
         await this.#resetForRetry(claimed, attemptId, error);
+        const retryAt = error.code === "LINKEDIN_RELATION_PENDING" || error.code === "UNIPILE_PROVIDER_LIMIT"
+          ? new Date(this.clock.now().getTime() + 8 * 60 * 60_000)
+          : new Date(this.clock.now().getTime() + 60_000 * job.attempts);
         await this.queue.retry({
           jobId: job.id,
           workerId: job.lockedBy,
-          availableAt: new Date(this.clock.now().getTime() + 60_000 * job.attempts),
+          availableAt: retryAt,
           errorCode: error.code,
           errorMessage: error.message,
         });
@@ -374,6 +371,38 @@ export class OutreachDispatchJobProcessor {
         ),
       );
     return sent.length >= policy.limits[action.channel];
+  }
+
+  async #rebindSenderAccount(action: ClaimedAction, providerAccountId: string): Promise<ClaimedAction> {
+    const [connectedAccount] = await this.database
+      .select({ id: connectedAccounts.id })
+      .from(connectedAccounts)
+      .where(and(
+        eq(connectedAccounts.workspaceId, action.workspaceId),
+        eq(connectedAccounts.provider, "unipile"),
+        eq(connectedAccounts.providerAccountId, providerAccountId),
+        eq(connectedAccounts.status, "connected"),
+      ))
+      .limit(1);
+    await this.database
+      .update(outreachActions)
+      .set({
+        providerAccountId,
+        connectedAccountId: connectedAccount?.id ?? null,
+        lastErrorCode: null,
+        lastErrorMessage: null,
+        updatedAt: this.clock.now(),
+      })
+      .where(and(
+        eq(outreachActions.workspaceId, action.workspaceId),
+        eq(outreachActions.id, action.id),
+        eq(outreachActions.status, "executing"),
+      ));
+    return {
+      ...action,
+      providerAccountId,
+      connectedAccountId: connectedAccount?.id ?? null,
+    };
   }
 
   async #sendWithFinalGate(
@@ -862,6 +891,7 @@ async function loadClaimedAction(
       campaignId: outreachActions.campaignId,
       contactId: outreachActions.contactId,
       providerAccountId: outreachActions.providerAccountId,
+      connectedAccountId: outreachActions.connectedAccountId,
       channel: outreachActions.channel,
       stepPosition: outreachActions.stepPosition,
       stepKind: outreachActions.stepKind,

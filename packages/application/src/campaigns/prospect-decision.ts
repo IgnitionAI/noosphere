@@ -23,6 +23,7 @@ export interface ProspectDecisionState {
     readonly id: string;
     readonly status: string;
     readonly stepPosition: number;
+    readonly stepKind: string;
     readonly channel: string;
     readonly dueAt: Date;
   } | null;

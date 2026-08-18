@@ -1,4 +1,4 @@
-import { Activity, Archive, ArrowRight, CalendarDays, Clock3, Database, Download, ExternalLink, Gauge, Mail, MessageCircle, Settings, ShieldCheck, Sparkles, UsersRound } from "lucide-react";
+import { Activity, Archive, ArrowRight, Bot, BookOpenCheck, CalendarDays, Clock3, Database, Download, ExternalLink, Gauge, Mail, MessageCircle, Package, Settings, ShieldCheck, Sparkles, Target, UsersRound } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
@@ -50,21 +50,28 @@ export default async function WorkspaceSettingsPage({ params, searchParams }: { 
 
   return <div className="mx-auto max-w-6xl">
     <ExportRefresh active={dataExport?.status === "pending" || dataExport?.status === "processing"} />
-    <header className="border-b border-line pb-6"><div className="badge badge-signal w-fit"><Settings size={13} /> Administration</div><h1 className="page-title mt-3">Paramètres du workspace</h1><p className="mt-2 max-w-3xl text-sm leading-6 text-muted">Profil, équipe, cadence d’envoi, sécurité et cycle de vie des données — chaque mutation sensible reste isolée et auditée.</p></header>
+    <header className="border-b border-line pb-6"><div className="badge badge-signal w-fit"><Settings size={13} /> Préparer l’autopilote</div><h1 className="page-title mt-3">Configuration</h1><p className="mt-2 max-w-3xl text-sm leading-6 text-muted">Un seul endroit pour connecter ce que vous vendez, qui vous ciblez, vos comptes et votre agenda.</p></header>
     {query.notice ? <p className="mt-5 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800" role="status">{query.notice}</p> : null}
     {query.error ? <p className="mt-5 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-danger" role="alert">{settingsError(query.error)}</p> : null}
 
     {readiness ? <section className="panel mt-6"><div className="panel-header"><div><h2 className="font-semibold">Lancement guidé</h2><p className="mt-1 text-xs text-muted">Les prérequis sont vérifiés automatiquement ; les éléments optionnels peuvent être ajoutés plus tard.</p></div><span className={readiness.ready ? "badge badge-success" : "badge badge-warning"}>{readiness.ready ? "Prêt à lancer" : "À compléter"}</span></div><div className="divide-y divide-line">{readiness.items.map((item) => <Link className="flex items-center gap-3 p-4 transition hover:bg-slate-50" href={item.action ? `/w/${workspaceSlug}${item.action.href}` : `/w/${workspaceSlug}/settings`} key={item.key}><span className={`grid h-8 w-8 place-items-center rounded-full ${item.state === "ready" ? "bg-emerald-50 text-success" : item.state === "optional" ? "bg-slate-100 text-muted" : "bg-amber-50 text-warning"}`}>{item.state === "ready" ? <ShieldCheck size={15} /> : <ArrowRight size={15} />}</span><span className="min-w-0 flex-1"><strong className="block text-sm">{item.label}</strong><span className="mt-1 block text-xs text-muted">{item.reason}</span></span><span className="badge">{item.state === "ready" ? "Prêt" : item.state === "optional" ? "Optionnel" : "Action requise"}</span></Link>)}</div></section> : null}
 
-    <section className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-      <SettingLink href={`/w/${workspaceSlug}/settings/members`} icon={<UsersRound size={17} />} label="Équipe" detail={`${members.length} membre${members.length > 1 ? "s" : ""}`} />
-      {canOperate ? <SettingLink href={`/w/${workspaceSlug}/settings/console`} icon={<Activity size={17} />} label="Console opérateur" detail="Jobs et corrélations" /> : null}
-      {canAdminister ? <>
-        <SettingLink href={`/w/${workspaceSlug}/settings/channels`} icon={<MessageCircle size={17} />} label="Canaux" detail="Comptes d’envoi" />
-        <SettingLink href={`/w/${workspaceSlug}/settings/calendar`} icon={<CalendarDays size={17} />} label="Agenda" detail="Cal.com et RDV" />
-        <SettingLink href={`/w/${workspaceSlug}/settings/ai`} icon={<Sparkles size={17} />} label="Modèles IA" detail="Kimi et fallbacks" />
-      </> : null}
+    <section className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <SettingLink href={`/w/${workspaceSlug}/offers`} icon={<Package size={17} />} label="Produit et offre" detail="Ce que l’IA doit vendre" />
+      <SettingLink href={`/w/${workspaceSlug}/icps`} icon={<Target size={17} />} label="ICP et segments" detail="Les profils à rechercher" />
+      <SettingLink href={`/w/${workspaceSlug}/settings/channels`} icon={<MessageCircle size={17} />} label="Comptes et canaux" detail="LinkedIn, email, WhatsApp" />
+      <SettingLink href={`/w/${workspaceSlug}/settings/automation`} icon={<Bot size={17} />} label="Automatisation" detail="Setter, relances et sécurité" />
+      <SettingLink href={`/w/${workspaceSlug}/settings/calendar`} icon={<CalendarDays size={17} />} label="Agenda" detail="Créneaux et réservations" />
+      <SettingLink href={`/w/${workspaceSlug}/knowledge`} icon={<BookOpenCheck size={17} />} label="Connaissance" detail="Preuves et objections optionnelles" />
     </section>
+
+    <details className="mt-8 rounded-xl border border-line bg-white p-4">
+      <summary className="cursor-pointer list-none font-semibold text-navy">Administration avancée <span className="ml-2 text-xs font-normal text-muted">équipe, jobs, quotas et données</span></summary>
+      <section className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <SettingLink href={`/w/${workspaceSlug}/settings/members`} icon={<UsersRound size={17} />} label="Équipe" detail={`${members.length} membre${members.length > 1 ? "s" : ""}`} />
+        {canOperate ? <SettingLink href={`/w/${workspaceSlug}/settings/console`} icon={<Activity size={17} />} label="Console opérateur" detail="Jobs et corrélations" /> : null}
+        {canAdminister ? <SettingLink href={`/w/${workspaceSlug}/settings/ai`} icon={<Sparkles size={17} />} label="Modèles IA" detail="Kimi et fallbacks" /> : null}
+      </section>
 
     <section className="panel mt-6"><div className="panel-header"><div><h2 className="font-semibold">Profil</h2><p className="mt-1 text-xs text-muted">Le nom est modifiable ; le slug reste stable pour ne casser aucun lien.</p></div><span className="badge">{workspace.slug}</span></div>{canAdminister ? <form action={profile} className="grid gap-3 p-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end"><label className="text-xs font-semibold text-muted">Nom<input className="control mt-1" defaultValue={workspace.name} maxLength={200} name="name" required /></label><label className="text-xs font-semibold text-muted">Slug immuable<input className="control mt-1 bg-slate-50" disabled value={workspace.slug} /></label><button className="button button-primary" type="submit">Renommer</button></form> : <div className="p-4"><strong>{workspace.name}</strong><p className="mt-1 text-xs text-muted">/{workspace.slug}</p></div>}</section>
 
@@ -81,6 +88,7 @@ export default async function WorkspaceSettingsPage({ params, searchParams }: { 
 
       <section className="panel mt-6"><div className="panel-header"><div><h2 className="flex items-center gap-2 font-semibold"><ShieldCheck size={16} /> Journal d’audit</h2><p className="mt-1 text-xs text-muted">Filtrez les mutations sensibles par action, acteur et période.</p></div><span className="badge">{audit.length}</span></div><form className="grid gap-3 border-b border-line p-4 sm:grid-cols-4"><label className="text-xs font-semibold text-muted">Action<input className="control mt-1" defaultValue={query.action ?? ""} name="action" placeholder="ContactAnonymized" /></label><label className="text-xs font-semibold text-muted">Acteur<select className="control mt-1" defaultValue={query.actorUserId ?? ""} name="actorUserId"><option value="">Tous</option>{members.map((member) => <option key={member.userId} value={member.userId}>{member.name || member.email}</option>)}</select></label><label className="text-xs font-semibold text-muted">Du<input className="control mt-1" defaultValue={query.from?.slice(0,10) ?? ""} name="from" type="date" /></label><label className="text-xs font-semibold text-muted">Au<input className="control mt-1" defaultValue={query.to?.slice(0,10) ?? ""} name="to" type="date" /></label><div className="sm:col-span-4"><button className="button" type="submit">Filtrer</button></div></form>{audit.length ? <div className="overflow-x-auto"><table className="data-table min-w-[780px]"><thead><tr><th>Date</th><th>Action</th><th>Acteur</th><th>Cible</th></tr></thead><tbody>{audit.map((entry) => <tr key={entry.id}><td className="text-xs text-muted">{formatDate(entry.createdAt)}</td><td><strong className="text-xs">{entry.action}</strong></td><td className="text-xs">{entry.actorName || entry.actorEmail || "Système"}</td><td className="text-xs text-muted">{entry.subjectType} · {entry.subjectId.slice(0,8)}</td></tr>)}</tbody></table></div> : <div className="p-8 text-center text-sm text-muted">Aucune entrée ne correspond à ces filtres.</div>}</section>
     </> : null}
+    </details>
   </div>;
 }
 

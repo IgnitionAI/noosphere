@@ -194,9 +194,9 @@ function channelLabel(kind: string): string {
 function automationLabel(stage: string, discoveryStatus: string | null): string {
   if (stage === "sourcing") {
     if (discoveryStatus === "running") return "recherche en cours";
-    if (discoveryStatus === "completed") return "passage terminé";
+    if (discoveryStatus === "completed") return "recherche continue";
     if (discoveryStatus === "failed") return "recherche échouée";
-    return "recherche non lancée";
+    return "premier passage programmé";
   }
   return ({
     enriching: "enrichissement et déduplication",

@@ -75,6 +75,14 @@ const onboardingResponse = await fetch(`${apiUrl}/api/v1/workspaces/${workspace.
 if (!onboardingResponse.ok) throw new Error(`Workspace onboarding lookup failed: ${onboardingResponse.status}`);
 const onboarding = await onboardingResponse.json() as { steps: unknown[]; currentStep: string | null };
 if (onboarding.steps.length !== 7) throw new Error("Workspace onboarding must expose seven persisted steps");
+const missingConversationResponse = await fetch(
+  `${apiUrl}/api/v1/conversations/${crypto.randomUUID()}`,
+  { headers },
+);
+const missingConversation = await missingConversationResponse.json() as { code?: string };
+if (missingConversationResponse.status !== 404 || missingConversation.code !== "CONVERSATION_NOT_FOUND") {
+  throw new Error(`Conversation detail routing failed: ${missingConversationResponse.status}`);
+}
 const settingsResponse = await fetch(`${apiUrl}/api/v1/workspace-ai-settings`, {
   headers,
 });
@@ -132,8 +140,16 @@ const workspaceSettingsPage = await fetch(`${webUrl}/w/${workspace.slug}/setting
   headers: { cookie },
 });
 const workspaceSettingsHtml = await workspaceSettingsPage.text();
-if (!workspaceSettingsPage.ok || !workspaceSettingsHtml.includes("Paramètres du workspace")) {
+if (!workspaceSettingsPage.ok || !workspaceSettingsHtml.includes("Configuration")) {
   throw new Error(`Workspace settings page smoke test failed: ${workspaceSettingsPage.status}`);
+}
+
+const inboxPage = await fetch(`${webUrl}/w/${workspace.slug}/inbox`, {
+  headers: { cookie },
+});
+const inboxHtml = await inboxPage.text();
+if (!inboxPage.ok || !inboxHtml.includes("Toutes les conversations des comptes LinkedIn, email et WhatsApp associés.")) {
+  throw new Error(`Unified inbox page smoke test failed: ${inboxPage.status}`);
 }
 
 const knowledgePage = await fetch(`${webUrl}/w/${workspace.slug}/knowledge`, {
@@ -179,6 +195,7 @@ console.info(
     knowledgeSources: "readable",
     aiStudio: "readable",
     operatorConsole: "readable",
+    unifiedInbox: "readable",
     calendarProduct: "readable",
     workspaceOnboarding: "resumable",
   }),

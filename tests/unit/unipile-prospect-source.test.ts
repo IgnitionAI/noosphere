@@ -124,6 +124,25 @@ describe("UnipileProspectSource", () => {
     ]);
   });
 
+  test("uses the LinkedIn account resolved for the workspace", async () => {
+    const calls: string[] = [];
+    const source = new UnipileProspectSource({
+      dsn: "https://api37.unipile.com:16796",
+      apiKey: "secret-key",
+      resolveLinkedinAccountId: async () => "workspace-linkedin-account",
+      fetchImpl: fakeFetch((url) => {
+        calls.push(url);
+        return Response.json({ cursor: null, items: [] });
+      }),
+    });
+
+    await source.searchPeople({ api: "classic", category: "people", keywords: "cto", limit: 10 });
+
+    expect(calls).toEqual([
+      "https://api37.unipile.com:16796/api/v1/linkedin/search?account_id=workspace-linkedin-account&limit=10",
+    ]);
+  });
+
   test("follows every LinkedIn cursor when autonomous sourcing is exhaustive", async () => {
     const searchUrls: string[] = [];
     const source = new UnipileProspectSource({

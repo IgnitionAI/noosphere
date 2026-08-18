@@ -66,6 +66,59 @@ describe("UnipileOutboundChannelGateway", () => {
     });
   });
 
+  test("waits for a LinkedIn invitation to be accepted before starting the follow-up chat", async () => {
+    const calls: string[] = [];
+    const gateway = new UnipileOutboundChannelGateway({
+      dsn: "https://api37.unipile.com:16796",
+      apiKey: "secret",
+      fetchImpl: fakeFetch((url) => {
+        calls.push(url);
+        return Response.json({ provider_id: "provider_marie", is_relationship: false, network_distance: "SECOND_DEGREE" });
+      }),
+    });
+
+    const error = await gateway.send({
+      accountId: "acc_li",
+      channel: "linkedin",
+      stepKind: "linkedin_message",
+      recipient: { value: "Marie", normalizedValue: "marie", providerUserId: "provider_marie" },
+      subject: null,
+      body: "Merci pour la connexion",
+      idempotencyKey: "action-follow-up",
+    }).catch((caught) => caught);
+
+    expect(calls).toEqual(["https://api37.unipile.com:16796/api/v1/users/provider_marie?account_id=acc_li"]);
+    expect(error).toMatchObject({ code: "LINKEDIN_RELATION_PENDING", deliveryState: "not_sent", retryable: true });
+  });
+
+  test("starts the LinkedIn follow-up chat after the relationship is confirmed", async () => {
+    const calls: string[] = [];
+    const gateway = new UnipileOutboundChannelGateway({
+      dsn: "https://api37.unipile.com:16796",
+      apiKey: "secret",
+      fetchImpl: fakeFetch((url) => {
+        calls.push(url);
+        return url.includes("/users/")
+          ? Response.json({ provider_id: "provider_marie", is_relationship: true, network_distance: "FIRST_DEGREE" })
+          : Response.json({ id: "message-1", chat_id: "chat-1" }, { status: 201 });
+      }),
+    });
+
+    const result = await gateway.send({
+      accountId: "acc_li",
+      channel: "linkedin",
+      stepKind: "linkedin_message",
+      recipient: { value: "Marie", normalizedValue: "marie", providerUserId: "provider_marie" },
+      subject: null,
+      body: "Merci pour la connexion",
+      idempotencyKey: "action-follow-up-ready",
+    });
+
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toBe("https://api37.unipile.com:16796/api/v1/chats");
+    expect(result).toMatchObject({ providerRequestId: "message-1", conversationId: "chat-1" });
+  });
+
   test("retries connection failures that are known to happen before delivery", async () => {
     const gateway = new UnipileOutboundChannelGateway({
       dsn: "https://api37.unipile.com:16796",
@@ -92,6 +145,39 @@ describe("UnipileOutboundChannelGateway", () => {
     expect(error).toBeInstanceOf(OutboundDeliveryError);
     expect(error).toMatchObject({
       code: "UNIPILE_NETWORK_NOT_SENT",
+      deliveryState: "not_sent",
+      retryable: true,
+    });
+  });
+
+  test("treats a provider usage limit returned as 422 as safely retryable", async () => {
+    const gateway = new UnipileOutboundChannelGateway({
+      dsn: "https://api37.unipile.com:16796",
+      apiKey: "secret-key",
+      fetchImpl: (async () => Response.json({
+        status: 422,
+        type: "errors/limit_exceeded",
+        title: "Limit exceeded",
+        detail: "You have reached the usage limit set by the provider for the current period.",
+      }, { status: 422 })) as unknown as typeof fetch,
+    });
+
+    const error = await gateway.send({
+      accountId: "linkedin-account",
+      channel: "linkedin",
+      stepKind: "linkedin_invite",
+      recipient: {
+        value: "Marie Durand",
+        normalizedValue: "linkedin.com/in/marie-durand",
+        providerUserId: "provider-marie",
+      },
+      subject: null,
+      body: "Bonjour Marie",
+      idempotencyKey: "limit:test",
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({
+      code: "UNIPILE_PROVIDER_LIMIT",
       deliveryState: "not_sent",
       retryable: true,
     });

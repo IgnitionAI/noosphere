@@ -2,6 +2,7 @@ import { and, count, desc, eq, sql } from "drizzle-orm";
 import type {
   CampaignWorkspaceView,
   ConversationWorkspacePage,
+  ConversationWorkspaceDetail,
   ConversationWorkspaceView,
   SetupReadinessView,
   WorkspaceOperationalSummary,
@@ -153,23 +154,87 @@ export class PostgresOperationalViews {
     };
   }
 
-  async listConversations(input: { workspaceId: string; channel?: string; scope?: string; search?: string; page: number; pageSize: number }): Promise<ConversationWorkspacePage> {
-    const conditions = [sql`c.workspace_id = ${input.workspaceId}`];
+  async listConversations(input: { workspaceId: string; channel?: string; scope?: string; search?: string; period?: string; read?: string; campaignId?: string; page: number; pageSize: number }): Promise<ConversationWorkspacePage> {
+    const conditions = [
+      sql`c.workspace_id = ${input.workspaceId}`,
+      // The unified inbox is an account mirror. Historical outside-campaign
+      // rows whose account was removed/reconnected are not actionable and can
+      // duplicate the live thread imported from the currently associated
+      // account. Campaign conversations remain visible for audit continuity.
+      sql`(c.connected_account_id is not null or c.campaign_id is not null)`,
+    ];
     if (input.channel && ["linkedin", "email", "whatsapp"].includes(input.channel)) conditions.push(sql`c.channel = ${input.channel}`);
     if (input.scope === "campaign") conditions.push(sql`c.campaign_id is not null`);
     if (input.scope === "outside_campaign") conditions.push(sql`c.campaign_id is null`);
+    if (input.read === "unread") conditions.push(sql`c.unread_count > 0`);
+    if (input.campaignId) conditions.push(sql`c.campaign_id = ${input.campaignId}`);
+    if (input.period === "today") conditions.push(sql`c.last_message_at >= date_trunc('day', now())`);
+    if (input.period === "7d") conditions.push(sql`c.last_message_at >= now() - interval '7 days'`);
+    if (input.period === "30d") conditions.push(sql`c.last_message_at >= now() - interval '30 days'`);
+    if (input.period === "90d") conditions.push(sql`c.last_message_at >= now() - interval '90 days'`);
     if (input.search?.trim()) {
       const query = `%${input.search.trim().toLowerCase()}%`;
-      conditions.push(sql`lower(concat_ws(' ', ct.first_name, ct.last_name, ca.name)) like ${query}`);
+      conditions.push(sql`lower(concat_ws(' ', ct.first_name, ct.last_name, ca.name, ac.display_name, c.subject, lm.body)) like ${query}`);
     }
     const where = sql.join(conditions, sql` AND `);
     const offset = (input.page - 1) * input.pageSize;
-    const [rows, totalRows] = await Promise.all([
-      this.database.execute<ConversationRow>(sql`SELECT c.id, c.contact_id, ct.first_name, ct.last_name, c.campaign_id, ca.name AS campaign_name, c.channel, c.status, c.unread_count, c.last_message_at, lm.body AS last_message_body, lm.direction AS last_message_direction, lm.message_at AS last_message_at_actual FROM conversations c JOIN contacts ct ON ct.workspace_id = c.workspace_id AND ct.id = c.contact_id LEFT JOIN campaigns ca ON ca.workspace_id = c.workspace_id AND ca.id = c.campaign_id LEFT JOIN LATERAL (SELECT m.body, m.direction, coalesce(m.sent_at, m.received_at, m.created_at) AS message_at FROM messages m WHERE m.workspace_id = c.workspace_id AND m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1) lm ON true WHERE ${where} ORDER BY c.last_message_at DESC LIMIT ${input.pageSize} OFFSET ${offset}`),
-      this.database.execute<{ total: number | string }>(sql`SELECT count(*)::int AS total FROM conversations c JOIN contacts ct ON ct.workspace_id = c.workspace_id AND ct.id = c.contact_id LEFT JOIN campaigns ca ON ca.workspace_id = c.workspace_id AND ca.id = c.campaign_id WHERE ${where}`),
+    const [rows, totalRows, syncRows] = await Promise.all([
+      this.database.execute<ConversationRow>(sql`SELECT c.id, c.contact_id, ct.first_name, ct.last_name, c.campaign_id, ca.name AS campaign_name, c.connected_account_id, ac.display_name AS account_name, c.channel, c.origin, c.automation_mode, c.subject, c.status, c.unread_count, c.last_message_at, lm.body AS last_message_body, lm.direction AS last_message_direction, lm.message_at AS last_message_at_actual FROM conversations c JOIN contacts ct ON ct.workspace_id = c.workspace_id AND ct.id = c.contact_id LEFT JOIN campaigns ca ON ca.workspace_id = c.workspace_id AND ca.id = c.campaign_id LEFT JOIN connected_accounts ac ON ac.workspace_id = c.workspace_id AND ac.id = c.connected_account_id LEFT JOIN LATERAL (SELECT m.body, m.direction, coalesce(m.sent_at, m.received_at, m.created_at) AS message_at FROM messages m WHERE m.workspace_id = c.workspace_id AND m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1) lm ON true WHERE ${where} ORDER BY c.last_message_at DESC LIMIT ${input.pageSize} OFFSET ${offset}`),
+      this.database.execute<{ total: number | string }>(sql`SELECT count(*)::int AS total FROM conversations c JOIN contacts ct ON ct.workspace_id = c.workspace_id AND ct.id = c.contact_id LEFT JOIN campaigns ca ON ca.workspace_id = c.workspace_id AND ca.id = c.campaign_id LEFT JOIN connected_accounts ac ON ac.workspace_id = c.workspace_id AND ac.id = c.connected_account_id LEFT JOIN LATERAL (SELECT m.body FROM messages m WHERE m.workspace_id = c.workspace_id AND m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1) lm ON true WHERE ${where}`),
+      this.database.execute<InboxSyncRow>(sql`SELECT count(ac.id)::int AS total_accounts, count(ac.id) FILTER (WHERE s.backfill_complete = true AND s.status = 'idle')::int AS ready_accounts, count(ac.id) FILTER (WHERE s.id IS NULL OR s.backfill_complete = false OR s.status = 'syncing')::int AS backfilling_accounts, count(ac.id) FILTER (WHERE s.status = 'error')::int AS error_accounts, max(s.last_success_at) AS last_success_at FROM connected_accounts ac LEFT JOIN inbox_sync_states s ON s.workspace_id = ac.workspace_id AND s.connected_account_id = ac.id WHERE ac.workspace_id = ${input.workspaceId} AND ac.provider = 'unipile' AND ac.status = 'connected' AND (ac.capabilities ? 'linkedin' OR ac.capabilities ? 'email' OR ac.capabilities ? 'whatsapp')`),
     ]);
     const total = Number(totalRows[0]?.total ?? 0);
-    return { data: rows.map(toConversationView), pagination: { page: input.page, pageSize: input.pageSize, total, hasNext: offset + rows.length < total } };
+    const sync = syncRows[0];
+    return {
+      data: rows.map(toConversationView),
+      pagination: { page: input.page, pageSize: input.pageSize, total, hasNext: offset + rows.length < total },
+      sync: {
+        totalAccounts: Number(sync?.total_accounts ?? 0),
+        readyAccounts: Number(sync?.ready_accounts ?? 0),
+        backfillingAccounts: Number(sync?.backfilling_accounts ?? 0),
+        errorAccounts: Number(sync?.error_accounts ?? 0),
+        lastSuccessAt: sync?.last_success_at ?? null,
+      },
+    };
+  }
+
+  async getConversation(workspaceId: string, conversationId: string): Promise<ConversationWorkspaceDetail | null> {
+    const rows = await this.database.execute<ConversationRow>(sql`SELECT c.id, c.contact_id, ct.first_name, ct.last_name, c.campaign_id, ca.name AS campaign_name, c.connected_account_id, ac.display_name AS account_name, c.channel, c.origin, c.automation_mode, c.subject, c.status, c.unread_count, c.last_message_at, lm.body AS last_message_body, lm.direction AS last_message_direction, lm.message_at AS last_message_at_actual FROM conversations c JOIN contacts ct ON ct.workspace_id = c.workspace_id AND ct.id = c.contact_id LEFT JOIN campaigns ca ON ca.workspace_id = c.workspace_id AND ca.id = c.campaign_id LEFT JOIN connected_accounts ac ON ac.workspace_id = c.workspace_id AND ac.id = c.connected_account_id LEFT JOIN LATERAL (SELECT m.body, m.direction, coalesce(m.sent_at, m.received_at, m.created_at) AS message_at FROM messages m WHERE m.workspace_id = c.workspace_id AND m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1) lm ON true WHERE c.workspace_id = ${workspaceId} AND c.id = ${conversationId} LIMIT 1`);
+    const row = rows[0];
+    if (!row) return null;
+    const [messageRows, decisionRows, commandRows] = await Promise.all([
+      this.database.execute<ConversationMessageRow>(sql`SELECT id, provider_message_id, direction, sender_type, body, coalesce(sent_at, received_at, created_at) AS message_at FROM messages WHERE workspace_id = ${workspaceId} AND conversation_id = ${conversationId} ORDER BY coalesce(sent_at, received_at, created_at), created_at`),
+      this.database.execute<ConversationDecisionRow>(sql`SELECT rc.intent, rc.confidence, rc.action, rc.rationale, rc.created_at FROM reply_classifications rc JOIN messages m ON m.workspace_id = rc.workspace_id AND m.id = rc.message_id WHERE rc.workspace_id = ${workspaceId} AND m.conversation_id = ${conversationId} ORDER BY rc.created_at DESC LIMIT 1`),
+      this.database.execute<ConversationCommandRow>(sql`SELECT id, mode, status, error_message, created_at FROM conversation_commands WHERE workspace_id = ${workspaceId} AND conversation_id = ${conversationId} ORDER BY created_at DESC LIMIT 1`),
+    ]);
+    const summary = toConversationView(row);
+    const decision = decisionRows[0];
+    const command = commandRows[0];
+    return {
+      ...summary,
+      messages: messageRows.map((message) => ({
+        id: message.id,
+        providerMessageId: message.provider_message_id,
+        direction: message.direction,
+        senderType: message.sender_type,
+        body: message.body,
+        at: message.message_at,
+      })),
+      decision: decision ? {
+        intent: decision.intent,
+        confidence: Number(decision.confidence),
+        action: decision.action,
+        rationale: decision.rationale,
+        createdAt: decision.created_at,
+      } : null,
+      latestCommand: command ? {
+        id: command.id,
+        mode: command.mode,
+        status: command.status,
+        errorMessage: command.error_message,
+        createdAt: command.created_at,
+      } : null,
+    };
   }
 
   async getPipeline(workspaceId: string, role?: string) {
@@ -186,13 +251,51 @@ type ConversationRow = {
   last_name: string;
   campaign_id: string | null;
   campaign_name: string | null;
+  connected_account_id: string | null;
+  account_name: string | null;
   channel: "linkedin" | "email" | "whatsapp";
+  origin: "campaign" | "outside_campaign";
+  automation_mode: "setter" | "human" | "disabled";
+  subject: string | null;
   status: string;
   unread_count: number;
   last_message_at: Date;
   last_message_body: string | null;
   last_message_direction: string | null;
   last_message_at_actual: Date | null;
+};
+
+type ConversationMessageRow = {
+  id: string;
+  provider_message_id: string;
+  direction: "inbound" | "outbound";
+  sender_type: string;
+  body: string;
+  message_at: Date;
+};
+
+type ConversationDecisionRow = {
+  intent: string;
+  confidence: number | string;
+  action: string;
+  rationale: string;
+  created_at: Date;
+};
+
+type ConversationCommandRow = {
+  id: string;
+  mode: "manual" | "setter";
+  status: string;
+  error_message: string | null;
+  created_at: Date;
+};
+
+type InboxSyncRow = {
+  total_accounts: number | string;
+  ready_accounts: number | string;
+  backfilling_accounts: number | string;
+  error_accounts: number | string;
+  last_success_at: Date | null;
 };
 
 function toConversationView(row: ConversationRow): ConversationWorkspaceView {
@@ -203,7 +306,12 @@ function toConversationView(row: ConversationRow): ConversationWorkspaceView {
     lastName: row.last_name,
     campaignId: row.campaign_id,
     campaignName: row.campaign_name,
+    connectedAccountId: row.connected_account_id,
+    accountName: row.account_name,
     channel: row.channel,
+    origin: row.origin,
+    automationMode: row.automation_mode,
+    subject: row.subject,
     status: row.status,
     unreadCount: row.unread_count,
     lastMessage: row.last_message_body && row.last_message_at_actual
