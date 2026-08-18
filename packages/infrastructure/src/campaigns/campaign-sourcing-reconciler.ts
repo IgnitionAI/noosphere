@@ -1,6 +1,7 @@
-import { and, eq, inArray, isNotNull, isNull, ne, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 import type { ChannelStrategy } from "@outbound/application/campaigns/channel-assessment";
 import {
+  AUTONOMOUS_SOURCING_VERSION,
   buildAutonomousSourcingFilters,
   PROSPECT_DISCOVERY_JOB_TYPE,
 } from "@outbound/application/campaigns/autonomous-prospecting";
@@ -147,7 +148,7 @@ export class CampaignSourcingReconciler {
         repaired += 1;
       }
 
-      const rejectedQueries = await tx
+      const recoverableFailures = await tx
         .select({
           campaignId: campaigns.id,
           workspaceId: campaigns.workspaceId,
@@ -155,6 +156,7 @@ export class CampaignSourcingReconciler {
           runId: prospectDiscoveryRuns.id,
           strategy: channelAssessments.strategy,
           icpName: icpVersions.name,
+          errorMessage: prospectDiscoveryRuns.errorMessage,
         })
         .from(campaigns)
         .innerJoin(
@@ -184,16 +186,26 @@ export class CampaignSourcingReconciler {
             ne(campaigns.status, "archived"),
             isNotNull(campaigns.channel),
             eq(prospectDiscoveryRuns.status, "failed"),
-            sql`${prospectDiscoveryRuns.errorMessage} ilike '%content%too%large%'`,
+            or(
+              sql`${prospectDiscoveryRuns.errorMessage} ilike '%content%too%large%'`,
+              sql`${prospectDiscoveryRuns.errorMessage} ilike '%account is selected for this workspace%'`,
+              sql`${prospectDiscoveryRuns.errorMessage} ilike '%crawler returned 422%'`,
+            ),
             options.workspaceId ? eq(campaigns.workspaceId, options.workspaceId) : undefined,
           ),
         )
         .limit(Math.max(0, limit - repaired))
         .for("update", { skipLocked: true });
 
-      for (const campaign of rejectedQueries) {
+      for (const campaign of recoverableFailures) {
         if (!campaign.channel) continue;
-        const retryKey = `${campaign.campaignId}:sourcing:normalized:v1`;
+        const failure = campaign.errorMessage?.toLocaleLowerCase("en") ?? "";
+        const repairKind = failure.includes("account is selected for this workspace")
+          ? "account-autoselect"
+          : failure.includes("crawler returned 422")
+            ? "partial-crawl"
+            : "normalized";
+        const retryKey = `${campaign.campaignId}:sourcing:${repairKind}:v1`;
         const [alreadyRetried] = await tx
           .select({ id: jobs.id })
           .from(jobs)
@@ -254,8 +266,119 @@ export class CampaignSourcingReconciler {
           workspaceId: campaign.workspaceId,
           aggregateType: "Campaign",
           aggregateId: campaign.campaignId,
-          eventType: "CampaignSourcingQueryNormalized",
-          payload: { campaignId: campaign.campaignId, runId: campaign.runId },
+          eventType: "CampaignSourcingFailureRecovered",
+          payload: { campaignId: campaign.campaignId, runId: campaign.runId, repairKind },
+          createdAt: now,
+        });
+        repaired += 1;
+      }
+
+      const staleZeroYield = await tx
+        .select({
+          campaignId: campaigns.id,
+          workspaceId: campaigns.workspaceId,
+          icpVersionId: campaigns.icpVersionId,
+          channel: campaigns.channel,
+          previousRunId: prospectDiscoveryRuns.id,
+          strategy: channelAssessments.strategy,
+          icpName: icpVersions.name,
+        })
+        .from(campaigns)
+        .innerJoin(
+          prospectDiscoveryRuns,
+          and(
+            eq(prospectDiscoveryRuns.workspaceId, campaigns.workspaceId),
+            eq(prospectDiscoveryRuns.id, campaigns.discoveryRunId),
+          ),
+        )
+        .innerJoin(
+          channelAssessments,
+          and(
+            eq(channelAssessments.workspaceId, campaigns.workspaceId),
+            eq(channelAssessments.id, campaigns.assessmentId),
+          ),
+        )
+        .innerJoin(
+          icpVersions,
+          and(
+            eq(icpVersions.workspaceId, campaigns.workspaceId),
+            eq(icpVersions.id, campaigns.icpVersionId),
+          ),
+        )
+        .where(
+          and(
+            eq(campaigns.automationStage, "sourcing"),
+            ne(campaigns.status, "archived"),
+            isNotNull(campaigns.channel),
+            eq(prospectDiscoveryRuns.status, "completed"),
+            eq(prospectDiscoveryRuns.candidateCount, 0),
+            sql`coalesce(${prospectDiscoveryRuns.filters} ->> 'sourcingVersion', '') <> ${AUTONOMOUS_SOURCING_VERSION}`,
+            options.workspaceId ? eq(campaigns.workspaceId, options.workspaceId) : undefined,
+          ),
+        )
+        .limit(Math.max(0, limit - repaired))
+        .for("update", { skipLocked: true });
+
+      for (const campaign of staleZeroYield) {
+        if (!campaign.channel) continue;
+        const retryKey = `${campaign.campaignId}:sourcing:${AUTONOMOUS_SOURCING_VERSION}`;
+        const [alreadyRetried] = await tx
+          .select({ id: jobs.id })
+          .from(jobs)
+          .where(and(
+            eq(jobs.workspaceId, campaign.workspaceId),
+            eq(jobs.idempotencyKey, retryKey),
+          ))
+          .limit(1);
+        if (alreadyRetried) continue;
+        const now = this.clock.now();
+        const runId = crypto.randomUUID();
+        const strategy = normalizeStrategy(campaign.strategy, campaign.channel, campaign.icpName);
+        await tx.insert(prospectDiscoveryRuns).values({
+          id: runId,
+          workspaceId: campaign.workspaceId,
+          icpVersionId: campaign.icpVersionId,
+          campaignId: campaign.campaignId,
+          provider: campaign.channel === "linkedin" ? "unipile" : "crawler",
+          channel: campaign.channel,
+          filters: buildAutonomousSourcingFilters(campaign.channel, strategy),
+          status: "running",
+          createdBy: null,
+          createdAt: now,
+        });
+        await tx.update(campaigns).set({
+          discoveryRunId: runId,
+          automationErrorCode: null,
+          automationErrorMessage: null,
+          updatedAt: now,
+        }).where(and(
+          eq(campaigns.workspaceId, campaign.workspaceId),
+          eq(campaigns.id, campaign.campaignId),
+          eq(campaigns.discoveryRunId, campaign.previousRunId),
+        ));
+        await tx.insert(jobs).values({
+          id: crypto.randomUUID(),
+          workspaceId: campaign.workspaceId,
+          type: PROSPECT_DISCOVERY_JOB_TYPE,
+          payload: { workspaceId: campaign.workspaceId, runId },
+          idempotencyKey: retryKey,
+          correlationId: `campaign:${campaign.campaignId}:source-v2`,
+          maxAttempts: 3,
+          availableAt: now,
+          createdAt: now,
+          updatedAt: now,
+        });
+        await tx.insert(outboxEvents).values({
+          workspaceId: campaign.workspaceId,
+          aggregateType: "Campaign",
+          aggregateId: campaign.campaignId,
+          eventType: "CampaignZeroYieldSourcingUpgraded",
+          payload: {
+            campaignId: campaign.campaignId,
+            previousRunId: campaign.previousRunId,
+            runId,
+            sourcingVersion: AUTONOMOUS_SOURCING_VERSION,
+          },
           createdAt: now,
         });
         repaired += 1;

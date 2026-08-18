@@ -1,7 +1,10 @@
 import { and, eq } from "drizzle-orm";
 import type { ProspectingChannel } from "@outbound/domain/campaigns/prospecting-plan";
 import type { Database } from "@outbound/infrastructure/database/client";
-import { workspaceChannelAccounts } from "@outbound/infrastructure/database/schema";
+import {
+  connectedAccounts,
+  workspaceChannelAccounts,
+} from "@outbound/infrastructure/database/schema";
 
 type UnipileAccount = {
   readonly id?: unknown;
@@ -115,13 +118,16 @@ export class PostgresUnipileChannelConnections {
   }
 
   async resolveHealthyAccount(workspaceId: string, channel: ProspectingChannel): Promise<string> {
-    const selected = await this.selectedAccount(workspaceId, channel);
+    let selected = await this.selectedAccount(workspaceId, channel);
     if (!selected) {
-      throw new UnipileChannelConnectionError(
-        "UNIPILE_ACCOUNT_NOT_SELECTED",
-        409,
-        `No Unipile ${channel} account is selected for this workspace`,
-      );
+      selected = await this.#autoSelectUniqueConnectedAccount(workspaceId, channel);
+      if (!selected) {
+        throw new UnipileChannelConnectionError(
+          "UNIPILE_ACCOUNT_NOT_SELECTED",
+          409,
+          `No Unipile ${channel} account is selected for this workspace`,
+        );
+      }
     }
     const account = (await this.#providerAccounts()).find(
       (candidate) => candidate.id === selected.providerAccountId && providerChannel(candidate.type) === channel,
@@ -141,6 +147,60 @@ export class PostgresUnipileChannelConnections {
       );
     }
     return account.id;
+  }
+
+  async #autoSelectUniqueConnectedAccount(
+    workspaceId: string,
+    channel: ProspectingChannel,
+  ): Promise<{ providerAccountId: string; displayName: string; updatedAt: Date } | null> {
+    const connected = await this.database
+      .select({
+        providerAccountId: connectedAccounts.providerAccountId,
+        displayName: connectedAccounts.displayName,
+        capabilities: connectedAccounts.capabilities,
+        createdBy: connectedAccounts.createdBy,
+      })
+      .from(connectedAccounts)
+      .where(and(
+        eq(connectedAccounts.workspaceId, workspaceId),
+        eq(connectedAccounts.provider, "unipile"),
+        eq(connectedAccounts.status, "connected"),
+      ));
+    const providerAccounts = await this.#providerAccounts();
+    const eligible = connected.flatMap((candidate) => {
+      if (!supportsChannel(candidate.capabilities, channel)) return [];
+      const provider = providerAccounts.find(
+        (account) => account.id === candidate.providerAccountId
+          && providerChannel(account.type) === channel
+          && account.healthy,
+      );
+      return provider ? [{ candidate, provider }] : [];
+    });
+    if (eligible.length !== 1) return null;
+    const match = eligible[0];
+    if (!match) return null;
+    const { candidate, provider } = match;
+    const now = new Date();
+    if (candidate.createdBy) {
+      await this.database
+        .insert(workspaceChannelAccounts)
+        .values({
+          workspaceId,
+          channel,
+          provider: "unipile",
+          providerAccountId: provider.id,
+          displayName: displayName(candidate.displayName ?? provider.name, channel),
+          selectedBy: candidate.createdBy,
+          createdAt: now,
+          updatedAt: now,
+        })
+        .onConflictDoNothing();
+    }
+    return {
+      providerAccountId: provider.id,
+      displayName: displayName(candidate.displayName ?? provider.name, channel),
+      updatedAt: now,
+    };
   }
 
   async selectedAccount(workspaceId: string, channel: ProspectingChannel) {
@@ -215,4 +275,10 @@ function displayName(value: string, channel: ProspectingChannel): string {
   if (channel !== "whatsapp") return value;
   const digits = value.replace(/\D/g, "");
   return digits ? `+${digits}` : value;
+}
+
+function supportsChannel(value: unknown, channel: ProspectingChannel): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const capability = (value as Record<string, unknown>)[channel];
+  return Boolean(capability && typeof capability === "object" && !Array.isArray(capability));
 }

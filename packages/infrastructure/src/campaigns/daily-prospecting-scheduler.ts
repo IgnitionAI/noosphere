@@ -1,5 +1,6 @@
 import { and, asc, eq, inArray, lte, ne, or } from "drizzle-orm";
 import {
+  AUTONOMOUS_SOURCING_VERSION,
   buildAutonomousSourcingFilters,
   PROSPECT_DISCOVERY_JOB_TYPE,
   type AutonomousSourcingFilters,
@@ -263,6 +264,7 @@ export class DailyProspectingScheduler {
         query: rotatedQuery(item.frontier.querySeed, item.frontier.rotationOrdinal),
         sourceKinds: ["web"],
         limit: companyLimit,
+        sourcingVersion: AUTONOMOUS_SOURCING_VERSION,
       };
       await tx.insert(prospectDiscoveryRuns).values({
         id: runId,

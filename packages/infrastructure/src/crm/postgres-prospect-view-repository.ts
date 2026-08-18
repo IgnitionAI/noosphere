@@ -1,4 +1,4 @@
-import { and, desc, eq, ilike, inArray, or, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, ilike, inArray, ne, or, sql, type SQL } from "drizzle-orm";
 import type { Database } from "@outbound/infrastructure/database/client";
 import {
   campaignProspects,
@@ -26,6 +26,8 @@ export class PostgresProspectViewRepository {
     workspaceId: string;
     search?: string;
     icpVersionId?: string;
+    campaignId?: string;
+    campaignScope?: "in_campaign" | "outside_campaign";
     channel?: "linkedin" | "email" | "whatsapp";
     limit: number;
   }) {
@@ -41,6 +43,26 @@ export class PostgresProspectViewRepository {
         where cp.workspace_id = ${input.workspaceId}
           and cp.contact_id = ${contacts.id}
           and c.icp_version_id = ${input.icpVersionId}
+      )`);
+    }
+    if (input.campaignId) {
+      conditions.push(sql`exists (
+        select 1 from campaign_prospects cp
+        where cp.workspace_id = ${input.workspaceId}
+          and cp.contact_id = ${contacts.id}
+          and cp.campaign_id = ${input.campaignId}
+      )`);
+    } else if (input.campaignScope === "in_campaign") {
+      conditions.push(sql`exists (
+        select 1 from campaign_prospects cp
+        where cp.workspace_id = ${input.workspaceId}
+          and cp.contact_id = ${contacts.id}
+      )`);
+    } else if (input.campaignScope === "outside_campaign") {
+      conditions.push(sql`not exists (
+        select 1 from campaign_prospects cp
+        where cp.workspace_id = ${input.workspaceId}
+          and cp.contact_id = ${contacts.id}
       )`);
     }
     if (input.channel) {
@@ -68,7 +90,16 @@ export class PostgresProspectViewRepository {
       )
       .where(and(eq(icpVersions.workspaceId, input.workspaceId), sql`${icpVersions.publishedAt} is not null`))
       .orderBy(icpVersions.name);
-    return { data, filters: { icps } };
+    const campaignOptions = await this.db
+      .select({ id: campaigns.id, name: campaigns.name, channel: campaigns.channel })
+      .from(campaigns)
+      .where(and(
+        eq(campaigns.workspaceId, input.workspaceId),
+        sql`${campaigns.archivedAt} is null`,
+        ne(campaigns.status, "archived"),
+      ))
+      .orderBy(campaigns.name);
+    return { data, filters: { icps, campaigns: campaignOptions } };
   }
 
   async get(input: { workspaceId: string; contactId: string }) {

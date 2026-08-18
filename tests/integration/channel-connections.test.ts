@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { PostgresUnipileChannelConnections } from "@outbound/infrastructure/channels/postgres-unipile-channel-connections";
 import { createDatabase } from "@outbound/infrastructure/database/client";
-import { authUsers, workspaces } from "@outbound/infrastructure/database/schema";
+import { authUsers, connectedAccounts, workspaces } from "@outbound/infrastructure/database/schema";
 
 const databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
 const databaseDescribe = databaseUrl ? describe : describe.skip;
@@ -43,6 +43,7 @@ databaseDescribe("workspace Unipile channel connections", () => {
 
   afterAll(async () => {
     await database.client`delete from workspace_channel_accounts where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
+    await database.client`delete from connected_accounts where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`delete from auth_users where id = ${userId}`;
     await database.client`delete from workspaces where id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.close();
@@ -75,5 +76,22 @@ databaseDescribe("workspace Unipile channel connections", () => {
       selectedBy: userId,
       now: new Date(),
     })).rejects.toMatchObject({ code: "UNIPILE_ACCOUNT_UNHEALTHY", status: 409 });
+  });
+
+  test("automatically selects the only healthy connected account for a channel", async () => {
+    await database.db.insert(connectedAccounts).values({
+      workspaceId,
+      provider: "unipile",
+      providerAccountId: "li-healthy",
+      displayName: "Owner",
+      status: "connected",
+      capabilities: { linkedin: { sending: true } },
+      encryptedSecret: "fixture",
+      createdBy: userId,
+    });
+
+    expect(await manager.selectedAccountId(workspaceId, "linkedin")).toBeNull();
+    expect(await manager.resolveHealthyAccount(workspaceId, "linkedin")).toBe("li-healthy");
+    expect(await manager.selectedAccountId(workspaceId, "linkedin")).toBe("li-healthy");
   });
 });

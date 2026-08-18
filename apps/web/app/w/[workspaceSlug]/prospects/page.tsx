@@ -11,13 +11,24 @@ export default async function ProspectsPage({
   searchParams,
 }: {
   params: Promise<{ workspaceSlug: string }>;
-  searchParams: Promise<{ search?: string; icp?: string; channel?: string; signalType?: SignalType; signalFreshness?: "current" | "history"; prospect?: string }>;
+  searchParams: Promise<{
+    search?: string;
+    icp?: string;
+    campaign?: string;
+    campaignScope?: "in_campaign" | "outside_campaign";
+    channel?: string;
+    signalType?: SignalType;
+    signalFreshness?: "current" | "history";
+    prospect?: string;
+  }>;
 }) {
   const { workspaceSlug } = await params;
   const query = await searchParams;
   const result = await listProspectViews(workspaceSlug, {
     ...(query.search ? { search: query.search } : {}),
     ...(query.icp ? { icpVersionId: query.icp } : {}),
+    ...(query.campaign ? { campaignId: query.campaign } : {}),
+    ...(!query.campaign && query.campaignScope ? { campaignScope: query.campaignScope } : {}),
     ...(query.channel ? { channel: query.channel } : {}),
   });
   let signals: IntentSignal[] = [];
@@ -46,7 +57,7 @@ export default async function ProspectsPage({
       </header>
 
       <section className="panel mb-5">
-        <form className="grid gap-3 p-4 md:grid-cols-[minmax(220px,1fr)_240px_180px_auto]" method="get">
+        <form className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-4" method="get">
           <label className="relative">
             <Search className="pointer-events-none absolute left-3 top-3 text-muted" size={15} />
             <input className="control w-full pl-9" name="search" defaultValue={query.search ?? ""} placeholder="Nom ou prénom…" />
@@ -54,6 +65,17 @@ export default async function ProspectsPage({
           <select className="control" name="icp" defaultValue={query.icp ?? ""}>
             <option value="">Tous les ICP</option>
             {result.filters.icps.map((icp) => <option value={icp.id} key={icp.id}>{icp.name}</option>)}
+          </select>
+          <select className="control" name="campaignScope" defaultValue={query.campaignScope ?? ""}>
+            <option value="">Tous les prospects</option>
+            <option value="in_campaign">En campagne</option>
+            <option value="outside_campaign">Hors campagne</option>
+          </select>
+          <select className="control" name="campaign" defaultValue={query.campaign ?? ""}>
+            <option value="">Toutes les campagnes</option>
+            {result.filters.campaigns.map((campaign) => (
+              <option value={campaign.id} key={campaign.id}>{campaign.name}</option>
+            ))}
           </select>
           <select className="control" name="channel" defaultValue={query.channel ?? ""}>
             <option value="">Tous les canaux</option>
@@ -128,10 +150,12 @@ function ChannelBadges({ channels }: { channels: { linkedin: boolean; email: boo
   return <>{channels.linkedin ? <span className="badge"><AtSign size={11} /> LinkedIn</span> : null}{channels.email ? <span className="badge"><Mail size={11} /> Email</span> : null}{channels.whatsapp ? <span className="badge"><MessageCircle size={11} /> WhatsApp</span> : null}</>;
 }
 
-function prospectListHref(workspaceSlug: string, query: { search?: string; icp?: string; channel?: string; signalType?: string; signalFreshness?: string }) {
+function prospectListHref(workspaceSlug: string, query: { search?: string; icp?: string; campaign?: string; campaignScope?: string; channel?: string; signalType?: string; signalFreshness?: string }) {
   const params = new URLSearchParams();
   if (query.search) params.set("search", query.search);
   if (query.icp) params.set("icp", query.icp);
+  if (query.campaign) params.set("campaign", query.campaign);
+  if (query.campaignScope) params.set("campaignScope", query.campaignScope);
   if (query.channel) params.set("channel", query.channel);
   if (query.signalType) params.set("signalType", query.signalType);
   if (query.signalFreshness) params.set("signalFreshness", query.signalFreshness);

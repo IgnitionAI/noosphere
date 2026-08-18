@@ -19,8 +19,11 @@ import type { Database } from "@outbound/infrastructure/database/client";
 import { PostgresDiscoveryRepository } from "@outbound/infrastructure/crm/postgres-discovery-repository";
 import {
   ProviderUnavailableError,
+  type ProspectSearchFilters,
   type ProspectSource,
+  type ProspectSourceCandidate,
 } from "@outbound/infrastructure/crm/unipile-prospect-source";
+import { buildLinkedinSearchQueries } from "@outbound/infrastructure/campaigns/channel-observation-source";
 
 export { PROSPECT_DISCOVERY_JOB_TYPE };
 
@@ -50,7 +53,9 @@ export class ProspectDiscoveryRunner {
     }
     try {
       const source = this.prospectSource(input.workspaceId);
-      const searched = await source.searchPeople(input.filters);
+      const searched = isLinkedinSourcingFilters(input.filters)
+        ? await searchLinkedinCampaignCandidates(source, input.filters, input.version)
+        : await source.searchPeople(input.filters);
       const found = "channel" in input.filters && input.filters.channel === "linkedin" && source.enrichLinkedinProfile
         ? await mapWithConcurrency(searched, 3, (candidate) => source.enrichLinkedinProfile!(candidate))
         : searched;
@@ -201,6 +206,46 @@ function isCompanySourcingFilters(
   filters: ReturnType<typeof buildProspectSearchFilters> | AutonomousSourcingFilters,
 ): filters is Extract<AutonomousSourcingFilters, { channel: "email" | "whatsapp" }> {
   return "channel" in filters && (filters.channel === "email" || filters.channel === "whatsapp");
+}
+
+function isLinkedinSourcingFilters(
+  filters: ReturnType<typeof buildProspectSearchFilters> | AutonomousSourcingFilters,
+): filters is Extract<AutonomousSourcingFilters, { channel: "linkedin" }> {
+  return "channel" in filters && filters.channel === "linkedin";
+}
+
+export async function searchLinkedinCampaignCandidates(
+  source: ProspectSource,
+  filters: Extract<AutonomousSourcingFilters, { channel: "linkedin" }>,
+  version: { criteria: unknown; buyingCommittee: unknown },
+): Promise<readonly ProspectSourceCandidate[]> {
+  const queries = buildLinkedinSearchQueries({
+    query: filters.keywords,
+    sourceKinds: ["linkedin"],
+    rationale: "Campagne autonome alignée sur l’échantillon ICP.",
+    sampleSize: Math.min(25, filters.limit),
+  }, version);
+  const perQueryLimit = Math.max(5, Math.ceil(filters.limit / queries.length));
+  const found: ProspectSourceCandidate[] = [];
+  for (const keywords of queries) {
+    const queryFilters: ProspectSearchFilters = {
+      ...filters,
+      keywords,
+      limit: perQueryLimit,
+      exhaustive: false,
+    };
+    found.push(...await source.searchPeople(queryFilters));
+  }
+  const seen = new Set<string>();
+  return found.filter((candidate) => {
+    const providerId = typeof candidate.providerData.providerId === "string"
+      ? candidate.providerData.providerId
+      : null;
+    const key = providerId ?? candidate.linkedinUrl ?? `${candidate.fullName}|${candidate.companyName ?? ""}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, filters.limit);
 }
 
 export class ProspectDiscoveryJobProcessor {

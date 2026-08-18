@@ -197,6 +197,11 @@ export function createCrmHttpHandler(dependencies: CrmHttpDependencies) {
       if (url.pathname === "/api/v1/prospects" && request.method === "GET") {
         requireViewer(context.role);
         const channel = url.searchParams.get("channel");
+        const campaignScope = url.searchParams.get("campaignScope");
+        const campaignId = url.searchParams.get("campaignId");
+        if (campaignId && campaignScope === "outside_campaign") {
+          throw new Error("INVALID_PROSPECT_CAMPAIGN_FILTER");
+        }
         const result = await prospectViews.list({
           workspaceId: context.workspaceId,
           ...(url.searchParams.get("search")?.trim()
@@ -204,6 +209,12 @@ export function createCrmHttpHandler(dependencies: CrmHttpDependencies) {
             : {}),
           ...(url.searchParams.get("icpVersionId")
             ? { icpVersionId: postgresUuidSchema.parse(url.searchParams.get("icpVersionId")) }
+            : {}),
+          ...(campaignId
+            ? { campaignId: postgresUuidSchema.parse(campaignId) }
+            : {}),
+          ...(campaignScope
+            ? { campaignScope: z.enum(["in_campaign", "outside_campaign"]).parse(campaignScope) }
             : {}),
           ...(channel
             ? { channel: z.enum(["linkedin", "email", "whatsapp"]).parse(channel) }

@@ -27,6 +27,7 @@ import type {
   CrawlerSearchResult,
 } from "@outbound/infrastructure/ai/crawler-client";
 import type { ProspectSource } from "./unipile-prospect-source";
+import { buildCompanySearchQueries } from "./company-search-query-compiler";
 
 const EMAIL_PATTERN = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
 const BLOCKED_HOSTS = [
@@ -46,6 +47,20 @@ const GENERIC_EMAILS = new Set([
   "no-reply",
   "support",
   "webmaster",
+]);
+const NON_PERSON_EMAIL_TOKENS = new Set([
+  "cabinet",
+  "commercial",
+  "communication",
+  "comptabilite",
+  "direction",
+  "dpo",
+  "equipe",
+  "jobs",
+  "privacy",
+  "recrutement",
+  "rgpd",
+  "service",
 ]);
 const PERSONAL_EMAIL_DOMAINS = new Set([
   "gmail.com",
@@ -82,9 +97,9 @@ export class CrawlerCompanyProspectSource implements CompanyProspectSource {
   async searchCompanies(
     input: Parameters<CompanyProspectSource["searchCompanies"]>[0],
   ): Promise<CompanyProspectSearchResult> {
-    const perQueryLimit = input.limit === null ? 20 : Math.min(20, input.limit);
+    const perQueryLimit = input.limit === null ? 10 : Math.min(10, input.limit);
     const searches = await Promise.all(
-      buildQueries(input.query, input.sourceKinds).map((query, index) =>
+      buildCompanySearchQueries(input.query, input.sourceKinds).map((query, index) =>
         this.crawler.search({
           query,
           limit: perQueryLimit,
@@ -93,8 +108,10 @@ export class CrawlerCompanyProspectSource implements CompanyProspectSource {
         }),
       ),
     );
-    const uniqueResults = uniqueOfficialResults(searches.flat());
-    const officialResults = input.limit === null ? uniqueResults : uniqueResults.slice(0, input.limit);
+    const uniqueResults = uniqueOfficialResults(roundRobin(searches));
+    const officialResults = input.limit === null
+      ? uniqueResults.slice(0, 30)
+      : uniqueResults.slice(0, Math.min(30, Math.max(input.limit, input.limit * 2)));
     const candidates: CompanyProspectCandidate[] = [];
     const observations: CompanyPhoneObservation[] = [];
     const verified = new Set<string>();
@@ -112,13 +129,14 @@ export class CrawlerCompanyProspectSource implements CompanyProspectSource {
       const companyName = companyNameFrom(result, domain);
       const pages = await this.#readCompanyPages({
         result,
+        channel: input.channel,
         correlationId: `${input.correlationId}:company:${resultIndex + 1}`,
         sourcingCycleId: input.sourcingCycleId ?? null,
       });
       pageAttemptCount += pages.attemptCount;
       if (input.channel === "email") {
         for (const page of pages.pages) {
-          for (const email of extractEmails(page)) {
+          for (const { email, personName } of extractEmails(page, domain)) {
             candidates.push(companyCandidate({
               companyName,
               website,
@@ -127,6 +145,7 @@ export class CrawlerCompanyProspectSource implements CompanyProspectSource {
               channel: evidenceChannel(email, normalizeEmail(email), "found", "medium", page),
               kind: "email",
               endpointKind: "person",
+              providerData: { personName },
             }));
             if (input.limit !== null && candidates.length >= input.limit) break;
           }
@@ -220,17 +239,24 @@ export class CrawlerCompanyProspectSource implements CompanyProspectSource {
 
   async #readCompanyPages(input: {
     result: CrawlerSearchResult;
+    channel: "email" | "whatsapp";
     correlationId: string;
     sourcingCycleId: string | null;
   }): Promise<{ pages: readonly CrawledPage[]; attemptCount: number }> {
     const initialUrl = input.result.canonicalUrl ?? input.result.url;
-    const discovered = await this.crawler.discover({
-      url: origin(initialUrl),
-      maxPages: this.#maxPagesPerCompany * 3,
-      maxDepth: 2,
-      correlationId: `${input.correlationId}:discover`,
+    const domain = hostname(initialUrl);
+    const targeted = await this.crawler.search({
+      query: input.channel === "email"
+        ? `site:${domain} équipe associés direction contact email`
+        : `site:${domain} contact téléphone mobile équipe`,
+      limit: Math.max(3, this.#maxPagesPerCompany * 2),
+      searchDepth: "basic",
+      correlationId: `${input.correlationId}:pages-search`,
     }).catch(() => []);
-    const urls = prioritizedUrls(initialUrl, discovered.map((page) => page.url))
+    const sameDomainUrls = targeted
+      .map((result) => result.canonicalUrl ?? result.url)
+      .filter((url) => sameRegistrableHost(url, domain));
+    const urls = prioritizedUrls(initialUrl, sameDomainUrls)
       .slice(0, this.#maxPagesPerCompany);
     const reserved: string[] = [];
     for (const url of urls) {
@@ -248,7 +274,7 @@ export class CrawlerCompanyProspectSource implements CompanyProspectSource {
       urls: reserved,
       correlationId: `${input.correlationId}:pages`,
       requestKey: `${input.correlationId}:pages:v2`,
-    });
+    }).catch(() => []);
     return { pages, attemptCount: reserved.length };
   }
 
@@ -350,17 +376,6 @@ function companyObservation(input: {
   };
 }
 
-function buildQueries(query: string, sourceKinds: readonly string[]): string[] {
-  const kinds = sourceKinds.length ? sourceKinds : ["web"];
-  const suffixes = kinds.map((kind) => {
-    if (kind === "maps") return "adresse téléphone établissement";
-    if (kind === "official_registry") return "registre officiel entreprise";
-    if (kind === "professional_directory") return "annuaire professionnel";
-    return "site officiel entreprise contact France";
-  });
-  return [...new Set(suffixes.map((suffix) => `${query} ${suffix}`))].slice(0, 3);
-}
-
 function uniqueOfficialResults(results: readonly CrawlerSearchResult[]): CrawlerSearchResult[] {
   const seen = new Set<string>();
   return results.filter((result) => {
@@ -378,16 +393,47 @@ function uniqueOfficialResults(results: readonly CrawlerSearchResult[]): Crawler
   });
 }
 
-function extractEmails(page: CrawledPage): string[] {
-  return [...new Set(page.markdown.match(EMAIL_PATTERN) ?? [])].filter((value) => {
+function roundRobin<T>(groups: readonly (readonly T[])[]): T[] {
+  const output: T[] = [];
+  const maxLength = Math.max(0, ...groups.map((group) => group.length));
+  for (let index = 0; index < maxLength; index += 1) {
+    for (const group of groups) {
+      const value = group[index];
+      if (value !== undefined) output.push(value);
+    }
+  }
+  return output;
+}
+
+function extractEmails(page: CrawledPage, companyDomain: string): { email: string; personName: string }[] {
+  return [...new Set(page.markdown.match(EMAIL_PATTERN) ?? [])].flatMap((value) => {
     try {
       const email = normalizeEmail(value);
       const [local = "", domain = ""] = email.split("@");
-      return !GENERIC_EMAILS.has(local) && !PERSONAL_EMAIL_DOMAINS.has(domain);
+      if (
+        GENERIC_EMAILS.has(local)
+        || PERSONAL_EMAIL_DOMAINS.has(domain)
+        || !sameDomain(domain, companyDomain)
+      ) return [];
+      const personName = personNameFromEmailLocal(local);
+      return personName ? [{ email, personName }] : [];
     } catch {
-      return false;
+      return [];
     }
   });
+}
+
+function personNameFromEmailLocal(local: string): string | null {
+  const tokens = local
+    .split(/[._-]+/)
+    .map((token) => token.trim())
+    .filter((token) => /^[a-z]{2,}$/i.test(token));
+  if (tokens.length < 2 || tokens.some((token) => NON_PERSON_EMAIL_TOKENS.has(token.toLocaleLowerCase("fr")))) {
+    return null;
+  }
+  return tokens
+    .map((token) => `${token[0]!.toLocaleUpperCase("fr")}${token.slice(1).toLocaleLowerCase("fr")}`)
+    .join(" ");
 }
 
 function evidenceChannel(
@@ -434,6 +480,23 @@ function companyNameFrom(result: CrawlerSearchResult, domain: string): string {
 
 function hostname(value: string): string {
   return new URL(value).hostname.toLowerCase().replace(/^www\./, "");
+}
+
+function sameRegistrableHost(value: string, expectedHost: string): boolean {
+  try {
+    const candidate = hostname(value);
+    return candidate === expectedHost
+      || candidate.endsWith(`.${expectedHost}`)
+      || expectedHost.endsWith(`.${candidate}`);
+  } catch {
+    return false;
+  }
+}
+
+function sameDomain(candidate: string, expected: string): boolean {
+  const left = candidate.toLocaleLowerCase("en").replace(/^www\./, "");
+  const right = expected.toLocaleLowerCase("en").replace(/^www\./, "");
+  return left === right || left.endsWith(`.${right}`) || right.endsWith(`.${left}`);
 }
 
 function origin(value: string): string {

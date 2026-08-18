@@ -1463,11 +1463,25 @@ export interface ProspectDecisionView {
 
 export async function listProspectViews(
   workspaceSlug: string,
-  filters: { search?: string; icpVersionId?: string; channel?: string } = {},
-): Promise<{ data: ProspectViewSummary[]; filters: { icps: { id: string; name: string }[] } }> {
+  filters: {
+    search?: string;
+    icpVersionId?: string;
+    campaignId?: string;
+    campaignScope?: "in_campaign" | "outside_campaign";
+    channel?: string;
+  } = {},
+): Promise<{
+  data: ProspectViewSummary[];
+  filters: {
+    icps: { id: string; name: string }[];
+    campaigns: { id: string; name: string; channel: "linkedin" | "email" | "whatsapp" }[];
+  };
+}> {
   const query = new URLSearchParams({ limit: "100" });
   if (filters.search) query.set("search", filters.search);
   if (filters.icpVersionId) query.set("icpVersionId", filters.icpVersionId);
+  if (filters.campaignId) query.set("campaignId", filters.campaignId);
+  if (filters.campaignScope) query.set("campaignScope", filters.campaignScope);
   if (filters.channel) query.set("channel", filters.channel);
   return crmFetch(workspaceSlug, `/api/v1/prospects?${query.toString()}`);
 }

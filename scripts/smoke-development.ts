@@ -152,6 +152,31 @@ if (!inboxPage.ok || !inboxHtml.includes("Toutes les conversations des comptes L
   throw new Error(`Unified inbox page smoke test failed: ${inboxPage.status}`);
 }
 
+const prospectFilterResponse = await fetch(
+  `${apiUrl}/api/v1/prospects?limit=10&campaignScope=outside_campaign`,
+  { headers },
+);
+if (!prospectFilterResponse.ok) {
+  throw new Error(`Prospect campaign-scope API smoke test failed: ${prospectFilterResponse.status}`);
+}
+const prospectFilterBody = await prospectFilterResponse.json() as {
+  filters?: { campaigns?: unknown[] };
+};
+if (!Array.isArray(prospectFilterBody.filters?.campaigns)) {
+  throw new Error("Prospect campaign filter options are unavailable");
+}
+const prospectsPage = await fetch(`${webUrl}/w/${workspace.slug}/prospects`, {
+  headers: { cookie },
+});
+const prospectsHtml = await prospectsPage.text();
+if (
+  !prospectsPage.ok
+  || !prospectsHtml.includes("Toutes les campagnes")
+  || !prospectsHtml.includes("Hors campagne")
+) {
+  throw new Error(`Prospect campaign filters smoke test failed: ${prospectsPage.status}`);
+}
+
 const productReadingPage = await fetch(`${webUrl}/w/${workspace.slug}/strategy/product-reading`, {
   headers: { cookie },
 });
@@ -208,6 +233,7 @@ console.info(
     aiStudio: "readable",
     operatorConsole: "readable",
     unifiedInbox: "readable",
+    prospectCampaignFilters: "readable",
     simpleIcpLaunch: "readable",
     calendarProduct: "readable",
     workspaceOnboarding: "resumable",

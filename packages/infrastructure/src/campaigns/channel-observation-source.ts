@@ -8,6 +8,7 @@ import type { ProspectingChannel } from "@outbound/domain/campaigns/prospecting-
 import { normalizeLinkedinUrl } from "@outbound/domain/crm/normalization";
 import type { CrawlerClient, CrawlerSearchResult } from "@outbound/infrastructure/ai/crawler-client";
 import type { ProspectSource } from "@outbound/infrastructure/crm/unipile-prospect-source";
+import { buildCompanySearchQueries } from "@outbound/infrastructure/crm/company-search-query-compiler";
 
 const EMAIL_PATTERN = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
 const PHONE_PATTERN = /(?:\+33|0033|0)[\s.()-]*[1-9](?:[\s.()-]*\d{2}){4}\b/g;
@@ -98,7 +99,7 @@ export class RoutedChannelObservationSource implements ChannelObservationSource 
     strategy: ChannelStrategy;
   }): Promise<ChannelObservation> {
     const searches = await Promise.all(
-      sourceQueries(input.strategy).map((query, index) =>
+      buildCompanySearchQueries(input.strategy.query, input.strategy.sourceKinds).map((query, index) =>
         this.crawler.search({
           query,
           limit: Math.min(10, input.strategy.sampleSize),
@@ -170,17 +171,6 @@ export class RoutedChannelObservationSource implements ChannelObservationSource 
       evidence,
     };
   }
-}
-
-function sourceQueries(strategy: ChannelStrategy): string[] {
-  return unique(strategy.sourceKinds.map((kind) => {
-    if (kind === "maps") return `${strategy.query} adresse téléphone établissement`;
-    if (kind === "official_registry") return `${strategy.query} registre officiel entreprise`;
-    if (kind === "professional_directory") return `${strategy.query} annuaire professionnel`;
-    if (kind === "jobs") return `${strategy.query} recrutement`;
-    if (kind === "news") return `${strategy.query} actualités entreprise`;
-    return strategy.query;
-  })).slice(0, 3);
 }
 
 function uniqueOfficialResults(results: readonly CrawlerSearchResult[]): CrawlerSearchResult[] {

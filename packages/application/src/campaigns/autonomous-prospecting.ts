@@ -10,6 +10,7 @@ export const INBOUND_REPLY_SEND_JOB_TYPE = "inbound.reply.send";
 export const CONVERSATION_COMMAND_JOB_TYPE = "conversation.command.execute";
 
 export const CAMPAIGN_PROSPECT_SCORE_VERSION = "icp-fit-v1";
+export const AUTONOMOUS_SOURCING_VERSION = "icp-source-v3";
 
 export interface CampaignProspectScore {
   readonly score: number;
@@ -31,12 +32,14 @@ export type AutonomousSourcingFilters =
       readonly limit: number;
       readonly exhaustive: boolean;
       readonly enrichContacts: false;
+      readonly sourcingVersion: typeof AUTONOMOUS_SOURCING_VERSION;
     }
   | {
       readonly channel: "email" | "whatsapp";
       readonly query: string;
       readonly sourceKinds: ChannelStrategy["sourceKinds"];
       readonly limit: number | null;
+      readonly sourcingVersion: typeof AUTONOMOUS_SOURCING_VERSION;
     };
 
 export function buildAutonomousSourcingFilters(
@@ -52,6 +55,7 @@ export function buildAutonomousSourcingFilters(
       limit: 50,
       exhaustive: true,
       enrichContacts: false,
+      sourcingVersion: AUTONOMOUS_SOURCING_VERSION,
     };
   }
   return {
@@ -59,6 +63,7 @@ export function buildAutonomousSourcingFilters(
     query: strategy.query,
     sourceKinds: strategy.sourceKinds,
     limit: null,
+    sourcingVersion: AUTONOMOUS_SOURCING_VERSION,
   };
 }
 

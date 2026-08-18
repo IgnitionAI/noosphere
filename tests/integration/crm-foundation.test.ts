@@ -164,6 +164,104 @@ databaseDescribe("F-020/F-021 CRM foundation", () => {
     expect(await response.json()).toMatchObject({ data: [], filters: { icps: [] } });
   });
 
+  test("prospects: filters contacts in a campaign or outside every campaign", async () => {
+    const insideContactId = crypto.randomUUID();
+    const outsideContactId = crypto.randomUUID();
+    const icpId = crypto.randomUUID();
+    const icpVersionId = crypto.randomUUID();
+    const campaignId = crypto.randomUUID();
+    const runId = crypto.randomUUID();
+    const candidateId = crypto.randomUUID();
+    await database.db.insert(contacts).values([
+      { id: insideContactId, workspaceId, firstName: "Inside", lastName: "Campaign" },
+      { id: outsideContactId, workspaceId, firstName: "Outside", lastName: "Campaign" },
+    ]);
+    await database.db.insert(icps).values({ id: icpId, workspaceId, name: "Prospect filter ICP" });
+    await database.db.insert(icpVersions).values({
+      id: icpVersionId,
+      workspaceId,
+      icpId,
+      version: 1,
+      name: "Prospect filter ICP",
+      confidence: "0.9000",
+      criteria: [],
+      buyingCommittee: [],
+      problems: [],
+      signals: [],
+      exclusions: [],
+      unknowns: [],
+      unresolvedContradictions: [],
+      blockedFindings: [],
+      publishedAt: new Date(),
+    });
+    await database.db.insert(campaigns).values({
+      id: campaignId,
+      workspaceId,
+      icpVersionId,
+      name: "Prospect filter campaign",
+      status: "draft",
+      channel: "linkedin",
+      sequenceId: crypto.randomUUID(),
+    });
+    await database.db.insert(prospectDiscoveryRuns).values({
+      id: runId,
+      workspaceId,
+      icpVersionId,
+      campaignId,
+      channel: "linkedin",
+      filters: {},
+      status: "completed",
+      completedAt: new Date(),
+    });
+    await database.db.insert(prospectDiscoveryCandidates).values({
+      id: candidateId,
+      workspaceId,
+      runId,
+      fullName: "Inside Campaign",
+      channels: {
+        linkedin: { value: null, normalizedValue: null, status: "unavailable", confidence: "none", source: null },
+        email: { value: null, normalizedValue: null, status: "unavailable", confidence: "none", source: null },
+        whatsapp: { value: null, normalizedValue: null, status: "unavailable", confidence: "none", source: null },
+      },
+      providerData: {},
+      icpFit: { matches: [], gaps: [] },
+      importedContactId: insideContactId,
+    });
+    await database.db.insert(campaignProspects).values({
+      workspaceId,
+      campaignId,
+      contactId: insideContactId,
+      candidateId,
+    });
+
+    const inCampaign = await handle(new Request(
+      "http://localhost/api/v1/prospects?limit=100&campaignScope=in_campaign",
+    ));
+    expect(inCampaign.status).toBe(200);
+    const inCampaignBody = await inCampaign.json() as {
+      data: { id: string }[];
+      filters: { campaigns: { id: string; name: string }[] };
+    };
+    expect(inCampaignBody.data.map((item) => item.id)).toContain(insideContactId);
+    expect(inCampaignBody.data.map((item) => item.id)).not.toContain(outsideContactId);
+    expect(inCampaignBody.filters.campaigns).toContainEqual(expect.objectContaining({ id: campaignId }));
+
+    const outsideCampaign = await handle(new Request(
+      "http://localhost/api/v1/prospects?limit=100&campaignScope=outside_campaign",
+    ));
+    expect(outsideCampaign.status).toBe(200);
+    const outsideCampaignBody = await outsideCampaign.json() as { data: { id: string }[] };
+    expect(outsideCampaignBody.data.map((item) => item.id)).toContain(outsideContactId);
+    expect(outsideCampaignBody.data.map((item) => item.id)).not.toContain(insideContactId);
+
+    const exactCampaign = await handle(new Request(
+      `http://localhost/api/v1/prospects?limit=100&campaignId=${campaignId}`,
+    ));
+    expect(exactCampaign.status).toBe(200);
+    expect(((await exactCampaign.json()) as { data: { id: string }[] }).data.map((item) => item.id))
+      .toContain(insideContactId);
+  });
+
   test("schedules a tenant-scoped manual decision in simulation-only mode", async () => {
     const contactId = crypto.randomUUID();
     await database.db.insert(contacts).values({

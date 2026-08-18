@@ -66,6 +66,7 @@ import { PostgresProspectViewRepository } from "@outbound/infrastructure/crm/pos
 import { PostgresChannelCapabilityReassessment } from "@outbound/infrastructure/campaigns/channel-capability-reassessment";
 import { ProspectDecisionJobProcessor } from "@outbound/infrastructure/campaigns/prospect-decision-runner";
 import { DailyProspectingScheduler } from "@outbound/infrastructure/campaigns/daily-prospecting-scheduler";
+import { AUTONOMOUS_SOURCING_VERSION } from "@outbound/application/campaigns/autonomous-prospecting";
 
 const databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
 const databaseDescribe = databaseUrl ? describe : describe.skip;
@@ -81,6 +82,7 @@ databaseDescribe("V3 automatic ICP publication", () => {
     now: () => new Date(currentTime),
   };
   const workspaceId = crypto.randomUUID();
+  const linkedinAccountId = `acc_linkedin_fixture_${workspaceId}`;
   const campaignUserId = crypto.randomUUID();
 
   beforeAll(async () => {
@@ -355,6 +357,81 @@ databaseDescribe("V3 automatic ICP publication", () => {
         eq(jobs.idempotencyKey, `${staleCampaign.id}:sourcing:normalized:v1`),
       ));
     expect(normalizedRetryJobs).toHaveLength(1);
+    const accountSelectionCampaign = campaignRows[2]!;
+    await database.db
+      .update(prospectDiscoveryRuns)
+      .set({
+        status: "failed",
+        errorCode: "PROVIDER_UNAVAILABLE",
+        errorMessage: "No LinkedIn account is selected for this workspace",
+        completedAt: clock.now(),
+      })
+      .where(and(
+        eq(prospectDiscoveryRuns.workspaceId, workspaceId),
+        eq(prospectDiscoveryRuns.id, accountSelectionCampaign.discoveryRunId!),
+      ));
+    expect(await reconciler.reconcile({ workspaceId })).toBe(1);
+    expect(await reconciler.reconcile({ workspaceId })).toBe(0);
+    const accountSelectionRetryJobs = await database.db
+      .select()
+      .from(jobs)
+      .where(and(
+        eq(jobs.workspaceId, workspaceId),
+        eq(jobs.idempotencyKey, `${accountSelectionCampaign.id}:sourcing:account-autoselect:v1`),
+      ));
+    expect(accountSelectionRetryJobs).toHaveLength(1);
+    const zeroYieldCampaign = campaignRows[1]!;
+    const zeroYieldPreviousRunId = zeroYieldCampaign.discoveryRunId!;
+    await database.db
+      .update(prospectDiscoveryRuns)
+      .set({
+        status: "completed",
+        candidateCount: 0,
+        filters: {
+          channel: "linkedin",
+          api: "classic",
+          category: "people",
+          keywords: "legacy Boolean strategy",
+          limit: 50,
+          exhaustive: true,
+          enrichContacts: false,
+        },
+        completedAt: clock.now(),
+      })
+      .where(and(
+        eq(prospectDiscoveryRuns.workspaceId, workspaceId),
+        eq(prospectDiscoveryRuns.id, zeroYieldPreviousRunId),
+      ));
+    expect(await reconciler.reconcile({ workspaceId })).toBe(1);
+    expect(await reconciler.reconcile({ workspaceId })).toBe(0);
+    const [upgradedZeroYieldCampaign] = await database.db
+      .select()
+      .from(campaigns)
+      .where(and(
+        eq(campaigns.workspaceId, workspaceId),
+        eq(campaigns.id, zeroYieldCampaign.id),
+      ));
+    expect(upgradedZeroYieldCampaign?.discoveryRunId).not.toBe(zeroYieldPreviousRunId);
+    const [upgradedZeroYieldRun] = await database.db
+      .select()
+      .from(prospectDiscoveryRuns)
+      .where(and(
+        eq(prospectDiscoveryRuns.workspaceId, workspaceId),
+        eq(prospectDiscoveryRuns.id, upgradedZeroYieldCampaign!.discoveryRunId!),
+      ));
+    expect(upgradedZeroYieldRun).toMatchObject({
+      status: "running",
+      campaignId: zeroYieldCampaign.id,
+      filters: expect.objectContaining({ sourcingVersion: AUTONOMOUS_SOURCING_VERSION }),
+    });
+    const zeroYieldRetryJobs = await database.db
+      .select()
+      .from(jobs)
+      .where(and(
+        eq(jobs.workspaceId, workspaceId),
+        eq(jobs.idempotencyKey, `${zeroYieldCampaign.id}:sourcing:${AUTONOMOUS_SOURCING_VERSION}`),
+      ));
+    expect(zeroYieldRetryJobs).toHaveLength(1);
     const firstCampaign = repairedCampaign!;
 
     let campaignRole: "operator" | "admin" = "operator";
@@ -570,7 +647,7 @@ databaseDescribe("V3 automatic ICP publication", () => {
       new FixtureCampaignContentGenerator(),
       {
         async resolveHealthyAccount() {
-          return { provider: "unipile", accountId: "acc_linkedin_fixture" };
+          return { provider: "unipile", accountId: linkedinAccountId };
         },
       },
       clock,
@@ -797,10 +874,10 @@ databaseDescribe("V3 automatic ICP publication", () => {
     currentTime = new Date(currentTime.getTime() + 1_000);
     const webhookPayload = JSON.stringify({
       event: "message_received",
-      account_id: "acc_linkedin_fixture",
+      account_id: linkedinAccountId,
       account_type: "LINKEDIN",
       chat_id: "chat-fixture",
-      id: "inbound-message-fixture",
+      id: `inbound-message-fixture-${workspaceId}`,
       text: "Oui, je veux bien réserver un rendez-vous.",
       sender: { attendee_provider_id: "linkedin-marie" },
       account_info: { user_id: "linkedin-owner" },
@@ -941,7 +1018,7 @@ databaseDescribe("V3 automatic ICP publication", () => {
       {
         async send(request) {
           expect(request.conversationId).toBe("chat-fixture");
-          expect(request.replyToProviderMessageId).toBe("inbound-message-fixture");
+          expect(request.replyToProviderMessageId).toBe(`inbound-message-fixture-${workspaceId}`);
           return { providerRequestId: "automated-reply-fixture", conversationId: "chat-fixture" };
         },
       },
@@ -1036,10 +1113,10 @@ databaseDescribe("V3 automatic ICP publication", () => {
     currentTime = new Date(currentTime.getTime() + 1_000);
     const secondInboundPayload = JSON.stringify({
       event: "message_received",
-      account_id: "acc_linkedin_fixture",
+      account_id: linkedinAccountId,
       account_type: "LINKEDIN",
       chat_id: "chat-fixture",
-      id: "inbound-message-follow-up",
+      id: `inbound-message-follow-up-${workspaceId}`,
       text: "Merci, le 4 septembre à partir de 10h30 me convient.",
       sender: { attendee_provider_id: "linkedin-marie" },
       account_info: { user_id: "linkedin-owner" },
@@ -1090,10 +1167,10 @@ databaseDescribe("V3 automatic ICP publication", () => {
     const humanOutboundPayload = JSON.stringify({
       event: "message_sent",
       direction: "outbound",
-      account_id: "acc_linkedin_fixture",
+      account_id: linkedinAccountId,
       account_type: "LINKEDIN",
       chat_id: "chat-fixture",
-      id: "human-outbound-fixture",
+      id: `human-outbound-fixture-${workspaceId}`,
       text: "Bonjour Marie, je reprends personnellement la conversation.",
       sender: { attendee_provider_id: "linkedin-owner" },
       account_info: { user_id: "linkedin-owner" },
@@ -1137,7 +1214,7 @@ databaseDescribe("V3 automatic ICP publication", () => {
       .where(and(eq(messages.workspaceId, workspaceId), eq(messages.senderType, "human")));
     expect(humanMessages).toHaveLength(1);
     expect(humanMessages[0]).toMatchObject({
-      providerMessageId: "human-outbound-fixture",
+      providerMessageId: `human-outbound-fixture-${workspaceId}`,
       direction: "outbound",
     });
     const [humanOwnedConversation] = await database.db
