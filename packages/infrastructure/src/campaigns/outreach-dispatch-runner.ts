@@ -4,6 +4,7 @@ import type {
   OutboundSendRequest,
 } from "@outbound/application/campaigns/outbound-channel-gateway";
 import type { CampaignContentGenerator } from "@outbound/application/campaigns/campaign-content-generator";
+import type { CampaignEditorialContextReader } from "@outbound/application/campaigns/campaign-content-generator";
 import { OutboundDeliveryError } from "@outbound/application/campaigns/outbound-channel-gateway";
 import type { JobQueue, LeasedJob } from "@outbound/application/jobs/job-queue";
 import type { Clock } from "@outbound/application/shared/ports";
@@ -12,6 +13,7 @@ import { deriveCampaignExecutionState } from "@outbound/domain/campaigns/campaig
 import { nextAllowedCampaignSendAt, type CampaignSendSchedule } from "@outbound/domain/campaigns/campaign-autopilot-policy";
 import { resolveCampaignAutopilotPolicy } from "@outbound/domain/campaigns/campaign-autopilot-policy";
 import { fitSequenceStepContent, validateSequenceSteps, type SequenceStepInput } from "@outbound/domain/campaigns/sequence-validation";
+import { requiresEditorialRegeneration } from "@outbound/domain/campaigns/campaign-editorial-context";
 import { startOfWorkspaceDay } from "@outbound/domain/workspaces/workspace-data-policy";
 import type { Database } from "@outbound/infrastructure/database/client";
 import {
@@ -30,6 +32,7 @@ import {
   workspaces,
 } from "@outbound/infrastructure/database/schema";
 import { suppressionFingerprint } from "@outbound/infrastructure/crm/suppression-fingerprint";
+import { PostgresCampaignEditorialContextReader } from "./postgres-campaign-editorial-context";
 
 export interface OutreachDispatchLimits {
   readonly linkedin: number;
@@ -48,6 +51,8 @@ export interface OutboundSenderReadiness {
 }
 
 export class OutreachDispatchJobProcessor {
+  readonly #editorialContext: CampaignEditorialContextReader;
+
   constructor(
     private readonly database: Database,
     private readonly queue: JobQueue,
@@ -58,7 +63,10 @@ export class OutreachDispatchJobProcessor {
     private readonly reachabilityResolver?: (workspaceId: string) => WhatsappReachabilityResolver,
     private readonly workspacePolicy?: WorkspaceDispatchPolicyReader,
     private readonly senderReadiness?: OutboundSenderReadiness,
-  ) {}
+    editorialContext?: CampaignEditorialContextReader,
+  ) {
+    this.#editorialContext = editorialContext ?? new PostgresCampaignEditorialContextReader(database);
+  }
 
   async process(job: LeasedJob): Promise<void> {
     const payload = actionPayload(job.payload);
@@ -542,7 +550,13 @@ export class OutreachDispatchJobProcessor {
 
   async #prepareContentIfNeeded(action: ClaimedAction): Promise<unknown> {
     const snapshot = recordValue(action.contentSnapshot);
-    if (!snapshot || snapshot.generationPending !== true) return action.contentSnapshot;
+    if (!snapshot) return action.contentSnapshot;
+    const generation = recordValue(snapshot.generation);
+    const needsGeneration = requiresEditorialRegeneration({
+      generationPending: snapshot.generationPending === true,
+      promptVersion: typeof generation?.promptVersion === "string" ? generation.promptVersion : null,
+    });
+    if (!needsGeneration) return action.contentSnapshot;
     if (!this.generator) throw new Error("CAMPAIGN_JIT_GENERATOR_UNAVAILABLE");
     const template = readTemplateSnapshot(snapshot.template);
     if (!template) throw new Error("CAMPAIGN_JIT_TEMPLATE_INVALID");
@@ -587,12 +601,34 @@ export class OutreachDispatchJobProcessor {
       .limit(1);
     if (!context) throw new Error("CAMPAIGN_JIT_CONTEXT_MISSING");
     const policy = resolveCampaignAutopilotPolicy(context.autopilotPolicy, action.channel);
+    const [actionCount] = await this.database
+      .select({ value: sql<number>`count(*)::int` })
+      .from(outreachActions)
+      .where(and(
+        eq(outreachActions.workspaceId, action.workspaceId),
+        eq(outreachActions.enrollmentId, action.enrollmentId),
+      ));
+    const editorial = await this.#editorialContext.read({
+      workspaceId: action.workspaceId,
+      campaignId: action.campaignId,
+      contactId: action.contactId,
+      step: template,
+      totalSteps: actionCount?.value ?? template.position,
+      prospectEvidence: {
+        publicData: context.providerData,
+        scoreFactors: context.scoreExplanation,
+      },
+    });
     const generated = await this.generator.generate({
       workspaceId: action.workspaceId,
       channel: action.channel,
+      campaignObjective: editorial.campaignObjective,
       icpName: context.icpName,
       problems: context.problems,
       signals: context.signals,
+      offer: editorial.offer,
+      previousMessages: editorial.previousMessages,
+      stepObjective: editorial.stepObjective,
       policy: action.channel === "email"
         ? {
             language: policy.email.language,
@@ -608,7 +644,7 @@ export class OutreachDispatchJobProcessor {
         location: context.location,
         score: context.score ?? 0,
         scoreExplanation: context.scoreExplanation,
-        publicEvidence: context.providerData,
+        evidence: editorial.prospectEvidence,
       },
       templateSteps: [template],
     });

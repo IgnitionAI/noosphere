@@ -2,6 +2,7 @@ import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import type {
   CampaignChannelReadiness,
   CampaignContentGenerator,
+  CampaignEditorialContextReader,
   PersonalizedCampaignStep,
 } from "@outbound/application/campaigns/campaign-content-generator";
 import { PROSPECT_DECISION_JOB_TYPE } from "@outbound/application/campaigns/prospect-decision";
@@ -36,15 +37,21 @@ import {
   sequenceSteps,
   sequenceVersions,
 } from "@outbound/infrastructure/database/schema";
+import { PostgresCampaignEditorialContextReader } from "./postgres-campaign-editorial-context";
 
 export class CampaignCompositionJobProcessor {
+  readonly #editorialContext: CampaignEditorialContextReader;
+
   constructor(
     private readonly database: Database,
     private readonly queue: JobQueue,
     private readonly generator: CampaignContentGenerator,
     private readonly readiness: CampaignChannelReadiness,
     private readonly clock: Clock,
-  ) {}
+    editorialContext?: CampaignEditorialContextReader,
+  ) {
+    this.#editorialContext = editorialContext ?? new PostgresCampaignEditorialContextReader(database);
+  }
 
   async process(job: LeasedJob): Promise<void> {
     const payload = campaignPayload(job.payload);
@@ -87,12 +94,28 @@ export class CampaignCompositionJobProcessor {
         if (existingSteps.length && !assessmentMissing) continue;
         const firstTemplate = templateSteps[0];
         if (!firstTemplate) throw new Error("CAMPAIGN_SEQUENCE_EMPTY");
+        if (!prospect.contactId) throw new Error("ELIGIBLE_PROSPECT_CONTACT_MISSING");
+        const editorial = await this.#editorialContext.read({
+          workspaceId: payload.workspaceId,
+          campaignId: payload.campaignId,
+          contactId: prospect.contactId,
+          step: firstTemplate,
+          totalSteps: templateSteps.length,
+          prospectEvidence: {
+            publicData: prospect.providerData,
+            scoreFactors: prospect.scoreExplanation,
+          },
+        });
         const generated = await this.generator.generate({
           workspaceId: payload.workspaceId,
           channel: campaign.channel,
+          campaignObjective: editorial.campaignObjective,
           icpName: campaign.icpName,
           problems: campaign.problems,
           signals: campaign.signals,
+          offer: editorial.offer,
+          previousMessages: editorial.previousMessages,
+          stepObjective: editorial.stepObjective,
           policy: campaign.channel === "email"
             ? {
                 language: autopilotPolicy.email.language,
@@ -108,7 +131,7 @@ export class CampaignCompositionJobProcessor {
             location: prospect.location,
             score: prospect.score ?? 0,
             scoreExplanation: prospect.scoreExplanation,
-            publicEvidence: prospect.providerData,
+            evidence: editorial.prospectEvidence,
           },
           templateSteps: [firstTemplate],
         });
