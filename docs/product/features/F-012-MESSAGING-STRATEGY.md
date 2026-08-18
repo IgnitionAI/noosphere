@@ -58,10 +58,10 @@ humaine — publiés en versions immuables.
 - un canal utilisé doit définir longueur, CTA et contraintes ;
 - un claim référencé doit être `sourced` ou `validated` dans l’`OfferVersion`
   ; un claim `hypothesis` ou `invalidated` bloque la publication ;
-- le premier contact et les réponses restent supervisés par la politique
-  d’autopilote : envoi sans validation humaine dans le chemin normal (D-003),
-  revérifications déterministes avant chaque envoi, exceptions humaines en
-  file F-033 ;
+- le premier contact et les réponses sont autonomes sous une policy publiée :
+  envoi sans validation humaine dans le chemin normal (D-003),
+  revérifications déterministes avant chaque envoi, exceptions explicites dans
+  « À traiter » ;
 - une campagne (F-031) ne peut référencer que des versions publiées ;
 - une suppression (F-026) prime sur toute autorisation de la politique ;
 - la publication est idempotente et auditée (F-003, désormais disponible).

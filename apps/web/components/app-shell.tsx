@@ -55,7 +55,7 @@ export function AppShell({
   const offersHref = `/w/${workspace.slug}/offers`;
   const knowledgeHref = `/w/${workspace.slug}/knowledge`;
   const aiStudioHref = `/w/${workspace.slug}/ai-studio`;
-  const messagingHref = `/w/${workspace.slug}/messaging`;
+  const messagingHref = `/w/${workspace.slug}/settings/automation`;
   const analyticsHref = `/w/${workspace.slug}/analytics`;
   const inboxHref = `/w/${workspace.slug}/inbox`;
   const campaignsHref = `/w/${workspace.slug}/campaigns`;
@@ -126,7 +126,7 @@ export function AppShell({
               ? workspaces.map((candidate) => (
                 <Link
                   className="block rounded-md px-3 py-2 text-xs hover:bg-white/10"
-                  href={`/w/${candidate.slug}/strategy/product-reading`}
+                  href={`/w/${candidate.slug}`}
                   key={candidate.id}
                 >
                   {candidate.name}
@@ -137,7 +137,25 @@ export function AppShell({
           </div>
         </details>
 
-        <nav aria-label="Navigation principale">
+        <nav aria-label="Navigation principale" className="mt-6 space-y-1">
+          <NavItem active={pathname === `/w/${workspace.slug}` || pathname === `/w/${workspace.slug}/`} href={`/w/${workspace.slug}`} icon={Activity} label="À traiter" onClick={() => setOpen(false)} />
+          <NavItem active={pathname.startsWith(campaignsHref)} href={campaignsHref} icon={Megaphone} label="Campagnes" onClick={() => setOpen(false)} />
+          <NavItem active={pathname.startsWith(prospectsHref)} href={prospectsHref} icon={UsersRound} label="Prospects" onClick={() => setOpen(false)} />
+          <NavItem active={pathname.startsWith(inboxHref)} href={inboxHref} icon={Inbox} label="Conversations" onClick={() => setOpen(false)} />
+          <NavItem active={pathname.startsWith(pipelineHref)} href={pipelineHref} icon={Kanban} label="Pipeline" onClick={() => setOpen(false)} />
+          <div className="mb-2 mt-6 px-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">Configuration</div>
+          <NavItem active={pathname === workspaceSettingsHref || pathname.startsWith(`/w/${workspace.slug}/settings/`) || pathname.startsWith(messagingHref)} href={workspaceSettingsHref} icon={SlidersHorizontal} label="Configuration" onClick={() => setOpen(false)} />
+          <div className="mt-2 grid grid-cols-2 gap-1 px-1 text-[11px] text-slate-400">
+            <Link className="rounded px-2 py-1 hover:bg-white/5 hover:text-white" href={offersHref}>Produit</Link>
+            <Link className="rounded px-2 py-1 hover:bg-white/5 hover:text-white" href={icpsHref}>ICP</Link>
+            <Link className="rounded px-2 py-1 hover:bg-white/5 hover:text-white" href={channelSettingsHref}>Canaux</Link>
+            <Link className="rounded px-2 py-1 hover:bg-white/5 hover:text-white" href={calendarSettingsHref}>Agenda</Link>
+            <Link className="rounded px-2 py-1 hover:bg-white/5 hover:text-white" href={messagingHref}>Automatisation</Link>
+            <Link className="rounded px-2 py-1 hover:bg-white/5 hover:text-white" href={knowledgeHref}>Connaissance</Link>
+          </div>
+          {workspace.role !== "viewer" ? <Link className="mt-2 flex items-center gap-3 rounded-lg px-3 py-2 text-[12px] text-slate-400 hover:bg-white/5 hover:text-white" href={operatorConsoleHref} onClick={() => setOpen(false)}><Activity size={15} />Administration</Link> : null}
+        </nav>
+        <nav aria-label="Navigation historique" className="hidden">
           <div className="mb-2 mt-6 px-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">
             Stratégie
           </div>
@@ -437,7 +455,22 @@ export function AppShell({
           ) : null}
           {children}
         </main>
+        <nav aria-label="Navigation mobile" className="fixed inset-x-3 bottom-3 z-40 grid grid-cols-5 rounded-2xl border border-line bg-white/95 p-1 shadow-xl backdrop-blur lg:hidden">
+          <MobileNavItem active={pathname === `/w/${workspace.slug}` || pathname === `/w/${workspace.slug}/`} href={`/w/${workspace.slug}`} icon={Activity} label="À traiter" />
+          <MobileNavItem active={pathname.startsWith(campaignsHref)} href={campaignsHref} icon={Megaphone} label="Campagnes" />
+          <MobileNavItem active={pathname.startsWith(prospectsHref)} href={prospectsHref} icon={UsersRound} label="Prospects" />
+          <MobileNavItem active={pathname.startsWith(inboxHref)} href={inboxHref} icon={Inbox} label="Conversations" />
+          <MobileNavItem active={pathname.startsWith(pipelineHref)} href={pipelineHref} icon={Kanban} label="Pipeline" />
+        </nav>
       </div>
     </div>
   );
+}
+
+function NavItem({ icon: Icon, label, href, active, onClick }: { icon: typeof Activity; label: string; href: string; active: boolean; onClick: () => void }) {
+  return <Link aria-current={active ? "page" : undefined} className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium ${active ? "bg-white/10 text-white" : "text-slate-300 hover:bg-white/5 hover:text-white"}`} href={href} onClick={onClick}><Icon size={17} />{label}</Link>;
+}
+
+function MobileNavItem({ icon: Icon, label, href, active }: { icon: typeof Activity; label: string; href: string; active: boolean }) {
+  return <Link aria-current={active ? "page" : undefined} className={`flex min-w-0 flex-col items-center gap-0.5 rounded-xl px-1 py-2 text-[9px] font-semibold ${active ? "bg-navy text-white" : "text-muted"}`} href={href}><Icon size={15} /><span className="max-w-full truncate">{label}</span></Link>;
 }

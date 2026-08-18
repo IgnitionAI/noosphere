@@ -1,6 +1,6 @@
-import { AlertTriangle, ArrowLeft, Building2, Clock3, ExternalLink, Mail, Phone, RefreshCw, Search, Send, UserRound } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Building2, Clock3, ExternalLink, Mail, MessageCircle, Phone, RefreshCw, Search, Send, UserRound } from "lucide-react";
 import Link from "next/link";
-import { getCampaign, getCampaignAutopilotPolicy } from "@/lib/api";
+import { getCampaign, getCampaignAutopilotPolicy, getCampaignWorkspaceView } from "@/lib/api";
 import { prospectDetailHref } from "@/lib/prospect-navigation";
 import { CampaignAutoRefresh } from "../campaign-auto-refresh";
 import { setCampaignExecutionModeAction } from "../actions";
@@ -16,6 +16,7 @@ export default async function CampaignDetailPage({
 }) {
   const { workspaceSlug, campaignId } = await params;
   const campaign = await getCampaign(workspaceSlug, campaignId);
+  const workspaceView = await getCampaignWorkspaceView(workspaceSlug, campaignId).catch(() => null);
   const execution = campaign.channel
     ? await getCampaignAutopilotPolicy(workspaceSlug, campaignId)
     : null;
@@ -62,6 +63,16 @@ export default async function CampaignDetailPage({
           {campaign.automationErrorMessage ?? campaign.discoveryErrorMessage ?? campaign.automationErrorCode ?? campaign.discoveryErrorCode ?? "L’autopilote est suspendu sur une exception fournisseur."}
         </div>
       ) : null}
+
+      {workspaceView ? <>
+        <section className="panel mb-5 overflow-hidden">
+          <div className="panel-header"><div><h2 className="font-semibold">Boucle de campagne</h2><p className="mt-1 text-xs text-muted">Chaque étape est durable, observable et relançable sans perdre le job.</p></div><span className="badge">{workspaceView.population.total} prospects</span></div>
+          <div className="grid gap-2 p-4 sm:grid-cols-4 lg:grid-cols-8">{workspaceView.timeline.map((step) => <div className={`rounded-lg border p-3 ${step.status === "active" ? "border-brand-blue bg-blue-50" : step.status === "attention" ? "border-amber-300 bg-amber-50" : step.status === "done" ? "border-emerald-200 bg-emerald-50" : "border-line bg-slate-50"}`} key={step.key}><p className="text-[10px] font-bold uppercase tracking-wide text-muted">{step.status === "active" ? "En cours" : step.status === "done" ? "Terminé" : step.status === "attention" ? "Exception" : "À venir"}</p><p className="mt-2 text-xs font-semibold">{step.label}</p></div>)}</div>
+        </section>
+        <section className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><CampaignMetric label="Population" value={workspaceView.population.total} /><CampaignMetric label="Éligibles" value={workspaceView.population.eligible} /><CampaignMetric label="Contactés" value={workspaceView.population.contacted} /><CampaignMetric label="Réponses" value={workspaceView.population.replies} tone="signal" /></section>
+      </> : null}
+
+      {workspaceView?.engagement.prospects.some((prospect) => prospect.conversationId) ? <section className="panel mb-5"><div className="panel-header"><div><h2 className="font-semibold">Conversations liées</h2><p className="mt-1 text-xs text-muted">Les réponses restent rattachées à la campagne et à leur canal d’origine.</p></div><Link className="button" href={`/w/${workspaceSlug}/inbox?scope=campaign`}>Ouvrir la messagerie</Link></div><div className="divide-y divide-line">{workspaceView.engagement.prospects.filter((prospect) => prospect.conversationId).slice(0, 6).map((prospect) => <Link className="flex items-center gap-3 p-4 transition hover:bg-slate-50" href={`/w/${workspaceSlug}/inbox?scope=campaign&prospect=${prospect.contactId ?? ""}`} key={prospect.conversationId}><span className="grid h-8 w-8 place-items-center rounded-full bg-slate-100"><MessageCircle size={14} /></span><span className="min-w-0 flex-1"><strong className="block text-sm">{prospect.fullName}</strong><span className="mt-1 block truncate text-xs text-muted">{prospect.lastMessage?.body ?? "Conversation ouverte"}</span></span><span className="badge capitalize">{prospect.lastMessage?.source === "conversation" ? "réponse" : "activité"}</span></Link>)}</div></section> : null}
 
       {campaign.sourcingPool ? (
         <WhatsappSourcingPoolPanel pool={campaign.sourcingPool} />
@@ -170,6 +181,10 @@ export default async function CampaignDetailPage({
 
 function Channel({ href, icon: Icon, label }: { href: string; icon: typeof Mail; label: string }) {
   return <a className="inline-flex max-w-full items-center gap-1 rounded border border-line px-2 py-1 text-brand-blue hover:border-brand-blue" href={href} rel="noreferrer" target="_blank"><Icon size={12} /><span className="truncate">{label}</span></a>;
+}
+
+function CampaignMetric({ label, value, tone }: { label: string; value: number; tone?: "signal" }) {
+  return <div className={`panel p-4 ${tone === "signal" ? "border-lime-300" : ""}`}><p className="text-xs text-muted">{label}</p><strong className="metric-value mt-2 block">{value}</strong></div>;
 }
 
 function channelLabel(kind: string): string {

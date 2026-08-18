@@ -424,13 +424,16 @@ function createOutboundGateway(): OutboundChannelGateway {
 }
 
 function documentServiceOptionsFromEnvironment() {
+  const extractor = process.env.DOCUMENT_EXTRACTOR === "docling" ? "docling" : "lightweight";
+  if (extractor === "docling" && !process.env.DOCLING_SERVICE_URL) throw new Error("DOCLING_SERVICE_URL is required when DOCUMENT_EXTRACTOR=docling");
   return {
     bucket: requiredEnvironment("S3_BUCKET"),
     endpoint: requiredEnvironment("S3_ENDPOINT"),
     region: process.env.S3_REGION ?? "us-east-1",
     accessKeyId: requiredEnvironment("S3_ACCESS_KEY_ID"),
     secretAccessKey: requiredEnvironment("S3_SECRET_ACCESS_KEY"),
-    doclingUrl: requiredEnvironment("DOCLING_SERVICE_URL"),
+    documentExtractor: extractor as "lightweight" | "docling",
+    ...(process.env.DOCLING_SERVICE_URL ? { doclingUrl: process.env.DOCLING_SERVICE_URL } : {}),
     ...(process.env.DOCLING_API_KEY ? { doclingApiKey: process.env.DOCLING_API_KEY } : {}),
     openAIApiKey: requiredEnvironment("OPENAI_API_KEY"),
     embeddingModel: requiredEnvironment("OPENAI_EMBEDDING_MODEL"),

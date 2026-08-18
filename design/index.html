@@ -1,0 +1,27 @@
+<!-- Ignition Outbound design contract: target architecture and P0 UX, static review only. -->
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Ignition Outbound — design review</title><link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="content" style="max-width:1100px">
+    <p class="eyebrow">Package de design · 17 août 2026</p>
+    <h1>Ignition Outbound, boucle opérateur</h1>
+    <p>Maquettes statiques de la cible : moins d’onglets, campagnes au centre, automatisation observable et exceptions actionnables.</p>
+    <div class="panel mt"><div class="panel-head"><h2>Parcours P0</h2><span class="badge badge-blue">review statique</span></div><div class="panel-body grid grid-2">
+      <a class="panel" href="screen-home.html"><div class="panel-body"><h2>01 · À traiter</h2><p class="mt">La page qui répond à “que dois-je faire maintenant ?”.</p></div></a>
+      <a class="panel" href="screen-campaigns.html"><div class="panel-body"><h2>02 · Campagnes</h2><p class="mt">Vue de portefeuille, rendement et santé des canaux.</p></div></a>
+      <a class="panel" href="screen-campaign-detail.html"><div class="panel-body"><h2>03 · Détail campagne</h2><p class="mt">Timeline, prospects, automatisation et conversation.</p></div></a>
+      <a class="panel" href="screen-prospects.html"><div class="panel-body"><h2>04 · Prospects</h2><p class="mt">CRM global, ICP, canaux et hors campagne.</p></div></a>
+      <a class="panel" href="screen-prospect.html"><div class="panel-body"><h2>05 · Prospect 360</h2><p class="mt">Preuves, avis IA, thread et prochaine action.</p></div></a>
+      <a class="panel" href="screen-inbox.html"><div class="panel-body"><h2>06 · Conversations</h2><p class="mt">Inbox LinkedIn, email et WhatsApp dans un même contexte.</p></div></a>
+      <a class="panel" href="screen-pipeline.html"><div class="panel-body"><h2>07 · Pipeline</h2><p class="mt">Rendez-vous et opportunités jusqu’au revenu.</p></div></a>
+      <a class="panel" href="screen-setup.html"><div class="panel-body"><h2>08 · Configuration</h2><p class="mt">Checklist guidée au lieu de sept pages isolées.</p></div></a>
+      <a class="panel" href="screen-report.html"><div class="panel-body"><h2>09 · Rapport ICP</h2><p class="mt">Livrable lisible, preuve visible, relance simple.</p></div></a>
+    </div></div>
+    <div class="panel mt"><div class="panel-head"><h2>Contrat de revue</h2></div><div class="panel-body grid grid-3"><div><h3>Décision</h3><p class="mt">Valider l’architecture d’information avant de toucher au shell Next.js.</p></div><div><h3>Responsive</h3><p class="mt">Chaque écran est conçu pour 390px, 768px et 1440px.</p></div><div><h3>États</h3><p class="mt">Les maquettes signalent les états plein, vide, erreur, partiel et reconnect.</p></div></div></div>
+  </main>
+</body>
+</html>

@@ -31,7 +31,7 @@ Le premier parcours critique est :
 7. exécuter les relances jusqu’à un signal d’arrêt ;
 8. centraliser les réponses dans une inbox ;
 9. laisser l’autopilote répondre dans les bornes de la politique, avec
-   exceptions humaines ;
+   exceptions déterministes remontées dans « À traiter » ;
 10. qualifier, réserver un rendez-vous et suivre l’opportunité jusqu’au revenu.
 
 ## 3. Contraintes de capacité V1

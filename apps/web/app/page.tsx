@@ -9,5 +9,5 @@ export default async function HomePage() {
   const workspaces = await listWorkspaces();
   const workspace = workspaces[0];
   if (!workspace) redirect("/onboarding");
-  redirect(`/w/${workspace.slug}/strategy/product-reading`);
+  redirect(`/w/${workspace.slug}`);
 }

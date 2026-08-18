@@ -9,7 +9,7 @@ LangChain avec Kimi Code.
 ## Démarrer l’infrastructure privée
 
 Le bootstrap de développement génère automatiquement les identifiants locaux
-PostgreSQL, MinIO, SearXNG, crawler, Docling et Better Auth, démarre les
+PostgreSQL, MinIO, SearXNG, crawler et Better Auth, démarre les
 conteneurs et applique les migrations :
 
 ```bash
@@ -22,7 +22,9 @@ pour exécuter réellement les modèles et les embeddings.
 
 En développement, `compose.development.yml` publie les services uniquement sur
 `127.0.0.1`. En production, cet override n’est pas chargé : aucun port de
-ParadeDB, MinIO, SearXNG, Docling ou du crawler n’est publié sur l’hôte.
+ParadeDB, MinIO, SearXNG ou du crawler n’est publié sur l’hôte. L’extraction
+standard utilise `pdftotext`; Docling est uniquement activé avec le profil
+optionnel `documents-advanced` et `DOCUMENT_EXTRACTOR=docling`.
 
 La découverte web ne dépend d’aucune API de recherche payante : SearXNG est
 auto-hébergé et DuckDuckGo sert uniquement de fallback. Le crawler ne génère

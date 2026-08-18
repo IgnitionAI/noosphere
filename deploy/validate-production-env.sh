@@ -27,7 +27,6 @@ required = [
     "S3_SECRET_ACCESS_KEY",
     "SEARXNG_SECRET",
     "CRAWLER_API_KEY",
-    "DOCLING_API_KEY",
     "BETTER_AUTH_SECRET",
     "KIMI_CODE_API_KEY",
     "OPENAI_API_KEY",
@@ -50,6 +49,9 @@ if missing or placeholders:
     if placeholders:
         print("Placeholder production variables: " + ", ".join(placeholders), file=sys.stderr)
     raise SystemExit(1)
+
+if os.environ.get("DOCUMENT_EXTRACTOR", "lightweight") == "docling" and not os.environ.get("DOCLING_SERVICE_URL"):
+    raise SystemExit("DOCLING_SERVICE_URL is required when DOCUMENT_EXTRACTOR=docling")
 
 for name in ("BETTER_AUTH_URL", "PUBLIC_WEBHOOK_BASE_URL"):
     parsed = urlparse(os.environ[name])

@@ -10,7 +10,9 @@ généraliste. `apps/web` contient l’interface Next.js 16, `apps/api` compose 
 handlers Web `Request`/`Response`, `apps/worker` consomme les jobs PostgreSQL et
 `apps/crawler` reste le seul service Python. Les dépendances suivent
 `interface → application → domain`; les adaptateurs Drizzle, Unipile,
-LangChain/Kimi, S3, Docling et crawler sont dans `packages/infrastructure`.
+LangChain/Kimi, S3 et crawler sont dans `packages/infrastructure` ;
+l’extraction standard est portée par `DocumentTextExtractor` avec `pdftotext`,
+tandis que Docling reste un adaptateur optionnel hors du chemin standard.
 
 La base est PostgreSQL/Drizzle (`packages/infrastructure/src/database/schema.ts`).
 Better Auth gère l’identité tandis que `workspaces` et `workspace_members`

@@ -90,6 +90,7 @@ services:
     networks: [outbound-private]
 
   docling:
+    profiles: [documents-advanced]
     image: ${DOCLING_IMAGE:-ghcr.io/docling-project/docling-serve-cpu:v1.21.0}
     environment:
       DOCLING_SERVE_API_KEY: ${DOCLING_API_KEY:?DOCLING_API_KEY is required}

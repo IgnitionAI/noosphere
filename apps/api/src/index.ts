@@ -56,6 +56,7 @@ import { PostgresOperatorConsole } from "@outbound/infrastructure/operations/pos
 import { createOperatorConsoleHttpHandler, isOperatorConsoleRoute } from "@outbound/interface/http/operator-console-handler";
 import { PostgresWorkspaceOnboarding } from "@outbound/infrastructure/workspaces/postgres-workspace-onboarding";
 import { createWorkspaceOnboardingHttpHandler, isWorkspaceOnboardingRoute } from "@outbound/interface/http/workspace-onboarding-handler";
+import { createOperationalViewHttpHandler } from "@outbound/interface/http/operational-view-handler";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
@@ -251,6 +252,10 @@ const opportunityHandler = createOpportunityHttpHandler({
   repository: new PostgresOpportunityRepository(database.db),
   contextResolver: auth.contextResolver,
 });
+const operationalViews = createOperationalViewHttpHandler({
+  database: database.db,
+  contextResolver: auth.contextResolver,
+});
 const port = positiveIntegerEnvironment("PORT", 3000);
 const server = Bun.serve({
   port,
@@ -279,6 +284,7 @@ const server = Bun.serve({
     if (isOperatorConsoleRoute(pathname)) return operatorConsole(request);
     if (isWorkspaceOnboardingRoute(pathname)) return workspaceOnboarding(request);
     if (isWorkspaceDataRoute(pathname, request.method)) return workspaceData(request);
+    if (pathname === "/api/v1/workspace/operational-summary" || pathname === "/api/v1/workspace/setup-readiness" || pathname === "/api/v1/conversations" || pathname === "/api/v1/pipeline/view" || /^\/api\/v1\/campaigns\/[^/]+\/workspace-view$/.test(pathname)) return operationalViews(request);
     if (pathname.startsWith("/api/v1/opportunities") || pathname === "/api/v1/pipeline/forecast" || pathname.startsWith("/api/v1/workspaces/") && pathname.endsWith("/lost-reasons")) return opportunityHandler(request);
     if (pathname.includes("/actions/enrich") || pathname.startsWith("/api/v1/enrichment-jobs/") || pathname.endsWith("/enrichment")) return enrichment(request);
     if (pathname === "/api/v1/workspaces" || pathname.startsWith("/api/v1/workspaces/") || pathname.startsWith("/api/v1/invitations/")) return workspace(request);
@@ -371,13 +377,16 @@ function positiveIntegerEnvironment(name: string, fallback: number): number {
 }
 
 function documentServiceOptionsFromEnvironment() {
+  const extractor = process.env.DOCUMENT_EXTRACTOR === "docling" ? "docling" : "lightweight";
+  if (extractor === "docling" && !process.env.DOCLING_SERVICE_URL) throw new Error("DOCLING_SERVICE_URL is required when DOCUMENT_EXTRACTOR=docling");
   return {
     bucket: requiredEnvironment("S3_BUCKET"),
     endpoint: requiredEnvironment("S3_ENDPOINT"),
     region: process.env.S3_REGION ?? "us-east-1",
     accessKeyId: requiredEnvironment("S3_ACCESS_KEY_ID"),
     secretAccessKey: requiredEnvironment("S3_SECRET_ACCESS_KEY"),
-    doclingUrl: requiredEnvironment("DOCLING_SERVICE_URL"),
+    documentExtractor: extractor as "lightweight" | "docling",
+    ...(process.env.DOCLING_SERVICE_URL ? { doclingUrl: process.env.DOCLING_SERVICE_URL } : {}),
     ...(process.env.DOCLING_API_KEY ? { doclingApiKey: process.env.DOCLING_API_KEY } : {}),
   };
 }

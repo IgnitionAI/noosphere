@@ -47,6 +47,83 @@ export interface WorkspaceOnboardingProgress {
 export type WorkspaceRole = Workspace["role"];
 export type WorkspaceMemberStatus = "active" | "disabled";
 
+export type AttentionItem = {
+  readonly id: string;
+  readonly type: "account" | "job" | "campaign" | "decision" | "conversation";
+  readonly severity: "info" | "warning" | "critical";
+  readonly message: string;
+  readonly resourceId: string | null;
+  readonly resourceHref: string | null;
+  readonly ageSeconds: number;
+  readonly action: { readonly label: string; readonly href: string } | null;
+  readonly createdAt: string;
+};
+
+export interface WorkspaceOperationalSummary {
+  readonly asOf: string;
+  readonly counts: { readonly activeCampaigns: number; readonly prospects: number; readonly openConversations: number; readonly openOpportunities: number; readonly attention: number };
+  readonly attention: readonly AttentionItem[];
+  readonly jobs: { readonly active: number; readonly failed: number; readonly running: readonly { readonly id: string; readonly type: string; readonly status: string; readonly updatedAt: string }[] };
+  readonly nextAutomaticResearch: string | null;
+  readonly accountHealth: { readonly connected: number; readonly degraded: number; readonly disconnected: number; readonly activeAlerts: number };
+}
+
+export interface SetupReadinessItem {
+  readonly key: "product" | "icp" | "accounts" | "automation" | "calendar" | "knowledge";
+  readonly label: string;
+  readonly state: "ready" | "optional" | "attention" | "missing";
+  readonly reason: string;
+  readonly action: { readonly label: string; readonly href: string } | null;
+  readonly requiredForLaunch: boolean;
+}
+
+export interface SetupReadinessView {
+  readonly ready: boolean;
+  readonly asOf: string;
+  readonly items: readonly SetupReadinessItem[];
+}
+
+export interface WorkspaceConversationView {
+  readonly id: string;
+  readonly contactId: string;
+  readonly firstName: string;
+  readonly lastName: string;
+  readonly campaignId: string | null;
+  readonly campaignName: string | null;
+  readonly channel: "linkedin" | "email" | "whatsapp";
+  readonly status: string;
+  readonly unreadCount: number;
+  readonly lastMessage: { readonly body: string; readonly direction: string; readonly at: string } | null;
+  readonly lastMessageAt: string;
+}
+
+export interface WorkspaceConversationPage {
+  readonly data: readonly WorkspaceConversationView[];
+  readonly pagination: { readonly page: number; readonly pageSize: number; readonly total: number; readonly hasNext: boolean };
+}
+
+export async function getOperationalSummary(workspaceSlug: string): Promise<WorkspaceOperationalSummary> {
+  return crmFetch(workspaceSlug, "/api/v1/workspace/operational-summary");
+}
+
+export async function getSetupReadiness(workspaceSlug: string): Promise<SetupReadinessView> {
+  return crmFetch(workspaceSlug, "/api/v1/workspace/setup-readiness");
+}
+
+export async function getCampaignWorkspaceView(workspaceSlug: string, campaignId: string): Promise<{ campaign: CampaignDetail; autopilot: CampaignAutopilotDashboard; engagement: CampaignEngagementOverview; population: { total: number; eligible: number; contacted: number; replies: number }; nextAction: { label: string; href: string } | null; timeline: readonly { key: string; label: string; status: "done" | "active" | "pending" | "attention" }[] }> {
+  return crmFetch(workspaceSlug, `/api/v1/campaigns/${campaignId}/workspace-view`);
+}
+
+export async function listWorkspaceConversations(workspaceSlug: string, filters: { channel?: string; scope?: string; search?: string; page?: number; pageSize?: number } = {}): Promise<WorkspaceConversationPage> {
+  const params = new URLSearchParams();
+  if (filters.channel) params.set("channel", filters.channel);
+  if (filters.scope) params.set("scope", filters.scope);
+  if (filters.search) params.set("search", filters.search);
+  if (filters.page) params.set("page", String(filters.page));
+  if (filters.pageSize) params.set("pageSize", String(filters.pageSize));
+  return crmFetch(workspaceSlug, `/api/v1/conversations${params.size ? `?${params.toString()}` : ""}`);
+}
+
 export interface WorkspaceMember {
   readonly workspaceId: string;
   readonly userId: string;
@@ -827,7 +904,7 @@ export interface PipelineView {
 }
 
 export async function getPipeline(workspaceSlug: string): Promise<PipelineView> {
-  return crmFetch(workspaceSlug, "/api/v1/opportunities");
+  return crmFetch(workspaceSlug, "/api/v1/pipeline/view");
 }
 
 export async function changeOpportunityStage(

@@ -54,8 +54,8 @@ HOSTNAME=0.0.0.0 PORT=3000 bun run web:start
 ```
 
 Le workflow livré couvre `/login`, la sélection automatique du workspace, le
-brief produit et ses documents, le suivi de mission, le rapport sourcé et
-l’approbation humaine d’un ICP.
+brief produit et ses documents, le suivi de mission, le rapport sourcé et la
+publication automatique de l’ICP exploitable.
 
 ## Backend F-009
 
@@ -70,7 +70,7 @@ Le socle est organisé selon le monolithe modulaire :
 - `apps/worker` : consommateur Bun à lease.
 
 Voir le [runbook F-009](docs/architecture/F009_BACKEND_RUNBOOK.md) pour lancer
-ParadeDB, MinIO, Docling et le crawler, migrer la base, puis démarrer l’API et
+ParadeDB, MinIO et le crawler, migrer la base, puis démarrer l’API et
 le worker. Le contrat machine des routes est
 [`product-research-v1.json`](packages/contracts/openapi/product-research-v1.json).
 
@@ -113,7 +113,8 @@ supervisées (D-003/D-005), Inbox globale (D-006), pipeline et rendez-vous
 Cal.com intégrés au 8 août 2026. Le moteur utilise les agents LangChain via
 l’API Kimi for Coding (modèles K3, provider `kimi-code` par défaut,
 `AI_PROVIDER=openai` en alternative), OpenAI pour les embeddings
-documentaires, le crawler SearXNG/Crawl4AI, Docling et ParadeDB. L’autopilote
-opère dans les bornes de la politique de supervision (F-012) :
-revérifications déterministes avant chaque envoi et exceptions humaines en
-file F-033.
+documentaires, le crawler SearXNG/Crawl4AI et ParadeDB. L’extraction documentaire
+standard est légère (texte/HTML et PDF via `pdftotext`) ; Docling est une capacité
+optionnelle du profil `documents-advanced`. L’autopilote
+opère dans les bornes de la policy publiée (F-012) : revérifications
+déterministes avant chaque envoi et exceptions explicites dans « À traiter ».

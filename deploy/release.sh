@@ -23,7 +23,7 @@ compose=(
 )
 
 "${compose[@]}" build --pull
-"${compose[@]}" up -d database minio searxng crawler docling minio-init migrate api web worker decision-worker proxy
+"${compose[@]}" up -d database minio searxng crawler minio-init migrate api web worker decision-worker proxy
 
 PUBLIC_WEBHOOK_BASE_URL="$(grep '^PUBLIC_WEBHOOK_BASE_URL=' "$ENV_FILE" | cut -d= -f2- || true)" \
   bash deploy/healthcheck.sh

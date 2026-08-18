@@ -1,10 +1,11 @@
-import { Activity, Archive, CalendarDays, Clock3, Database, Download, ExternalLink, Gauge, Mail, MessageCircle, Settings, ShieldCheck, Sparkles, UsersRound } from "lucide-react";
+import { Activity, Archive, ArrowRight, CalendarDays, Clock3, Database, Download, ExternalLink, Gauge, Mail, MessageCircle, Settings, ShieldCheck, Sparkles, UsersRound } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
   getSession,
   getWorkspaceDataExport,
   getWorkspaceDataPolicy,
+  getSetupReadiness,
   listWorkspaceAuditLogs,
   listWorkspaceMembers,
   listWorkspaces,
@@ -34,6 +35,7 @@ export default async function WorkspaceSettingsPage({ params, searchParams }: { 
       limit: 50,
     }) : [],
   ]);
+  const readiness = await getSetupReadiness(workspaceSlug).catch(() => null);
   let dataExport: Awaited<ReturnType<typeof getWorkspaceDataExport>> | null = null;
   let exportExpired = false;
   if (canAdminister && query.exportId) {
@@ -51,6 +53,8 @@ export default async function WorkspaceSettingsPage({ params, searchParams }: { 
     <header className="border-b border-line pb-6"><div className="badge badge-signal w-fit"><Settings size={13} /> Administration</div><h1 className="page-title mt-3">Paramètres du workspace</h1><p className="mt-2 max-w-3xl text-sm leading-6 text-muted">Profil, équipe, cadence d’envoi, sécurité et cycle de vie des données — chaque mutation sensible reste isolée et auditée.</p></header>
     {query.notice ? <p className="mt-5 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800" role="status">{query.notice}</p> : null}
     {query.error ? <p className="mt-5 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-danger" role="alert">{settingsError(query.error)}</p> : null}
+
+    {readiness ? <section className="panel mt-6"><div className="panel-header"><div><h2 className="font-semibold">Lancement guidé</h2><p className="mt-1 text-xs text-muted">Les prérequis sont vérifiés automatiquement ; les éléments optionnels peuvent être ajoutés plus tard.</p></div><span className={readiness.ready ? "badge badge-success" : "badge badge-warning"}>{readiness.ready ? "Prêt à lancer" : "À compléter"}</span></div><div className="divide-y divide-line">{readiness.items.map((item) => <Link className="flex items-center gap-3 p-4 transition hover:bg-slate-50" href={item.action ? `/w/${workspaceSlug}${item.action.href}` : `/w/${workspaceSlug}/settings`} key={item.key}><span className={`grid h-8 w-8 place-items-center rounded-full ${item.state === "ready" ? "bg-emerald-50 text-success" : item.state === "optional" ? "bg-slate-100 text-muted" : "bg-amber-50 text-warning"}`}>{item.state === "ready" ? <ShieldCheck size={15} /> : <ArrowRight size={15} />}</span><span className="min-w-0 flex-1"><strong className="block text-sm">{item.label}</strong><span className="mt-1 block text-xs text-muted">{item.reason}</span></span><span className="badge">{item.state === "ready" ? "Prêt" : item.state === "optional" ? "Optionnel" : "Action requise"}</span></Link>)}</div></section> : null}
 
     <section className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       <SettingLink href={`/w/${workspaceSlug}/settings/members`} icon={<UsersRound size={17} />} label="Équipe" detail={`${members.length} membre${members.length > 1 ? "s" : ""}`} />

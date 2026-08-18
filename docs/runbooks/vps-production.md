@@ -1,7 +1,7 @@
 # Déploiement VPS production
 
 Le bundle production exécute l’application dans le même réseau Docker privé
-que PostgreSQL, MinIO, SearXNG, le crawler et Docling. Seul Caddy expose les
+que PostgreSQL, MinIO, SearXNG et le crawler. Seul Caddy expose les
 ports 80/443.
 
 ## Préparer
@@ -31,7 +31,15 @@ docker compose --env-file .env \
   build
 docker compose --env-file .env \
   -f compose.infrastructure.yml -f compose.production.yml \
-  up -d database minio searxng crawler docling minio-init migrate api web worker decision-worker proxy
+  up -d database minio searxng crawler minio-init migrate api web worker decision-worker proxy
+```
+
+L’extracteur documentaire standard ne dépend pas de Docling. Pour activer
+l’OCR et les tableaux complexes, définir `DOCUMENT_EXTRACTOR=docling`, fournir
+`DOCLING_SERVICE_URL` et démarrer explicitement le profil optionnel :
+
+```bash
+docker compose --env-file .env -f compose.infrastructure.yml --profile documents-advanced up -d docling
 ```
 
 Puis vérifier :

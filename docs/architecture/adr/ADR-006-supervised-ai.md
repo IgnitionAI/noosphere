@@ -7,13 +7,19 @@ traçabilité (claims, sources, prompt, modèle, politique, feedback) reste
 acquise.
 
 ## Décision
-Recherche, enrichissement, scoring et brouillons peuvent être automatiques. Le
-premier contact et toutes les réponses IA exigent une approbation humaine en V1.
-Claims, sources, prompt, modèle et feedback sont conservés.
+Recherche, enrichissement, scoring, rédaction, premier contact et réponses
+peuvent être exécutés automatiquement dans les bornes d’une policy publiée.
+La policy est déterministe et revérifiée juste avant chaque action. Les
+exceptions (opt-out, prix, juridique, sécurité, négociation, quota ou compte
+dégradé) sont interrompues et présentées dans la surface « À traiter » ; elles
+ne constituent pas une approbation humaine obligatoire du chemin normal.
+Claims, sources, prompt, modèle, policy, coût, latence et feedback sont
+conservés.
 
 ## Motifs et conséquences
-L’automatisation gagne du temps sans déléguer les décisions commerciales
-sensibles. Une file d’approbation est nécessaire et peut ralentir le débit.
+L’automatisation gagne du temps tout en bornant les décisions commerciales
+sensibles. Une file d’exceptions remplace la file d’approbation généralisée et
+ne bloque que les cas explicitement définis.
 
 ## Date
 2026-07-24

@@ -11,8 +11,10 @@ Le worker de décisions réutilise la configuration IA existante :
 
 Les envois exigent `UNIPILE_DSN`, `UNIPILE_API_KEY` et un compte sain du
 workspace. Les webhooks doivent viser la route Unipile publique et porter la
-signature configurée. Le crawler, SearXNG, Docling, PostgreSQL et le stockage
-S3-compatible restent privés au réseau Docker.
+signature configurée. Le crawler, SearXNG, PostgreSQL et le stockage
+S3-compatible restent privés au réseau Docker. L’extraction documentaire
+standard est locale et légère ; Docling n’est démarré que pour le profil
+optionnel `documents-advanced`.
 
 Tester d’abord en dry-run. Aucun test automatisé du dépôt ne lit les secrets
 de production ou n’appelle un vrai provider d’envoi.

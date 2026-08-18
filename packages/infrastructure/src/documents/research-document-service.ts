@@ -15,6 +15,9 @@ import {
   researchDocuments,
 } from "@outbound/infrastructure/database/schema";
 import type { InternalDocumentSearch } from "@outbound/infrastructure/ai/research-tools";
+import type { DocumentTextExtractor } from "@outbound/application/documents/document-text-extractor";
+import { LightweightDocumentTextExtractor } from "@outbound/infrastructure/documents/lightweight-document-text-extractor";
+import { DoclingDocumentTextExtractor } from "@outbound/infrastructure/documents/docling-document-text-extractor";
 
 const MAX_DOCUMENT_BYTES = 50 * 1024 * 1024;
 const allowedContentTypes = new Set([
@@ -33,7 +36,9 @@ export interface ResearchDocumentServiceOptions {
   readonly region: string;
   readonly accessKeyId: string;
   readonly secretAccessKey: string;
-  readonly doclingUrl: string;
+  readonly documentExtractor?: "lightweight" | "docling";
+  readonly extractor?: DocumentTextExtractor;
+  readonly doclingUrl?: string;
   readonly doclingApiKey?: string;
   readonly openAIApiKey?: string;
   readonly embeddingModel?: string;
@@ -42,6 +47,7 @@ export interface ResearchDocumentServiceOptions {
 export class ResearchDocumentService {
   readonly #s3: S3Client;
   readonly #embeddings: OpenAIEmbeddings | null;
+  readonly #extractor: DocumentTextExtractor;
 
   constructor(
     private readonly db: Database,
@@ -67,6 +73,10 @@ export class ResearchDocumentService {
             dimensions: 1536,
           })
         : null;
+    this.#extractor = options.extractor
+      ?? (options.documentExtractor === "docling"
+        ? new DoclingDocumentTextExtractor(options.doclingUrl ?? "", options.doclingApiKey)
+        : new LightweightDocumentTextExtractor());
   }
 
   async createUploadIntent(input: {
@@ -277,35 +287,7 @@ export class ResearchDocumentService {
   }
 
   async #extractMarkdown(filename: string, contentType: string, bytes: Uint8Array): Promise<string> {
-    const form = new FormData();
-    const fileBytes = Uint8Array.from(bytes);
-    form.append("files", new Blob([fileBytes.buffer], { type: contentType }), filename);
-    form.append("to_formats", "md");
-    form.append("do_ocr", "true");
-    form.append("image_export_mode", "placeholder");
-    form.append("table_mode", "accurate");
-    const response = await fetch(
-      `${this.options.doclingUrl.replace(/\/+$/, "")}/v1/convert/file`,
-      {
-        method: "POST",
-        ...(this.options.doclingApiKey
-          ? { headers: { "x-api-key": this.options.doclingApiKey } }
-          : {}),
-        body: form,
-        signal: AbortSignal.timeout(10 * 60_000),
-      },
-    );
-    if (!response.ok) throw new Error(`Docling returned ${response.status}`);
-    const result = (await response.json()) as {
-      status?: string;
-      document?: { md_content?: string };
-      errors?: unknown[];
-    };
-    const markdown = result.document?.md_content?.trim();
-    if (!markdown || result.status === "failure") {
-      throw new Error("Docling did not return Markdown");
-    }
-    return markdown;
+    return (await this.#extractor.extract({ filename, contentType, bytes })).markdown;
   }
 
   async #find(workspaceId: string, documentId: string) {
