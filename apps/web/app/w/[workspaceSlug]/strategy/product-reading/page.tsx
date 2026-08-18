@@ -12,6 +12,7 @@ export default async function ProductReadingPage({
 }) {
   const { workspaceSlug } = await params;
   const runs = await listResearchRuns(workspaceSlug);
+  const latestRun = runs[0] ?? null;
   const recoverableRun = runs.find((run) =>
     ["draft", "queued", "running", "paused", "ready_for_review", "completed", "partial", "interrupted"].includes(run.status),
   );
@@ -22,34 +23,34 @@ export default async function ProductReadingPage({
           <span className="grid h-5 w-5 place-items-center rounded-full bg-navy text-[10px] text-white">
             1
           </span>
-          Brief
+          ICP
         </span>
         <span className="h-px w-7 bg-line" />
         <span className="inline-flex items-center gap-2">
           <span className="grid h-5 w-5 place-items-center rounded-full border border-line bg-white text-[10px]">
             2
           </span>
-          Recherche
+          Campagnes
         </span>
         <span className="h-px w-7 bg-line" />
         <span className="inline-flex items-center gap-2">
           <span className="grid h-5 w-5 place-items-center rounded-full border border-line bg-white text-[10px]">
             3
           </span>
-          Livrable ICP
+          Rendez-vous
         </span>
       </div>
       <header className="mb-6">
-        <h1 className="page-title">Commander une étude ICP</h1>
+        <h1 className="page-title">Lancer mon ICP</h1>
         <p className="mt-2 max-w-3xl text-sm leading-6 text-muted">
-          Le deep agent analysera votre produit, recherchera les concurrents et proposera les
-          marchés les plus crédibles avec leurs preuves.
+          Décrivez votre produit. L’IA trouve les marchés crédibles, crée les campagnes puis
+          prospecte automatiquement jusqu’aux rendez-vous.
         </p>
       </header>
       {recoverableRun ? (
         <RecoverableRun workspaceSlug={workspaceSlug} run={recoverableRun} />
       ) : null}
-      <BriefForm workspaceSlug={workspaceSlug} />
+      <BriefForm initialBrief={latestRun?.brief ?? null} workspaceSlug={workspaceSlug} />
     </>
   );
 }

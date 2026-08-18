@@ -7,7 +7,7 @@
 | Workspace | tenant, membres, rôles, invitations | `Workspace`, `WorkspaceMembership` |
 | GTM Strategy | offre, ICP, messages et politique IA versionnés | `Offer`, `ICP`, `MessagingStrategy` |
 | Prospect Intelligence | entreprises, contacts, identités, emplois, signaux, enrichissements | `Company`, `Contact`, `Suppression` |
-| Campaigns | campagne, population, séquence et approbation | `Campaign`, `Sequence`, `CampaignProspect` |
+| Campaigns | campagne, population, séquence et policy d’exécution | `Campaign`, `Sequence`, `CampaignProspect` |
 | Outreach | planification et exécution multicanale | `OutreachAction`, `ConnectedAccount` |
 | Inbox | conversations, messages et qualification des réponses | `Conversation`, `Message` |
 | Pipeline | rendez-vous, opportunités et revenu | `Opportunity`, `Meeting` |
@@ -27,7 +27,7 @@ Rôles V1 :
 - `owner` : contrôle total et transfert de propriété ;
 - `admin` : membres, intégrations, campagnes et politiques ;
 - `operator` : prospects, campagnes, inbox et pipeline ;
-- `reviewer` : approbations et réponses ;
+- `reviewer` : réponses et traitement des exceptions sensibles ;
 - `viewer` : lecture seule.
 
 ### Offer et ICP
@@ -184,7 +184,7 @@ ParadeDB seulement lorsque la recherche hybride devient nécessaire.
 | `ContactIdentityVerified` | identité certaine | déduplication |
 | `EmploymentChanged` | nouveau poste observé | signaux/campagnes |
 | `SignalObserved` | signal entreprise/contact | rescoring |
-| `CampaignActivated` | campagne approuvée | enrollment |
+| `CampaignActivated` | campagne autorisée par sa policy | enrollment |
 | `ApprovalItemApproved`, `ApprovalItemRejected` | décision sur exception autopilote | planification |
 | `OutreachActionDue` | délai atteint | exécution |
 | `OutreachActionAccepted` | fournisseur accepte | analytics |

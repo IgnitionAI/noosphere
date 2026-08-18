@@ -27,8 +27,11 @@ TryCRM n'est copié.
   résultat, tentatives, erreurs, idempotency key et correlation ID.
 - Faire produire à LangChain/Kimi une proposition structurée seulement. Une
   policy déterministe autorise, diffère ou bloque l'effet.
-- Démarrer toute campagne en `dry_run`. Un envoi proposé devient alors une
-  approbation et n'appelle aucun provider.
+- Une campagne créée manuellement démarre en `dry_run` tant que son opérateur
+  ne l’a pas passée explicitement en live. Une campagne créée par la boucle
+  autonome depuis un ICP audité démarre en `live` : elle ne passe pas par une
+  file d’approbation, mais reste soumise aux contrôles déterministes avant
+  chaque envoi.
 - Utiliser le même advisory lock tenant-scoped pour la barrière webhook et la
   dernière vérification avant envoi.
 - Préserver les anciens jobs `outreach.dispatch` pendant la migration
@@ -39,7 +42,8 @@ TryCRM n'est copié.
 Le système reprend les décisions après redémarrage, déduplique les
 replanifications et explique le prochain mouvement dans l'interface. La base
 PostgreSQL reste le point de contention à observer; la fair-queue par workspace
-et les leases bornent le risque. Le mode live reste explicite et réversible.
+et les leases bornent le risque. Le mode live autonome est explicite dans la
+policy persistée et reste réversible.
 
 ## Date
 

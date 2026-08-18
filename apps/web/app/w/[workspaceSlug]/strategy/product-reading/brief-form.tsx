@@ -1,14 +1,17 @@
 "use client";
 
 import {
+  ChevronDown,
   Globe2,
   LoaderCircle,
   Plus,
   Radar,
   ShieldCheck,
+  Sparkles,
   X,
 } from "lucide-react";
 import { useActionState, useState } from "react";
+import type { ProductResearchBrief } from "@/lib/api";
 import {
   createResearchMission,
   type CreateMissionState,
@@ -42,20 +45,45 @@ const sourceLabels: Record<string, string> = {
   en: "EN",
 };
 
-export function BriefForm({ workspaceSlug }: { workspaceSlug: string }) {
+const supportedGeographies = [
+  "France",
+  "Europe francophone",
+  "Union européenne",
+  "International",
+] as const;
+
+function languageSelection(languages: readonly string[] | undefined): string {
+  if (!languages?.length) return "fr,en";
+  if (languages.includes("fr") && languages.includes("en")) return "fr,en";
+  if (languages.includes("fr")) return "fr";
+  if (languages.includes("en")) return "en";
+  return "fr,en";
+}
+
+export function BriefForm({
+  workspaceSlug,
+  initialBrief,
+}: {
+  workspaceSlug: string;
+  initialBrief?: ProductResearchBrief | null;
+}) {
   const action = createResearchMission.bind(null, workspaceSlug);
   const [state, formAction, pending] = useActionState<CreateMissionState, FormData>(
     action,
     { error: null },
   );
-  const [competitors, setCompetitors] = useState<string[]>([]);
+  const [competitors, setCompetitors] = useState<string[]>([
+    ...(initialBrief?.knownCompetitors ?? []),
+  ]);
   const [competitorDraft, setCompetitorDraft] = useState("");
-  const [depth, setDepth] = useState<"quick" | "standard" | "deep">("standard");
-  const [geography, setGeography] = useState("France");
-  const [languages, setLanguages] = useState("fr,en");
+  const [depth, setDepth] = useState<"quick" | "standard" | "deep">(
+    initialBrief?.depth ?? "standard",
+  );
+  const [geography, setGeography] = useState(initialBrief?.geography ?? "France");
+  const [languages, setLanguages] = useState(languageSelection(initialBrief?.languages));
   const [audienceGoal, setAudienceGoal] = useState<
     "end_customers" | "channel_partners" | "both"
-  >("end_customers");
+  >(initialBrief?.audienceGoal ?? "end_customers");
 
   function addCompetitor() {
     const value = competitorDraft.trim();
@@ -76,7 +104,15 @@ export function BriefForm({ workspaceSlug }: { workspaceSlug: string }) {
         <div className="space-y-4">
           <section className="panel">
             <div className="panel-header">
-              <h2 className="font-semibold">1. Produit à analyser</h2>
+              <div>
+                <h2 className="font-semibold">Quel produit voulez-vous vendre ?</h2>
+                {initialBrief ? (
+                  <p className="mt-1 flex items-center gap-1.5 text-xs text-muted">
+                    <Sparkles size={13} />
+                    Prérempli depuis votre dernière étude
+                  </p>
+                ) : null}
+              </div>
               <span className="badge">Requis</span>
             </div>
             <div className="panel-body">
@@ -89,6 +125,7 @@ export function BriefForm({ workspaceSlug }: { workspaceSlug: string }) {
                     <Globe2 className="absolute left-3 top-2.5 text-muted" size={17} />
                     <input
                       className="control control-icon"
+                      defaultValue={initialBrief?.productUrl ?? ""}
                       name="productUrl"
                       placeholder="https://…"
                       required
@@ -102,6 +139,7 @@ export function BriefForm({ workspaceSlug }: { workspaceSlug: string }) {
                   </span>
                   <input
                     className="control"
+                    defaultValue={initialBrief?.productName ?? ""}
                     maxLength={200}
                     name="productName"
                     placeholder="Nom du produit ou service"
@@ -115,6 +153,7 @@ export function BriefForm({ workspaceSlug }: { workspaceSlug: string }) {
                 </span>
                 <textarea
                   className="control min-h-28 resize-y"
+                  defaultValue={initialBrief?.description ?? ""}
                   maxLength={20_000}
                   name="description"
                   placeholder="Problème résolu, clients actuels, différenciation et mode de vente…"
@@ -124,11 +163,46 @@ export function BriefForm({ workspaceSlug }: { workspaceSlug: string }) {
                 </span>
               </label>
             </div>
+            <footer className="border-t border-line p-4">
+              <div className="sm:flex sm:items-center sm:justify-between sm:gap-4">
+                <p className="mb-3 text-xs leading-5 text-muted sm:mb-0 sm:max-w-xl">
+                  L’IA trouve les ICP, crée les campagnes utiles puis lance la prospection
+                  automatiquement.
+                </p>
+                <button
+                  className="button button-primary w-full flex-none sm:w-auto"
+                  disabled={pending}
+                  type="submit"
+                >
+                  {pending ? <LoaderCircle className="animate-spin" size={17} /> : <Radar size={17} />}
+                  {pending ? "Lancement en cours…" : "Lancer mon ICP"}
+                </button>
+              </div>
+              {state.error ? (
+                <p className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-danger">
+                  {state.error}
+                </p>
+              ) : null}
+            </footer>
           </section>
 
+          <details className="group rounded-xl border border-line bg-white">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-4 p-4 sm:p-5">
+              <div>
+                <h2 className="font-semibold">Options avancées</h2>
+                <p className="mt-1 text-xs leading-5 text-muted">
+                  Marché, concurrents, documents internes et profondeur de recherche.
+                </p>
+              </div>
+              <ChevronDown
+                className="flex-none text-muted transition-transform group-open:rotate-180"
+                size={18}
+              />
+            </summary>
+            <div className="space-y-4 border-t border-line bg-canvas/40 p-3 sm:p-4">
           <section className="panel">
             <div className="panel-header">
-              <h2 className="font-semibold">2. Marché recherché</h2>
+              <h2 className="font-semibold">Marché recherché</h2>
             </div>
             <div className="panel-body grid gap-4 md:grid-cols-3">
               <label>
@@ -139,10 +213,10 @@ export function BriefForm({ workspaceSlug }: { workspaceSlug: string }) {
                   onChange={(event) => setGeography(event.target.value)}
                   value={geography}
                 >
-                  <option>France</option>
-                  <option>Europe francophone</option>
-                  <option>Union européenne</option>
-                  <option>International</option>
+                  {!supportedGeographies.includes(
+                    geography as (typeof supportedGeographies)[number],
+                  ) ? <option>{geography}</option> : null}
+                  {supportedGeographies.map((option) => <option key={option}>{option}</option>)}
                 </select>
               </label>
               <label>
@@ -162,7 +236,11 @@ export function BriefForm({ workspaceSlug }: { workspaceSlug: string }) {
               </label>
               <label>
                 <span className="mb-2 block text-xs font-semibold text-slate-700">Type de vente</span>
-                <select className="control" defaultValue="hybrid" name="salesMotion">
+                <select
+                  className="control"
+                  defaultValue={initialBrief?.salesMotion ?? "hybrid"}
+                  name="salesMotion"
+                >
                   <option value="hybrid">SaaS + accompagnement</option>
                   <option value="saas">SaaS B2B</option>
                   <option value="service">Service</option>
@@ -173,7 +251,11 @@ export function BriefForm({ workspaceSlug }: { workspaceSlug: string }) {
                 <span className="mb-2 block text-xs font-semibold text-slate-700">
                   Objectif de l’étude
                 </span>
-                <select className="control" defaultValue="qualified_conversations" name="researchObjective">
+                <select
+                  className="control"
+                  defaultValue={initialBrief?.researchObjective ?? "qualified_conversations"}
+                  name="researchObjective"
+                >
                   <option value="qualified_conversations">Conversations qualifiées</option>
                   <option value="fast_revenue">Revenu le plus rapide</option>
                   <option value="strategic_market">Marché stratégique</option>
@@ -204,6 +286,7 @@ export function BriefForm({ workspaceSlug }: { workspaceSlug: string }) {
                 </span>
                 <textarea
                   className="control min-h-20 resize-y"
+                  defaultValue={initialBrief?.buyerConstraints ?? ""}
                   maxLength={5_000}
                   name="buyerConstraints"
                   placeholder="Ex. privilégier les structures sans équipe IA interne, avec des documents propriétaires et un sponsor métier."
@@ -217,7 +300,7 @@ export function BriefForm({ workspaceSlug }: { workspaceSlug: string }) {
 
           <section className="panel">
             <div className="panel-header">
-              <h2 className="font-semibold">3. Concurrents déjà connus</h2>
+              <h2 className="font-semibold">Concurrents déjà connus</h2>
               <span className="text-xs text-muted">Facultatif</span>
             </div>
             <div className="panel-body">
@@ -265,7 +348,7 @@ export function BriefForm({ workspaceSlug }: { workspaceSlug: string }) {
 
           <section className="panel">
             <div className="panel-header">
-              <h2 className="font-semibold">4. Documents internes</h2>
+              <h2 className="font-semibold">Documents internes</h2>
               <span className="badge">Facultatif</span>
             </div>
             <div className="panel-body">
@@ -275,7 +358,7 @@ export function BriefForm({ workspaceSlug }: { workspaceSlug: string }) {
 
           <section className="panel">
             <div className="panel-header">
-              <h2 className="font-semibold">5. Profondeur de l’étude</h2>
+              <h2 className="font-semibold">Profondeur de l’étude</h2>
             </div>
             <div className="panel-body grid gap-3 md:grid-cols-3">
               {depths.map((option) => {
@@ -307,6 +390,8 @@ export function BriefForm({ workspaceSlug }: { workspaceSlug: string }) {
               })}
             </div>
           </section>
+            </div>
+          </details>
         </div>
 
         <aside className="space-y-4 xl:sticky xl:top-20">
@@ -341,21 +426,7 @@ export function BriefForm({ workspaceSlug }: { workspaceSlug: string }) {
                 <ShieldCheck className="mb-2 text-success" size={17} />
                 Chaque affirmation devra citer une source ou rester explicitement une hypothèse.
               </div>
-              {state.error ? (
-                <p className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-danger">
-                  {state.error}
-                </p>
-              ) : null}
             </div>
-            <footer className="border-t border-line p-4">
-              <button className="button button-primary w-full" disabled={pending} type="submit">
-                {pending ? <LoaderCircle className="animate-spin" size={17} /> : <Radar size={17} />}
-                {pending ? "Création de la mission…" : "Lancer l’étude ICP"}
-              </button>
-              <p className="mt-3 text-center text-[11px] text-muted">
-                Aucun prospect ne sera recherché pendant cette mission.
-              </p>
-            </footer>
           </section>
         </aside>
       </div>

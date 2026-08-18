@@ -152,6 +152,18 @@ if (!inboxPage.ok || !inboxHtml.includes("Toutes les conversations des comptes L
   throw new Error(`Unified inbox page smoke test failed: ${inboxPage.status}`);
 }
 
+const productReadingPage = await fetch(`${webUrl}/w/${workspace.slug}/strategy/product-reading`, {
+  headers: { cookie },
+});
+const productReadingHtml = await productReadingPage.text();
+if (
+  !productReadingPage.ok ||
+  !productReadingHtml.includes("Lancer mon ICP") ||
+  !productReadingHtml.includes("Options avancées")
+) {
+  throw new Error(`Simple ICP launch page smoke test failed: ${productReadingPage.status}`);
+}
+
 const knowledgePage = await fetch(`${webUrl}/w/${workspace.slug}/knowledge`, {
   headers: { cookie },
 });
@@ -196,6 +208,7 @@ console.info(
     aiStudio: "readable",
     operatorConsole: "readable",
     unifiedInbox: "readable",
+    simpleIcpLaunch: "readable",
     calendarProduct: "readable",
     workspaceOnboarding: "resumable",
   }),

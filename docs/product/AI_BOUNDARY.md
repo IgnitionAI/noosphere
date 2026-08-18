@@ -25,8 +25,9 @@ et remonte sur la campagne, la conversation ou la configuration concernée.
 
 - `AIModelProvider` : exécuter une demande structurée sans exposer un SDK au
   domaine ;
-- `ProductUnderstandingService` : proposer des findings sourcés sans publier
-  l’offre ou l’ICP ;
+- `ProductUnderstandingService` : proposer des findings sourcés ; l’orchestrateur
+  peut publier automatiquement l’ICP lorsque l’audit de preuves et les règles
+  déterministes sont satisfaits ;
 - `KnowledgeRetriever` : retrouver des éléments sourcés indépendamment du
   moteur d’indexation ;
 - `ProspectScoringPolicy` : retourner score, critères, faits et données
@@ -55,7 +56,8 @@ est insuffisamment prouvée.
 ## Garde-fous permanents
 
 1. un modèle ne déclenche jamais directement un envoi ;
-2. une lecture produit ne publie jamais automatiquement une offre ou un ICP ;
+2. une lecture produit ne publie automatiquement un ICP qu’après réussite de
+   l’audit adversarial et de la vérification déterministe des preuves ;
 3. les exclusions, suppressions et permissions restent déterministes ;
 4. un score IA ne rend pas éligible un contact interdit ;
 5. tout texte généré référence les faits et claims utilisés ;
@@ -67,7 +69,7 @@ est insuffisamment prouvée.
 9. chaque exécution conserve fournisseur, modèle, prompt, coût, latence et
    décision (politique appliquée ou exception déterministe).
 
-## Gate de démarrage de la phase IA
+## Conditions d’exploitation de l’IA
 
 La phase IA peut fonctionner en production lorsque :
 
