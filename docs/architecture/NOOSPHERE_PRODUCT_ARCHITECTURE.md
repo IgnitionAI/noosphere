@@ -1,7 +1,10 @@
 # Noosphere — architecture produit Outbound + Content Inbound
 
 Date de décision : 2026-08-20
-Statut : cible d'architecture et backlog prêts à être découpés en issues
+Statut : remplacé pour l'expérience et la navigation par
+[`NOOSPHERE_EXPERIENCE_ARCHITECTURE.md`](./NOOSPHERE_EXPERIENCE_ARCHITECTURE.md).
+Ce document reste la référence détaillée pour les agrégats Content Inbound,
+les ports provider et les contraintes par canal.
 Baseline analysée : `b8efbf8424ebc1c5c6f86f48a0a68d70d63a6652`
 
 ## 1. Décision produit
