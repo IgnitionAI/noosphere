@@ -1,0 +1,118 @@
+<!--
+Route: design/noosphere/index.html
+Purpose: Galerie de revue du contrat visuel Noosphere.
+Components: GalleryHeader, ProductDoctrine, ScreenGallery, ReviewChecklist.
+States: catalogue statique.
+Data: huit écrans P0 et leurs responsabilités.
+Viewport: mobile-first 390px, adaptation desktop 1440px.
+-->
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Noosphere — galerie de design</title>
+  <style>
+    :root {
+      --surface-1: #f5f5f1;
+      --surface-2: #ffffff;
+      --surface-3: #edf0eb;
+      --border: #d9ded8;
+      --text-primary: #10172a;
+      --text-secondary: #465267;
+      --text-muted: #5f6b7c;
+      --accent: #c8f169;
+      --accent-fg: #172307;
+      --success: #147a4b;
+      --success-fg: #edfff5;
+      --warning: #9a5600;
+      --warning-fg: #fff7e8;
+      --danger: #a5231a;
+      --danger-fg: #fff1f0;
+      --nav: #000e38;
+      --font-body: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      --font-xs: 12px;
+      --font-sm: 14px;
+      --font-md: 16px;
+      --font-lg: 20px;
+      --font-xl: 24px;
+      --space-1: 4px;
+      --space-2: 8px;
+      --space-3: 12px;
+      --space-4: 16px;
+      --space-5: 24px;
+      --space-6: 32px;
+      --space-7: 48px;
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --radius-pill: 999px;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--surface-1); color: var(--text-primary); font: var(--font-md)/1.5 var(--font-body); }
+    a { color: inherit; text-decoration: none; }
+    a:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+    main { width: min(1160px, calc(100% - 32px)); margin: 0 auto; padding: var(--space-7) 0; }
+    .hero { padding: var(--space-6); color: white; background: var(--nav); border-radius: var(--radius-md); }
+    .brand { display: inline-flex; align-items: center; gap: var(--space-3); font-weight: 800; }
+    .mark { display: grid; width: 40px; height: 40px; place-items: center; color: var(--accent-fg); background: var(--accent); border-radius: var(--radius-sm); }
+    h1 { margin: var(--space-5) 0 var(--space-2); font-size: clamp(30px, 5vw, 52px); line-height: 1.02; letter-spacing: -0.045em; }
+    h2 { margin: 0; font-size: var(--font-lg); }
+    p { margin: 0; color: var(--text-secondary); }
+    .hero p { max-width: 720px; color: #d7deef; }
+    .axis { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-2); margin-top: var(--space-6); padding: var(--space-2); background: rgba(255,255,255,.1); border-radius: var(--radius-pill); }
+    .axis span { padding: var(--space-2) var(--space-3); text-align: center; font-size: var(--font-sm); font-weight: 800; border-radius: var(--radius-pill); }
+    .axis .active { color: var(--accent-fg); background: var(--accent); }
+    .section { margin-top: var(--space-7); }
+    .section-head { display: flex; align-items: end; justify-content: space-between; gap: var(--space-4); margin-bottom: var(--space-4); }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); }
+    .card { min-height: 190px; padding: var(--space-5); background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-md); }
+    .card:hover { border-color: var(--text-secondary); }
+    .num { font: 700 var(--font-xs)/1 var(--font-mono); color: var(--text-muted); }
+    .card h2 { margin: var(--space-5) 0 var(--space-2); }
+    .tags { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-4); }
+    .tag { padding: 5px 9px; color: var(--text-secondary); background: var(--surface-3); border-radius: var(--radius-pill); font-size: var(--font-xs); font-weight: 700; }
+    .checklist { display: grid; gap: var(--space-3); padding: var(--space-5); background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-md); }
+    .check { display: grid; grid-template-columns: 24px 1fr; gap: var(--space-3); }
+    .check b { display: grid; width: 22px; height: 22px; place-items: center; color: var(--accent-fg); background: var(--accent); border-radius: var(--radius-pill); }
+    @media (max-width: 720px) {
+      main { padding: var(--space-5) 0; }
+      .hero { padding: var(--space-5); }
+      .grid { grid-template-columns: 1fr; }
+      .axis { border-radius: var(--radius-md); }
+      .axis span { padding-inline: var(--space-1); font-size: 11px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header class="hero">
+      <div class="brand"><span class="mark">N</span> Noosphere</div>
+      <h1>Créer la demande.<br>Activer le marché.</h1>
+      <p>Le slider est une lentille de navigation. Les moteurs Inbound et Outbound continuent de tourner pendant que l'utilisateur change de perspective.</p>
+      <div class="axis" aria-label="Noosphere Axis"><span>Inbound</span><span class="active">Symbiose</span><span>Outbound</span></div>
+    </header>
+
+    <section class="section">
+      <div class="section-head"><div><h2>Parcours P0</h2><p>Ouvrir chaque écran et tester les quatre états depuis la barre de revue.</p></div></div>
+      <div class="grid">
+        <a class="card" href="screen-today.html"><span class="num">01 · AUJOURD'HUI</span><h2>Santé et attention</h2><p>Les deux moteurs, les exceptions et les prochains résultats.</p><div class="tags"><span class="tag">desktop</span><span class="tag">mobile</span><span class="tag">5 états</span></div></a>
+        <a class="card" href="screen-activity-inbound.html"><span class="num">02 · ACTIVITÉ</span><h2>Lens Inbound</h2><p>Stratégie, idées, contenus, calendrier et engagement.</p><div class="tags"><span class="tag">LinkedIn V1</span><span class="tag">4 états</span></div></a>
+        <a class="card" href="screen-activity-symbiosis.html"><span class="num">03 · ACTIVITÉ</span><h2>Lens Symbiose</h2><p>Signaux, identité, attribution et passage vers une conversation.</p><div class="tags"><span class="tag">preuves</span><span class="tag">4 états</span></div></a>
+        <a class="card" href="screen-activity-outbound.html"><span class="num">04 · ACTIVITÉ</span><h2>Lens Outbound</h2><p>ICP, sourcing, campagnes, séquences et qualification.</p><div class="tags"><span class="tag">autopilote</span><span class="tag">4 états</span></div></a>
+        <a class="card" href="screen-prospects.html"><span class="num">05 · PROSPECTS</span><h2>CRM commun</h2><p>Origine Inbound, Outbound ou mixte et prochaine action prouvée.</p><div class="tags"><span class="tag">filtres URL</span><span class="tag">4 états</span></div></a>
+        <a class="card" href="screen-conversations.html"><span class="num">06 · CONVERSATIONS</span><h2>Inbox multicanale</h2><p>LinkedIn, email et WhatsApp, campagne ou hors campagne.</p><div class="tags"><span class="tag">Setter</span><span class="tag">reconnect</span></div></a>
+        <a class="card" href="screen-calls.html"><span class="num">07 · APPELS</span><h2>Rendez-vous attribués</h2><p>Créneau, contact, source et suite commerciale.</p><div class="tags"><span class="tag">agenda</span><span class="tag">4 états</span></div></a>
+        <a class="card" href="screen-configuration.html"><span class="num">08 · CONFIGURATION</span><h2>Readiness guidée</h2><p>Offre, ICP, comptes, autonomie, agenda et connaissance.</p><div class="tags"><span class="tag">setup</span><span class="tag">4 états</span></div></a>
+      </div>
+    </section>
+
+    <section class="section checklist">
+      <h2>Questions de revue</h2>
+      <div class="check"><b>1</b><p>Comprends-tu en moins de dix secondes que les deux moteurs tournent ensemble ?</p></div>
+      <div class="check"><b>2</b><p>Le passage Inbound → Symbiose → Outbound paraît-il naturel sans suggérer une pause ?</p></div>
+      <div class="check"><b>3</b><p>Peux-tu retrouver un prospect, sa conversation et son appel sans reconstruire son origine ?</p></div>
+    </section>
+  </main>
+</body>
+</html>
