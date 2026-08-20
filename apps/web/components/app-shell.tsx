@@ -157,7 +157,7 @@ export function AppShell({
           <MobileNavItem active={todayActive} href={todayHref} icon={Home} label="Aujourd’hui" />
           <MobileNavItem active={activityActive} href={activityHref} icon={Activity} label="Activité" />
           <MobileNavItem active={prospectsActive} href={prospectsHref} icon={Users} label="Prospects" />
-          <MobileNavItem active={pathname.startsWith(conversationsHref)} href={conversationsHref} icon={Inbox} label="Messages" />
+          <MobileNavItem active={pathname.startsWith(conversationsHref)} href={conversationsHref} icon={Inbox} label="Conversations" />
           <MobileNavItem active={callsActive} href={callsHref} icon={CalendarCheck2} label="Appels" />
         </nav>
       </div>

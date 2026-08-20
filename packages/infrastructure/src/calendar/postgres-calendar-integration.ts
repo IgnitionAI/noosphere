@@ -7,11 +7,13 @@ import {
   calendarBookings,
   calendarConnections,
   calendarMeetingTypes,
+  campaigns,
   campaignProspects,
   contactIdentities,
   contacts,
   conversations,
   integrationEvents,
+  opportunities,
   outboxEvents,
   outreachActions,
   sequenceEnrollments,
@@ -99,7 +101,10 @@ export interface CalendarProductBookingView {
   readonly id: string;
   readonly contactId: string | null;
   readonly campaignId: string | null;
+  readonly campaignName: string | null;
   readonly opportunityId: string | null;
+  readonly opportunityStage: OpportunityStage | null;
+  readonly contactName: string | null;
   readonly status: string;
   readonly attendeeName: string | null;
   readonly attendeeEmail: string | null;
@@ -705,10 +710,34 @@ export class PostgresCalendarIntegration implements WorkspaceCalendarScheduler {
     const predicates = [eq(calendarBookings.workspaceId, input.workspaceId)];
     if (input.contactId) predicates.push(eq(calendarBookings.contactId, input.contactId));
     if (input.opportunityId) predicates.push(eq(calendarBookings.opportunityId, input.opportunityId));
-    const rows = await this.database.select({ booking: calendarBookings, meetingType: calendarMeetingTypes }).from(calendarBookings).leftJoin(calendarMeetingTypes, and(eq(calendarMeetingTypes.workspaceId, calendarBookings.workspaceId), eq(calendarMeetingTypes.id, calendarBookings.meetingTypeId))).where(and(...predicates)).orderBy(desc(calendarBookings.startAt)).limit(input.limit);
+    const rows = await this.database.select({
+      booking: calendarBookings,
+      meetingType: calendarMeetingTypes,
+      campaignName: campaigns.name,
+      contactFirstName: contacts.firstName,
+      contactLastName: contacts.lastName,
+      opportunityStage: opportunities.stage,
+    })
+      .from(calendarBookings)
+      .leftJoin(calendarMeetingTypes, and(eq(calendarMeetingTypes.workspaceId, calendarBookings.workspaceId), eq(calendarMeetingTypes.id, calendarBookings.meetingTypeId)))
+      .leftJoin(campaigns, and(eq(campaigns.workspaceId, calendarBookings.workspaceId), eq(campaigns.id, calendarBookings.campaignId)))
+      .leftJoin(contacts, and(eq(contacts.workspaceId, calendarBookings.workspaceId), eq(contacts.id, calendarBookings.contactId)))
+      .leftJoin(opportunities, and(eq(opportunities.workspaceId, calendarBookings.workspaceId), eq(opportunities.id, calendarBookings.opportunityId)))
+      .where(and(...predicates))
+      .orderBy(desc(calendarBookings.startAt))
+      .limit(input.limit);
     const ids = rows.map((row) => row.booking.id);
     const history = ids.length ? await this.database.select().from(calendarBookingHistory).where(and(eq(calendarBookingHistory.workspaceId, input.workspaceId), inArray(calendarBookingHistory.bookingId, ids))).orderBy(calendarBookingHistory.createdAt) : [];
-    return rows.map(({ booking, meetingType }) => productBookingView(booking, meetingType, history.filter((entry) => entry.bookingId === booking.id)));
+    return rows.map(({ booking, meetingType, campaignName, contactFirstName, contactLastName, opportunityStage }) => productBookingView(
+      booking,
+      meetingType,
+      history.filter((entry) => entry.bookingId === booking.id),
+      {
+        campaignName,
+        contactName: [contactFirstName, contactLastName].filter(Boolean).join(" ") || null,
+        opportunityStage: opportunityStage as OpportunityStage | null,
+      },
+    ));
   }
 
   async rescheduleById(input: { workspaceId: string; bookingId: string; start: string; reason: string; requestKey: string; actorUserId: string; now: Date }): Promise<CalendarBookingResult> {
@@ -1173,12 +1202,24 @@ function meetingTypeView(row: typeof calendarMeetingTypes.$inferSelect): Calenda
   return { id: row.id, providerEventTypeId: row.providerEventTypeId, slug: row.slug, title: row.title, lengthMinutes: row.lengthMinutes, bookingUrl: row.bookingUrl, timeZone: row.timeZone, isDefault: row.isDefault, active: row.active };
 }
 
-function productBookingView(booking: typeof calendarBookings.$inferSelect, meetingType: typeof calendarMeetingTypes.$inferSelect | null, history: readonly (typeof calendarBookingHistory.$inferSelect)[]): CalendarProductBookingView {
+function productBookingView(
+  booking: typeof calendarBookings.$inferSelect,
+  meetingType: typeof calendarMeetingTypes.$inferSelect | null,
+  history: readonly (typeof calendarBookingHistory.$inferSelect)[],
+  context: { campaignName: string | null; contactName: string | null; opportunityStage: OpportunityStage | null } = {
+    campaignName: null,
+    contactName: null,
+    opportunityStage: null,
+  },
+): CalendarProductBookingView {
   return {
     id: booking.id,
     contactId: booking.contactId,
     campaignId: booking.campaignId,
+    campaignName: context.campaignName,
     opportunityId: booking.opportunityId,
+    opportunityStage: context.opportunityStage,
+    contactName: context.contactName,
     status: booking.status,
     attendeeName: booking.attendeeName,
     attendeeEmail: booking.attendeeEmail,

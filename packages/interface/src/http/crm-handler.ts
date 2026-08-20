@@ -197,6 +197,8 @@ export function createCrmHttpHandler(dependencies: CrmHttpDependencies) {
       if (url.pathname === "/api/v1/prospects" && request.method === "GET") {
         requireViewer(context.role);
         const channel = url.searchParams.get("channel");
+        const status = url.searchParams.get("status");
+        const period = url.searchParams.get("period");
         const campaignScope = url.searchParams.get("campaignScope");
         const campaignId = url.searchParams.get("campaignId");
         if (campaignId && campaignScope === "outside_campaign") {
@@ -218,6 +220,12 @@ export function createCrmHttpHandler(dependencies: CrmHttpDependencies) {
             : {}),
           ...(channel
             ? { channel: z.enum(["linkedin", "email", "whatsapp"]).parse(channel) }
+            : {}),
+          ...(status
+            ? { status: z.enum(["active", "suppressed"]).parse(status) }
+            : {}),
+          ...(period
+            ? { updatedSince: prospectPeriodStart(z.enum(["today", "7d", "30d", "90d"]).parse(period), now()) }
             : {}),
           limit: parseLimit(url.searchParams.get("limit")),
         });
@@ -500,6 +508,16 @@ export function createCrmHttpHandler(dependencies: CrmHttpDependencies) {
       return problem(500, "INTERNAL_ERROR", "An unexpected error occurred");
     }
   };
+}
+
+function prospectPeriodStart(period: "today" | "7d" | "30d" | "90d", now: Date): Date {
+  if (period === "today") {
+    const start = new Date(now);
+    start.setUTCHours(0, 0, 0, 0);
+    return start;
+  }
+  const days = period === "7d" ? 7 : period === "30d" ? 30 : 90;
+  return new Date(now.getTime() - days * 86_400_000);
 }
 
 class WorkspacePermissionError extends Error {}

@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowLeft, Building2, Clock3, ExternalLink, Mail, MessageCircle, Phone, RefreshCw, Search, Send, UserRound } from "lucide-react";
+import { AlertTriangle, ArrowLeft, ArrowRight, Building2, Clock3, ExternalLink, Mail, MessageCircle, Phone, RefreshCw, Search, Send, UserRound } from "lucide-react";
 import Link from "next/link";
 import { getCampaign, getCampaignAutopilotPolicy, getCampaignWorkspaceView } from "@/lib/api";
 import { prospectDetailHref } from "@/lib/prospect-navigation";
@@ -59,10 +59,12 @@ export default async function CampaignDetailPage({
       </header>
 
       {campaign.automationStage === "attention" || campaign.discoveryStatus === "failed" ? (
-        <div className="mb-5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-800">
+        <div className="mb-5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-800" id="exception">
           {campaign.automationErrorMessage ?? campaign.discoveryErrorMessage ?? campaign.automationErrorCode ?? campaign.discoveryErrorCode ?? "L’autopilote est suspendu sur une exception fournisseur."}
         </div>
       ) : null}
+
+      {workspaceView?.nextAction ? <section className="mb-5 flex flex-col gap-3 rounded-xl bg-navy px-5 py-4 text-white sm:flex-row sm:items-center sm:justify-between"><div><p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">Prochaine action durable</p><p className="mt-1 text-sm font-semibold">{workspaceView.nextAction.label}</p><p className="mt-1 text-xs text-slate-300">Cette action provient de l’état persistant de la campagne, pas d’une estimation de l’interface.</p></div><Link className="button button-signal shrink-0" href={`/w/${workspaceSlug}${workspaceView.nextAction.href}`}><span>Ouvrir</span><ArrowRight size={14} /></Link></section> : null}
 
       {workspaceView ? <>
         <section className="panel mb-5 overflow-hidden">
@@ -79,7 +81,7 @@ export default async function CampaignDetailPage({
       ) : null}
 
       <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
-        <section className="panel">
+        <section className="panel" id="sourcing">
           <div className="panel-header">
             <h2 className="font-semibold">Prospects enrichis</h2>
             <span className="badge">{campaign.prospects.length}</span>

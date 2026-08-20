@@ -226,6 +226,8 @@ export class PostgresOperationalViews {
       id: campaigns.id,
       name: campaigns.name,
       status: campaigns.status,
+      channel: campaigns.channel,
+      prospectCount: campaigns.prospectCount,
       automationStage: campaigns.automationStage,
       updatedAt: campaigns.updatedAt,
     }).from(campaigns).where(eq(campaigns.workspaceId, input.workspaceId)).orderBy(desc(campaigns.updatedAt)).limit(limit + 1).offset(offset);
@@ -240,7 +242,7 @@ export class PostgresOperationalViews {
           ? "running" as const
           : "completed" as const,
       title: campaign.name,
-      detail: `${campaign.automationStage ?? "configuration"} · ${campaign.status}`,
+      detail: `${campaign.channel} · ${campaign.prospectCount} prospect${campaign.prospectCount === 1 ? "" : "s"} · ${campaignStageLabel(campaign.automationStage)}`,
       occurredAt: campaign.updatedAt,
       href: `/campaigns/${campaign.id}`,
       correlationId: null,
@@ -304,11 +306,11 @@ export class PostgresOperationalViews {
     const total = campaign.prospects.length;
     const eligible = campaign.prospects.filter((item) => item.eligible).length;
     const nextAction = autopilot.health === "attention"
-      ? { label: "Voir l’exception", href: `/w/${workspaceId}/campaigns/${campaignId}` }
+      ? { label: "Voir l’exception", href: `/campaigns/${campaignId}#exception` }
       : autopilot.currentStep === "research"
-        ? { label: "Relancer le sourcing", href: `/w/${workspaceId}/campaigns/${campaignId}#sourcing` }
+        ? { label: "Relancer le sourcing", href: `/campaigns/${campaignId}#sourcing` }
         : autopilot.currentStep === "meeting"
-          ? { label: "Ouvrir le pipeline", href: `/w/${workspaceId}/pipeline` }
+          ? { label: "Voir les appels", href: "/appointments" }
           : null;
     return {
       campaign,
@@ -521,6 +523,18 @@ function readiness(key: "product" | "icp" | "accounts" | "automation" | "calenda
     action: ready ? null : { label: requiredForLaunch ? "Configurer" : "Ajouter plus tard", href },
     requiredForLaunch,
   } as const;
+}
+
+function campaignStageLabel(stage: string): string {
+  return ({
+    sourcing: "Sourcing",
+    enriching: "Enrichissement",
+    composing: "Rédaction",
+    scheduled: "Planifiée",
+    running: "Envoi et relances",
+    completed: "Terminée",
+    attention: "Exception localisée",
+  } as Record<string, string>)[stage] ?? stage;
 }
 
 function timelineFor(currentStep: string, health: string) {

@@ -13,14 +13,16 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Aujourd’hui" })).toBeVisible();
 });
 
-test("the five destinations and Noosphere Axis remain GET-only", async ({ page, isMobile }) => {
+test("the five destinations and Noosphere Axis remain GET-only", async ({ page }) => {
   const mutationRequests: string[] = [];
   page.on("request", (request) => {
     if (["POST", "PUT", "PATCH", "DELETE"].includes(request.method())) mutationRequests.push(`${request.method()} ${request.url()}`);
   });
 
-  const navigation = page.getByRole("navigation", { name: isMobile ? "Navigation mobile" : "Navigation principale" });
-  for (const label of ["Aujourd’hui", "Activité", "Prospects", isMobile ? "Messages" : "Conversations", "Appels"]) {
+  const navigation = page.viewportSize()?.width === 390
+    ? page.getByRole("navigation", { name: "Navigation mobile" })
+    : page.getByRole("navigation", { name: "Navigation principale" });
+  for (const label of ["Aujourd’hui", "Activité", "Prospects", "Conversations", "Appels"]) {
     await expect(navigation.getByRole("link", { name: label, exact: true })).toBeVisible();
   }
 
@@ -47,4 +49,39 @@ test("browser back restores the previous lens without losing URL state", async (
   await page.goBack();
   await expect(page).toHaveURL(new RegExp("lens=inbound"));
   await expect(page.getByRole("tab", { name: "Inbound" })).toHaveAttribute("aria-selected", "true");
+});
+
+test("Outbound surfaces preserve prospect and conversation filters in the URL", async ({ page }) => {
+  const navigation = page.viewportSize()?.width === 390
+    ? page.getByRole("navigation", { name: "Navigation mobile" })
+    : page.getByRole("navigation", { name: "Navigation principale" });
+
+  await navigation.getByRole("link", { name: "Prospects", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Prospects", exact: true })).toBeVisible();
+  await page.locator('select[name="campaignScope"]').selectOption("outside_campaign");
+  await page.getByLabel("Statut du contact").selectOption("active");
+  await page.getByLabel("Période prospect").selectOption("30d");
+  await page.getByRole("button", { name: "Filtrer" }).click();
+  await expect(page).toHaveURL(/campaignScope=outside_campaign/);
+  await expect(page).toHaveURL(/status=active/);
+  await expect(page).toHaveURL(/period=30d/);
+
+  await navigation.getByRole("link", { name: "Conversations", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Conversations", exact: true, level: 1 })).toBeVisible();
+  await page.getByLabel("Canal", { exact: true }).selectOption("linkedin");
+  await page.getByLabel("Origine", { exact: true }).selectOption("outside_campaign");
+  await page.getByLabel("Période", { exact: true }).selectOption("7d");
+  await page.getByRole("button", { name: "Filtrer" }).click();
+  await expect(page).toHaveURL(/channel=linkedin/);
+  await expect(page).toHaveURL(/scope=outside_campaign/);
+  await expect(page).toHaveURL(/period=7d/);
+
+  await navigation.getByRole("link", { name: "Appels", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Appels", exact: true })).toBeVisible();
+  await page.goBack();
+  await expect(page).toHaveURL(/scope=outside_campaign/);
+
+  await page.goto(`/w/${workspaceSlug}/settings`);
+  await expect(page.getByRole("heading", { name: "Configuration", exact: true, level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Lancement guidé", exact: true })).toBeVisible();
 });

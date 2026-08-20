@@ -262,6 +262,27 @@ databaseDescribe("F-020/F-021 CRM foundation", () => {
       .toContain(insideContactId);
   });
 
+  test("prospects: filters durable status and update period without broadening the workspace", async () => {
+    const recentActiveId = crypto.randomUUID();
+    const recentSuppressedId = crypto.randomUUID();
+    const oldActiveId = crypto.randomUUID();
+    await database.db.insert(contacts).values([
+      { id: recentActiveId, workspaceId, firstName: "Recent", lastName: "Active", status: "active", updatedAt: new Date() },
+      { id: recentSuppressedId, workspaceId, firstName: "Recent", lastName: "Suppressed", status: "suppressed", updatedAt: new Date() },
+      { id: oldActiveId, workspaceId, firstName: "Old", lastName: "Active", status: "active", updatedAt: new Date("2020-01-01T00:00:00.000Z") },
+    ]);
+
+    const response = await handle(new Request("http://localhost/api/v1/prospects?limit=100&period=7d&status=active"));
+    expect(response.status).toBe(200);
+    const ids = ((await response.json()) as { data: { id: string }[] }).data.map((item) => item.id);
+    expect(ids).toContain(recentActiveId);
+    expect(ids).not.toContain(recentSuppressedId);
+    expect(ids).not.toContain(oldActiveId);
+
+    expect((await handle(new Request("http://localhost/api/v1/prospects?period=forever"))).status).toBe(400);
+    expect((await handle(new Request("http://localhost/api/v1/prospects?status=unknown"))).status).toBe(400);
+  });
+
   test("schedules a tenant-scoped manual decision in simulation-only mode", async () => {
     const contactId = crypto.randomUUID();
     await database.db.insert(contacts).values({

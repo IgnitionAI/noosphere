@@ -10,7 +10,7 @@ describe("F-043 calendar booking HTTP", () => {
     const response = await handler("viewer")(request("/api/v1/calendar-bookings"));
     expect(response.status).toBe(200);
     const body = await response.json() as { data: Array<Record<string, unknown>> };
-    expect(body.data[0]).toMatchObject({ attendeeName: null, attendeeEmail: null, meetingUrl: null, contactId: null });
+    expect(body.data[0]).toMatchObject({ attendeeName: null, attendeeEmail: null, meetingUrl: null, contactId: null, contactName: null, campaignName: null });
   });
 
   test("allows operators to mutate bookings but not meeting type configuration", async () => {
@@ -30,7 +30,7 @@ describe("F-043 calendar booking HTTP", () => {
 });
 
 function handler(role: "owner" | "operator" | "reviewer" | "viewer") {
-  const booking = { id: bookingId, contactId: userId, campaignId: null, opportunityId: null, status: "booked", attendeeName: "Marie", attendeeEmail: "marie@example.com", attendeePhone: "+33123456789", attendeeTimeZone: "Europe/Paris", organizerTimeZone: "Europe/Madrid", startAt: new Date("2027-01-10T10:00:00.000Z"), endAt: new Date("2027-01-10T10:30:00.000Z"), meetingUrl: "https://meet.example/secret", cancellationReason: null, noShowAt: null, rescheduleCount: 0, meetingType: null, history: [], createdAt: new Date(), updatedAt: new Date() };
+  const booking = { id: bookingId, contactId: userId, contactName: "Marie Martin", campaignId: null, campaignName: null, opportunityId: null, opportunityStage: null, status: "booked", attendeeName: "Marie", attendeeEmail: "marie@example.com", attendeePhone: "+33123456789", attendeeTimeZone: "Europe/Paris", organizerTimeZone: "Europe/Madrid", startAt: new Date("2027-01-10T10:00:00.000Z"), endAt: new Date("2027-01-10T10:30:00.000Z"), meetingUrl: "https://meet.example/secret", cancellationReason: null, noShowAt: null, rescheduleCount: 0, meetingType: null, history: [], createdAt: new Date(), updatedAt: new Date() };
   const integration = {
     async listBookings() { return [booking]; },
     async listMeetingTypes() { return []; },

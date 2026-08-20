@@ -17,6 +17,8 @@ export default async function ProspectsPage({
     campaign?: string;
     campaignScope?: "in_campaign" | "outside_campaign";
     channel?: string;
+    status?: "active" | "suppressed";
+    period?: "today" | "7d" | "30d" | "90d";
     signalType?: SignalType;
     signalFreshness?: "current" | "history";
     prospect?: string;
@@ -30,6 +32,8 @@ export default async function ProspectsPage({
     ...(query.campaign ? { campaignId: query.campaign } : {}),
     ...(!query.campaign && query.campaignScope ? { campaignScope: query.campaignScope } : {}),
     ...(query.channel ? { channel: query.channel } : {}),
+    ...(query.status ? { status: query.status } : {}),
+    ...(query.period ? { period: query.period } : {}),
   });
   let signals: IntentSignal[] = [];
   try { signals = (await listSignals(workspaceSlug)).data; }
@@ -57,7 +61,7 @@ export default async function ProspectsPage({
       </header>
 
       <section className="panel mb-5">
-        <form className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-4" method="get">
+        <form className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-5" method="get">
           <label className="relative">
             <Search className="pointer-events-none absolute left-3 top-3 text-muted" size={15} />
             <input className="control w-full pl-9" name="search" defaultValue={query.search ?? ""} placeholder="Nom ou prénom…" />
@@ -88,6 +92,18 @@ export default async function ProspectsPage({
             <option value="hiring">Recrute</option><option value="funding">Levée de fonds</option><option value="job_change">Changement de poste</option><option value="leadership_change">Changement de direction</option><option value="geographic_expansion">Expansion géographique</option><option value="public_activity">Activité publique</option><option value="technology">Technologie</option><option value="competitor">Concurrent</option>
           </select>
           <select className="control" name="signalFreshness" defaultValue={query.signalFreshness ?? ""}><option value="">Fraîcheur indifférente</option><option value="current">Signaux actuels</option><option value="history">Inclure l’historique</option></select>
+          <select aria-label="Statut du contact" className="control" name="status" defaultValue={query.status ?? ""}>
+            <option value="">Tous les statuts</option>
+            <option value="active">Actifs</option>
+            <option value="suppressed">Suspendus</option>
+          </select>
+          <select aria-label="Période prospect" className="control" name="period" defaultValue={query.period ?? ""}>
+            <option value="">Toute la période</option>
+            <option value="today">Ajoutés ou actualisés aujourd’hui</option>
+            <option value="7d">7 derniers jours</option>
+            <option value="30d">30 derniers jours</option>
+            <option value="90d">90 derniers jours</option>
+          </select>
           <button className="button" type="submit"><Filter size={14} /> Filtrer</button>
         </form>
       </section>
@@ -150,7 +166,7 @@ function ChannelBadges({ channels }: { channels: { linkedin: boolean; email: boo
   return <>{channels.linkedin ? <span className="badge"><AtSign size={11} /> LinkedIn</span> : null}{channels.email ? <span className="badge"><Mail size={11} /> Email</span> : null}{channels.whatsapp ? <span className="badge"><MessageCircle size={11} /> WhatsApp</span> : null}</>;
 }
 
-function prospectListHref(workspaceSlug: string, query: { search?: string; icp?: string; campaign?: string; campaignScope?: string; channel?: string; signalType?: string; signalFreshness?: string }) {
+function prospectListHref(workspaceSlug: string, query: { search?: string; icp?: string; campaign?: string; campaignScope?: string; channel?: string; signalType?: string; signalFreshness?: string; status?: string; period?: string }) {
   const params = new URLSearchParams();
   if (query.search) params.set("search", query.search);
   if (query.icp) params.set("icp", query.icp);
@@ -159,6 +175,8 @@ function prospectListHref(workspaceSlug: string, query: { search?: string; icp?:
   if (query.channel) params.set("channel", query.channel);
   if (query.signalType) params.set("signalType", query.signalType);
   if (query.signalFreshness) params.set("signalFreshness", query.signalFreshness);
+  if (query.status) params.set("status", query.status);
+  if (query.period) params.set("period", query.period);
   return `/w/${workspaceSlug}/prospects${params.size ? `?${params.toString()}` : ""}`;
 }
 

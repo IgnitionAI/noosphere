@@ -1,4 +1,4 @@
-import { and, desc, eq, ilike, inArray, ne, or, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, gte, ilike, inArray, ne, or, sql, type SQL } from "drizzle-orm";
 import type { Database } from "@outbound/infrastructure/database/client";
 import {
   campaignProspects,
@@ -29,9 +29,13 @@ export class PostgresProspectViewRepository {
     campaignId?: string;
     campaignScope?: "in_campaign" | "outside_campaign";
     channel?: "linkedin" | "email" | "whatsapp";
+    status?: "active" | "suppressed";
+    updatedSince?: Date;
     limit: number;
   }) {
     const conditions: SQL[] = [eq(contacts.workspaceId, input.workspaceId)];
+    if (input.status) conditions.push(eq(contacts.status, input.status));
+    if (input.updatedSince) conditions.push(gte(contacts.updatedAt, input.updatedSince));
     if (input.search) {
       const pattern = `%${input.search}%`;
       conditions.push(or(ilike(contacts.firstName, pattern), ilike(contacts.lastName, pattern))!);

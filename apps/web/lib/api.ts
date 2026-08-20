@@ -855,7 +855,10 @@ export interface CalendarBooking {
   readonly id: string;
   readonly contactId: string | null;
   readonly campaignId: string | null;
+  readonly campaignName: string | null;
   readonly opportunityId: string | null;
+  readonly opportunityStage: string | null;
+  readonly contactName: string | null;
   readonly status: string;
   readonly attendeeName: string | null;
   readonly attendeeEmail: string | null;
@@ -1522,6 +1525,8 @@ export async function listProspectViews(
     campaignId?: string;
     campaignScope?: "in_campaign" | "outside_campaign";
     channel?: string;
+    status?: "active" | "suppressed";
+    period?: "today" | "7d" | "30d" | "90d";
   } = {},
 ): Promise<{
   data: ProspectViewSummary[];
@@ -1536,6 +1541,8 @@ export async function listProspectViews(
   if (filters.campaignId) query.set("campaignId", filters.campaignId);
   if (filters.campaignScope) query.set("campaignScope", filters.campaignScope);
   if (filters.channel) query.set("channel", filters.channel);
+  if (filters.status) query.set("status", filters.status);
+  if (filters.period) query.set("period", filters.period);
   return crmFetch(workspaceSlug, `/api/v1/prospects?${query.toString()}`);
 }
 
