@@ -59,6 +59,13 @@ test("Inbound exposes its grounded editorial strategy without a provider mutatio
   await expect(page.getByRole("heading", { name: "Aucune stratégie dérivée" })).toBeVisible();
 });
 
+test("the Inbound idea radar is explicit, durable and never presented as a publisher", async ({ page }) => {
+  await page.goto(`/w/${workspaceSlug}/content/ideas`);
+  await expect(page.getByRole("heading", { name: "Idées sourcées" })).toBeVisible();
+  await expect(page.getByText("Ce radar ne rédige et ne publie rien.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Relancer la recherche" })).toBeVisible();
+});
+
 test("Outbound surfaces preserve prospect and conversation filters in the URL", async ({ page }) => {
   const navigation = page.viewportSize()?.width === 390
     ? page.getByRole("navigation", { name: "Navigation mobile" })

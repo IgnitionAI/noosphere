@@ -137,6 +137,47 @@ export interface EditorialStrategy {
   readonly updatedAt: string;
 }
 
+export type ContentIdeaStatus = "discovered" | "shortlisted" | "briefed" | "discarded" | "expired";
+export interface ContentIdeaEvidence {
+  readonly key: string;
+  readonly type: "offer_claim" | "knowledge_claim" | "conversation_message" | "public_web";
+  readonly sourceRef: string;
+  readonly canonicalUrl: string | null;
+  readonly title: string;
+  readonly excerpt: string;
+  readonly contentHash: string;
+  readonly collectedAt: string;
+}
+export interface ContentIdea {
+  readonly id: string;
+  readonly status: ContentIdeaStatus;
+  readonly angle: string;
+  readonly rationale: string;
+  readonly audience: string;
+  readonly pillar: string;
+  readonly priority: number;
+  readonly freshnessUntil: string;
+  readonly firstSeenAt: string;
+  readonly lastSeenAt: string;
+  readonly sources: readonly ContentIdeaEvidence[];
+}
+export interface ContentIdeaDiscoveryRun {
+  readonly id: string;
+  readonly status: "queued" | "running" | "completed" | "partial" | "failed";
+  readonly trigger: "manual" | "daily";
+  readonly cursor: number;
+  readonly queryCount: number;
+  readonly sourceCount: number;
+  readonly ideaCount: number;
+  readonly queryLimit: number;
+  readonly sourceLimit: number;
+  readonly deadlineAt: string;
+  readonly lastErrorCode: string | null;
+  readonly lastErrorMessage: string | null;
+  readonly createdAt: string;
+  readonly completedAt: string | null;
+}
+
 export interface SetupReadinessItem {
   readonly key: "product" | "icp" | "accounts" | "automation" | "calendar" | "knowledge";
   readonly label: string;
@@ -218,6 +259,23 @@ export async function deriveEditorialStrategy(workspaceSlug: string, requestKey:
 
 export async function publishEditorialStrategy(workspaceSlug: string, requestKey: string): Promise<{ readonly id: string; readonly version: number }> {
   return crmFetch(workspaceSlug, "/api/v1/content/strategy/publish", { method: "POST", body: { requestKey } });
+}
+
+export async function listContentIdeas(workspaceSlug: string, input: { cursor?: string; status?: ContentIdeaStatus; limit?: number } = {}): Promise<{ data: readonly ContentIdea[]; nextCursor: string | null }> {
+  const params = new URLSearchParams();
+  if (input.cursor) params.set("cursor", input.cursor);
+  if (input.status) params.set("status", input.status);
+  if (input.limit) params.set("limit", String(input.limit));
+  return crmFetch(workspaceSlug, `/api/v1/content/ideas${params.size ? `?${params}` : ""}`);
+}
+
+export async function discoverContentIdeas(workspaceSlug: string, requestKey: string): Promise<ContentIdeaDiscoveryRun> {
+  return crmFetch(workspaceSlug, "/api/v1/content/ideas/discover", { method: "POST", body: { requestKey } });
+}
+
+export async function getContentIdeaDiscoveryRun(workspaceSlug: string, runId: string): Promise<ContentIdeaDiscoveryRun | null> {
+  try { return await crmFetch(workspaceSlug, `/api/v1/content/idea-discovery-runs/${runId}`); }
+  catch (error) { if (error instanceof OutboundApiError && error.status === 404) return null; throw error; }
 }
 
 export async function getActivity(workspaceSlug: string, lens: NoosphereLens, cursor?: string): Promise<ActivityWorkspacePage> {

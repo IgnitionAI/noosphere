@@ -20,6 +20,9 @@ import {
   connectedAccounts,
   contacts,
   conversations,
+  contentIdeaDiscoveryRuns,
+  contentIdeas,
+  contentIdeaSchedules,
   dailyProspectingSchedules,
   editorialStrategies,
   editorialStrategyVersions,
@@ -203,7 +206,7 @@ export class PostgresOperationalViews {
     const offset = input.offset ?? 0;
     const limit = input.limit ?? 25;
     if (input.lens === "inbound") {
-      const [strategies, versions] = await Promise.all([
+      const [strategies, versions, ideaCount, ideas, activeRuns, schedule] = await Promise.all([
         this.database.select({
           id: editorialStrategies.id,
           name: editorialStrategies.name,
@@ -216,9 +219,36 @@ export class PostgresOperationalViews {
           sql`${editorialStrategies.deletedAt} is null`,
         )).orderBy(desc(editorialStrategies.updatedAt)).limit(limit + 1).offset(offset),
         this.database.select({ value: count() }).from(editorialStrategyVersions).where(eq(editorialStrategyVersions.workspaceId, input.workspaceId)),
+        this.database.select({ value: count() }).from(contentIdeas).where(and(eq(contentIdeas.workspaceId, input.workspaceId), sql`${contentIdeas.status} not in ('discarded', 'expired')`)),
+        this.database.select({ id: contentIdeas.id, angle: contentIdeas.angle, pillar: contentIdeas.pillar, priority: contentIdeas.priority, updatedAt: contentIdeas.updatedAt }).from(contentIdeas).where(eq(contentIdeas.workspaceId, input.workspaceId)).orderBy(desc(contentIdeas.lastSeenAt)).limit(limit + 1).offset(offset),
+        this.database.select({ id: contentIdeaDiscoveryRuns.id, status: contentIdeaDiscoveryRuns.status, cursor: contentIdeaDiscoveryRuns.cursor, queryLimit: contentIdeaDiscoveryRuns.queryLimit, updatedAt: contentIdeaDiscoveryRuns.updatedAt }).from(contentIdeaDiscoveryRuns).where(and(eq(contentIdeaDiscoveryRuns.workspaceId, input.workspaceId), sql`${contentIdeaDiscoveryRuns.status} in ('queued', 'running', 'failed')`)).orderBy(desc(contentIdeaDiscoveryRuns.updatedAt)).limit(5),
+        this.database.select({ nextRunAt: contentIdeaSchedules.nextRunAt }).from(contentIdeaSchedules).where(and(eq(contentIdeaSchedules.workspaceId, input.workspaceId), eq(contentIdeaSchedules.enabled, true))).limit(1),
       ]);
-      const hasNext = strategies.length > limit;
-      const items = strategies.slice(0, limit).map((strategy) => ({
+      const hasNext = ideas.length > limit;
+      const items = [
+        ...activeRuns.map((run) => ({
+          id: `idea-run:${run.id}`,
+          kind: "job" as const,
+          source: "inbound" as const,
+          status: run.status === "failed" ? "attention" as const : "running" as const,
+          title: run.status === "failed" ? "Recherche d’idées en erreur" : "Recherche d’idées en cours",
+          detail: `${run.cursor}/${run.queryLimit} requêtes traitées · reprise automatique durable`,
+          occurredAt: run.updatedAt,
+          href: "/content/ideas",
+          correlationId: `content-ideas:${run.id}`,
+        })),
+        ...ideas.slice(0, limit).map((idea) => ({
+          id: `idea:${idea.id}`,
+          kind: "publication" as const,
+          source: "inbound" as const,
+          status: "completed" as const,
+          title: idea.angle,
+          detail: `${idea.pillar} · priorité ${idea.priority}/100 · preuves résolubles`,
+          occurredAt: idea.updatedAt,
+          href: "/content/ideas",
+          correlationId: null,
+        })),
+        ...strategies.slice(0, 1).map((strategy) => ({
         id: `strategy:${strategy.id}`,
         kind: "publication" as const,
         source: "inbound" as const,
@@ -228,16 +258,19 @@ export class PostgresOperationalViews {
         occurredAt: strategy.updatedAt,
         href: "/content/strategy",
         correlationId: null,
-      }));
+        })),
+      ].slice(0, limit);
+      const failed = activeRuns.some((run) => run.status === "failed");
+      const running = activeRuns.some((run) => run.status === "running" || run.status === "queued");
       return {
         lens: input.lens,
         asOf,
-        state: strategies.length ? (strategies[0]!.status === "active" ? "idle" : "attention") : "not_configured",
-        headline: strategies.length ? "La stratégie éditoriale LinkedIn est durable et ancrée dans l’offre et l’ICP publiés." : "Publiez une offre et un ICP pour dériver la stratégie Inbound.",
+        state: strategies.length ? (failed ? "attention" : running ? "active" : strategies[0]!.status === "active" ? "idle" : "attention") : "not_configured",
+        headline: strategies.length ? (running ? "Le radar quotidien recherche et déduplique des angles sourcés." : schedule[0] ? `Le radar est prêt pour son prochain passage automatique.` : "La stratégie éditoriale LinkedIn est durable et ancrée dans l’offre et l’ICP publiés.") : "Publiez une offre et un ICP pour dériver la stratégie Inbound.",
         counters: [
           { key: "strategies", label: "Stratégies", value: strategies.length },
           { key: "versions", label: "Versions publiées", value: valueOf(versions) },
-          { key: "ideas", label: "Idées sourcées", value: 0 },
+          { key: "ideas", label: "Idées sourcées", value: valueOf(ideaCount) },
           { key: "planned", label: "Contenus planifiés", value: 0 },
         ],
         items,

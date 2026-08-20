@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { EditorialStrategySnapshot } from "@outbound/domain/content/editorial-strategy";
+import type { ContentIdeaCandidate } from "@outbound/domain/content/content-idea";
 
 export const editorialStrategySnapshotSchema: z.ZodType<EditorialStrategySnapshot> = z.object({
   audience: z.object({
@@ -25,4 +26,23 @@ export const editorialStrategySnapshotSchema: z.ZodType<EditorialStrategySnapsho
   callsToAction: z.array(z.string().trim().min(1).max(300)).min(1).max(8),
   allowedClaimIds: z.array(z.string().uuid()).max(100),
   forbiddenTopics: z.array(z.string().trim().min(1).max(300)).max(30),
+}).strict();
+
+export const contentIdeaCandidateSchema: z.ZodType<ContentIdeaCandidate> = z.object({
+  angle: z.string().trim().min(10).max(500),
+  rationale: z.string().trim().min(10).max(2_000),
+  audience: z.string().trim().min(2).max(500),
+  pillar: z.string().trim().min(2).max(300),
+  priority: z.number().int().min(0).max(100),
+  freshnessDays: z.number().int().min(1).max(365),
+  sourceKeys: z.array(z.string().trim().min(1).max(500)).min(1).max(12),
+  conceptKey: z.string().trim().min(3).max(500),
+}).strict();
+
+export const contentIdeaBatchSchema = z.object({
+  ideas: z.array(contentIdeaCandidateSchema).max(12),
+}).strict();
+
+export const contentIdeaDiscoveryRequestSchema = z.object({
+  requestKey: z.string().trim().min(8).max(300),
 }).strict();

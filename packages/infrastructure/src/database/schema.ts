@@ -1439,6 +1439,106 @@ export const contentOperationRequests = pgTable(
   ],
 );
 
+export const contentIdeaDiscoveryRuns = pgTable(
+  "content_idea_discovery_runs",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    strategyVersionId: uuid("strategy_version_id").notNull(),
+    trigger: varchar("trigger", { length: 20 }).notNull(),
+    status: varchar("status", { length: 40 }).notNull().default("queued"),
+    queryPlan: jsonb("query_plan").notNull(),
+    cursor: integer("cursor").notNull().default(0),
+    queryCount: integer("query_count").notNull().default(0),
+    sourceCount: integer("source_count").notNull().default(0),
+    ideaCount: integer("idea_count").notNull().default(0),
+    queryLimit: integer("query_limit").notNull(),
+    sourceLimit: integer("source_limit").notNull(),
+    deadlineAt: timestamp("deadline_at", { withTimezone: true }).notNull(),
+    lastErrorCode: varchar("last_error_code", { length: 160 }),
+    lastErrorMessage: text("last_error_message"),
+    createdBy: uuid("created_by").references(() => authUsers.id, { onDelete: "set null" }),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({ columns: [table.workspaceId, table.strategyVersionId], foreignColumns: [editorialStrategyVersions.workspaceId, editorialStrategyVersions.id], name: "content_idea_runs_workspace_strategy_version_fk" }).onDelete("restrict"),
+    unique("content_idea_runs_workspace_id_uq").on(table.workspaceId, table.id),
+    check("content_idea_runs_trigger_ck", sql`${table.trigger} in ('manual', 'daily')`),
+    check("content_idea_runs_status_ck", sql`${table.status} in ('queued', 'running', 'completed', 'partial', 'failed')`),
+    check("content_idea_runs_budget_ck", sql`${table.queryLimit} > 0 and ${table.sourceLimit} > 0`),
+  ],
+);
+
+export const contentIdeas = pgTable(
+  "content_ideas",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    strategyVersionId: uuid("strategy_version_id").notNull(),
+    status: varchar("status", { length: 40 }).notNull().default("discovered"),
+    angle: varchar("angle", { length: 500 }).notNull(),
+    rationale: text("rationale").notNull(),
+    audience: varchar("audience", { length: 500 }).notNull(),
+    pillar: varchar("pillar", { length: 300 }).notNull(),
+    priority: integer("priority").notNull(),
+    fingerprint: varchar("fingerprint", { length: 64 }).notNull(),
+    freshnessUntil: timestamp("freshness_until", { withTimezone: true }).notNull(),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).notNull(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({ columns: [table.workspaceId, table.strategyVersionId], foreignColumns: [editorialStrategyVersions.workspaceId, editorialStrategyVersions.id], name: "content_ideas_workspace_strategy_version_fk" }).onDelete("restrict"),
+    unique("content_ideas_workspace_id_uq").on(table.workspaceId, table.id),
+    uniqueIndex("content_ideas_workspace_fingerprint_uq").on(table.workspaceId, table.fingerprint),
+    check("content_ideas_status_ck", sql`${table.status} in ('discovered', 'shortlisted', 'briefed', 'discarded', 'expired')`),
+    check("content_ideas_priority_ck", sql`${table.priority} between 0 and 100`),
+  ],
+);
+
+export const contentIdeaSources = pgTable(
+  "content_idea_sources",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    ideaId: uuid("idea_id").notNull(),
+    runId: uuid("run_id").notNull(),
+    type: varchar("type", { length: 40 }).notNull(),
+    sourceRef: varchar("source_ref", { length: 500 }).notNull(),
+    canonicalUrl: text("canonical_url"),
+    title: varchar("title", { length: 500 }).notNull(),
+    excerpt: text("excerpt").notNull(),
+    contentHash: varchar("content_hash", { length: 128 }).notNull(),
+    collectedAt: timestamp("collected_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({ columns: [table.workspaceId, table.ideaId], foreignColumns: [contentIdeas.workspaceId, contentIdeas.id], name: "content_idea_sources_workspace_idea_fk" }).onDelete("cascade"),
+    foreignKey({ columns: [table.workspaceId, table.runId], foreignColumns: [contentIdeaDiscoveryRuns.workspaceId, contentIdeaDiscoveryRuns.id], name: "content_idea_sources_workspace_run_fk" }).onDelete("restrict"),
+    uniqueIndex("content_idea_sources_idea_hash_uq").on(table.workspaceId, table.ideaId, table.contentHash),
+    check("content_idea_sources_type_ck", sql`${table.type} in ('offer_claim', 'knowledge_claim', 'conversation_message', 'public_web')`),
+  ],
+);
+
+export const contentIdeaSchedules = pgTable(
+  "content_idea_schedules",
+  {
+    workspaceId: uuid("workspace_id").primaryKey().references(() => workspaces.id, { onDelete: "cascade" }),
+    enabled: boolean("enabled").notNull().default(true),
+    localTime: varchar("local_time", { length: 5 }).notNull().default("06:00"),
+    timezone: varchar("timezone", { length: 120 }).notNull().default("Europe/Paris"),
+    lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+    nextRunAt: timestamp("next_run_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [check("content_idea_schedules_local_time_ck", sql`${table.localTime} ~ '^(?:[01][0-9]|2[0-3]):[0-5][0-9]$'`)],
+);
+
 export const knowledgeSources = pgTable(
   "knowledge_sources",
   {

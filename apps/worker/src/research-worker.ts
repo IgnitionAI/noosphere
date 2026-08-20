@@ -50,6 +50,7 @@ export class ResearchWorker {
     private readonly knowledgeExpirationProcessor?: { process(job: LeasedJob): Promise<void> },
     private readonly evaluationRunProcessor?: { process(job: LeasedJob): Promise<void> },
     private readonly prospectDecisionProcessor?: { process(job: LeasedJob): Promise<void> },
+    private readonly contentIdeaDiscoveryProcessor?: { process(job: LeasedJob): Promise<void> },
   ) {}
 
   stop(): void {
@@ -90,6 +91,7 @@ export class ResearchWorker {
         ...(this.knowledgeExpirationProcessor ? ["knowledge.source.expire"] : []),
         ...(this.evaluationRunProcessor ? ["ai.evaluation.execute"] : []),
         ...(this.prospectDecisionProcessor ? ["prospect.decision.execute"] : []),
+        ...(this.contentIdeaDiscoveryProcessor ? ["content.ideas.discover"] : []),
     ];
     const allowed = this.options.jobTypes ? new Set(this.options.jobTypes) : null;
     const excluded = new Set(this.options.excludedJobTypes ?? []);
@@ -153,6 +155,8 @@ export class ResearchWorker {
         await this.evaluationRunProcessor.process(job);
       } else if (job.type === "prospect.decision.execute" && this.prospectDecisionProcessor) {
         await this.prospectDecisionProcessor.process(job);
+      } else if (job.type === "content.ideas.discover" && this.contentIdeaDiscoveryProcessor) {
+        await this.contentIdeaDiscoveryProcessor.process(job);
       } else {
         await this.orchestrator.process(job);
       }

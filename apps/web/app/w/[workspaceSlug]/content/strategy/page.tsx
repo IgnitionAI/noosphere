@@ -18,7 +18,10 @@ export default async function EditorialStrategyPage({ params }: { params: Promis
           <h1 className="page-title mt-3">Stratégie LinkedIn</h1>
           <p className="mt-2 max-w-2xl text-sm text-muted">Noosphere relie l’offre publiée, l’ICP actif et les claims autorisés avant de produire une seule idée.</p>
         </div>
-        <StrategyActions currentVersion={strategy?.currentVersion ?? 0} hasStrategy={Boolean(strategy)} workspaceSlug={workspaceSlug} />
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {strategy?.currentVersion ? <Link className="button button-primary" href={`/w/${workspaceSlug}/content/ideas`}>Ouvrir le radar d’idées</Link> : null}
+          <StrategyActions currentVersion={strategy?.currentVersion ?? 0} hasStrategy={Boolean(strategy)} workspaceSlug={workspaceSlug} />
+        </div>
       </header>
 
       {!strategy ? <section className="panel mt-5 py-16 text-center"><AlertTriangle className="mx-auto text-warning" size={30} /><h2 className="mt-4 font-semibold">Aucune stratégie dérivée</h2><p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-muted">Publiez d’abord une offre et un ICP. La dérivation K3 conservera exactement les versions utilisées.</p><div className="mt-5 flex justify-center gap-2"><Link className="button" href={`/w/${workspaceSlug}/settings`}>Vérifier les prérequis</Link></div></section> : (
