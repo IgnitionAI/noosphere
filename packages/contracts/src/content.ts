@@ -1,6 +1,12 @@
 import { z } from "zod";
 import type { EditorialStrategySnapshot } from "@outbound/domain/content/editorial-strategy";
 import type { ContentIdeaCandidate } from "@outbound/domain/content/content-idea";
+import type {
+  ContentBriefSnapshot,
+  ContentDraftSnapshot,
+  ContentEditorialCritique,
+  ContentEvidenceAudit,
+} from "@outbound/domain/content/content-asset";
 
 export const editorialStrategySnapshotSchema: z.ZodType<EditorialStrategySnapshot> = z.object({
   audience: z.object({
@@ -45,4 +51,56 @@ export const contentIdeaBatchSchema = z.object({
 
 export const contentIdeaDiscoveryRequestSchema = z.object({
   requestKey: z.string().trim().min(8).max(300),
+}).strict();
+
+export const contentBriefSnapshotSchema: z.ZodType<ContentBriefSnapshot> = z.object({
+  objective: z.enum(["educate", "challenge", "explain", "prove"]),
+  audience: z.string().trim().min(2).max(500),
+  problem: z.string().trim().min(10).max(2_000),
+  angle: z.string().trim().min(10).max(500),
+  format: z.literal("linkedin_text"),
+  evidenceKeys: z.array(z.string().trim().min(1).max(500)).min(1).max(20),
+  allowedClaimIds: z.array(z.string().uuid()).max(100),
+  callToAction: z.string().trim().min(2).max(300).nullable(),
+  constraints: z.array(z.string().trim().min(2).max(500)).min(1).max(20),
+}).strict();
+
+export const contentDraftSnapshotSchema: z.ZodType<ContentDraftSnapshot> = z.object({
+  hook: z.string().trim().min(5).max(500),
+  body: z.string().trim().min(80).max(3_000),
+  callToAction: z.string().trim().min(2).max(300).nullable(),
+  factualClaims: z.array(z.object({
+    statement: z.string().trim().min(3).max(1_000),
+    sourceKeys: z.array(z.string().trim().min(1).max(500)).min(1).max(12),
+  }).strict()).max(20),
+  opinionStatements: z.array(z.string().trim().min(3).max(1_000)).max(20),
+}).strict();
+
+export const contentEvidenceAuditSchema: z.ZodType<ContentEvidenceAudit> = z.object({
+  reviewedClaims: z.array(z.object({
+    statement: z.string().trim().min(3).max(1_000),
+    sourceKeys: z.array(z.string().trim().min(1).max(500)).max(12),
+    verdict: z.enum(["supported", "unsupported"]),
+    reason: z.string().trim().min(3).max(1_000),
+  }).strict()).max(30),
+  ungroundedStatements: z.array(z.string().trim().min(3).max(1_000)).max(20),
+  forbiddenTopicMatches: z.array(z.string().trim().min(2).max(500)).max(20),
+}).strict();
+
+export const contentEditorialCritiqueSchema: z.ZodType<ContentEditorialCritique> = z.object({
+  genericPhrases: z.array(z.string().trim().min(2).max(500)).max(20),
+  repeatedConcepts: z.array(z.string().trim().min(2).max(500)).max(20),
+  callToActionAligned: z.boolean(),
+  distinctFromHistory: z.boolean(),
+  issues: z.array(z.object({
+    severity: z.enum(["advice", "blocker"]),
+    code: z.string().trim().min(2).max(120),
+    message: z.string().trim().min(3).max(1_000),
+  }).strict()).max(20),
+  summary: z.string().trim().min(3).max(1_500),
+}).strict();
+
+export const contentGenerationRequestSchema = z.object({
+  requestKey: z.string().trim().min(8).max(300),
+  instruction: z.string().trim().min(3).max(1_500).optional(),
 }).strict();

@@ -20,6 +20,8 @@ import {
   connectedAccounts,
   contacts,
   conversations,
+  contentAssets,
+  contentGenerationRuns,
   contentIdeaDiscoveryRuns,
   contentIdeas,
   contentIdeaSchedules,
@@ -114,16 +116,36 @@ export class PostgresOperationalViews {
     const hasMoreAttention = attentionPage.length > attentionLimit;
     const attention = attentionPage.slice(0, attentionLimit);
     const statuses = accountRows.map((row) => row.status);
-    const editorialRows = await this.database.select({
-      id: editorialStrategies.id,
-      status: editorialStrategies.status,
-      currentVersion: editorialStrategies.currentVersion,
-      updatedAt: editorialStrategies.updatedAt,
-    }).from(editorialStrategies).where(and(
-      eq(editorialStrategies.workspaceId, workspaceId),
-      sql`${editorialStrategies.deletedAt} is null`,
-    )).orderBy(desc(editorialStrategies.updatedAt)).limit(1);
+    const [editorialRows, generationRows, assetRows] = await Promise.all([
+      this.database.select({
+        id: editorialStrategies.id,
+        status: editorialStrategies.status,
+        currentVersion: editorialStrategies.currentVersion,
+        updatedAt: editorialStrategies.updatedAt,
+      }).from(editorialStrategies).where(and(
+        eq(editorialStrategies.workspaceId, workspaceId),
+        sql`${editorialStrategies.deletedAt} is null`,
+      )).orderBy(desc(editorialStrategies.updatedAt)).limit(1),
+      this.database.select({
+        id: contentGenerationRuns.id,
+        ideaId: contentGenerationRuns.ideaId,
+        status: contentGenerationRuns.status,
+        stage: contentGenerationRuns.stage,
+        updatedAt: contentGenerationRuns.updatedAt,
+      }).from(contentGenerationRuns).where(and(
+        eq(contentGenerationRuns.workspaceId, workspaceId),
+        sql`${contentGenerationRuns.status} in ('queued', 'running', 'blocked', 'failed')`,
+      )).orderBy(desc(contentGenerationRuns.updatedAt)).limit(1),
+      this.database.select({
+        id: contentAssets.id,
+        ideaId: contentAssets.ideaId,
+        status: contentAssets.status,
+        updatedAt: contentAssets.updatedAt,
+      }).from(contentAssets).where(eq(contentAssets.workspaceId, workspaceId)).orderBy(desc(contentAssets.updatedAt)).limit(1),
+    ]);
     const editorial = editorialRows[0];
+    const generation = generationRows[0];
+    const latestAsset = assetRows[0];
     const connected = statuses.filter((status) => status === "connected").length;
     const degraded = statuses.filter((status) => status === "degraded" || status === "unknown" || status === "pending").length;
     const disconnected = statuses.filter((status) => status === "disconnected").length;
@@ -161,7 +183,26 @@ export class PostgresOperationalViews {
         expectedAt: nextBooking[0].startAt,
         href: "/appointments",
       }] : []),
+      ...(latestAsset?.status === "ready" ? [{
+        id: `content:${latestAsset.id}`,
+        type: "publication" as const,
+        source: "inbound" as const,
+        label: "Contenu LinkedIn prêt",
+        detail: "Le brief, les preuves et la critique éditoriale sont disponibles. Aucune publication n’a encore été déclenchée.",
+        expectedAt: null,
+        href: `/content/ideas/${latestAsset.ideaId}`,
+      }] : []),
     ].sort((left, right) => (left.expectedAt?.getTime() ?? Number.MAX_SAFE_INTEGER) - (right.expectedAt?.getTime() ?? Number.MAX_SAFE_INTEGER));
+    const inboundStatus = !editorial
+      ? "not_configured"
+      : generation?.status === "blocked" || generation?.status === "failed" || latestAsset?.status === "blocked"
+        ? "degraded"
+        : generation?.status === "queued" || generation?.status === "running"
+          ? "running"
+          : editorial.status === "active"
+            ? "idle"
+            : "paused";
+    const inboundLastActivity = generation?.updatedAt ?? latestAsset?.updatedAt ?? editorial?.updatedAt ?? null;
     return {
       asOf,
       counts: {
@@ -182,11 +223,25 @@ export class PostgresOperationalViews {
       accountHealth: { connected, degraded, disconnected, activeAlerts: valueOf(alertCount) },
       engines: {
         inbound: {
-          status: editorial ? (editorial.status === "active" ? "idle" : "paused") : "not_configured",
-          label: editorial ? (editorial.status === "active" ? "Inbound prêt" : "Stratégie Inbound en brouillon") : "Inbound à configurer",
-          summary: editorial ? `Stratégie LinkedIn v${editorial.currentVersion || "brouillon"} · le pipeline éditorial attend sa prochaine étape.` : "Une offre publiée et un ICP actif sont requis pour dériver la stratégie.",
-          lastActivityAt: editorial?.updatedAt ?? null,
-          nextAction: editorial ? { label: "Voir la stratégie", href: "/content/strategy" } : { label: "Vérifier la configuration", href: "/settings" },
+          status: inboundStatus,
+          label: inboundStatus === "running" ? "Inbound génère un contenu" : inboundStatus === "degraded" ? "Inbound nécessite une attention" : editorial ? (editorial.status === "active" ? "Inbound prêt" : "Stratégie Inbound en brouillon") : "Inbound à configurer",
+          summary: !editorial
+            ? "Une offre publiée et un ICP actif sont requis pour dériver la stratégie."
+            : generation?.status === "queued" || generation?.status === "running"
+              ? `Pipeline éditorial à l’étape ${contentStageLabel(generation.stage)} · reprise durable active.`
+              : latestAsset?.status === "ready"
+                ? `Stratégie LinkedIn v${editorial.currentVersion || "brouillon"} · un contenu sourcé est prêt.`
+                : latestAsset?.status === "blocked"
+                  ? "La critique ou l’audit des preuves a bloqué le dernier contenu."
+                  : `Stratégie LinkedIn v${editorial.currentVersion || "brouillon"} · le pipeline éditorial attend sa prochaine étape.`,
+          lastActivityAt: inboundLastActivity,
+          nextAction: generation
+            ? { label: generation.status === "blocked" || generation.status === "failed" ? "Voir le blocage" : "Suivre la génération", href: `/content/ideas/${generation.ideaId}` }
+            : latestAsset
+              ? { label: "Voir le contenu", href: `/content/ideas/${latestAsset.ideaId}` }
+              : editorial
+                ? { label: "Voir les idées", href: "/content/ideas" }
+                : { label: "Vérifier la configuration", href: "/settings" },
         },
         outbound: {
           status: outboundStatus,
@@ -206,7 +261,7 @@ export class PostgresOperationalViews {
     const offset = input.offset ?? 0;
     const limit = input.limit ?? 25;
     if (input.lens === "inbound") {
-      const [strategies, versions, ideaCount, ideas, activeRuns, schedule] = await Promise.all([
+      const [strategies, versions, ideaCount, ideas, ideaRuns, schedule, assetCount, assetRows, generationRows] = await Promise.all([
         this.database.select({
           id: editorialStrategies.id,
           name: editorialStrategies.name,
@@ -223,10 +278,35 @@ export class PostgresOperationalViews {
         this.database.select({ id: contentIdeas.id, angle: contentIdeas.angle, pillar: contentIdeas.pillar, priority: contentIdeas.priority, updatedAt: contentIdeas.updatedAt }).from(contentIdeas).where(eq(contentIdeas.workspaceId, input.workspaceId)).orderBy(desc(contentIdeas.lastSeenAt)).limit(limit + 1).offset(offset),
         this.database.select({ id: contentIdeaDiscoveryRuns.id, status: contentIdeaDiscoveryRuns.status, cursor: contentIdeaDiscoveryRuns.cursor, queryLimit: contentIdeaDiscoveryRuns.queryLimit, updatedAt: contentIdeaDiscoveryRuns.updatedAt }).from(contentIdeaDiscoveryRuns).where(and(eq(contentIdeaDiscoveryRuns.workspaceId, input.workspaceId), sql`${contentIdeaDiscoveryRuns.status} in ('queued', 'running', 'failed')`)).orderBy(desc(contentIdeaDiscoveryRuns.updatedAt)).limit(5),
         this.database.select({ nextRunAt: contentIdeaSchedules.nextRunAt }).from(contentIdeaSchedules).where(and(eq(contentIdeaSchedules.workspaceId, input.workspaceId), eq(contentIdeaSchedules.enabled, true))).limit(1),
+        this.database.select({ value: count() }).from(contentAssets).where(eq(contentAssets.workspaceId, input.workspaceId)),
+        this.database.select({ id: contentAssets.id, ideaId: contentAssets.ideaId, status: contentAssets.status, latestVersion: contentAssets.latestVersion, angle: contentIdeas.angle, updatedAt: contentAssets.updatedAt }).from(contentAssets).innerJoin(contentIdeas, and(eq(contentIdeas.workspaceId, contentAssets.workspaceId), eq(contentIdeas.id, contentAssets.ideaId))).where(eq(contentAssets.workspaceId, input.workspaceId)).orderBy(desc(contentAssets.updatedAt)).limit(limit),
+        this.database.select({ id: contentGenerationRuns.id, ideaId: contentGenerationRuns.ideaId, status: contentGenerationRuns.status, stage: contentGenerationRuns.stage, angle: contentIdeas.angle, updatedAt: contentGenerationRuns.updatedAt }).from(contentGenerationRuns).innerJoin(contentIdeas, and(eq(contentIdeas.workspaceId, contentGenerationRuns.workspaceId), eq(contentIdeas.id, contentGenerationRuns.ideaId))).where(and(eq(contentGenerationRuns.workspaceId, input.workspaceId), sql`${contentGenerationRuns.status} in ('queued', 'running', 'blocked', 'failed')`)).orderBy(desc(contentGenerationRuns.updatedAt)).limit(limit),
       ]);
       const hasNext = ideas.length > limit;
       const items = [
-        ...activeRuns.map((run) => ({
+        ...generationRows.map((run) => ({
+          id: `content-run:${run.id}`,
+          kind: "publication" as const,
+          source: "inbound" as const,
+          status: run.status === "blocked" || run.status === "failed" ? "attention" as const : "running" as const,
+          title: run.status === "blocked" || run.status === "failed" ? `Contenu bloqué · ${run.angle}` : `Rédaction en cours · ${run.angle}`,
+          detail: `${contentStageLabel(run.stage)} · checkpoint durable · aucune publication déclenchée`,
+          occurredAt: run.updatedAt,
+          href: `/content/ideas/${run.ideaId}`,
+          correlationId: `content-generation:${run.id}`,
+        })),
+        ...assetRows.map((asset) => ({
+          id: `content-asset:${asset.id}`,
+          kind: "publication" as const,
+          source: "inbound" as const,
+          status: asset.status === "blocked" ? "attention" as const : asset.status === "ready" ? "completed" as const : "pending" as const,
+          title: asset.angle,
+          detail: asset.status === "ready" ? `Contenu v${asset.latestVersion} sourcé et critiqué · prêt sans être publié` : asset.status === "blocked" ? "Contenu bloqué par l’audit ou la critique" : "Brouillon éditorial en préparation",
+          occurredAt: asset.updatedAt,
+          href: `/content/ideas/${asset.ideaId}`,
+          correlationId: null,
+        })),
+        ...ideaRuns.map((run) => ({
           id: `idea-run:${run.id}`,
           kind: "job" as const,
           source: "inbound" as const,
@@ -260,8 +340,8 @@ export class PostgresOperationalViews {
         correlationId: null,
         })),
       ].slice(0, limit);
-      const failed = activeRuns.some((run) => run.status === "failed");
-      const running = activeRuns.some((run) => run.status === "running" || run.status === "queued");
+      const failed = ideaRuns.some((run) => run.status === "failed") || generationRows.some((run) => run.status === "failed" || run.status === "blocked");
+      const running = ideaRuns.some((run) => run.status === "running" || run.status === "queued") || generationRows.some((run) => run.status === "running" || run.status === "queued");
       return {
         lens: input.lens,
         asOf,
@@ -271,7 +351,7 @@ export class PostgresOperationalViews {
           { key: "strategies", label: "Stratégies", value: strategies.length },
           { key: "versions", label: "Versions publiées", value: valueOf(versions) },
           { key: "ideas", label: "Idées sourcées", value: valueOf(ideaCount) },
-          { key: "planned", label: "Contenus planifiés", value: 0 },
+          { key: "assets", label: "Contenus", value: valueOf(assetCount) },
         ],
         items,
         pagination: { nextCursor: hasNext ? String(offset + limit) : null },
@@ -606,6 +686,16 @@ function campaignStageLabel(stage: string): string {
     running: "Envoi et relances",
     completed: "Terminée",
     attention: "Exception localisée",
+  } as Record<string, string>)[stage] ?? stage;
+}
+
+function contentStageLabel(stage: string): string {
+  return ({
+    brief: "Brief",
+    writer: "Rédaction",
+    audit: "Audit des preuves",
+    critic: "Critique anti-générique",
+    completed: "Terminé",
   } as Record<string, string>)[stage] ?? stage;
 }
 

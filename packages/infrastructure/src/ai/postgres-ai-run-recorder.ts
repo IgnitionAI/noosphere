@@ -12,6 +12,7 @@ export class PostgresAiRunRecorder implements AiRunRecorder {
       id,
       workspaceId: input.workspaceId,
       purpose: input.purpose,
+      contentGenerationRunId: input.contentGenerationRunId ?? null,
       provider: input.provider,
       model: input.model,
       promptVersion: input.promptVersion,
