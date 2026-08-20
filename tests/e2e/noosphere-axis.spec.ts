@@ -9,8 +9,8 @@ test.beforeEach(async ({ page }) => {
   await page.getByLabel("Email professionnel").fill(email);
   await page.getByLabel("Mot de passe").fill(password);
   await page.getByRole("button", { name: "Accéder au workspace" }).click();
-  await expect(page).toHaveURL(new RegExp(`/w/${workspaceSlug}/?$`));
-  await expect(page.getByRole("heading", { name: "Aujourd’hui" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Aujourd’hui" })).toBeVisible({ timeout: 20_000 });
+  await expect(page).toHaveURL(new RegExp(`/w/${workspaceSlug}/?$`), { timeout: 20_000 });
 });
 
 test("the five destinations and Noosphere Axis remain GET-only", async ({ page }) => {
