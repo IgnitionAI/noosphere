@@ -1644,6 +1644,76 @@ export const contentAssetVersions = pgTable(
   ],
 );
 
+export const contentPublications = pgTable(
+  "content_publications",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    assetId: uuid("asset_id").notNull(),
+    assetVersionId: uuid("asset_version_id").notNull(),
+    network: varchar("network", { length: 40 }).notNull().default("linkedin"),
+    provider: varchar("provider", { length: 80 }).notNull().default("unipile"),
+    status: varchar("status", { length: 40 }).notNull().default("scheduled"),
+    requestKey: varchar("request_key", { length: 300 }).notNull(),
+    scheduledFor: timestamp("scheduled_for", { withTimezone: true }).notNull(),
+    contentSnapshot: jsonb("content_snapshot").notNull(),
+    policySnapshot: jsonb("policy_snapshot").notNull(),
+    accountSnapshot: jsonb("account_snapshot").notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    maxAttempts: integer("max_attempts").notNull().default(4),
+    providerPostId: text("provider_post_id"),
+    providerSocialId: text("provider_social_id"),
+    providerUrl: text("provider_url"),
+    lastErrorCode: varchar("last_error_code", { length: 160 }),
+    lastErrorMessage: text("last_error_message"),
+    executionToken: uuid("execution_token"),
+    publishStartedAt: timestamp("publish_started_at", { withTimezone: true }),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    unknownAt: timestamp("unknown_at", { withTimezone: true }),
+    createdBy: uuid("created_by").references(() => authUsers.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({ columns: [table.workspaceId, table.assetId], foreignColumns: [contentAssets.workspaceId, contentAssets.id], name: "content_publications_workspace_asset_fk" }).onDelete("restrict"),
+    foreignKey({ columns: [table.workspaceId, table.assetVersionId], foreignColumns: [contentAssetVersions.workspaceId, contentAssetVersions.id], name: "content_publications_workspace_asset_version_fk" }).onDelete("restrict"),
+    unique("content_publications_workspace_id_uq").on(table.workspaceId, table.id),
+    unique("content_publications_workspace_request_uq").on(table.workspaceId, table.requestKey),
+    check("content_publications_network_ck", sql`${table.network} in ('linkedin')`),
+    check("content_publications_status_ck", sql`${table.status} in ('scheduled', 'retry', 'publishing', 'published', 'unknown', 'failed', 'cancelled')`),
+    check("content_publications_attempts_ck", sql`${table.attempts} >= 0 and ${table.maxAttempts} > 0 and ${table.attempts} <= ${table.maxAttempts}`),
+  ],
+);
+
+export const contentPublicationAttempts = pgTable(
+  "content_publication_attempts",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    publicationId: uuid("publication_id").notNull(),
+    attempt: integer("attempt").notNull(),
+    executionToken: uuid("execution_token").notNull(),
+    status: varchar("status", { length: 40 }).notNull().default("started"),
+    requestSnapshot: jsonb("request_snapshot").notNull(),
+    providerPostId: text("provider_post_id"),
+    providerSocialId: text("provider_social_id"),
+    providerUrl: text("provider_url"),
+    errorCode: varchar("error_code", { length: 160 }),
+    errorMessage: text("error_message"),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({ columns: [table.workspaceId, table.publicationId], foreignColumns: [contentPublications.workspaceId, contentPublications.id], name: "content_publication_attempts_workspace_publication_fk" }).onDelete("cascade"),
+    unique("content_publication_attempts_workspace_token_uq").on(table.workspaceId, table.executionToken),
+    unique("content_publication_attempts_workspace_number_uq").on(table.workspaceId, table.publicationId, table.attempt),
+    check("content_publication_attempts_status_ck", sql`${table.status} in ('started', 'published', 'not_sent', 'unknown', 'failed')`),
+    check("content_publication_attempts_attempt_ck", sql`${table.attempt} > 0`),
+  ],
+);
+
 export const knowledgeSources = pgTable(
   "knowledge_sources",
   {

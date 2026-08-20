@@ -104,3 +104,12 @@ export const contentGenerationRequestSchema = z.object({
   requestKey: z.string().trim().min(8).max(300),
   instruction: z.string().trim().min(3).max(1_500).optional(),
 }).strict();
+
+export const contentPublicationScheduleRequestSchema = z.object({
+  requestKey: z.string().trim().min(8).max(300),
+  scheduledFor: z.string().datetime({ offset: true }).transform((value) => new Date(value)),
+}).strict();
+
+export const contentPublicationMutationRequestSchema = z.object({
+  requestKey: z.string().trim().min(8).max(300),
+}).strict();

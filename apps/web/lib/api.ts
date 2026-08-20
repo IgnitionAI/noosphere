@@ -233,6 +233,31 @@ export interface ContentAsset {
   readonly updatedAt: string;
 }
 
+export interface ContentPublication {
+  readonly id: string;
+  readonly assetId: string;
+  readonly assetVersionId: string;
+  readonly network: "linkedin";
+  readonly provider: "unipile";
+  readonly status: "scheduled" | "retry" | "publishing" | "published" | "unknown" | "failed" | "cancelled";
+  readonly scheduledFor: string;
+  readonly contentSnapshot: { readonly assetVersionId: string; readonly body: string; readonly contentHash: string };
+  readonly policySnapshot: { readonly schemaVersion: 1; readonly policyVersion: "linkedin-publishing-v1"; readonly network: "linkedin"; readonly assetReady: true; readonly strategyVersionId: string; readonly claimsGate: "passed" };
+  readonly accountSnapshot: { readonly provider: "unipile"; readonly providerAccountId: string; readonly displayName: string; readonly selectionVersion: string; readonly observedAt: string };
+  readonly attempts: number;
+  readonly maxAttempts: number;
+  readonly providerPostId: string | null;
+  readonly providerSocialId: string | null;
+  readonly providerUrl: string | null;
+  readonly lastErrorCode: string | null;
+  readonly lastErrorMessage: string | null;
+  readonly publishedAt: string | null;
+  readonly cancelledAt: string | null;
+  readonly unknownAt: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
 export interface SetupReadinessItem {
   readonly key: "product" | "icp" | "accounts" | "automation" | "calendar" | "knowledge";
   readonly label: string;
@@ -348,6 +373,24 @@ export async function improveContentAsset(workspaceSlug: string, assetId: string
 export async function getContentGenerationRun(workspaceSlug: string, runId: string): Promise<ContentGenerationRun | null> {
   try { return await crmFetch(workspaceSlug, `/api/v1/content/generation-runs/${runId}`); }
   catch (error) { if (error instanceof OutboundApiError && error.status === 404) return null; throw error; }
+}
+
+export async function listContentPublications(workspaceSlug: string, cursor?: string): Promise<{ readonly data: readonly ContentPublication[]; readonly nextCursor: string | null }> {
+  const params = new URLSearchParams();
+  if (cursor) params.set("cursor", cursor);
+  return crmFetch(workspaceSlug, `/api/v1/content/publications${params.size ? `?${params}` : ""}`);
+}
+
+export async function scheduleContentPublication(workspaceSlug: string, assetId: string, requestKey: string, scheduledFor: string): Promise<ContentPublication> {
+  return crmFetch(workspaceSlug, `/api/v1/content/assets/${assetId}/schedule`, { method: "POST", body: { requestKey, scheduledFor } });
+}
+
+export async function rescheduleContentPublication(workspaceSlug: string, publicationId: string, requestKey: string, scheduledFor: string): Promise<ContentPublication> {
+  return crmFetch(workspaceSlug, `/api/v1/content/publications/${publicationId}/reschedule`, { method: "POST", body: { requestKey, scheduledFor } });
+}
+
+export async function cancelContentPublication(workspaceSlug: string, publicationId: string, requestKey: string): Promise<ContentPublication> {
+  return crmFetch(workspaceSlug, `/api/v1/content/publications/${publicationId}/cancel`, { method: "POST", body: { requestKey } });
 }
 
 export async function getActivity(workspaceSlug: string, lens: NoosphereLens, cursor?: string): Promise<ActivityWorkspacePage> {

@@ -85,6 +85,10 @@ import { DailyContentIdeaScheduler } from "@outbound/infrastructure/content/dail
 import { ContentGenerationJobProcessor } from "@outbound/application/content/content-generation";
 import { PostgresContentGenerationRepository } from "@outbound/infrastructure/content/postgres-content-generation-repository";
 import { LangChainContentPipelineAgent } from "@outbound/infrastructure/content/langchain-content-pipeline-agent";
+import { ContentPublicationJobProcessor, type SocialPublishingAccountResolver } from "@outbound/application/content/content-publications";
+import { SocialProviderError, type SocialPublisher } from "@outbound/application/content/social-ports";
+import { PostgresContentPublicationRepository, PostgresSocialPublishingAccountResolver } from "@outbound/infrastructure/content/postgres-content-publication-repository";
+import { UnipileSocialPublisher } from "@outbound/infrastructure/content/unipile-social-publisher";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
@@ -297,6 +301,19 @@ const contentGenerationProcessor = new ContentGenerationJobProcessor(
   queue,
   () => clock.now(),
 );
+const socialPublisher: SocialPublisher = unipileDsn && unipileApiKey
+  ? new UnipileSocialPublisher({ dsn: unipileDsn, apiKey: unipileApiKey, timeoutMs: positiveIntegerEnvironment("UNIPILE_TIMEOUT_MS", 10_000) })
+  : unavailableSocialPublisher();
+const socialPublishingAccounts: SocialPublishingAccountResolver = unipileChannelConnections
+  ? new PostgresSocialPublishingAccountResolver(unipileChannelConnections)
+  : unavailableSocialPublishingAccounts();
+const contentPublicationProcessor = new ContentPublicationJobProcessor(
+  new PostgresContentPublicationRepository(database.db),
+  socialPublishingAccounts,
+  socialPublisher,
+  queue,
+  () => clock.now(),
+);
 const prospectAssessmentReconciler = new ProspectAssessmentReconciler(database.db, clock);
 const campaignHealthReconciler = new CampaignHealthReconciler(database.db, clock);
 const sourcingRetentionReconciler = new SourcingRetentionReconciler(database.db, clock);
@@ -348,7 +365,7 @@ const worker = new ResearchWorker(queue, orchestrator, clock, {
   pollIntervalMs: positiveIntegerEnvironment("JOB_POLL_INTERVAL_MS", 1_000),
   ...optionalJobTypes("WORKER_JOB_TYPES"),
   ...optionalExcludedJobTypes("WORKER_EXCLUDED_JOB_TYPES"),
-}, documentService, discoveryProcessor, channelAssessmentProcessor, campaignAutomationProcessor, campaignCompositionProcessor, outreachDispatchProcessor, inboundReplyProcessor, automatedReplySendProcessor, conversationCommandProcessor, process.env.WORKER_DISABLE_MAINTENANCE === "true" ? undefined : maintenance, process.env.WORKER_DISABLE_OUTBOX === "true" ? undefined : outboxDispatcher, importService, process.env.WORKER_DISABLE_OUTREACH_SCHEDULER === "true" ? undefined : outreachScheduler, enrichmentProcessor, signalProcessor, workspaceExportProcessor, retentionPurgeProcessor, knowledgeExpirationProcessor, evaluationRunProcessor, prospectDecisionProcessor, contentIdeaDiscoveryProcessor, contentGenerationProcessor);
+}, documentService, discoveryProcessor, channelAssessmentProcessor, campaignAutomationProcessor, campaignCompositionProcessor, outreachDispatchProcessor, inboundReplyProcessor, automatedReplySendProcessor, conversationCommandProcessor, process.env.WORKER_DISABLE_MAINTENANCE === "true" ? undefined : maintenance, process.env.WORKER_DISABLE_OUTBOX === "true" ? undefined : outboxDispatcher, importService, process.env.WORKER_DISABLE_OUTREACH_SCHEDULER === "true" ? undefined : outreachScheduler, enrichmentProcessor, signalProcessor, workspaceExportProcessor, retentionPurgeProcessor, knowledgeExpirationProcessor, evaluationRunProcessor, prospectDecisionProcessor, contentIdeaDiscoveryProcessor, contentGenerationProcessor, contentPublicationProcessor);
 
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
   process.once(signal, () => {
@@ -466,6 +483,15 @@ function createOutboundGateway(): OutboundChannelGateway {
     dsn: process.env.UNIPILE_DSN,
     apiKey: process.env.UNIPILE_API_KEY,
   });
+}
+
+function unavailableSocialPublisher(): SocialPublisher {
+  const unavailable = () => Promise.reject(new SocialProviderError("SOCIAL_PROVIDER_UNAVAILABLE", "Unipile is not configured", "not_sent", true));
+  return { observeCapabilities: unavailable, publishText: unavailable };
+}
+
+function unavailableSocialPublishingAccounts(): SocialPublishingAccountResolver {
+  return { resolveLinkedin: () => Promise.reject(new SocialProviderError("SOCIAL_PROVIDER_UNAVAILABLE", "Unipile is not configured", "not_sent", true)) };
 }
 
 function documentServiceOptionsFromEnvironment() {

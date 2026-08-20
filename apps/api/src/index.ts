@@ -68,6 +68,11 @@ import { createContentIdeaHttpHandler, isContentIdeaRoute } from "@outbound/inte
 import { ContentGenerationApplication } from "@outbound/application/content/content-generation";
 import { PostgresContentGenerationRepository } from "@outbound/infrastructure/content/postgres-content-generation-repository";
 import { createContentGenerationHttpHandler, isContentGenerationRoute } from "@outbound/interface/http/content-generation-handler";
+import { ContentPublicationApplication, type SocialPublishingAccountResolver } from "@outbound/application/content/content-publications";
+import { SocialProviderError, type SocialPublisher } from "@outbound/application/content/social-ports";
+import { PostgresContentPublicationRepository, PostgresSocialPublishingAccountResolver } from "@outbound/infrastructure/content/postgres-content-publication-repository";
+import { UnipileSocialPublisher } from "@outbound/infrastructure/content/unipile-social-publisher";
+import { createContentPublicationHttpHandler, isContentPublicationRoute } from "@outbound/interface/http/content-publication-handler";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
@@ -286,6 +291,20 @@ const contentGeneration = createContentGenerationHttpHandler({
   contextResolver: auth.contextResolver,
   application: new ContentGenerationApplication(new PostgresContentGenerationRepository(database.db)),
 });
+const socialPublisher: SocialPublisher = unipileDsn && unipileApiKey
+  ? new UnipileSocialPublisher({ dsn: unipileDsn, apiKey: unipileApiKey, timeoutMs: positiveIntegerEnvironment("UNIPILE_TIMEOUT_MS", 10_000) })
+  : unavailableSocialPublisher();
+const socialPublishingAccounts: SocialPublishingAccountResolver = unipileChannelConnections
+  ? new PostgresSocialPublishingAccountResolver(unipileChannelConnections)
+  : unavailableSocialPublishingAccounts();
+const contentPublications = createContentPublicationHttpHandler({
+  contextResolver: auth.contextResolver,
+  application: new ContentPublicationApplication(
+    new PostgresContentPublicationRepository(database.db),
+    socialPublishingAccounts,
+    socialPublisher,
+  ),
+});
 const port = positiveIntegerEnvironment("PORT", 3000);
 const server = Bun.serve({
   port,
@@ -315,6 +334,7 @@ const server = Bun.serve({
     if (isWorkspaceOnboardingRoute(pathname)) return workspaceOnboarding(request);
     if (isWorkspaceDataRoute(pathname, request.method)) return workspaceData(request);
     if (isContentStrategyRoute(pathname)) return contentStrategy(request);
+    if (isContentPublicationRoute(pathname)) return contentPublications(request);
     if (isContentGenerationRoute(pathname)) return contentGeneration(request);
     if (isContentIdeaRoute(pathname)) return contentIdeas(request);
     if (
@@ -379,6 +399,15 @@ const server = Bun.serve({
     );
   },
 });
+
+function unavailableSocialPublisher(): SocialPublisher {
+  const unavailable = () => Promise.reject(new SocialProviderError("SOCIAL_PROVIDER_UNAVAILABLE", "Unipile is not configured", "not_sent", true));
+  return { observeCapabilities: unavailable, publishText: unavailable };
+}
+
+function unavailableSocialPublishingAccounts(): SocialPublishingAccountResolver {
+  return { resolveLinkedin: () => Promise.reject(new SocialProviderError("SOCIAL_PROVIDER_UNAVAILABLE", "Unipile is not configured", "not_sent", true)) };
+}
 
 console.info(JSON.stringify({ event: "api_started", port: server.port }));
 for (const signal of ["SIGTERM", "SIGINT"] as const) {

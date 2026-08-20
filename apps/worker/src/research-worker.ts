@@ -52,6 +52,7 @@ export class ResearchWorker {
     private readonly prospectDecisionProcessor?: { process(job: LeasedJob): Promise<void> },
     private readonly contentIdeaDiscoveryProcessor?: { process(job: LeasedJob): Promise<void> },
     private readonly contentGenerationProcessor?: { process(job: LeasedJob): Promise<void> },
+    private readonly contentPublicationProcessor?: { process(job: LeasedJob): Promise<void> },
   ) {}
 
   stop(): void {
@@ -94,6 +95,7 @@ export class ResearchWorker {
         ...(this.prospectDecisionProcessor ? ["prospect.decision.execute"] : []),
         ...(this.contentIdeaDiscoveryProcessor ? ["content.ideas.discover"] : []),
         ...(this.contentGenerationProcessor ? ["content.asset.generate"] : []),
+        ...(this.contentPublicationProcessor ? ["content.publication.publish"] : []),
     ];
     const allowed = this.options.jobTypes ? new Set(this.options.jobTypes) : null;
     const excluded = new Set(this.options.excludedJobTypes ?? []);
@@ -161,6 +163,8 @@ export class ResearchWorker {
         await this.contentIdeaDiscoveryProcessor.process(job);
       } else if (job.type === "content.asset.generate" && this.contentGenerationProcessor) {
         await this.contentGenerationProcessor.process(job);
+      } else if (job.type === "content.publication.publish" && this.contentPublicationProcessor) {
+        await this.contentPublicationProcessor.process(job);
       } else {
         await this.orchestrator.process(job);
       }
