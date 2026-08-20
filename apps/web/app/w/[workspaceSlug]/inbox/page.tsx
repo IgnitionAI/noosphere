@@ -7,7 +7,7 @@ import {
   type WorkspaceConversationView,
 } from "@/lib/api";
 
-export const metadata = { title: "Messages" };
+export const metadata = { title: "Conversations" };
 export const dynamic = "force-dynamic";
 
 type Query = {
@@ -55,7 +55,7 @@ export default async function InboxPage({
   return (
     <>
       <header className="mb-6">
-        <h1 className="page-title">Messages</h1>
+        <h1 className="page-title">Conversations</h1>
         <p className="mt-2 text-sm text-muted">Toutes les conversations des comptes LinkedIn, email et WhatsApp associés.</p>
       </header>
 

@@ -181,6 +181,9 @@ databaseDescribe("Setter Cal.com scheduling", () => {
     expect(await database.db.select().from(opportunities).where(eq(opportunities.workspaceId, workspaceId))).toMatchObject([
       { stage: "meeting_booked", contactId },
     ]);
+    expect(await integration.listBookings({ workspaceId, contactId, limit: 20 })).toMatchObject([
+      { contactName: "Marie Dupont", campaignName: null, opportunityStage: "meeting_booked" },
+    ]);
     expect(await database.db.select().from(opportunityStageHistory).where(eq(opportunityStageHistory.workspaceId, workspaceId))).toHaveLength(1);
     expect(await database.db.select().from(outboxEvents).where(eq(outboxEvents.workspaceId, workspaceId))).toHaveLength(1);
   });

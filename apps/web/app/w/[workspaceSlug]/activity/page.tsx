@@ -28,7 +28,7 @@ export default async function ActivityPage({
             <h1 className="page-title mt-3">{titleFor(lens)}</h1>
             <p className="mt-2 max-w-2xl text-sm text-muted">{descriptionFor(lens)}</p>
           </div>
-          {lens === "outbound" ? <Link className="button button-primary" href={`/w/${workspaceSlug}/strategy/product-reading`}>Lancer un ICP <ArrowRight size={14} /></Link> : <Link className="button" href={`/w/${workspaceSlug}/settings`}><Settings2 size={14} /> Configuration</Link>}
+          {lens === "outbound" ? <div className="flex flex-wrap gap-2"><Link className="button" href={`/w/${workspaceSlug}/campaigns`}>Toutes les campagnes</Link><Link className="button button-primary" href={`/w/${workspaceSlug}/strategy/product-reading`}>Lancer un ICP <ArrowRight size={14} /></Link></div> : <Link className="button" href={`/w/${workspaceSlug}/settings`}><Settings2 size={14} /> Configuration</Link>}
         </header>
 
         <NoosphereAxis lens={lens} searchParams={{}} workspaceSlug={workspaceSlug} />
