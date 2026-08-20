@@ -148,6 +148,11 @@ export const offerClaimValidationStatusEnum = pgEnum("offer_claim_validation_sta
   "validated",
   "invalidated",
 ]);
+export const editorialStrategyStatusEnum = pgEnum("editorial_strategy_status", [
+  "draft",
+  "active",
+  "archived",
+]);
 export const connectedAccountStatusEnum = pgEnum("connected_account_status", [
   "pending",
   "connected",
@@ -1351,6 +1356,86 @@ export const offerClaims = pgTable(
     foreignKey({ columns: [table.workspaceId, table.offerVersionId], foreignColumns: [offerVersions.workspaceId, offerVersions.id], name: "offer_claims_workspace_version_fk" }).onDelete("restrict"),
     unique("offer_claims_workspace_id_uq").on(table.workspaceId, table.id),
     index("offer_claims_workspace_version_idx").on(table.workspaceId, table.offerVersionId),
+  ],
+);
+
+export const editorialStrategies = pgTable(
+  "editorial_strategies",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    name: varchar("name", { length: 500 }).notNull(),
+    offerId: uuid("offer_id").notNull(),
+    offerVersionId: uuid("offer_version_id").notNull(),
+    icpId: uuid("icp_id").notNull(),
+    icpVersionId: uuid("icp_version_id").notNull(),
+    status: editorialStrategyStatusEnum("status").notNull().default("draft"),
+    currentVersion: integer("current_version").notNull().default(0),
+    draft: jsonb("draft").notNull(),
+    provider: varchar("provider", { length: 120 }).notNull(),
+    model: varchar("model", { length: 200 }).notNull(),
+    promptVersion: varchar("prompt_version", { length: 120 }).notNull(),
+    aiRunId: uuid("ai_run_id"),
+    createdBy: uuid("created_by").references(() => authUsers.id, { onDelete: "set null" }),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({ columns: [table.workspaceId, table.offerId], foreignColumns: [offers.workspaceId, offers.id], name: "editorial_strategies_workspace_offer_fk" }).onDelete("restrict"),
+    foreignKey({ columns: [table.workspaceId, table.offerVersionId], foreignColumns: [offerVersions.workspaceId, offerVersions.id], name: "editorial_strategies_workspace_offer_version_fk" }).onDelete("restrict"),
+    foreignKey({ columns: [table.workspaceId, table.icpId], foreignColumns: [icps.workspaceId, icps.id], name: "editorial_strategies_workspace_icp_fk" }).onDelete("restrict"),
+    foreignKey({ columns: [table.workspaceId, table.icpVersionId], foreignColumns: [icpVersions.workspaceId, icpVersions.id], name: "editorial_strategies_workspace_icp_version_fk" }).onDelete("restrict"),
+    foreignKey({ columns: [table.workspaceId, table.aiRunId], foreignColumns: [aiRuns.workspaceId, aiRuns.id], name: "editorial_strategies_workspace_ai_run_fk" }).onDelete("set null"),
+    unique("editorial_strategies_workspace_id_uq").on(table.workspaceId, table.id),
+    uniqueIndex("editorial_strategies_workspace_grounding_uq")
+      .on(table.workspaceId, table.offerId, table.icpId)
+      .where(sql`${table.deletedAt} is null`),
+  ],
+);
+
+export const editorialStrategyVersions = pgTable(
+  "editorial_strategy_versions",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    strategyId: uuid("strategy_id").notNull(),
+    version: integer("version").notNull(),
+    offerVersionId: uuid("offer_version_id").notNull(),
+    icpVersionId: uuid("icp_version_id").notNull(),
+    snapshot: jsonb("snapshot").notNull(),
+    provider: varchar("provider", { length: 120 }).notNull(),
+    model: varchar("model", { length: 200 }).notNull(),
+    promptVersion: varchar("prompt_version", { length: 120 }).notNull(),
+    aiRunId: uuid("ai_run_id"),
+    publishedBy: uuid("published_by").references(() => authUsers.id, { onDelete: "set null" }),
+    publishedAt: timestamp("published_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({ columns: [table.workspaceId, table.strategyId], foreignColumns: [editorialStrategies.workspaceId, editorialStrategies.id], name: "editorial_strategy_versions_workspace_strategy_fk" }).onDelete("restrict"),
+    foreignKey({ columns: [table.workspaceId, table.offerVersionId], foreignColumns: [offerVersions.workspaceId, offerVersions.id], name: "editorial_strategy_versions_workspace_offer_fk" }).onDelete("restrict"),
+    foreignKey({ columns: [table.workspaceId, table.icpVersionId], foreignColumns: [icpVersions.workspaceId, icpVersions.id], name: "editorial_strategy_versions_workspace_icp_fk" }).onDelete("restrict"),
+    foreignKey({ columns: [table.workspaceId, table.aiRunId], foreignColumns: [aiRuns.workspaceId, aiRuns.id], name: "editorial_strategy_versions_workspace_ai_run_fk" }).onDelete("set null"),
+    unique("editorial_strategy_versions_workspace_id_uq").on(table.workspaceId, table.id),
+    uniqueIndex("editorial_strategy_versions_strategy_version_uq").on(table.workspaceId, table.strategyId, table.version),
+  ],
+);
+
+export const contentOperationRequests = pgTable(
+  "content_operation_requests",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    operation: varchar("operation", { length: 120 }).notNull(),
+    requestKey: varchar("request_key", { length: 300 }).notNull(),
+    resourceType: varchar("resource_type", { length: 120 }).notNull(),
+    resourceId: uuid("resource_id").notNull(),
+    response: jsonb("response").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("content_operation_requests_workspace_key_uq").on(table.workspaceId, table.operation, table.requestKey),
   ],
 );
 

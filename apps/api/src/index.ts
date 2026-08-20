@@ -57,6 +57,11 @@ import { createOperatorConsoleHttpHandler, isOperatorConsoleRoute } from "@outbo
 import { PostgresWorkspaceOnboarding } from "@outbound/infrastructure/workspaces/postgres-workspace-onboarding";
 import { createWorkspaceOnboardingHttpHandler, isWorkspaceOnboardingRoute } from "@outbound/interface/http/workspace-onboarding-handler";
 import { createOperationalViewHttpHandler } from "@outbound/interface/http/operational-view-handler";
+import { EditorialStrategyApplication } from "@outbound/application/content/editorial-strategy";
+import { PostgresEditorialStrategyRepository } from "@outbound/infrastructure/content/postgres-editorial-strategy-repository";
+import { LangChainEditorialStrategyGenerator } from "@outbound/infrastructure/content/langchain-editorial-strategy-generator";
+import { PostgresAiRunRecorder } from "@outbound/infrastructure/ai/postgres-ai-run-recorder";
+import { createContentStrategyHttpHandler, isContentStrategyRoute } from "@outbound/interface/http/content-strategy-handler";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
@@ -256,6 +261,17 @@ const operationalViews = createOperationalViewHttpHandler({
   database: database.db,
   contextResolver: auth.contextResolver,
 });
+const contentStrategy = createContentStrategyHttpHandler({
+  contextResolver: auth.contextResolver,
+  application: new EditorialStrategyApplication(
+    new PostgresEditorialStrategyRepository(database.db),
+    new LangChainEditorialStrategyGenerator(
+      process.env,
+      workspaceAiSettingsRepository,
+      new PostgresAiRunRecorder(database.db, clock, ids),
+    ),
+  ),
+});
 const port = positiveIntegerEnvironment("PORT", 3000);
 const server = Bun.serve({
   port,
@@ -284,6 +300,7 @@ const server = Bun.serve({
     if (isOperatorConsoleRoute(pathname)) return operatorConsole(request);
     if (isWorkspaceOnboardingRoute(pathname)) return workspaceOnboarding(request);
     if (isWorkspaceDataRoute(pathname, request.method)) return workspaceData(request);
+    if (isContentStrategyRoute(pathname)) return contentStrategy(request);
     if (
       pathname === "/api/v1/workspace/operational-summary"
       || pathname === "/api/v1/activity"

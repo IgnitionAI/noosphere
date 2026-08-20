@@ -57,7 +57,10 @@ function ActivityContent({ activity, workspaceSlug }: { activity: ActivityWorksp
         <Sparkles className="mx-auto text-muted" size={30} />
         <h2 className="mt-4 font-semibold">{activity.lens === "inbound" ? "Inbound LinkedIn sera le prochain moteur activé" : "La Symbiose attend une première preuve Inbound"}</h2>
         <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-muted">{activity.lens === "inbound" ? "La stratégie, les idées sourcées, le pipeline éditorial et la publication durable seront installés sans perturber Outbound." : "Elle reliera ensuite publications, interactions, conversations et appels sans modifier l’origine campagne/hors campagne."}</p>
-        <Link className="button mt-5" href={`/w/${workspaceSlug}/settings`}>Vérifier les prérequis</Link>
+        <div className="mt-5 flex flex-wrap justify-center gap-2">
+          {activity.lens === "inbound" ? <Link className="button button-primary" href={`/w/${workspaceSlug}/content/strategy`}>Préparer la stratégie</Link> : null}
+          <Link className="button" href={`/w/${workspaceSlug}/settings`}>Vérifier les prérequis</Link>
+        </div>
       </section>
     );
   }

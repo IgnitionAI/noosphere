@@ -21,6 +21,8 @@ import {
   contacts,
   conversations,
   dailyProspectingSchedules,
+  editorialStrategies,
+  editorialStrategyVersions,
   jobs,
   knowledgeSources,
   icpVersions,
@@ -109,6 +111,16 @@ export class PostgresOperationalViews {
     const hasMoreAttention = attentionPage.length > attentionLimit;
     const attention = attentionPage.slice(0, attentionLimit);
     const statuses = accountRows.map((row) => row.status);
+    const editorialRows = await this.database.select({
+      id: editorialStrategies.id,
+      status: editorialStrategies.status,
+      currentVersion: editorialStrategies.currentVersion,
+      updatedAt: editorialStrategies.updatedAt,
+    }).from(editorialStrategies).where(and(
+      eq(editorialStrategies.workspaceId, workspaceId),
+      sql`${editorialStrategies.deletedAt} is null`,
+    )).orderBy(desc(editorialStrategies.updatedAt)).limit(1);
+    const editorial = editorialRows[0];
     const connected = statuses.filter((status) => status === "connected").length;
     const degraded = statuses.filter((status) => status === "degraded" || status === "unknown" || status === "pending").length;
     const disconnected = statuses.filter((status) => status === "disconnected").length;
@@ -167,11 +179,11 @@ export class PostgresOperationalViews {
       accountHealth: { connected, degraded, disconnected, activeAlerts: valueOf(alertCount) },
       engines: {
         inbound: {
-          status: "not_configured",
-          label: "Inbound à configurer",
-          summary: "La stratégie éditoriale LinkedIn sera disponible au Lot 2.",
-          lastActivityAt: null,
-          nextAction: { label: "Voir la configuration", href: "/settings" },
+          status: editorial ? (editorial.status === "active" ? "idle" : "paused") : "not_configured",
+          label: editorial ? (editorial.status === "active" ? "Inbound prêt" : "Stratégie Inbound en brouillon") : "Inbound à configurer",
+          summary: editorial ? `Stratégie LinkedIn v${editorial.currentVersion || "brouillon"} · le pipeline éditorial attend sa prochaine étape.` : "Une offre publiée et un ICP actif sont requis pour dériver la stratégie.",
+          lastActivityAt: editorial?.updatedAt ?? null,
+          nextAction: editorial ? { label: "Voir la stratégie", href: "/content/strategy" } : { label: "Vérifier la configuration", href: "/settings" },
         },
         outbound: {
           status: outboundStatus,
@@ -191,18 +203,45 @@ export class PostgresOperationalViews {
     const offset = input.offset ?? 0;
     const limit = input.limit ?? 25;
     if (input.lens === "inbound") {
+      const [strategies, versions] = await Promise.all([
+        this.database.select({
+          id: editorialStrategies.id,
+          name: editorialStrategies.name,
+          status: editorialStrategies.status,
+          currentVersion: editorialStrategies.currentVersion,
+          model: editorialStrategies.model,
+          updatedAt: editorialStrategies.updatedAt,
+        }).from(editorialStrategies).where(and(
+          eq(editorialStrategies.workspaceId, input.workspaceId),
+          sql`${editorialStrategies.deletedAt} is null`,
+        )).orderBy(desc(editorialStrategies.updatedAt)).limit(limit + 1).offset(offset),
+        this.database.select({ value: count() }).from(editorialStrategyVersions).where(eq(editorialStrategyVersions.workspaceId, input.workspaceId)),
+      ]);
+      const hasNext = strategies.length > limit;
+      const items = strategies.slice(0, limit).map((strategy) => ({
+        id: `strategy:${strategy.id}`,
+        kind: "publication" as const,
+        source: "inbound" as const,
+        status: strategy.status === "active" ? "completed" as const : "pending" as const,
+        title: strategy.name,
+        detail: `${strategy.currentVersion > 0 ? `Version ${strategy.currentVersion} active` : "Brouillon dérivé"} · réflexion ${strategy.model}`,
+        occurredAt: strategy.updatedAt,
+        href: "/content/strategy",
+        correlationId: null,
+      }));
       return {
         lens: input.lens,
         asOf,
-        state: "not_configured",
-        headline: "La création de demande LinkedIn arrive dans le prochain lot.",
+        state: strategies.length ? (strategies[0]!.status === "active" ? "idle" : "attention") : "not_configured",
+        headline: strategies.length ? "La stratégie éditoriale LinkedIn est durable et ancrée dans l’offre et l’ICP publiés." : "Publiez une offre et un ICP pour dériver la stratégie Inbound.",
         counters: [
+          { key: "strategies", label: "Stratégies", value: strategies.length },
+          { key: "versions", label: "Versions publiées", value: valueOf(versions) },
           { key: "ideas", label: "Idées sourcées", value: 0 },
           { key: "planned", label: "Contenus planifiés", value: 0 },
-          { key: "published", label: "Contenus publiés", value: 0 },
         ],
-        items: [],
-        pagination: { nextCursor: null },
+        items,
+        pagination: { nextCursor: hasNext ? String(offset + limit) : null },
       };
     }
     if (input.lens === "symbiosis") {

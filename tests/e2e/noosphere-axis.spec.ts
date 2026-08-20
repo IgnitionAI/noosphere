@@ -9,8 +9,8 @@ test.beforeEach(async ({ page }) => {
   await page.getByLabel("Email professionnel").fill(email);
   await page.getByLabel("Mot de passe").fill(password);
   await page.getByRole("button", { name: "Accéder au workspace" }).click();
-  await expect(page).toHaveURL(new RegExp(`/w/${workspaceSlug}/?$`));
-  await expect(page.getByRole("heading", { name: "Aujourd’hui" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Aujourd’hui" })).toBeVisible({ timeout: 20_000 });
+  await expect(page).toHaveURL(new RegExp(`/w/${workspaceSlug}/?$`), { timeout: 20_000 });
 });
 
 test("the five destinations and Noosphere Axis remain GET-only", async ({ page }) => {
@@ -49,6 +49,14 @@ test("browser back restores the previous lens without losing URL state", async (
   await page.goBack();
   await expect(page).toHaveURL(new RegExp("lens=inbound"));
   await expect(page.getByRole("tab", { name: "Inbound" })).toHaveAttribute("aria-selected", "true");
+});
+
+test("Inbound exposes its grounded editorial strategy without a provider mutation", async ({ page }) => {
+  await page.getByRole("tab", { name: "Inbound" }).click();
+  await page.getByRole("link", { name: "Préparer la stratégie" }).click();
+  await expect(page).toHaveURL(new RegExp(`/w/${workspaceSlug}/content/strategy`));
+  await expect(page.getByRole("heading", { name: "Stratégie LinkedIn" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Aucune stratégie dérivée" })).toBeVisible();
 });
 
 test("Outbound surfaces preserve prospect and conversation filters in the URL", async ({ page }) => {
