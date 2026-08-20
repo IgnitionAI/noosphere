@@ -25,6 +25,7 @@ import {
   contentIdeaDiscoveryRuns,
   contentIdeas,
   contentIdeaSchedules,
+  contentPublications,
   dailyProspectingSchedules,
   editorialStrategies,
   editorialStrategyVersions,
@@ -116,7 +117,7 @@ export class PostgresOperationalViews {
     const hasMoreAttention = attentionPage.length > attentionLimit;
     const attention = attentionPage.slice(0, attentionLimit);
     const statuses = accountRows.map((row) => row.status);
-    const [editorialRows, generationRows, assetRows] = await Promise.all([
+    const [editorialRows, generationRows, assetRows, publicationRows] = await Promise.all([
       this.database.select({
         id: editorialStrategies.id,
         status: editorialStrategies.status,
@@ -142,10 +143,18 @@ export class PostgresOperationalViews {
         status: contentAssets.status,
         updatedAt: contentAssets.updatedAt,
       }).from(contentAssets).where(eq(contentAssets.workspaceId, workspaceId)).orderBy(desc(contentAssets.updatedAt)).limit(1),
+      this.database.select({
+        id: contentPublications.id,
+        status: contentPublications.status,
+        scheduledFor: contentPublications.scheduledFor,
+        lastErrorCode: contentPublications.lastErrorCode,
+        updatedAt: contentPublications.updatedAt,
+      }).from(contentPublications).where(eq(contentPublications.workspaceId, workspaceId)).orderBy(desc(contentPublications.updatedAt)).limit(1),
     ]);
     const editorial = editorialRows[0];
     const generation = generationRows[0];
     const latestAsset = assetRows[0];
+    const latestPublication = publicationRows[0];
     const connected = statuses.filter((status) => status === "connected").length;
     const degraded = statuses.filter((status) => status === "degraded" || status === "unknown" || status === "pending").length;
     const disconnected = statuses.filter((status) => status === "disconnected").length;
@@ -188,21 +197,30 @@ export class PostgresOperationalViews {
         type: "publication" as const,
         source: "inbound" as const,
         label: "Contenu LinkedIn prêt",
-        detail: "Le brief, les preuves et la critique éditoriale sont disponibles. Aucune publication n’a encore été déclenchée.",
+        detail: "Le brief, les preuves et la critique éditoriale sont disponibles.",
         expectedAt: null,
         href: `/content/ideas/${latestAsset.ideaId}`,
+      }] : []),
+      ...(latestPublication && ["scheduled", "retry"].includes(latestPublication.status) ? [{
+        id: `publication:${latestPublication.id}`,
+        type: "publication" as const,
+        source: "inbound" as const,
+        label: latestPublication.status === "retry" ? "Nouvelle tentative LinkedIn" : "Prochaine publication LinkedIn",
+        detail: "Le texte, la policy et le compte sont figés dans un snapshot durable.",
+        expectedAt: latestPublication.scheduledFor,
+        href: "/content/calendar",
       }] : []),
     ].sort((left, right) => (left.expectedAt?.getTime() ?? Number.MAX_SAFE_INTEGER) - (right.expectedAt?.getTime() ?? Number.MAX_SAFE_INTEGER));
     const inboundStatus = !editorial
       ? "not_configured"
-      : generation?.status === "blocked" || generation?.status === "failed" || latestAsset?.status === "blocked"
+      : generation?.status === "blocked" || generation?.status === "failed" || latestAsset?.status === "blocked" || latestPublication?.status === "unknown" || latestPublication?.status === "failed"
         ? "degraded"
-        : generation?.status === "queued" || generation?.status === "running"
+        : generation?.status === "queued" || generation?.status === "running" || latestPublication?.status === "publishing"
           ? "running"
           : editorial.status === "active"
             ? "idle"
             : "paused";
-    const inboundLastActivity = generation?.updatedAt ?? latestAsset?.updatedAt ?? editorial?.updatedAt ?? null;
+    const inboundLastActivity = latestPublication?.updatedAt ?? generation?.updatedAt ?? latestAsset?.updatedAt ?? editorial?.updatedAt ?? null;
     return {
       asOf,
       counts: {
@@ -224,10 +242,16 @@ export class PostgresOperationalViews {
       engines: {
         inbound: {
           status: inboundStatus,
-          label: inboundStatus === "running" ? "Inbound génère un contenu" : inboundStatus === "degraded" ? "Inbound nécessite une attention" : editorial ? (editorial.status === "active" ? "Inbound prêt" : "Stratégie Inbound en brouillon") : "Inbound à configurer",
+          label: inboundStatus === "running" ? (latestPublication?.status === "publishing" ? "Inbound publie sur LinkedIn" : "Inbound génère un contenu") : inboundStatus === "degraded" ? "Inbound nécessite une attention" : editorial ? (editorial.status === "active" ? "Inbound prêt" : "Stratégie Inbound en brouillon") : "Inbound à configurer",
           summary: !editorial
             ? "Une offre publiée et un ICP actif sont requis pour dériver la stratégie."
-            : generation?.status === "queued" || generation?.status === "running"
+            : latestPublication?.status === "unknown"
+              ? "Le résultat LinkedIn est incertain : la publication attend une réconciliation et ne sera pas rejouée."
+              : latestPublication?.status === "failed"
+                ? `La dernière publication a échoué${latestPublication.lastErrorCode ? ` · ${latestPublication.lastErrorCode}` : ""}.`
+                : latestPublication?.status === "publishing"
+                  ? "Publication LinkedIn en cours avec lease durable."
+                  : generation?.status === "queued" || generation?.status === "running"
               ? `Pipeline éditorial à l’étape ${contentStageLabel(generation.stage)} · reprise durable active.`
               : latestAsset?.status === "ready"
                 ? `Stratégie LinkedIn v${editorial.currentVersion || "brouillon"} · un contenu sourcé est prêt.`
@@ -235,7 +259,9 @@ export class PostgresOperationalViews {
                   ? "La critique ou l’audit des preuves a bloqué le dernier contenu."
                   : `Stratégie LinkedIn v${editorial.currentVersion || "brouillon"} · le pipeline éditorial attend sa prochaine étape.`,
           lastActivityAt: inboundLastActivity,
-          nextAction: generation
+          nextAction: latestPublication && ["scheduled", "retry", "publishing", "unknown", "failed"].includes(latestPublication.status)
+            ? { label: latestPublication.status === "unknown" || latestPublication.status === "failed" ? "Voir l’exception" : "Voir le calendrier", href: "/content/calendar" }
+            : generation
             ? { label: generation.status === "blocked" || generation.status === "failed" ? "Voir le blocage" : "Suivre la génération", href: `/content/ideas/${generation.ideaId}` }
             : latestAsset
               ? { label: "Voir le contenu", href: `/content/ideas/${latestAsset.ideaId}` }
@@ -261,7 +287,7 @@ export class PostgresOperationalViews {
     const offset = input.offset ?? 0;
     const limit = input.limit ?? 25;
     if (input.lens === "inbound") {
-      const [strategies, versions, ideaCount, ideas, ideaRuns, schedule, assetCount, assetRows, generationRows] = await Promise.all([
+      const [strategies, versions, ideaCount, ideas, ideaRuns, schedule, assetCount, assetRows, generationRows, publicationCount, publicationRows] = await Promise.all([
         this.database.select({
           id: editorialStrategies.id,
           name: editorialStrategies.name,
@@ -281,9 +307,22 @@ export class PostgresOperationalViews {
         this.database.select({ value: count() }).from(contentAssets).where(eq(contentAssets.workspaceId, input.workspaceId)),
         this.database.select({ id: contentAssets.id, ideaId: contentAssets.ideaId, status: contentAssets.status, latestVersion: contentAssets.latestVersion, angle: contentIdeas.angle, updatedAt: contentAssets.updatedAt }).from(contentAssets).innerJoin(contentIdeas, and(eq(contentIdeas.workspaceId, contentAssets.workspaceId), eq(contentIdeas.id, contentAssets.ideaId))).where(eq(contentAssets.workspaceId, input.workspaceId)).orderBy(desc(contentAssets.updatedAt)).limit(limit),
         this.database.select({ id: contentGenerationRuns.id, ideaId: contentGenerationRuns.ideaId, status: contentGenerationRuns.status, stage: contentGenerationRuns.stage, angle: contentIdeas.angle, updatedAt: contentGenerationRuns.updatedAt }).from(contentGenerationRuns).innerJoin(contentIdeas, and(eq(contentIdeas.workspaceId, contentGenerationRuns.workspaceId), eq(contentIdeas.id, contentGenerationRuns.ideaId))).where(and(eq(contentGenerationRuns.workspaceId, input.workspaceId), sql`${contentGenerationRuns.status} in ('queued', 'running', 'blocked', 'failed')`)).orderBy(desc(contentGenerationRuns.updatedAt)).limit(limit),
+        this.database.select({ value: count() }).from(contentPublications).where(eq(contentPublications.workspaceId, input.workspaceId)),
+        this.database.select({ id: contentPublications.id, status: contentPublications.status, scheduledFor: contentPublications.scheduledFor, attempts: contentPublications.attempts, maxAttempts: contentPublications.maxAttempts, lastErrorCode: contentPublications.lastErrorCode, updatedAt: contentPublications.updatedAt }).from(contentPublications).where(eq(contentPublications.workspaceId, input.workspaceId)).orderBy(desc(contentPublications.updatedAt)).limit(limit),
       ]);
       const hasNext = ideas.length > limit;
       const items = [
+        ...publicationRows.map((publication) => ({
+          id: `publication:${publication.id}`,
+          kind: "publication" as const,
+          source: "inbound" as const,
+          status: publication.status === "unknown" || publication.status === "failed" ? "attention" as const : publication.status === "published" || publication.status === "cancelled" ? "completed" as const : publication.status === "publishing" ? "running" as const : "pending" as const,
+          title: publication.status === "published" ? "Publication LinkedIn publiée" : publication.status === "unknown" ? "Publication LinkedIn à réconcilier" : publication.status === "failed" ? "Publication LinkedIn en échec" : "Publication LinkedIn planifiée",
+          detail: `${publication.attempts}/${publication.maxAttempts} tentative${publication.maxAttempts === 1 ? "" : "s"} · ${publication.status === "scheduled" || publication.status === "retry" ? `prévue ${publication.scheduledFor.toISOString()}` : publication.lastErrorCode ?? "snapshot durable"}`,
+          occurredAt: publication.updatedAt,
+          href: "/content/calendar",
+          correlationId: `content-publication:${publication.id}`,
+        })),
         ...generationRows.map((run) => ({
           id: `content-run:${run.id}`,
           kind: "publication" as const,
@@ -340,8 +379,8 @@ export class PostgresOperationalViews {
         correlationId: null,
         })),
       ].slice(0, limit);
-      const failed = ideaRuns.some((run) => run.status === "failed") || generationRows.some((run) => run.status === "failed" || run.status === "blocked");
-      const running = ideaRuns.some((run) => run.status === "running" || run.status === "queued") || generationRows.some((run) => run.status === "running" || run.status === "queued");
+      const failed = ideaRuns.some((run) => run.status === "failed") || generationRows.some((run) => run.status === "failed" || run.status === "blocked") || publicationRows.some((publication) => publication.status === "failed" || publication.status === "unknown");
+      const running = ideaRuns.some((run) => run.status === "running" || run.status === "queued") || generationRows.some((run) => run.status === "running" || run.status === "queued") || publicationRows.some((publication) => publication.status === "publishing");
       return {
         lens: input.lens,
         asOf,
@@ -352,6 +391,7 @@ export class PostgresOperationalViews {
           { key: "versions", label: "Versions publiées", value: valueOf(versions) },
           { key: "ideas", label: "Idées sourcées", value: valueOf(ideaCount) },
           { key: "assets", label: "Contenus", value: valueOf(assetCount) },
+          { key: "publications", label: "Publications", value: valueOf(publicationCount) },
         ],
         items,
         pagination: { nextCursor: hasNext ? String(offset + limit) : null },

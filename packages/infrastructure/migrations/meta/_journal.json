@@ -498,6 +498,13 @@
       "when": 1797775380000,
       "tag": "0070_noosphere_content_generation",
       "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "7",
+      "when": 1797775440000,
+      "tag": "0071_noosphere_durable_publications",
+      "breakpoints": true
     }
   ]
 }

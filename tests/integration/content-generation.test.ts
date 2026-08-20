@@ -1,9 +1,12 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
+import { inArray } from "drizzle-orm";
 import { createDatabase } from "@outbound/infrastructure/database/client";
 import {
   authUsers,
+  contentPublicationAttempts,
+  contentPublications,
   contentIdeaDiscoveryRuns,
   contentIdeaSources,
   contentIdeas,
@@ -17,6 +20,7 @@ import {
   workspaces,
 } from "@outbound/infrastructure/database/schema";
 import { PostgresContentGenerationRepository } from "@outbound/infrastructure/content/postgres-content-generation-repository";
+import { PostgresContentPublicationRepository } from "@outbound/infrastructure/content/postgres-content-publication-repository";
 import { PostgresOperationalViews } from "@outbound/infrastructure/workspaces/postgres-operational-views";
 
 const databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
@@ -26,6 +30,7 @@ databaseDescribe("CNT-101 durable content generation", () => {
   if (!databaseUrl) return;
   const database = createDatabase(databaseUrl);
   const repository = new PostgresContentGenerationRepository(database.db);
+  const publicationRepository = new PostgresContentPublicationRepository(database.db);
   const operationalViews = new PostgresOperationalViews(database.db);
   const workspaceId = crypto.randomUUID();
   const otherWorkspaceId = crypto.randomUUID();
@@ -66,6 +71,8 @@ databaseDescribe("CNT-101 durable content generation", () => {
     await database.client`delete from audit_logs where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`delete from outbox_events where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`delete from content_operation_requests where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
+    await database.db.delete(contentPublicationAttempts).where(inArray(contentPublicationAttempts.workspaceId, [workspaceId, otherWorkspaceId]));
+    await database.db.delete(contentPublications).where(inArray(contentPublications.workspaceId, [workspaceId, otherWorkspaceId]));
     await database.client`alter table content_asset_versions disable trigger content_asset_versions_immutable_trg`;
     await database.client`delete from content_asset_versions where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`alter table content_asset_versions enable trigger content_asset_versions_immutable_trg`;
@@ -123,6 +130,29 @@ databaseDescribe("CNT-101 durable content generation", () => {
     expect((await repository.findRun({ workspaceId, runId: first.id }))?.status).toBe("ready");
     expect(await repository.findRun({ workspaceId: otherWorkspaceId, runId: first.id })).toBeNull();
 
+    const scheduled = await publicationRepository.schedule({
+      workspaceId,
+      userId,
+      assetId: asset!.id,
+      requestKey: "publication:integration:1",
+      scheduledFor: new Date(now.getTime() + 10_000),
+      account: { provider: "unipile", providerAccountId: "linkedin-account-fixture", displayName: "Compte LinkedIn fixture", selectionVersion: now.toISOString(), observedAt: now.toISOString() },
+      now,
+    });
+    const scheduledReplay = await publicationRepository.schedule({
+      workspaceId,
+      userId,
+      assetId: asset!.id,
+      requestKey: "publication:integration:1",
+      scheduledFor: new Date(now.getTime() + 20_000),
+      account: { provider: "unipile", providerAccountId: "linkedin-account-fixture", displayName: "Compte LinkedIn fixture", selectionVersion: now.toISOString(), observedAt: now.toISOString() },
+      now,
+    });
+    expect(scheduledReplay.id).toBe(scheduled.id);
+    expect(await publicationRepository.find({ workspaceId: otherWorkspaceId, publicationId: scheduled.id })).toBeNull();
+    const moved = await publicationRepository.reschedule({ workspaceId, userId, publicationId: scheduled.id, requestKey: "publication:move:1", scheduledFor: new Date(now.getTime() + 1_000), now });
+    expect(moved.scheduledFor).toEqual(new Date(now.getTime() + 1_000));
+
     const improved = await repository.createGeneration({ workspaceId, userId, assetId: asset!.id, operation: "asset.improve", requestKey: "content:integration:2", instruction: "Un hook plus concret", now: new Date(now.getTime() + 1_000) });
     await repository.startRun({ workspaceId, runId: improved.id, now });
     await repository.saveBrief({ workspaceId, runId: improved.id, brief, now });
@@ -131,19 +161,56 @@ databaseDescribe("CNT-101 durable content generation", () => {
     await repository.completeRun({ workspaceId, runId: improved.id, critique, readiness: { ready: true, blockers: [] }, now });
     expect((await repository.findAssetByIdea({ workspaceId, ideaId }))?.latestVersion).toBe(2);
 
+    const execution = await publicationRepository.claimExecution({ workspaceId, publicationId: scheduled.id, currentAccountId: "linkedin-account-fixture", executionToken: crypto.randomUUID(), now: new Date(now.getTime() + 2_000) });
+    expect(execution.text).toBe(draft.body);
+    expect(await publicationRepository.inspectExecution({ workspaceId, publicationId: scheduled.id, now: new Date(now.getTime() + 3_000) })).toBe("unknown");
+    expect((await publicationRepository.find({ workspaceId, publicationId: scheduled.id }))?.status).toBe("unknown");
+
+    const cancellable = await publicationRepository.schedule({ workspaceId, userId, assetId: asset!.id, requestKey: "publication:integration:cancel", scheduledFor: new Date(now.getTime() + 30_000), account: { provider: "unipile", providerAccountId: "linkedin-account-fixture", displayName: "Compte LinkedIn fixture", selectionVersion: now.toISOString(), observedAt: now.toISOString() }, now });
+    const cancelled = await publicationRepository.cancel({ workspaceId, userId, publicationId: cancellable.id, requestKey: "publication:cancel:1", now });
+    const cancelReplay = await publicationRepository.cancel({ workspaceId, userId, publicationId: cancellable.id, requestKey: "publication:cancel:1", now });
+    expect(cancelled.status).toBe("cancelled");
+    expect(cancelReplay.status).toBe("cancelled");
+
+    const publishable = await publicationRepository.schedule({ workspaceId, userId, assetId: asset!.id, requestKey: "publication:integration:published", scheduledFor: now, account: { provider: "unipile", providerAccountId: "linkedin-account-fixture", displayName: "Compte LinkedIn fixture", selectionVersion: now.toISOString(), observedAt: now.toISOString() }, now });
+    const publishToken = crypto.randomUUID();
+    await publicationRepository.claimExecution({ workspaceId, publicationId: publishable.id, currentAccountId: "linkedin-account-fixture", executionToken: publishToken, now });
+    await publicationRepository.markPublished({ workspaceId, publicationId: publishable.id, executionToken: publishToken, result: { providerPostId: "provider-post-fixture", socialId: "social-fixture", url: "https://www.linkedin.com/feed/update/fixture", publishedAt: now }, now });
+    expect(await publicationRepository.find({ workspaceId, publicationId: publishable.id })).toMatchObject({ status: "published", providerPostId: "provider-post-fixture", providerUrl: "https://www.linkedin.com/feed/update/fixture" });
+    await expectRejected(() => publicationRepository.markFailed({ workspaceId, publicationId: publishable.id, code: "STALE_WORKER", message: "A stale preflight must not overwrite success", now }), "CONTENT_PUBLICATION_EXECUTION_CONFLICT");
+    expect((await publicationRepository.find({ workspaceId, publicationId: publishable.id }))?.status).toBe("published");
+
+    const firstPublicationPage = await publicationRepository.list({ workspaceId, limit: 1 });
+    const secondPublicationPage = await publicationRepository.list({ workspaceId, cursor: firstPublicationPage.nextCursor!, limit: 1 });
+    const thirdPublicationPage = await publicationRepository.list({ workspaceId, cursor: secondPublicationPage.nextCursor!, limit: 1 });
+    expect(new Set([
+      firstPublicationPage.data[0]?.id,
+      secondPublicationPage.data[0]?.id,
+      thirdPublicationPage.data[0]?.id,
+    ])).toEqual(new Set([scheduled.id, cancellable.id, publishable.id]));
+    expect(thirdPublicationPage.nextCursor).toBeNull();
+
     const [summary, activity, isolatedActivity] = await Promise.all([
       operationalViews.getSummary(workspaceId),
       operationalViews.getActivity({ workspaceId, lens: "inbound" }),
       operationalViews.getActivity({ workspaceId: otherWorkspaceId, lens: "inbound" }),
     ]);
-    expect(summary.engines.inbound).toMatchObject({ status: "idle", label: "Inbound prêt" });
-    expect(summary.engines.inbound.nextAction?.href).toBe(`/content/ideas/${ideaId}`);
+    expect(summary.engines.inbound).toMatchObject({
+      status: "degraded",
+      label: "Inbound nécessite une attention",
+      summary: "Le résultat LinkedIn est incertain : la publication attend une réconciliation et ne sera pas rejouée.",
+    });
+    expect(summary.engines.inbound.nextAction).toEqual({ label: "Voir l’exception", href: "/content/calendar" });
     expect(summary.nextOutcomes).toContainEqual(expect.objectContaining({ id: `content:${asset!.id}`, type: "publication", source: "inbound" }));
     expect(activity.counters).toContainEqual({ key: "assets", label: "Contenus", value: 1 });
+    expect(activity.counters).toContainEqual({ key: "publications", label: "Publications", value: 3 });
+    expect(activity.items).toContainEqual(expect.objectContaining({ id: `publication:${scheduled.id}`, status: "attention", href: "/content/calendar" }));
+    expect(activity.items).toContainEqual(expect.objectContaining({ id: `publication:${publishable.id}`, status: "completed", href: "/content/calendar" }));
     expect(activity.items).toContainEqual(expect.objectContaining({ id: `content-asset:${asset!.id}`, status: "completed", href: `/content/ideas/${ideaId}` }));
     expect(isolatedActivity.items).toEqual([]);
 
     await expectRejected(() => database.client`update content_asset_versions set body = 'mutated' where workspace_id = ${workspaceId}`, "CONTENT_SNAPSHOT_IMMUTABLE");
+    await expectRejected(() => database.client`update content_publications set content_snapshot = '{"body":"mutated"}'::jsonb where workspace_id = ${workspaceId}`, "CONTENT_PUBLICATION_SNAPSHOT_IMMUTABLE");
   });
 });
 

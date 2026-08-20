@@ -66,6 +66,19 @@ test("the Inbound idea radar is explicit, durable and never presented as a publi
   await expect(page.getByRole("button", { name: "Relancer la recherche" })).toBeVisible();
 });
 
+test("the LinkedIn publication calendar exposes durable empty state without a provider mutation", async ({ page }) => {
+  const mutations: string[] = [];
+  page.on("request", (request) => {
+    if (["POST", "PUT", "PATCH", "DELETE"].includes(request.method())) mutations.push(`${request.method()} ${request.url()}`);
+  });
+  await page.goto(`/w/${workspaceSlug}/activity?lens=inbound`);
+  await page.getByRole("link", { name: "Calendrier", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/w/${workspaceSlug}/content/calendar`));
+  await expect(page.getByRole("heading", { name: "Publications LinkedIn" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Aucune publication planifiée" })).toBeVisible();
+  expect(mutations).toEqual([]);
+});
+
 test("Outbound surfaces preserve prospect and conversation filters in the URL", async ({ page }) => {
   const navigation = page.viewportSize()?.width === 390
     ? page.getByRole("navigation", { name: "Navigation mobile" })
