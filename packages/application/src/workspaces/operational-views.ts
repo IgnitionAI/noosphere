@@ -1,5 +1,28 @@
 export type AttentionSeverity = "info" | "warning" | "critical";
 
+export const noosphereLenses = ["inbound", "symbiosis", "outbound"] as const;
+export type NoosphereLens = (typeof noosphereLenses)[number];
+
+export type EngineOperationalStatus = "not_configured" | "idle" | "running" | "degraded" | "paused";
+
+export interface EngineOperationalState {
+  readonly status: EngineOperationalStatus;
+  readonly label: string;
+  readonly summary: string;
+  readonly lastActivityAt: Date | null;
+  readonly nextAction: { readonly label: string; readonly href: string } | null;
+}
+
+export interface NextOutcome {
+  readonly id: string;
+  readonly type: "publication" | "research" | "conversation" | "call";
+  readonly source: "inbound" | "outbound" | "mixed" | "unknown";
+  readonly label: string;
+  readonly detail: string;
+  readonly expectedAt: Date | null;
+  readonly href: string;
+}
+
 export interface AttentionItem {
   readonly id: string;
   readonly type: "account" | "job" | "campaign" | "decision" | "conversation";
@@ -9,6 +32,7 @@ export interface AttentionItem {
   readonly resourceHref: string | null;
   readonly ageSeconds: number;
   readonly action: { readonly label: string; readonly href: string } | null;
+  readonly correlationId: string | null;
   readonly createdAt: Date;
 }
 
@@ -19,6 +43,7 @@ export interface WorkspaceOperationalSummary {
     readonly prospects: number;
     readonly openConversations: number;
     readonly openOpportunities: number;
+    readonly bookedCalls: number;
     readonly attention: number;
   };
   readonly attention: readonly AttentionItem[];
@@ -34,6 +59,37 @@ export interface WorkspaceOperationalSummary {
     readonly disconnected: number;
     readonly activeAlerts: number;
   };
+  /** Compatibility fields above remain available for one release. */
+  readonly engines: {
+    readonly inbound: EngineOperationalState;
+    readonly outbound: EngineOperationalState;
+  };
+  readonly nextOutcomes: readonly NextOutcome[];
+  readonly attentionPagination: { readonly nextCursor: string | null };
+}
+
+export type ActivityItemKind = "campaign" | "job" | "conversation" | "call" | "publication" | "signal";
+
+export interface ActivityItem {
+  readonly id: string;
+  readonly kind: ActivityItemKind;
+  readonly source: "inbound" | "outbound" | "mixed" | "unknown";
+  readonly status: "pending" | "running" | "completed" | "attention";
+  readonly title: string;
+  readonly detail: string;
+  readonly occurredAt: Date;
+  readonly href: string;
+  readonly correlationId: string | null;
+}
+
+export interface ActivityWorkspacePage {
+  readonly lens: NoosphereLens;
+  readonly asOf: Date;
+  readonly state: "not_configured" | "idle" | "active" | "attention";
+  readonly headline: string;
+  readonly counters: readonly { readonly key: string; readonly label: string; readonly value: number }[];
+  readonly items: readonly ActivityItem[];
+  readonly pagination: { readonly nextCursor: string | null };
 }
 
 export type SetupReadinessState = "ready" | "optional" | "attention" | "missing";

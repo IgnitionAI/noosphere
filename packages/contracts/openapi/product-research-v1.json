@@ -1474,7 +1474,11 @@
     },
     "/api/v1/workspace/operational-summary": {
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
-      "get": { "operationId": "getWorkspaceOperationalSummary", "summary": "Read the tenant-scoped À traiter projection", "responses": { "200": { "description": "Operational counters, exceptions, jobs and account health", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkspaceOperationalSummary" } } } }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" } } }
+      "get": { "operationId": "getWorkspaceOperationalSummary", "summary": "Read the tenant-scoped À traiter projection", "parameters": [{ "name": "attentionCursor", "in": "query", "schema": { "type": "string" } }, { "name": "attentionLimit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 20 } }], "responses": { "200": { "description": "Operational counters, engines, outcomes, exceptions, jobs and account health", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkspaceOperationalSummary" } } } }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" } } }
+    },
+    "/api/v1/activity": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
+      "get": { "operationId": "getNoosphereActivity", "summary": "Read one Noosphere lens without triggering a command", "parameters": [{ "name": "lens", "in": "query", "schema": { "$ref": "#/components/schemas/NoosphereLens", "default": "symbiosis" } }, { "name": "cursor", "in": "query", "schema": { "type": "string" } }, { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 25 } }], "responses": { "200": { "description": "Paginated activity projection", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ActivityWorkspacePage" } } } }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" } } }
     },
     "/api/v1/workspace/setup-readiness": {
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
@@ -2934,21 +2938,29 @@
         "required": ["id", "type", "severity", "message", "resourceId", "ageSeconds", "createdAt"],
         "properties": {
           "id": { "type": "string" }, "type": { "type": "string", "enum": ["account", "job", "campaign", "decision", "conversation"] },
-          "severity": { "type": "string", "enum": ["info", "warning", "critical"] }, "message": { "type": "string" }, "resourceId": { "type": "string" },
+          "severity": { "type": "string", "enum": ["info", "warning", "critical"] }, "message": { "type": "string" }, "resourceId": { "type": ["string", "null"] },
           "resourceHref": { "type": ["string", "null"] }, "ageSeconds": { "type": "integer", "minimum": 0 },
           "action": { "type": ["object", "null"], "properties": { "label": { "type": "string" }, "href": { "type": "string" } } },
+          "correlationId": { "type": ["string", "null"] },
           "createdAt": { "type": "string", "format": "date-time" }
         }
       },
       "WorkspaceOperationalSummary": {
-        "type": "object", "required": ["asOf", "counts", "attention", "jobs", "nextAutomaticResearch", "accountHealth"],
+        "type": "object", "required": ["asOf", "counts", "attention", "jobs", "nextAutomaticResearch", "accountHealth", "engines", "nextOutcomes", "attentionPagination"],
         "properties": {
-          "asOf": { "type": "string", "format": "date-time" }, "counts": { "type": "object", "required": ["activeCampaigns", "prospects", "openConversations", "openOpportunities", "attention"], "additionalProperties": { "type": "integer", "minimum": 0 } },
+          "asOf": { "type": "string", "format": "date-time" }, "counts": { "type": "object", "required": ["activeCampaigns", "prospects", "openConversations", "openOpportunities", "bookedCalls", "attention"], "additionalProperties": { "type": "integer", "minimum": 0 } },
           "attention": { "type": "array", "items": { "$ref": "#/components/schemas/AttentionItem" } },
           "jobs": { "type": "object", "required": ["active", "failed", "running"], "properties": { "active": { "type": "integer" }, "failed": { "type": "integer" }, "running": { "type": "array", "items": { "type": "object", "additionalProperties": true } } } },
-          "nextAutomaticResearch": { "type": ["string", "null"], "format": "date-time" }, "accountHealth": { "type": "object", "additionalProperties": { "type": "integer" } }
+          "nextAutomaticResearch": { "type": ["string", "null"], "format": "date-time" }, "accountHealth": { "type": "object", "additionalProperties": { "type": "integer" } },
+          "engines": { "type": "object", "required": ["inbound", "outbound"], "properties": { "inbound": { "$ref": "#/components/schemas/EngineOperationalState" }, "outbound": { "$ref": "#/components/schemas/EngineOperationalState" } } },
+          "nextOutcomes": { "type": "array", "items": { "$ref": "#/components/schemas/NextOutcome" } },
+          "attentionPagination": { "type": "object", "required": ["nextCursor"], "properties": { "nextCursor": { "type": ["string", "null"] } } }
         }
       },
+      "NoosphereLens": { "type": "string", "enum": ["inbound", "symbiosis", "outbound"] },
+      "EngineOperationalState": { "type": "object", "required": ["status", "label", "summary", "lastActivityAt", "nextAction"], "properties": { "status": { "type": "string", "enum": ["not_configured", "idle", "running", "degraded", "paused"] }, "label": { "type": "string" }, "summary": { "type": "string" }, "lastActivityAt": { "type": ["string", "null"], "format": "date-time" }, "nextAction": { "type": ["object", "null"] } } },
+      "NextOutcome": { "type": "object", "required": ["id", "type", "source", "label", "detail", "expectedAt", "href"], "properties": { "id": { "type": "string" }, "type": { "type": "string", "enum": ["publication", "research", "conversation", "call"] }, "source": { "type": "string", "enum": ["inbound", "outbound", "mixed", "unknown"] }, "label": { "type": "string" }, "detail": { "type": "string" }, "expectedAt": { "type": ["string", "null"], "format": "date-time" }, "href": { "type": "string" } } },
+      "ActivityWorkspacePage": { "type": "object", "required": ["lens", "asOf", "state", "headline", "counters", "items", "pagination"], "properties": { "lens": { "$ref": "#/components/schemas/NoosphereLens" }, "asOf": { "type": "string", "format": "date-time" }, "state": { "type": "string", "enum": ["not_configured", "idle", "active", "attention"] }, "headline": { "type": "string" }, "counters": { "type": "array", "items": { "type": "object", "required": ["key", "label", "value"] } }, "items": { "type": "array", "items": { "type": "object", "required": ["id", "kind", "source", "status", "title", "detail", "occurredAt", "href", "correlationId"] } }, "pagination": { "type": "object", "required": ["nextCursor"], "properties": { "nextCursor": { "type": ["string", "null"] } } } } },
       "SetupReadinessView": {
         "type": "object", "required": ["ready", "asOf", "items"],
         "properties": { "ready": { "type": "boolean" }, "asOf": { "type": "string", "format": "date-time" }, "items": { "type": "array", "items": { "type": "object", "required": ["key", "label", "state", "reason", "requiredForLaunch"], "properties": { "key": { "type": "string" }, "label": { "type": "string" }, "state": { "type": "string", "enum": ["ready", "optional", "attention", "missing"] }, "reason": { "type": "string" }, "action": { "type": ["object", "null"] }, "requiredForLaunch": { "type": "boolean" } } } } }
