@@ -178,6 +178,61 @@ export interface ContentIdeaDiscoveryRun {
   readonly completedAt: string | null;
 }
 
+export interface ContentGenerationRun {
+  readonly id: string;
+  readonly ideaId: string;
+  readonly assetId: string;
+  readonly assetVersionId: string | null;
+  readonly status: "queued" | "running" | "ready" | "blocked" | "failed";
+  readonly stage: "brief" | "writer" | "audit" | "critic" | "completed";
+  readonly instruction: string | null;
+  readonly lastErrorCode: string | null;
+  readonly lastErrorMessage: string | null;
+  readonly createdAt: string;
+  readonly completedAt: string | null;
+}
+
+export interface ContentAssetVersion {
+  readonly id: string;
+  readonly assetId: string;
+  readonly briefId: string;
+  readonly version: number;
+  readonly body: string;
+  readonly draft: {
+    readonly hook: string;
+    readonly body: string;
+    readonly callToAction: string | null;
+    readonly factualClaims: readonly { readonly statement: string; readonly sourceKeys: readonly string[] }[];
+    readonly opinionStatements: readonly string[];
+  };
+  readonly audit: {
+    readonly reviewedClaims: readonly { readonly statement: string; readonly sourceKeys: readonly string[]; readonly verdict: "supported" | "unsupported"; readonly reason: string }[];
+    readonly ungroundedStatements: readonly string[];
+    readonly forbiddenTopicMatches: readonly string[];
+  };
+  readonly critique: {
+    readonly genericPhrases: readonly string[];
+    readonly repeatedConcepts: readonly string[];
+    readonly callToActionAligned: boolean;
+    readonly distinctFromHistory: boolean;
+    readonly issues: readonly { readonly severity: "advice" | "blocker"; readonly code: string; readonly message: string }[];
+    readonly summary: string;
+  };
+  readonly readiness: { readonly ready: boolean; readonly blockers: readonly string[] };
+  readonly createdAt: string;
+}
+
+export interface ContentAsset {
+  readonly id: string;
+  readonly ideaId: string;
+  readonly type: "linkedin_text";
+  readonly status: "draft" | "ready" | "blocked";
+  readonly latestVersion: number;
+  readonly latest: ContentAssetVersion | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
 export interface SetupReadinessItem {
   readonly key: "product" | "icp" | "accounts" | "automation" | "calendar" | "knowledge";
   readonly label: string;
@@ -275,6 +330,23 @@ export async function discoverContentIdeas(workspaceSlug: string, requestKey: st
 
 export async function getContentIdeaDiscoveryRun(workspaceSlug: string, runId: string): Promise<ContentIdeaDiscoveryRun | null> {
   try { return await crmFetch(workspaceSlug, `/api/v1/content/idea-discovery-runs/${runId}`); }
+  catch (error) { if (error instanceof OutboundApiError && error.status === 404) return null; throw error; }
+}
+
+export async function getContentIdeaDetail(workspaceSlug: string, ideaId: string): Promise<{ readonly idea: ContentIdea; readonly asset: ContentAsset | null }> {
+  return crmFetch(workspaceSlug, `/api/v1/content/ideas/${ideaId}`);
+}
+
+export async function generateContentFromIdea(workspaceSlug: string, ideaId: string, requestKey: string): Promise<ContentGenerationRun> {
+  return crmFetch(workspaceSlug, `/api/v1/content/ideas/${ideaId}/brief`, { method: "POST", body: { requestKey } });
+}
+
+export async function improveContentAsset(workspaceSlug: string, assetId: string, requestKey: string, instruction?: string): Promise<ContentGenerationRun> {
+  return crmFetch(workspaceSlug, `/api/v1/content/assets/${assetId}/improve`, { method: "POST", body: { requestKey, ...(instruction?.trim() ? { instruction: instruction.trim() } : {}) } });
+}
+
+export async function getContentGenerationRun(workspaceSlug: string, runId: string): Promise<ContentGenerationRun | null> {
+  try { return await crmFetch(workspaceSlug, `/api/v1/content/generation-runs/${runId}`); }
   catch (error) { if (error instanceof OutboundApiError && error.status === 404) return null; throw error; }
 }
 

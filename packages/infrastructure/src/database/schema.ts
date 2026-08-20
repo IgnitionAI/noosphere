@@ -768,6 +768,7 @@ export const aiRuns = pgTable(
       .references(() => workspaces.id),
     productResearchRunId: uuid("product_research_run_id"),
     researchStageRunId: uuid("research_stage_run_id"),
+    contentGenerationRunId: uuid("content_generation_run_id"),
     purpose: varchar("purpose", { length: 120 }).notNull(),
     provider: varchar("provider", { length: 120 }).notNull(),
     model: varchar("model", { length: 200 }).notNull(),
@@ -1537,6 +1538,110 @@ export const contentIdeaSchedules = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [check("content_idea_schedules_local_time_ck", sql`${table.localTime} ~ '^(?:[01][0-9]|2[0-3]):[0-5][0-9]$'`)],
+);
+
+export const contentAssets = pgTable(
+  "content_assets",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    ideaId: uuid("idea_id").notNull(),
+    type: varchar("type", { length: 40 }).notNull().default("linkedin_text"),
+    status: varchar("status", { length: 40 }).notNull().default("draft"),
+    latestVersion: integer("latest_version").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({ columns: [table.workspaceId, table.ideaId], foreignColumns: [contentIdeas.workspaceId, contentIdeas.id], name: "content_assets_workspace_idea_fk" }).onDelete("restrict"),
+    unique("content_assets_workspace_id_uq").on(table.workspaceId, table.id),
+    uniqueIndex("content_assets_workspace_idea_type_uq").on(table.workspaceId, table.ideaId, table.type),
+    check("content_assets_type_ck", sql`${table.type} in ('linkedin_text')`),
+    check("content_assets_status_ck", sql`${table.status} in ('draft', 'ready', 'blocked')`),
+  ],
+);
+
+export const contentGenerationRuns = pgTable(
+  "content_generation_runs",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    ideaId: uuid("idea_id").notNull(),
+    assetId: uuid("asset_id").notNull(),
+    strategyVersionId: uuid("strategy_version_id").notNull(),
+    assetVersionId: uuid("asset_version_id"),
+    status: varchar("status", { length: 40 }).notNull().default("queued"),
+    stage: varchar("stage", { length: 40 }).notNull().default("brief"),
+    instruction: text("instruction"),
+    briefSnapshot: jsonb("brief_snapshot"),
+    draftSnapshot: jsonb("draft_snapshot"),
+    auditSnapshot: jsonb("audit_snapshot"),
+    critiqueSnapshot: jsonb("critique_snapshot"),
+    lastErrorCode: varchar("last_error_code", { length: 160 }),
+    lastErrorMessage: text("last_error_message"),
+    createdBy: uuid("created_by").references(() => authUsers.id, { onDelete: "set null" }),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({ columns: [table.workspaceId, table.ideaId], foreignColumns: [contentIdeas.workspaceId, contentIdeas.id], name: "content_generation_runs_workspace_idea_fk" }).onDelete("restrict"),
+    foreignKey({ columns: [table.workspaceId, table.assetId], foreignColumns: [contentAssets.workspaceId, contentAssets.id], name: "content_generation_runs_workspace_asset_fk" }).onDelete("restrict"),
+    foreignKey({ columns: [table.workspaceId, table.strategyVersionId], foreignColumns: [editorialStrategyVersions.workspaceId, editorialStrategyVersions.id], name: "content_generation_runs_workspace_strategy_fk" }).onDelete("restrict"),
+    unique("content_generation_runs_workspace_id_uq").on(table.workspaceId, table.id),
+    check("content_generation_runs_status_ck", sql`${table.status} in ('queued', 'running', 'ready', 'blocked', 'failed')`),
+    check("content_generation_runs_stage_ck", sql`${table.stage} in ('brief', 'writer', 'audit', 'critic', 'completed')`),
+  ],
+);
+
+export const contentBriefs = pgTable(
+  "content_briefs",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    runId: uuid("run_id").notNull(),
+    ideaId: uuid("idea_id").notNull(),
+    strategyVersionId: uuid("strategy_version_id").notNull(),
+    snapshot: jsonb("snapshot").notNull(),
+    evidenceSnapshot: jsonb("evidence_snapshot").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({ columns: [table.workspaceId, table.runId], foreignColumns: [contentGenerationRuns.workspaceId, contentGenerationRuns.id], name: "content_briefs_workspace_run_fk" }).onDelete("restrict"),
+    foreignKey({ columns: [table.workspaceId, table.ideaId], foreignColumns: [contentIdeas.workspaceId, contentIdeas.id], name: "content_briefs_workspace_idea_fk" }).onDelete("restrict"),
+    foreignKey({ columns: [table.workspaceId, table.strategyVersionId], foreignColumns: [editorialStrategyVersions.workspaceId, editorialStrategyVersions.id], name: "content_briefs_workspace_strategy_fk" }).onDelete("restrict"),
+    unique("content_briefs_workspace_id_uq").on(table.workspaceId, table.id),
+    uniqueIndex("content_briefs_workspace_run_uq").on(table.workspaceId, table.runId),
+  ],
+);
+
+export const contentAssetVersions = pgTable(
+  "content_asset_versions",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    assetId: uuid("asset_id").notNull(),
+    briefId: uuid("brief_id").notNull(),
+    generationRunId: uuid("generation_run_id").notNull(),
+    version: integer("version").notNull(),
+    body: text("body").notNull(),
+    draft: jsonb("draft").notNull(),
+    audit: jsonb("audit").notNull(),
+    critique: jsonb("critique").notNull(),
+    readiness: jsonb("readiness").notNull(),
+    ready: boolean("ready").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({ columns: [table.workspaceId, table.assetId], foreignColumns: [contentAssets.workspaceId, contentAssets.id], name: "content_asset_versions_workspace_asset_fk" }).onDelete("restrict"),
+    foreignKey({ columns: [table.workspaceId, table.briefId], foreignColumns: [contentBriefs.workspaceId, contentBriefs.id], name: "content_asset_versions_workspace_brief_fk" }).onDelete("restrict"),
+    foreignKey({ columns: [table.workspaceId, table.generationRunId], foreignColumns: [contentGenerationRuns.workspaceId, contentGenerationRuns.id], name: "content_asset_versions_workspace_run_fk" }).onDelete("restrict"),
+    unique("content_asset_versions_workspace_id_uq").on(table.workspaceId, table.id),
+    uniqueIndex("content_asset_versions_workspace_asset_version_uq").on(table.workspaceId, table.assetId, table.version),
+    uniqueIndex("content_asset_versions_workspace_run_uq").on(table.workspaceId, table.generationRunId),
+    check("content_asset_versions_version_ck", sql`${table.version} > 0`),
+  ],
 );
 
 export const knowledgeSources = pgTable(

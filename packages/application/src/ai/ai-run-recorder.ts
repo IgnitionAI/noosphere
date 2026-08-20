@@ -5,6 +5,7 @@ export interface AiRunRecorder {
     readonly provider: string;
     readonly model: string;
     readonly promptVersion: string;
+    readonly contentGenerationRunId?: string;
     readonly promptVersionId?: string;
     readonly aiConfigurationId?: string;
     readonly shadow: boolean;

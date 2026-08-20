@@ -82,6 +82,9 @@ import { PostgresContentIdeaRepository } from "@outbound/infrastructure/content/
 import { CrawlerContentIdeaSource } from "@outbound/infrastructure/content/crawler-content-idea-source";
 import { LangChainContentIdeaGenerator } from "@outbound/infrastructure/content/langchain-content-idea-generator";
 import { DailyContentIdeaScheduler } from "@outbound/infrastructure/content/daily-content-idea-scheduler";
+import { ContentGenerationJobProcessor } from "@outbound/application/content/content-generation";
+import { PostgresContentGenerationRepository } from "@outbound/infrastructure/content/postgres-content-generation-repository";
+import { LangChainContentPipelineAgent } from "@outbound/infrastructure/content/langchain-content-pipeline-agent";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
@@ -288,6 +291,12 @@ const dailyContentIdeaScheduler = new DailyContentIdeaScheduler(database.db, con
   localTime: process.env.DAILY_CONTENT_IDEA_TIME ?? "06:00",
   timezone: process.env.DAILY_CONTENT_IDEA_TIMEZONE ?? "Europe/Paris",
 });
+const contentGenerationProcessor = new ContentGenerationJobProcessor(
+  new PostgresContentGenerationRepository(database.db),
+  new LangChainContentPipelineAgent(process.env, workspaceAiSettings, aiRunRecorder),
+  queue,
+  () => clock.now(),
+);
 const prospectAssessmentReconciler = new ProspectAssessmentReconciler(database.db, clock);
 const campaignHealthReconciler = new CampaignHealthReconciler(database.db, clock);
 const sourcingRetentionReconciler = new SourcingRetentionReconciler(database.db, clock);
@@ -339,7 +348,7 @@ const worker = new ResearchWorker(queue, orchestrator, clock, {
   pollIntervalMs: positiveIntegerEnvironment("JOB_POLL_INTERVAL_MS", 1_000),
   ...optionalJobTypes("WORKER_JOB_TYPES"),
   ...optionalExcludedJobTypes("WORKER_EXCLUDED_JOB_TYPES"),
-}, documentService, discoveryProcessor, channelAssessmentProcessor, campaignAutomationProcessor, campaignCompositionProcessor, outreachDispatchProcessor, inboundReplyProcessor, automatedReplySendProcessor, conversationCommandProcessor, process.env.WORKER_DISABLE_MAINTENANCE === "true" ? undefined : maintenance, process.env.WORKER_DISABLE_OUTBOX === "true" ? undefined : outboxDispatcher, importService, process.env.WORKER_DISABLE_OUTREACH_SCHEDULER === "true" ? undefined : outreachScheduler, enrichmentProcessor, signalProcessor, workspaceExportProcessor, retentionPurgeProcessor, knowledgeExpirationProcessor, evaluationRunProcessor, prospectDecisionProcessor, contentIdeaDiscoveryProcessor);
+}, documentService, discoveryProcessor, channelAssessmentProcessor, campaignAutomationProcessor, campaignCompositionProcessor, outreachDispatchProcessor, inboundReplyProcessor, automatedReplySendProcessor, conversationCommandProcessor, process.env.WORKER_DISABLE_MAINTENANCE === "true" ? undefined : maintenance, process.env.WORKER_DISABLE_OUTBOX === "true" ? undefined : outboxDispatcher, importService, process.env.WORKER_DISABLE_OUTREACH_SCHEDULER === "true" ? undefined : outreachScheduler, enrichmentProcessor, signalProcessor, workspaceExportProcessor, retentionPurgeProcessor, knowledgeExpirationProcessor, evaluationRunProcessor, prospectDecisionProcessor, contentIdeaDiscoveryProcessor, contentGenerationProcessor);
 
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
   process.once(signal, () => {

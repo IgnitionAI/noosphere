@@ -1497,6 +1497,22 @@
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "name": "runId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
       "get": { "operationId": "getContentIdeaDiscoveryRun", "summary": "Read durable idea research progress without affecting the worker", "responses": { "200": { "description": "Discovery run status", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ContentIdeaDiscoveryRun" } } } }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" }, "404": { "$ref": "#/components/responses/RunNotFound" } } }
     },
+    "/api/v1/content/ideas/{ideaId}": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "name": "ideaId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+      "get": { "operationId": "getContentIdea", "summary": "Read one sourced idea and its latest immutable asset version", "responses": { "200": { "description": "Idea, evidence and latest content asset" }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" }, "404": { "$ref": "#/components/responses/RunNotFound" } } }
+    },
+    "/api/v1/content/ideas/{ideaId}/brief": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "name": "ideaId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+      "post": { "operationId": "generateContentFromIdea", "summary": "Schedule the durable brief, writer, evidence audit and critic pipeline", "responses": { "202": { "description": "Durable generation run; no publication is created" }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" }, "409": { "$ref": "#/components/responses/Conflict" }, "422": { "$ref": "#/components/responses/InvalidRequest" } } }
+    },
+    "/api/v1/content/assets/{assetId}/improve": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "name": "assetId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+      "post": { "operationId": "improveContentAsset", "summary": "Create another immutable reviewed version without scheduling or publishing", "responses": { "202": { "description": "Durable improvement run" }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" }, "404": { "$ref": "#/components/responses/RunNotFound" }, "422": { "$ref": "#/components/responses/InvalidRequest" } } }
+    },
+    "/api/v1/content/generation-runs/{runId}": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "name": "runId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+      "get": { "operationId": "getContentGenerationRun", "summary": "Read durable editorial pipeline progress", "responses": { "200": { "description": "Generation stage and immutable version reference" }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" }, "404": { "$ref": "#/components/responses/RunNotFound" } } }
+    },
     "/api/v1/workspace/operational-summary": {
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
       "get": { "operationId": "getWorkspaceOperationalSummary", "summary": "Read the tenant-scoped À traiter projection", "parameters": [{ "name": "attentionCursor", "in": "query", "schema": { "type": "string" } }, { "name": "attentionLimit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 20 } }], "responses": { "200": { "description": "Operational counters, engines, outcomes, exceptions, jobs and account health", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkspaceOperationalSummary" } } } }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" } } }
