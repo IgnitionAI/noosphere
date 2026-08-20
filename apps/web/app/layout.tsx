@@ -4,10 +4,10 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: {
-    default: "Ignition Outbound",
-    template: "%s · Ignition Outbound",
+    default: "Noosphere",
+    template: "%s · Noosphere",
   },
-  description: "Prospection B2B multi-workspace, sourcée et supervisée.",
+  description: "Créer la demande, capter les prospects et récolter les appels.",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

@@ -286,6 +286,7 @@ const server = Bun.serve({
     if (isWorkspaceDataRoute(pathname, request.method)) return workspaceData(request);
     if (
       pathname === "/api/v1/workspace/operational-summary"
+      || pathname === "/api/v1/activity"
       || pathname === "/api/v1/workspace/setup-readiness"
       || pathname === "/api/v1/conversations"
       || (request.method === "GET" && /^\/api\/v1\/conversations\/[^/]+$/.test(pathname))

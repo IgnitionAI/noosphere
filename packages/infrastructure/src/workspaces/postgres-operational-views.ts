@@ -1,16 +1,19 @@
-import { and, count, desc, eq, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, sql } from "drizzle-orm";
 import type {
+  ActivityWorkspacePage,
   CampaignWorkspaceView,
   ConversationWorkspacePage,
   ConversationWorkspaceDetail,
   ConversationWorkspaceView,
   SetupReadinessView,
+  NoosphereLens,
   WorkspaceOperationalSummary,
 } from "@outbound/application/workspaces/operational-views";
 import type { Database } from "@outbound/infrastructure/database/client";
 import {
   accountHealthAlerts,
   aiPolicyVersions,
+  calendarBookings,
   calendarConnections,
   campaigns,
   campaignProspects,
@@ -46,52 +49,215 @@ export class PostgresOperationalViews {
     this.opportunitiesRepository = new PostgresOpportunityRepository(database);
   }
 
-  async getSummary(workspaceId: string): Promise<WorkspaceOperationalSummary> {
+  async getSummary(workspaceId: string, input: { attentionOffset?: number; attentionLimit?: number } = {}): Promise<WorkspaceOperationalSummary> {
     const asOf = new Date();
-    const [campaignCount, prospectCount, conversationCount, opportunityCount, jobsRows, failedJobs, deadLetterRows, schedule, accountRows, alertCount, accountAttention, campaignAttention, pendingDecisions] = await Promise.all([
+    const attentionOffset = input.attentionOffset ?? 0;
+    const attentionLimit = input.attentionLimit ?? 20;
+    const attentionQueryLimit = attentionOffset + attentionLimit + 1;
+    const [
+      campaignCount,
+      prospectCount,
+      conversationCount,
+      opportunityCount,
+      bookedCallCount,
+      nextBooking,
+      activeJobCount,
+      jobsRows,
+      failedJobs,
+      deadLetterRows,
+      retryJobCount,
+      retryJobRows,
+      schedule,
+      accountRows,
+      alertCount,
+      accountAttention,
+      campaignAttentionCount,
+      campaignAttention,
+      pendingDecisionCount,
+      pendingDecisions,
+    ] = await Promise.all([
       this.database.select({ value: count() }).from(campaigns).where(and(eq(campaigns.workspaceId, workspaceId), eq(campaigns.status, "active"))),
       this.database.select({ value: count() }).from(contacts).where(and(eq(contacts.workspaceId, workspaceId), eq(contacts.status, "active"))),
       this.database.select({ value: count() }).from(conversations).where(and(eq(conversations.workspaceId, workspaceId), sql`${conversations.status} <> 'closed'`)),
       this.database.select({ value: count() }).from(opportunities).where(and(eq(opportunities.workspaceId, workspaceId), sql`${opportunities.stage} not in ('won', 'lost')`)),
-      this.database.select({ id: jobs.id, type: jobs.type, status: jobs.status, updatedAt: jobs.updatedAt }).from(jobs).where(and(eq(jobs.workspaceId, workspaceId), sql`${jobs.status} in ('pending', 'running', 'retry')`)).orderBy(desc(jobs.updatedAt)).limit(10),
+      this.database.select({ value: count() }).from(calendarBookings).where(and(eq(calendarBookings.workspaceId, workspaceId), sql`${calendarBookings.status} in ('requested', 'booked', 'rescheduled')`, gte(calendarBookings.startAt, asOf))),
+      this.database.select({ id: calendarBookings.id, attendeeName: calendarBookings.attendeeName, startAt: calendarBookings.startAt }).from(calendarBookings).where(and(eq(calendarBookings.workspaceId, workspaceId), sql`${calendarBookings.status} in ('requested', 'booked', 'rescheduled')`, gte(calendarBookings.startAt, asOf))).orderBy(calendarBookings.startAt).limit(1),
+      this.database.select({ value: count() }).from(jobs).where(and(eq(jobs.workspaceId, workspaceId), sql`${jobs.status} in ('pending', 'running', 'retry')`)),
+      this.database.select({ id: jobs.id, type: jobs.type, status: jobs.status, correlationId: jobs.correlationId, updatedAt: jobs.updatedAt }).from(jobs).where(and(eq(jobs.workspaceId, workspaceId), sql`${jobs.status} in ('pending', 'running', 'retry')`)).orderBy(desc(jobs.updatedAt)).limit(10),
       this.database.select({ value: count() }).from(jobs).where(and(eq(jobs.workspaceId, workspaceId), eq(jobs.status, "dead_lettered"))),
-      this.database.select({ id: jobs.id, type: jobs.type, updatedAt: jobs.updatedAt }).from(jobs).where(and(eq(jobs.workspaceId, workspaceId), eq(jobs.status, "dead_lettered"))).orderBy(desc(jobs.updatedAt)).limit(10),
+      this.database.select({ id: jobs.id, type: jobs.type, correlationId: jobs.correlationId, updatedAt: jobs.updatedAt }).from(jobs).where(and(eq(jobs.workspaceId, workspaceId), eq(jobs.status, "dead_lettered"))).orderBy(desc(jobs.updatedAt)).limit(attentionQueryLimit),
+      this.database.select({ value: count() }).from(jobs).where(and(eq(jobs.workspaceId, workspaceId), eq(jobs.status, "retry"))),
+      this.database.select({ id: jobs.id, type: jobs.type, correlationId: jobs.correlationId, updatedAt: jobs.updatedAt }).from(jobs).where(and(eq(jobs.workspaceId, workspaceId), eq(jobs.status, "retry"))).orderBy(desc(jobs.updatedAt)).limit(attentionQueryLimit),
       this.database.select({ nextRunAt: dailyProspectingSchedules.nextRunAt }).from(dailyProspectingSchedules).where(and(eq(dailyProspectingSchedules.workspaceId, workspaceId), eq(dailyProspectingSchedules.enabled, true))).limit(1),
       this.database.select({ status: connectedAccounts.status }).from(connectedAccounts).where(eq(connectedAccounts.workspaceId, workspaceId)),
       this.database.select({ value: count() }).from(accountHealthAlerts).where(and(eq(accountHealthAlerts.workspaceId, workspaceId), sql`${accountHealthAlerts.status} in ('active', 'acknowledged')`)),
-      this.database.select({ id: accountHealthAlerts.id, connectedAccountId: accountHealthAlerts.connectedAccountId, reason: accountHealthAlerts.reasonMessage, createdAt: accountHealthAlerts.createdAt }).from(accountHealthAlerts).where(and(eq(accountHealthAlerts.workspaceId, workspaceId), sql`${accountHealthAlerts.status} in ('active', 'acknowledged')`)).orderBy(desc(accountHealthAlerts.createdAt)).limit(10),
-      this.database.select({ id: campaigns.id, name: campaigns.name, updatedAt: campaigns.updatedAt, errorMessage: campaigns.automationErrorMessage }).from(campaigns).where(and(eq(campaigns.workspaceId, workspaceId), eq(campaigns.automationStage, "attention"))).orderBy(desc(campaigns.updatedAt)).limit(10),
-      this.database.select({ id: prospectDecisions.id, reason: prospectDecisions.reason, contactId: prospectDecisions.contactId, createdAt: prospectDecisions.createdAt }).from(prospectDecisions).where(and(eq(prospectDecisions.workspaceId, workspaceId), eq(prospectDecisions.status, "pending"))).orderBy(desc(prospectDecisions.priority), desc(prospectDecisions.createdAt)).limit(10),
+      this.database.select({ id: accountHealthAlerts.id, connectedAccountId: accountHealthAlerts.connectedAccountId, reason: accountHealthAlerts.reasonMessage, createdAt: accountHealthAlerts.createdAt }).from(accountHealthAlerts).where(and(eq(accountHealthAlerts.workspaceId, workspaceId), sql`${accountHealthAlerts.status} in ('active', 'acknowledged')`)).orderBy(desc(accountHealthAlerts.createdAt)).limit(attentionQueryLimit),
+      this.database.select({ value: count() }).from(campaigns).where(and(eq(campaigns.workspaceId, workspaceId), eq(campaigns.automationStage, "attention"))),
+      this.database.select({ id: campaigns.id, name: campaigns.name, updatedAt: campaigns.updatedAt, errorMessage: campaigns.automationErrorMessage }).from(campaigns).where(and(eq(campaigns.workspaceId, workspaceId), eq(campaigns.automationStage, "attention"))).orderBy(desc(campaigns.updatedAt)).limit(attentionQueryLimit),
+      this.database.select({ value: count() }).from(prospectDecisions).where(and(eq(prospectDecisions.workspaceId, workspaceId), eq(prospectDecisions.status, "pending"))),
+      this.database.select({ id: prospectDecisions.id, reason: prospectDecisions.reason, contactId: prospectDecisions.contactId, correlationId: prospectDecisions.correlationId, createdAt: prospectDecisions.createdAt }).from(prospectDecisions).where(and(eq(prospectDecisions.workspaceId, workspaceId), eq(prospectDecisions.status, "pending"))).orderBy(desc(prospectDecisions.priority), desc(prospectDecisions.createdAt)).limit(attentionQueryLimit),
     ]);
 
-    const attention = [
-      ...campaignAttention.map((item) => attentionItem("campaign", "critical", item.id, item.errorMessage ?? `La campagne ${item.name} nécessite une attention.`, item.updatedAt, `/campaigns/${item.id}`)),
-      ...accountAttention.map((item) => attentionItem("account", "critical", item.id, item.reason ?? "Un compte d’envoi nécessite une reconnexion.", item.createdAt, "/settings/channels")),
-      ...deadLetterRows.map((job) => attentionItem("job", "critical", job.id, `Le job ${job.type} est en dead letter et nécessite un diagnostic.`, job.updatedAt, "/settings/console")),
-      ...jobsRows.filter((job) => job.status === "retry").map((job) => attentionItem("job", "warning", job.id, `Le job ${job.type} sera retenté automatiquement.`, job.updatedAt, "/settings/console")),
-      ...pendingDecisions.map((item) => attentionItem("decision", "info", item.id, item.reason, item.createdAt, "/prospects")),
-    ].slice(0, 20);
+    const allAttention = [
+      ...campaignAttention.map((item) => attentionItem("campaign", "critical", item.id, item.errorMessage ?? `La campagne ${item.name} nécessite une attention.`, item.updatedAt, `/campaigns/${item.id}`, null)),
+      ...accountAttention.map((item) => attentionItem("account", "critical", item.id, item.reason ?? "Un compte d’envoi nécessite une reconnexion.", item.createdAt, "/settings/channels", null)),
+      ...deadLetterRows.map((job) => attentionItem("job", "critical", job.id, `Le job ${job.type} est en dead letter et nécessite un diagnostic.`, job.updatedAt, "/settings/console", job.correlationId)),
+      ...retryJobRows.map((job) => attentionItem("job", "warning", job.id, `Le job ${job.type} sera retenté automatiquement.`, job.updatedAt, "/settings/console", job.correlationId)),
+      ...pendingDecisions.map((item) => attentionItem("decision", "info", item.id, item.reason, item.createdAt, "/prospects", item.correlationId)),
+    ].sort(compareAttention);
+    const attentionPage = allAttention.slice(attentionOffset, attentionOffset + attentionLimit + 1);
+    const hasMoreAttention = attentionPage.length > attentionLimit;
+    const attention = attentionPage.slice(0, attentionLimit);
     const statuses = accountRows.map((row) => row.status);
     const connected = statuses.filter((status) => status === "connected").length;
     const degraded = statuses.filter((status) => status === "degraded" || status === "unknown" || status === "pending").length;
     const disconnected = statuses.filter((status) => status === "disconnected").length;
+    const activeCampaigns = valueOf(campaignCount);
+    const activeJobs = valueOf(activeJobCount);
+    const failed = valueOf(failedJobs);
+    const attentionTotal = valueOf(alertCount)
+      + valueOf(failedJobs)
+      + valueOf(retryJobCount)
+      + valueOf(campaignAttentionCount)
+      + valueOf(pendingDecisionCount);
+    const outboundStatus = degraded + disconnected + valueOf(alertCount) + failed > 0
+      ? "degraded"
+      : activeJobs > 0 || activeCampaigns > 0
+        ? "running"
+        : "idle";
+    const lastJobActivity = jobsRows[0]?.updatedAt ?? null;
+    const nextAutomaticResearch = schedule[0]?.nextRunAt ?? null;
+    const nextOutcomes = [
+      ...(nextAutomaticResearch ? [{
+        id: "outbound:next-research",
+        type: "research" as const,
+        source: "outbound" as const,
+        label: "Prochaine recherche de prospects",
+        detail: "Les campagnes éligibles seront alimentées automatiquement.",
+        expectedAt: nextAutomaticResearch,
+        href: "/activity?lens=outbound",
+      }] : []),
+      ...(nextBooking[0] ? [{
+        id: `call:${nextBooking[0].id}`,
+        type: "call" as const,
+        source: "unknown" as const,
+        label: nextBooking[0].attendeeName ? `Appel avec ${nextBooking[0].attendeeName}` : "Prochain appel",
+        detail: "Rendez-vous confirmé dans l’agenda connecté.",
+        expectedAt: nextBooking[0].startAt,
+        href: "/appointments",
+      }] : []),
+    ].sort((left, right) => (left.expectedAt?.getTime() ?? Number.MAX_SAFE_INTEGER) - (right.expectedAt?.getTime() ?? Number.MAX_SAFE_INTEGER));
     return {
       asOf,
       counts: {
-        activeCampaigns: valueOf(campaignCount),
+        activeCampaigns,
         prospects: valueOf(prospectCount),
         openConversations: valueOf(conversationCount),
         openOpportunities: valueOf(opportunityCount),
-        attention: attention.length,
+        bookedCalls: valueOf(bookedCallCount),
+        attention: attentionTotal,
       },
       attention,
       jobs: {
-        active: jobsRows.length,
-        failed: valueOf(failedJobs),
+        active: activeJobs,
+        failed,
         running: jobsRows.map((job) => ({ id: job.id, type: job.type, status: job.status, updatedAt: job.updatedAt })),
       },
-      nextAutomaticResearch: schedule[0]?.nextRunAt ?? null,
+      nextAutomaticResearch,
       accountHealth: { connected, degraded, disconnected, activeAlerts: valueOf(alertCount) },
+      engines: {
+        inbound: {
+          status: "not_configured",
+          label: "Inbound à configurer",
+          summary: "La stratégie éditoriale LinkedIn sera disponible au Lot 2.",
+          lastActivityAt: null,
+          nextAction: { label: "Voir la configuration", href: "/settings" },
+        },
+        outbound: {
+          status: outboundStatus,
+          label: outboundStatus === "degraded" ? "Outbound nécessite une attention" : outboundStatus === "running" ? "Outbound actif" : "Outbound en veille",
+          summary: `${activeCampaigns} campagne${activeCampaigns === 1 ? "" : "s"} active${activeCampaigns === 1 ? "" : "s"} · ${activeJobs} job${activeJobs === 1 ? "" : "s"} en cours`,
+          lastActivityAt: lastJobActivity,
+          nextAction: outboundStatus === "degraded" ? { label: "Voir les exceptions", href: "/?attention=1" } : { label: "Voir l’activité", href: "/activity?lens=outbound" },
+        },
+      },
+      nextOutcomes,
+      attentionPagination: { nextCursor: hasMoreAttention ? String(attentionOffset + attentionLimit) : null },
+    };
+  }
+
+  async getActivity(input: { workspaceId: string; lens: NoosphereLens; offset?: number; limit?: number }): Promise<ActivityWorkspacePage> {
+    const asOf = new Date();
+    const offset = input.offset ?? 0;
+    const limit = input.limit ?? 25;
+    if (input.lens === "inbound") {
+      return {
+        lens: input.lens,
+        asOf,
+        state: "not_configured",
+        headline: "La création de demande LinkedIn arrive dans le prochain lot.",
+        counters: [
+          { key: "ideas", label: "Idées sourcées", value: 0 },
+          { key: "planned", label: "Contenus planifiés", value: 0 },
+          { key: "published", label: "Contenus publiés", value: 0 },
+        ],
+        items: [],
+        pagination: { nextCursor: null },
+      };
+    }
+    if (input.lens === "symbiosis") {
+      const summary = await this.getSummary(input.workspaceId, { attentionLimit: 1 });
+      return {
+        lens: input.lens,
+        asOf,
+        state: "not_configured",
+        headline: "La Symbiose s’activera après la première publication Inbound attribuable.",
+        counters: [
+          { key: "signals", label: "Signaux partagés", value: 0 },
+          { key: "conversations", label: "Conversations ouvertes", value: summary.counts.openConversations },
+          { key: "calls", label: "Appels réservés", value: summary.counts.bookedCalls },
+        ],
+        items: [],
+        pagination: { nextCursor: null },
+      };
+    }
+    const summary = await this.getSummary(input.workspaceId, { attentionLimit: 1 });
+    const rows = await this.database.select({
+      id: campaigns.id,
+      name: campaigns.name,
+      status: campaigns.status,
+      automationStage: campaigns.automationStage,
+      updatedAt: campaigns.updatedAt,
+    }).from(campaigns).where(eq(campaigns.workspaceId, input.workspaceId)).orderBy(desc(campaigns.updatedAt)).limit(limit + 1).offset(offset);
+    const hasNext = rows.length > limit;
+    const items = rows.slice(0, limit).map((campaign) => ({
+      id: `campaign:${campaign.id}`,
+      kind: "campaign" as const,
+      source: "outbound" as const,
+      status: campaign.automationStage === "attention"
+        ? "attention" as const
+        : campaign.status === "active"
+          ? "running" as const
+          : "completed" as const,
+      title: campaign.name,
+      detail: `${campaign.automationStage ?? "configuration"} · ${campaign.status}`,
+      occurredAt: campaign.updatedAt,
+      href: `/campaigns/${campaign.id}`,
+      correlationId: null,
+    }));
+    return {
+      lens: input.lens,
+      asOf,
+      state: summary.engines.outbound.status === "degraded" ? "attention" : summary.engines.outbound.status === "running" ? "active" : "idle",
+      headline: summary.engines.outbound.summary,
+      counters: [
+        { key: "campaigns", label: "Campagnes actives", value: summary.counts.activeCampaigns },
+        { key: "prospects", label: "Prospects", value: summary.counts.prospects },
+        { key: "jobs", label: "Jobs en cours", value: summary.jobs.active },
+        { key: "conversations", label: "Conversations", value: summary.counts.openConversations },
+      ],
+      items,
+      pagination: { nextCursor: hasNext ? String(offset + limit) : null },
     };
   }
 
@@ -325,7 +491,7 @@ function valueOf(row: readonly [{ value: number | string }] | readonly { value: 
   return Number(row[0]?.value ?? 0);
 }
 
-function attentionItem(type: "account" | "job" | "campaign" | "decision" | "conversation", severity: "info" | "warning" | "critical", resourceId: string, message: string, createdAt: Date, href: string) {
+function attentionItem(type: "account" | "job" | "campaign" | "decision" | "conversation", severity: "info" | "warning" | "critical", resourceId: string, message: string, createdAt: Date, href: string, correlationId: string | null) {
   return {
     id: `${type}:${resourceId}`,
     type,
@@ -335,8 +501,15 @@ function attentionItem(type: "account" | "job" | "campaign" | "decision" | "conv
     resourceHref: href,
     ageSeconds: Math.max(0, Math.round((Date.now() - createdAt.getTime()) / 1000)),
     action: { label: severity === "critical" ? "Diagnostiquer" : "Ouvrir", href },
+    correlationId,
     createdAt,
   } as const;
+}
+
+function compareAttention(left: ReturnType<typeof attentionItem>, right: ReturnType<typeof attentionItem>): number {
+  const severityRank = { critical: 3, warning: 2, info: 1 } as const;
+  const riskOrder = severityRank[right.severity] - severityRank[left.severity];
+  return riskOrder || left.createdAt.getTime() - right.createdAt.getTime();
 }
 
 function readiness(key: "product" | "icp" | "accounts" | "automation" | "calendar" | "knowledge", label: string, ready: boolean, reason: string, href: string, requiredForLaunch: boolean, readyReason?: string) {

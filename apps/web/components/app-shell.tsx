@@ -1,16 +1,17 @@
 "use client";
 
 import {
+  Activity,
   ArrowRight,
   CalendarCheck2,
   ChevronDown,
   Inbox,
-  Megaphone,
+  Home,
   Menu,
   Plus,
   Settings,
   ShieldAlert,
-  SlidersHorizontal,
+  Users,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -37,29 +38,36 @@ export function AppShell({
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const baseHref = `/w/${workspace.slug}`;
-  const prospectionHref = `${baseHref}/campaigns`;
-  const messagesHref = `${baseHref}/inbox`;
-  const appointmentsHref = `${baseHref}/appointments`;
+  const todayHref = baseHref;
+  const activityHref = `${baseHref}/activity?lens=symbiosis`;
+  const prospectsHref = `${baseHref}/prospects`;
+  const conversationsHref = `${baseHref}/inbox`;
+  const callsHref = `${baseHref}/appointments`;
   const settingsHref = `${baseHref}/settings`;
-  const prospectionActive = [
-    prospectionHref,
-    `${baseHref}/prospects`,
+  const todayActive = pathname === baseHref || pathname === `${baseHref}/`;
+  const activityActive = [
+    `${baseHref}/activity`,
+    `${baseHref}/campaigns`,
     `${baseHref}/strategy`,
     `${baseHref}/research`,
-    `${baseHref}/icps`,
   ].some((href) => pathname.startsWith(href));
-  const appointmentsActive = pathname.startsWith(appointmentsHref) || pathname.startsWith(`${baseHref}/pipeline`);
+  const prospectsActive = pathname.startsWith(prospectsHref) || pathname.startsWith(`${baseHref}/icps`);
+  const callsActive = pathname.startsWith(callsHref) || pathname.startsWith(`${baseHref}/pipeline`);
   const settingsActive = pathname.startsWith(settingsHref)
     || pathname.startsWith(`${baseHref}/offers`)
     || pathname.startsWith(`${baseHref}/knowledge`)
     || pathname.startsWith(`${baseHref}/ai-studio`);
-  const currentSection = pathname.startsWith(messagesHref)
-    ? "Messages"
-    : appointmentsActive
-      ? "Rendez-vous"
+  const currentSection = pathname.startsWith(conversationsHref)
+    ? "Conversations"
+    : callsActive
+      ? "Appels"
       : settingsActive
         ? "Configuration"
-        : "Prospection";
+        : prospectsActive
+          ? "Prospects"
+          : activityActive
+            ? "Activité"
+            : "Aujourd’hui";
   const initials = session.user.name
     .split(/\s+/)
     .map((part) => part[0])
@@ -75,10 +83,10 @@ export function AppShell({
 
       <aside className={`fixed inset-y-0 left-0 z-50 flex w-[260px] flex-col overflow-y-auto bg-navy px-3 py-4 text-white transition-transform lg:sticky lg:top-0 lg:h-screen lg:w-auto ${open ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`}>
         <div className="flex items-center gap-3 px-2">
-          <div className="grid h-9 w-9 place-items-center rounded-lg bg-signal text-sm font-black text-signal-ink">IO</div>
+          <div className="grid h-9 w-9 place-items-center rounded-lg bg-signal text-sm font-black text-signal-ink">N</div>
           <div className="min-w-0 flex-1">
-            <div className="truncate font-semibold tracking-tight">Ignition Outbound</div>
-            <div className="text-[11px] text-slate-400">Prospection autonome</div>
+            <div className="truncate font-semibold tracking-tight">Noosphere</div>
+            <div className="text-[11px] text-slate-400">Créer et capter la demande</div>
           </div>
           <button aria-label="Fermer" className="lg:hidden" onClick={() => setOpen(false)} type="button"><X size={18} /></button>
         </div>
@@ -101,14 +109,15 @@ export function AppShell({
         </details>
 
         <nav aria-label="Navigation principale" className="mt-7 space-y-1">
-          <NavItem active={prospectionActive || pathname === baseHref || pathname === `${baseHref}/`} href={prospectionHref} icon={Megaphone} label="Prospection" onClick={() => setOpen(false)} />
-          <NavItem active={pathname.startsWith(messagesHref)} href={messagesHref} icon={Inbox} label="Messages" onClick={() => setOpen(false)} />
-          <NavItem active={appointmentsActive} href={appointmentsHref} icon={CalendarCheck2} label="Rendez-vous" onClick={() => setOpen(false)} />
+          <NavItem active={todayActive} href={todayHref} icon={Home} label="Aujourd’hui" onClick={() => setOpen(false)} />
+          <NavItem active={activityActive} href={activityHref} icon={Activity} label="Activité" onClick={() => setOpen(false)} />
+          <NavItem active={prospectsActive} href={prospectsHref} icon={Users} label="Prospects" onClick={() => setOpen(false)} />
+          <NavItem active={pathname.startsWith(conversationsHref)} href={conversationsHref} icon={Inbox} label="Conversations" onClick={() => setOpen(false)} />
+          <NavItem active={callsActive} href={callsHref} icon={CalendarCheck2} label="Appels" onClick={() => setOpen(false)} />
         </nav>
 
         <div className="mt-auto border-t border-white/10 pt-4">
-          <NavItem active={settingsActive} href={settingsHref} icon={SlidersHorizontal} label="Configuration" onClick={() => setOpen(false)} />
-          <p className="px-3 pt-3 text-[10px] leading-4 text-slate-500">L’IA source, contacte, relance et qualifie. Vous gardez la main dans Messages.</p>
+          <p className="px-3 pt-3 text-[10px] leading-4 text-slate-500">Deux moteurs autonomes, un seul cockpit. Les exceptions restent localisées.</p>
         </div>
       </aside>
 
@@ -144,11 +153,12 @@ export function AppShell({
           {children}
         </main>
 
-        <nav aria-label="Navigation mobile" className="fixed inset-x-3 bottom-3 z-40 grid grid-cols-4 rounded-2xl border border-line bg-white/95 p-1 shadow-xl backdrop-blur lg:hidden">
-          <MobileNavItem active={prospectionActive || pathname === baseHref || pathname === `${baseHref}/`} href={prospectionHref} icon={Megaphone} label="Prospection" />
-          <MobileNavItem active={pathname.startsWith(messagesHref)} href={messagesHref} icon={Inbox} label="Messages" />
-          <MobileNavItem active={appointmentsActive} href={appointmentsHref} icon={CalendarCheck2} label="Rendez-vous" />
-          <MobileNavItem active={settingsActive} href={settingsHref} icon={SlidersHorizontal} label="Réglages" />
+        <nav aria-label="Navigation mobile" className="fixed inset-x-3 bottom-3 z-40 grid grid-cols-5 rounded-2xl border border-line bg-white/95 p-1 shadow-xl backdrop-blur lg:hidden">
+          <MobileNavItem active={todayActive} href={todayHref} icon={Home} label="Aujourd’hui" />
+          <MobileNavItem active={activityActive} href={activityHref} icon={Activity} label="Activité" />
+          <MobileNavItem active={prospectsActive} href={prospectsHref} icon={Users} label="Prospects" />
+          <MobileNavItem active={pathname.startsWith(conversationsHref)} href={conversationsHref} icon={Inbox} label="Messages" />
+          <MobileNavItem active={callsActive} href={callsHref} icon={CalendarCheck2} label="Appels" />
         </nav>
       </div>
     </div>

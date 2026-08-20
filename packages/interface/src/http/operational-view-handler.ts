@@ -7,18 +7,21 @@ import {
   WorkspaceContextRequiredError,
 } from "@outbound/interface/http/request-context";
 import type {
+  ActivityWorkspacePage,
   CampaignWorkspaceView,
   ConversationWorkspacePage,
   ConversationWorkspaceDetail,
   SetupReadinessView,
   WorkspaceOperationalSummary,
 } from "@outbound/application/workspaces/operational-views";
+import { noosphereLenses, type NoosphereLens } from "@outbound/application/workspaces/operational-views";
 
 const campaignViewPath = /^\/api\/v1\/campaigns\/([^/]+)\/workspace-view$/;
 const conversationViewPath = /^\/api\/v1\/conversations\/([^/]+)$/;
 
 export type OperationalViewsPort = {
-  getSummary(workspaceId: string): Promise<WorkspaceOperationalSummary>;
+  getSummary(workspaceId: string, input?: { attentionOffset?: number; attentionLimit?: number }): Promise<WorkspaceOperationalSummary>;
+  getActivity(input: { workspaceId: string; lens: NoosphereLens; offset?: number; limit?: number }): Promise<ActivityWorkspacePage>;
   getSetupReadiness(workspaceId: string): Promise<SetupReadinessView>;
   getCampaignView(workspaceId: string, campaignId: string): Promise<CampaignWorkspaceView | null>;
   listConversations(input: { workspaceId: string; channel?: string; scope?: string; search?: string; period?: string; read?: string; campaignId?: string; page: number; pageSize: number }): Promise<ConversationWorkspacePage>;
@@ -39,7 +42,15 @@ export function createOperationalViewHttpHandler(input: {
       requireViewer(context.role);
       if (request.method !== "GET") return problem(405, "METHOD_NOT_ALLOWED", "Only GET is supported");
       if (url.pathname === "/api/v1/workspace/operational-summary") {
-        return Response.json(await views.getSummary(context.workspaceId));
+        const attentionOffset = parseCursor(url.searchParams.get("attentionCursor"));
+        const attentionLimit = parsePositiveInt(url.searchParams.get("attentionLimit"), 20, 100);
+        return Response.json(await views.getSummary(context.workspaceId, { attentionOffset, attentionLimit }));
+      }
+      if (url.pathname === "/api/v1/activity") {
+        const lens = z.enum(noosphereLenses).default("symbiosis").parse(url.searchParams.get("lens") || undefined);
+        const offset = parseCursor(url.searchParams.get("cursor"));
+        const limit = parsePositiveInt(url.searchParams.get("limit"), 25, 100);
+        return Response.json(await views.getActivity({ workspaceId: context.workspaceId, lens, offset, limit }));
       }
       if (url.pathname === "/api/v1/workspace/setup-readiness") {
         return Response.json(await views.getSetupReadiness(context.workspaceId));
@@ -94,6 +105,13 @@ function parsePositiveInt(value: string | null, fallback: number, max: number): 
   if (!value) return fallback;
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > max) throw new Error("INVALID_PAGINATION");
+  return parsed;
+}
+
+function parseCursor(value: string | null): number {
+  if (!value) return 0;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > 1_000_000) throw new Error("INVALID_PAGINATION");
   return parsed;
 }
 

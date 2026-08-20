@@ -27,9 +27,9 @@ env:
   OPENAI_SYNTHESIS_MODEL: ci-test-synthesis-model
   OPENAI_EMBEDDING_MODEL: text-embedding-3-small
   AI_PROVIDER: openai
-  BETTER_AUTH_URL: http://127.0.0.1:3000
+  BETTER_AUTH_URL: http://localhost:3000
   BETTER_AUTH_SECRET: ci-only-better-auth-secret-012345678901234567890123
-  BETTER_AUTH_TRUSTED_ORIGINS: http://127.0.0.1:3000
+  BETTER_AUTH_TRUSTED_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
   BETTER_AUTH_ALLOW_SIGN_UP: "false"
   OUTBOUND_API_URL: http://127.0.0.1:3001
   S3_ENDPOINT: http://127.0.0.1:9000
@@ -41,6 +41,11 @@ env:
   CRAWLER_SERVICE_URL: http://127.0.0.1:8000
   SEARCH_FALLBACK_ENABLED: "true"
   PORT: "3001"
+  BOOTSTRAP_OWNER_EMAIL: noosphere-ci@example.test
+  BOOTSTRAP_OWNER_NAME: Noosphere CI
+  BOOTSTRAP_OWNER_PASSWORD: noosphere-ci-password
+  BOOTSTRAP_WORKSPACE_SLUG: ignition-ai
+  BOOTSTRAP_WORKSPACE_NAME: IgnitionAI
 
 jobs:
   check:
@@ -112,3 +117,9 @@ jobs:
 
       - name: Run PostgreSQL integration tests
         run: bun run test:integration
+
+      - name: Install browser for Noosphere P0
+        run: bunx playwright install --with-deps chromium
+
+      - name: Run Noosphere browser journeys
+        run: bun run test:e2e

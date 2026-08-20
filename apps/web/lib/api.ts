@@ -56,16 +56,60 @@ export type AttentionItem = {
   readonly resourceHref: string | null;
   readonly ageSeconds: number;
   readonly action: { readonly label: string; readonly href: string } | null;
+  readonly correlationId: string | null;
   readonly createdAt: string;
 };
 
+export type NoosphereLens = "inbound" | "symbiosis" | "outbound";
+export type EngineOperationalStatus = "not_configured" | "idle" | "running" | "degraded" | "paused";
+export interface EngineOperationalState {
+  readonly status: EngineOperationalStatus;
+  readonly label: string;
+  readonly summary: string;
+  readonly lastActivityAt: string | null;
+  readonly nextAction: { readonly label: string; readonly href: string } | null;
+}
+
+export interface NextOutcome {
+  readonly id: string;
+  readonly type: "publication" | "research" | "conversation" | "call";
+  readonly source: "inbound" | "outbound" | "mixed" | "unknown";
+  readonly label: string;
+  readonly detail: string;
+  readonly expectedAt: string | null;
+  readonly href: string;
+}
+
 export interface WorkspaceOperationalSummary {
   readonly asOf: string;
-  readonly counts: { readonly activeCampaigns: number; readonly prospects: number; readonly openConversations: number; readonly openOpportunities: number; readonly attention: number };
+  readonly counts: { readonly activeCampaigns: number; readonly prospects: number; readonly openConversations: number; readonly openOpportunities: number; readonly bookedCalls: number; readonly attention: number };
   readonly attention: readonly AttentionItem[];
   readonly jobs: { readonly active: number; readonly failed: number; readonly running: readonly { readonly id: string; readonly type: string; readonly status: string; readonly updatedAt: string }[] };
   readonly nextAutomaticResearch: string | null;
   readonly accountHealth: { readonly connected: number; readonly degraded: number; readonly disconnected: number; readonly activeAlerts: number };
+  readonly engines: { readonly inbound: EngineOperationalState; readonly outbound: EngineOperationalState };
+  readonly nextOutcomes: readonly NextOutcome[];
+  readonly attentionPagination: { readonly nextCursor: string | null };
+}
+
+export interface ActivityWorkspacePage {
+  readonly lens: NoosphereLens;
+  readonly asOf: string;
+  readonly state: "not_configured" | "idle" | "active" | "attention";
+  readonly headline: string;
+  readonly counters: readonly { readonly key: string; readonly label: string; readonly value: number }[];
+  readonly items: readonly {
+    readonly id: string;
+    readonly kind: "campaign" | "job" | "conversation" | "call" | "publication" | "signal";
+    readonly source: "inbound" | "outbound" | "mixed" | "unknown";
+    readonly status: "pending" | "running" | "completed" | "attention";
+    readonly title: string;
+    readonly detail: string;
+    readonly occurredAt: string;
+    readonly href: string;
+    readonly correlationId: string | null;
+  }[];
+  readonly pagination: { readonly nextCursor: string | null };
 }
 
 export interface SetupReadinessItem {
@@ -127,8 +171,17 @@ export interface WorkspaceConversationPage {
   };
 }
 
-export async function getOperationalSummary(workspaceSlug: string): Promise<WorkspaceOperationalSummary> {
-  return crmFetch(workspaceSlug, "/api/v1/workspace/operational-summary");
+export async function getOperationalSummary(workspaceSlug: string, input: { attentionCursor?: string; attentionLimit?: number } = {}): Promise<WorkspaceOperationalSummary> {
+  const params = new URLSearchParams();
+  if (input.attentionCursor) params.set("attentionCursor", input.attentionCursor);
+  if (input.attentionLimit) params.set("attentionLimit", String(input.attentionLimit));
+  return crmFetch(workspaceSlug, `/api/v1/workspace/operational-summary${params.size ? `?${params}` : ""}`);
+}
+
+export async function getActivity(workspaceSlug: string, lens: NoosphereLens, cursor?: string): Promise<ActivityWorkspacePage> {
+  const params = new URLSearchParams({ lens });
+  if (cursor) params.set("cursor", cursor);
+  return crmFetch(workspaceSlug, `/api/v1/activity?${params}`);
 }
 
 export async function getSetupReadiness(workspaceSlug: string): Promise<SetupReadinessView> {
