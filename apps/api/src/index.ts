@@ -73,6 +73,9 @@ import { SocialProviderError, type SocialPublisher } from "@outbound/application
 import { PostgresContentPublicationRepository, PostgresSocialPublishingAccountResolver } from "@outbound/infrastructure/content/postgres-content-publication-repository";
 import { UnipileSocialPublisher } from "@outbound/infrastructure/content/unipile-social-publisher";
 import { createContentPublicationHttpHandler, isContentPublicationRoute } from "@outbound/interface/http/content-publication-handler";
+import { SocialContentSyncApplication } from "@outbound/application/content/social-content-sync";
+import { PostgresSocialContentSyncRepository } from "@outbound/infrastructure/content/postgres-social-content-sync-repository";
+import { createSocialContentHttpHandler, isSocialContentRoute } from "@outbound/interface/http/social-content-handler";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
@@ -305,6 +308,10 @@ const contentPublications = createContentPublicationHttpHandler({
     socialPublisher,
   ),
 });
+const socialContent = createSocialContentHttpHandler({
+  contextResolver: auth.contextResolver,
+  application: new SocialContentSyncApplication(new PostgresSocialContentSyncRepository(database.db)),
+});
 const port = positiveIntegerEnvironment("PORT", 3000);
 const server = Bun.serve({
   port,
@@ -334,6 +341,7 @@ const server = Bun.serve({
     if (isWorkspaceOnboardingRoute(pathname)) return workspaceOnboarding(request);
     if (isWorkspaceDataRoute(pathname, request.method)) return workspaceData(request);
     if (isContentStrategyRoute(pathname)) return contentStrategy(request);
+    if (isSocialContentRoute(pathname)) return socialContent(request);
     if (isContentPublicationRoute(pathname)) return contentPublications(request);
     if (isContentGenerationRoute(pathname)) return contentGeneration(request);
     if (isContentIdeaRoute(pathname)) return contentIdeas(request);

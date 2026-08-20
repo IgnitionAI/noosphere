@@ -1714,6 +1714,94 @@ export const contentPublicationAttempts = pgTable(
   ],
 );
 
+export const socialContentSyncStates = pgTable(
+  "social_content_sync_states",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    connectedAccountId: uuid("connected_account_id").notNull().references(() => connectedAccounts.id, { onDelete: "cascade" }),
+    providerAccountId: varchar("provider_account_id", { length: 300 }).notNull(),
+    cursor: text("cursor"),
+    highWatermark: timestamp("high_watermark", { withTimezone: true }),
+    backfillComplete: boolean("backfill_complete").notNull().default(false),
+    status: varchar("status", { length: 40 }).notNull().default("idle"),
+    leaseToken: uuid("lease_token"),
+    lockedUntil: timestamp("locked_until", { withTimezone: true }),
+    nextSyncAt: timestamp("next_sync_at", { withTimezone: true }).notNull(),
+    lastErrorCode: varchar("last_error_code", { length: 160 }),
+    lastErrorMessage: text("last_error_message"),
+    lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true }),
+    lastSuccessAt: timestamp("last_success_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique("social_content_sync_states_workspace_id_uq").on(table.workspaceId, table.id),
+    uniqueIndex("social_content_sync_states_account_uq").on(table.workspaceId, table.connectedAccountId),
+    check("social_content_sync_states_status_ck", sql`${table.status} in ('idle', 'syncing', 'error')`),
+  ],
+);
+
+export const socialContentItems = pgTable(
+  "social_content_items",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    connectedAccountId: uuid("connected_account_id").notNull().references(() => connectedAccounts.id, { onDelete: "cascade" }),
+    providerAccountId: varchar("provider_account_id", { length: 300 }).notNull(),
+    publicationId: uuid("publication_id"),
+    network: varchar("network", { length: 40 }).notNull().default("linkedin"),
+    provider: varchar("provider", { length: 80 }).notNull().default("unipile"),
+    origin: varchar("origin", { length: 40 }).notNull(),
+    providerPostId: text("provider_post_id").notNull(),
+    socialId: text("social_id"),
+    authorProviderId: text("author_provider_id"),
+    text: text("text").notNull(),
+    url: text("url"),
+    status: varchar("status", { length: 40 }).notNull().default("observed"),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    impressions: integer("impressions"),
+    reactions: integer("reactions"),
+    comments: integer("comments"),
+    reposts: integer("reposts"),
+    metricsObservedAt: timestamp("metrics_observed_at", { withTimezone: true }),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).notNull(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({ columns: [table.workspaceId, table.publicationId], foreignColumns: [contentPublications.workspaceId, contentPublications.id], name: "social_content_items_workspace_publication_fk" }).onDelete("cascade"),
+    unique("social_content_items_workspace_id_uq").on(table.workspaceId, table.id),
+    uniqueIndex("social_content_items_account_post_uq").on(table.workspaceId, table.connectedAccountId, table.providerPostId),
+    check("social_content_items_network_ck", sql`${table.network} in ('linkedin')`),
+    check("social_content_items_origin_ck", sql`${table.origin} in ('internal', 'external')`),
+    check("social_content_items_status_ck", sql`${table.status} in ('observed', 'unavailable')`),
+    check("social_content_items_metrics_ck", sql`(${table.impressions} is null or ${table.impressions} >= 0) and (${table.reactions} is null or ${table.reactions} >= 0) and (${table.comments} is null or ${table.comments} >= 0) and (${table.reposts} is null or ${table.reposts} >= 0)`),
+  ],
+);
+
+export const contentMetricSnapshots = pgTable(
+  "content_metric_snapshots",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    socialContentId: uuid("social_content_id").notNull(),
+    providerPostId: text("provider_post_id").notNull(),
+    impressions: integer("impressions"),
+    reactions: integer("reactions"),
+    comments: integer("comments"),
+    reposts: integer("reposts"),
+    observedAt: timestamp("observed_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({ columns: [table.workspaceId, table.socialContentId], foreignColumns: [socialContentItems.workspaceId, socialContentItems.id], name: "content_metric_snapshots_workspace_content_fk" }).onDelete("cascade"),
+    uniqueIndex("content_metric_snapshots_content_observed_uq").on(table.workspaceId, table.socialContentId, table.observedAt),
+    check("content_metric_snapshots_metrics_ck", sql`(${table.impressions} is null or ${table.impressions} >= 0) and (${table.reactions} is null or ${table.reactions} >= 0) and (${table.comments} is null or ${table.comments} >= 0) and (${table.reposts} is null or ${table.reposts} >= 0)`),
+  ],
+);
+
 export const knowledgeSources = pgTable(
   "knowledge_sources",
   {

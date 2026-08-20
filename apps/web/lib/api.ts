@@ -258,6 +258,34 @@ export interface ContentPublication {
   readonly updatedAt: string;
 }
 
+export interface SocialContentItem {
+  readonly id: string;
+  readonly publicationId: string | null;
+  readonly origin: "internal" | "external";
+  readonly providerPostId: string;
+  readonly socialId: string | null;
+  readonly text: string;
+  readonly url: string | null;
+  readonly publishedAt: string | null;
+  readonly status: "observed" | "unavailable";
+  readonly impressions: number | null;
+  readonly reactions: number | null;
+  readonly comments: number | null;
+  readonly reposts: number | null;
+  readonly metricsObservedAt: string | null;
+  readonly firstSeenAt: string;
+  readonly lastSeenAt: string;
+}
+
+export interface SocialContentSyncStatus {
+  readonly status: "not_configured" | "idle" | "syncing" | "error";
+  readonly backfillComplete: boolean;
+  readonly lastSuccessAt: string | null;
+  readonly nextSyncAt: string | null;
+  readonly lastErrorCode: string | null;
+  readonly lastErrorMessage: string | null;
+}
+
 export interface SetupReadinessItem {
   readonly key: "product" | "icp" | "accounts" | "automation" | "calendar" | "knowledge";
   readonly label: string;
@@ -379,6 +407,16 @@ export async function listContentPublications(workspaceSlug: string, cursor?: st
   const params = new URLSearchParams();
   if (cursor) params.set("cursor", cursor);
   return crmFetch(workspaceSlug, `/api/v1/content/publications${params.size ? `?${params}` : ""}`);
+}
+
+export async function listSocialContent(workspaceSlug: string, cursor?: string): Promise<{ readonly data: readonly SocialContentItem[]; readonly nextCursor: string | null }> {
+  const params = new URLSearchParams();
+  if (cursor) params.set("cursor", cursor);
+  return crmFetch(workspaceSlug, `/api/v1/content/social-posts${params.size ? `?${params}` : ""}`);
+}
+
+export async function getSocialContentSyncStatus(workspaceSlug: string): Promise<SocialContentSyncStatus> {
+  return crmFetch(workspaceSlug, "/api/v1/content/social-posts/status");
 }
 
 export async function scheduleContentPublication(workspaceSlug: string, assetId: string, requestKey: string, scheduledFor: string): Promise<ContentPublication> {
