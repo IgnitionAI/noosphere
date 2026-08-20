@@ -62,6 +62,9 @@ import { PostgresEditorialStrategyRepository } from "@outbound/infrastructure/co
 import { LangChainEditorialStrategyGenerator } from "@outbound/infrastructure/content/langchain-editorial-strategy-generator";
 import { PostgresAiRunRecorder } from "@outbound/infrastructure/ai/postgres-ai-run-recorder";
 import { createContentStrategyHttpHandler, isContentStrategyRoute } from "@outbound/interface/http/content-strategy-handler";
+import { ContentIdeaApplication } from "@outbound/application/content/content-ideas";
+import { PostgresContentIdeaRepository } from "@outbound/infrastructure/content/postgres-content-idea-repository";
+import { createContentIdeaHttpHandler, isContentIdeaRoute } from "@outbound/interface/http/content-idea-handler";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
@@ -272,6 +275,10 @@ const contentStrategy = createContentStrategyHttpHandler({
     ),
   ),
 });
+const contentIdeas = createContentIdeaHttpHandler({
+  contextResolver: auth.contextResolver,
+  application: new ContentIdeaApplication(new PostgresContentIdeaRepository(database.db)),
+});
 const port = positiveIntegerEnvironment("PORT", 3000);
 const server = Bun.serve({
   port,
@@ -301,6 +308,7 @@ const server = Bun.serve({
     if (isWorkspaceOnboardingRoute(pathname)) return workspaceOnboarding(request);
     if (isWorkspaceDataRoute(pathname, request.method)) return workspaceData(request);
     if (isContentStrategyRoute(pathname)) return contentStrategy(request);
+    if (isContentIdeaRoute(pathname)) return contentIdeas(request);
     if (
       pathname === "/api/v1/workspace/operational-summary"
       || pathname === "/api/v1/activity"

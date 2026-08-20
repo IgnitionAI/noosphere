@@ -77,6 +77,11 @@ import { PostgresActiveAiConfigurationReader } from "@outbound/infrastructure/ai
 import { PostgresAiRunRecorder } from "@outbound/infrastructure/ai/postgres-ai-run-recorder";
 import { ProspectDecisionJobProcessor } from "@outbound/infrastructure/campaigns/prospect-decision-runner";
 import { LangChainProspectDecisionAgent } from "@outbound/infrastructure/campaigns/langchain-prospect-decision-agent";
+import { ContentIdeaDiscoveryJobProcessor } from "@outbound/application/content/content-ideas";
+import { PostgresContentIdeaRepository } from "@outbound/infrastructure/content/postgres-content-idea-repository";
+import { CrawlerContentIdeaSource } from "@outbound/infrastructure/content/crawler-content-idea-source";
+import { LangChainContentIdeaGenerator } from "@outbound/infrastructure/content/langchain-content-idea-generator";
+import { DailyContentIdeaScheduler } from "@outbound/infrastructure/content/daily-content-idea-scheduler";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
@@ -271,6 +276,18 @@ const dailyProspectingScheduler = new DailyProspectingScheduler(database.db, clo
   localTime: process.env.DAILY_PROSPECTING_TIME ?? "06:00",
   timezone: process.env.DAILY_PROSPECTING_TIMEZONE ?? "Europe/Paris",
 });
+const contentIdeaRepository = new PostgresContentIdeaRepository(database.db);
+const contentIdeaDiscoveryProcessor = new ContentIdeaDiscoveryJobProcessor(
+  contentIdeaRepository,
+  new CrawlerContentIdeaSource(discoveryCrawler),
+  new LangChainContentIdeaGenerator(process.env, workspaceAiSettings, aiRunRecorder),
+  queue,
+  () => clock.now(),
+);
+const dailyContentIdeaScheduler = new DailyContentIdeaScheduler(database.db, contentIdeaRepository, clock, {
+  localTime: process.env.DAILY_CONTENT_IDEA_TIME ?? "06:00",
+  timezone: process.env.DAILY_CONTENT_IDEA_TIMEZONE ?? "Europe/Paris",
+});
 const prospectAssessmentReconciler = new ProspectAssessmentReconciler(database.db, clock);
 const campaignHealthReconciler = new CampaignHealthReconciler(database.db, clock);
 const sourcingRetentionReconciler = new SourcingRetentionReconciler(database.db, clock);
@@ -286,8 +303,9 @@ const unipileInboxSynchronizer = process.env.UNIPILE_DSN
   : null;
 const maintenance = {
   async reconcile() {
-    const [dailyRuns, assessmentJobs, repairedCampaigns, retainedSourcing, inboundEvents] = await Promise.all([
+    const [dailyRuns, dailyIdeaRuns, assessmentJobs, repairedCampaigns, retainedSourcing, inboundEvents] = await Promise.all([
       dailyProspectingScheduler.reconcile(),
+      dailyContentIdeaScheduler.reconcile(),
       prospectAssessmentReconciler.reconcile(),
       campaignHealthReconciler.reconcile(),
       sourcingRetentionReconciler.reconcile(),
@@ -296,7 +314,7 @@ const maintenance = {
     if (inboundEvents > 0) {
       console.info(JSON.stringify({ event: "unipile_inbox_mirror_updated", importedMessages: inboundEvents }));
     }
-    return dailyRuns + assessmentJobs + repairedCampaigns + retainedSourcing + inboundEvents;
+    return dailyRuns + dailyIdeaRuns + assessmentJobs + repairedCampaigns + retainedSourcing + inboundEvents;
   },
 };
 const orchestrator = new ResearchOrchestrator(
@@ -321,7 +339,7 @@ const worker = new ResearchWorker(queue, orchestrator, clock, {
   pollIntervalMs: positiveIntegerEnvironment("JOB_POLL_INTERVAL_MS", 1_000),
   ...optionalJobTypes("WORKER_JOB_TYPES"),
   ...optionalExcludedJobTypes("WORKER_EXCLUDED_JOB_TYPES"),
-}, documentService, discoveryProcessor, channelAssessmentProcessor, campaignAutomationProcessor, campaignCompositionProcessor, outreachDispatchProcessor, inboundReplyProcessor, automatedReplySendProcessor, conversationCommandProcessor, process.env.WORKER_DISABLE_MAINTENANCE === "true" ? undefined : maintenance, process.env.WORKER_DISABLE_OUTBOX === "true" ? undefined : outboxDispatcher, importService, process.env.WORKER_DISABLE_OUTREACH_SCHEDULER === "true" ? undefined : outreachScheduler, enrichmentProcessor, signalProcessor, workspaceExportProcessor, retentionPurgeProcessor, knowledgeExpirationProcessor, evaluationRunProcessor, prospectDecisionProcessor);
+}, documentService, discoveryProcessor, channelAssessmentProcessor, campaignAutomationProcessor, campaignCompositionProcessor, outreachDispatchProcessor, inboundReplyProcessor, automatedReplySendProcessor, conversationCommandProcessor, process.env.WORKER_DISABLE_MAINTENANCE === "true" ? undefined : maintenance, process.env.WORKER_DISABLE_OUTBOX === "true" ? undefined : outboxDispatcher, importService, process.env.WORKER_DISABLE_OUTREACH_SCHEDULER === "true" ? undefined : outreachScheduler, enrichmentProcessor, signalProcessor, workspaceExportProcessor, retentionPurgeProcessor, knowledgeExpirationProcessor, evaluationRunProcessor, prospectDecisionProcessor, contentIdeaDiscoveryProcessor);
 
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
   process.once(signal, () => {

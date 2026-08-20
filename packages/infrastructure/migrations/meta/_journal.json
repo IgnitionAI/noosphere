@@ -484,6 +484,13 @@
       "when": 1797775260000,
       "tag": "0068_editorial_strategy_immutability",
       "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1797775320000,
+      "tag": "0069_noosphere_content_ideas",
+      "breakpoints": true
     }
   ]
 }
