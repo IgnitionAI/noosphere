@@ -26,6 +26,8 @@ import {
   contentIdeas,
   contentIdeaSchedules,
   contentPublications,
+  socialContentItems,
+  socialContentSyncStates,
   dailyProspectingSchedules,
   editorialStrategies,
   editorialStrategyVersions,
@@ -117,7 +119,7 @@ export class PostgresOperationalViews {
     const hasMoreAttention = attentionPage.length > attentionLimit;
     const attention = attentionPage.slice(0, attentionLimit);
     const statuses = accountRows.map((row) => row.status);
-    const [editorialRows, generationRows, assetRows, publicationRows] = await Promise.all([
+    const [editorialRows, generationRows, assetRows, publicationRows, socialRows, socialSyncRows] = await Promise.all([
       this.database.select({
         id: editorialStrategies.id,
         status: editorialStrategies.status,
@@ -150,11 +152,23 @@ export class PostgresOperationalViews {
         lastErrorCode: contentPublications.lastErrorCode,
         updatedAt: contentPublications.updatedAt,
       }).from(contentPublications).where(eq(contentPublications.workspaceId, workspaceId)).orderBy(desc(contentPublications.updatedAt)).limit(1),
+      this.database.select({
+        id: socialContentItems.id,
+        origin: socialContentItems.origin,
+        lastSeenAt: socialContentItems.lastSeenAt,
+      }).from(socialContentItems).where(eq(socialContentItems.workspaceId, workspaceId)).orderBy(desc(socialContentItems.lastSeenAt)).limit(1),
+      this.database.select({
+        status: socialContentSyncStates.status,
+        lastSuccessAt: socialContentSyncStates.lastSuccessAt,
+        updatedAt: socialContentSyncStates.updatedAt,
+      }).from(socialContentSyncStates).where(eq(socialContentSyncStates.workspaceId, workspaceId)).orderBy(desc(socialContentSyncStates.updatedAt)).limit(1),
     ]);
     const editorial = editorialRows[0];
     const generation = generationRows[0];
     const latestAsset = assetRows[0];
     const latestPublication = publicationRows[0];
+    const latestSocial = socialRows[0];
+    const latestSocialSync = socialSyncRows[0];
     const connected = statuses.filter((status) => status === "connected").length;
     const degraded = statuses.filter((status) => status === "degraded" || status === "unknown" || status === "pending").length;
     const disconnected = statuses.filter((status) => status === "disconnected").length;
@@ -213,14 +227,14 @@ export class PostgresOperationalViews {
     ].sort((left, right) => (left.expectedAt?.getTime() ?? Number.MAX_SAFE_INTEGER) - (right.expectedAt?.getTime() ?? Number.MAX_SAFE_INTEGER));
     const inboundStatus = !editorial
       ? "not_configured"
-      : generation?.status === "blocked" || generation?.status === "failed" || latestAsset?.status === "blocked" || latestPublication?.status === "unknown" || latestPublication?.status === "failed"
+      : generation?.status === "blocked" || generation?.status === "failed" || latestAsset?.status === "blocked" || latestPublication?.status === "unknown" || latestPublication?.status === "failed" || latestSocialSync?.status === "error"
         ? "degraded"
-        : generation?.status === "queued" || generation?.status === "running" || latestPublication?.status === "publishing"
+        : generation?.status === "queued" || generation?.status === "running" || latestPublication?.status === "publishing" || latestSocialSync?.status === "syncing"
           ? "running"
           : editorial.status === "active"
             ? "idle"
             : "paused";
-    const inboundLastActivity = latestPublication?.updatedAt ?? generation?.updatedAt ?? latestAsset?.updatedAt ?? editorial?.updatedAt ?? null;
+    const inboundLastActivity = mostRecent(latestSocial?.lastSeenAt, latestSocialSync?.lastSuccessAt, latestPublication?.updatedAt, generation?.updatedAt, latestAsset?.updatedAt, editorial?.updatedAt);
     return {
       asOf,
       counts: {
@@ -242,15 +256,19 @@ export class PostgresOperationalViews {
       engines: {
         inbound: {
           status: inboundStatus,
-          label: inboundStatus === "running" ? (latestPublication?.status === "publishing" ? "Inbound publie sur LinkedIn" : "Inbound génère un contenu") : inboundStatus === "degraded" ? "Inbound nécessite une attention" : editorial ? (editorial.status === "active" ? "Inbound prêt" : "Stratégie Inbound en brouillon") : "Inbound à configurer",
+          label: inboundStatus === "running" ? (latestSocialSync?.status === "syncing" ? "Inbound synchronise LinkedIn" : latestPublication?.status === "publishing" ? "Inbound publie sur LinkedIn" : "Inbound génère un contenu") : inboundStatus === "degraded" ? "Inbound nécessite une attention" : editorial ? (editorial.status === "active" ? "Inbound prêt" : "Stratégie Inbound en brouillon") : "Inbound à configurer",
           summary: !editorial
             ? "Une offre publiée et un ICP actif sont requis pour dériver la stratégie."
+            : latestSocialSync?.status === "error"
+              ? "La lecture du compte LinkedIn a échoué et sera retentée automatiquement."
             : latestPublication?.status === "unknown"
               ? "Le résultat LinkedIn est incertain : la publication attend une réconciliation et ne sera pas rejouée."
               : latestPublication?.status === "failed"
                 ? `La dernière publication a échoué${latestPublication.lastErrorCode ? ` · ${latestPublication.lastErrorCode}` : ""}.`
                 : latestPublication?.status === "publishing"
                   ? "Publication LinkedIn en cours avec lease durable."
+                  : latestSocial
+                    ? `LinkedIn synchronisé · dernier post ${latestSocial.origin === "internal" ? "Noosphere" : "externe"} observé.`
                   : generation?.status === "queued" || generation?.status === "running"
               ? `Pipeline éditorial à l’étape ${contentStageLabel(generation.stage)} · reprise durable active.`
               : latestAsset?.status === "ready"
@@ -259,7 +277,9 @@ export class PostgresOperationalViews {
                   ? "La critique ou l’audit des preuves a bloqué le dernier contenu."
                   : `Stratégie LinkedIn v${editorial.currentVersion || "brouillon"} · le pipeline éditorial attend sa prochaine étape.`,
           lastActivityAt: inboundLastActivity,
-          nextAction: latestPublication && ["scheduled", "retry", "publishing", "unknown", "failed"].includes(latestPublication.status)
+          nextAction: latestSocialSync?.status === "error"
+            ? { label: "Voir la synchronisation", href: "/content/calendar" }
+            : latestPublication && ["scheduled", "retry", "publishing", "unknown", "failed"].includes(latestPublication.status)
             ? { label: latestPublication.status === "unknown" || latestPublication.status === "failed" ? "Voir l’exception" : "Voir le calendrier", href: "/content/calendar" }
             : generation
             ? { label: generation.status === "blocked" || generation.status === "failed" ? "Voir le blocage" : "Suivre la génération", href: `/content/ideas/${generation.ideaId}` }
@@ -287,7 +307,7 @@ export class PostgresOperationalViews {
     const offset = input.offset ?? 0;
     const limit = input.limit ?? 25;
     if (input.lens === "inbound") {
-      const [strategies, versions, ideaCount, ideas, ideaRuns, schedule, assetCount, assetRows, generationRows, publicationCount, publicationRows] = await Promise.all([
+      const [strategies, versions, ideaCount, ideas, ideaRuns, schedule, assetCount, assetRows, generationRows, publicationCount, publicationRows, socialCount, socialRows, socialSyncRows] = await Promise.all([
         this.database.select({
           id: editorialStrategies.id,
           name: editorialStrategies.name,
@@ -309,9 +329,34 @@ export class PostgresOperationalViews {
         this.database.select({ id: contentGenerationRuns.id, ideaId: contentGenerationRuns.ideaId, status: contentGenerationRuns.status, stage: contentGenerationRuns.stage, angle: contentIdeas.angle, updatedAt: contentGenerationRuns.updatedAt }).from(contentGenerationRuns).innerJoin(contentIdeas, and(eq(contentIdeas.workspaceId, contentGenerationRuns.workspaceId), eq(contentIdeas.id, contentGenerationRuns.ideaId))).where(and(eq(contentGenerationRuns.workspaceId, input.workspaceId), sql`${contentGenerationRuns.status} in ('queued', 'running', 'blocked', 'failed')`)).orderBy(desc(contentGenerationRuns.updatedAt)).limit(limit),
         this.database.select({ value: count() }).from(contentPublications).where(eq(contentPublications.workspaceId, input.workspaceId)),
         this.database.select({ id: contentPublications.id, status: contentPublications.status, scheduledFor: contentPublications.scheduledFor, attempts: contentPublications.attempts, maxAttempts: contentPublications.maxAttempts, lastErrorCode: contentPublications.lastErrorCode, updatedAt: contentPublications.updatedAt }).from(contentPublications).where(eq(contentPublications.workspaceId, input.workspaceId)).orderBy(desc(contentPublications.updatedAt)).limit(limit),
+        this.database.select({ value: count() }).from(socialContentItems).where(eq(socialContentItems.workspaceId, input.workspaceId)),
+        this.database.select({ id: socialContentItems.id, origin: socialContentItems.origin, text: socialContentItems.text, impressions: socialContentItems.impressions, reactions: socialContentItems.reactions, comments: socialContentItems.comments, metricsObservedAt: socialContentItems.metricsObservedAt, lastSeenAt: socialContentItems.lastSeenAt }).from(socialContentItems).where(eq(socialContentItems.workspaceId, input.workspaceId)).orderBy(desc(socialContentItems.lastSeenAt)).limit(limit),
+        this.database.select({ id: socialContentSyncStates.id, status: socialContentSyncStates.status, lastErrorCode: socialContentSyncStates.lastErrorCode, updatedAt: socialContentSyncStates.updatedAt }).from(socialContentSyncStates).where(eq(socialContentSyncStates.workspaceId, input.workspaceId)).orderBy(desc(socialContentSyncStates.updatedAt)).limit(5),
       ]);
       const hasNext = ideas.length > limit;
       const items = [
+        ...socialSyncRows.filter((state) => state.status === "error" || state.status === "syncing").map((state) => ({
+          id: `social-sync:${state.id}`,
+          kind: "job" as const,
+          source: "inbound" as const,
+          status: state.status === "error" ? "attention" as const : "running" as const,
+          title: state.status === "error" ? "Synchronisation LinkedIn en attente" : "Synchronisation LinkedIn en cours",
+          detail: state.status === "error" ? `${state.lastErrorCode ?? "Erreur provider"} · nouvelle tentative automatique` : "Lecture des posts et métriques avec curseur durable",
+          occurredAt: state.updatedAt,
+          href: "/content/calendar",
+          correlationId: `social-sync:${state.id}`,
+        })),
+        ...socialRows.map((post) => ({
+          id: `social-post:${post.id}`,
+          kind: "publication" as const,
+          source: "inbound" as const,
+          status: "completed" as const,
+          title: post.origin === "internal" ? "Post Noosphere observé sur LinkedIn" : "Post externe observé sur LinkedIn",
+          detail: `${post.text.slice(0, 120)}${post.text.length > 120 ? "…" : ""} · ${post.impressions ?? "—"} impressions · ${post.reactions ?? "—"} réactions · ${post.comments ?? "—"} commentaires${post.metricsObservedAt ? " · métriques actualisées" : ""}`,
+          occurredAt: post.lastSeenAt,
+          href: "/content/calendar",
+          correlationId: null,
+        })),
         ...publicationRows.map((publication) => ({
           id: `publication:${publication.id}`,
           kind: "publication" as const,
@@ -379,8 +424,8 @@ export class PostgresOperationalViews {
         correlationId: null,
         })),
       ].slice(0, limit);
-      const failed = ideaRuns.some((run) => run.status === "failed") || generationRows.some((run) => run.status === "failed" || run.status === "blocked") || publicationRows.some((publication) => publication.status === "failed" || publication.status === "unknown");
-      const running = ideaRuns.some((run) => run.status === "running" || run.status === "queued") || generationRows.some((run) => run.status === "running" || run.status === "queued") || publicationRows.some((publication) => publication.status === "publishing");
+      const failed = ideaRuns.some((run) => run.status === "failed") || generationRows.some((run) => run.status === "failed" || run.status === "blocked") || publicationRows.some((publication) => publication.status === "failed" || publication.status === "unknown") || socialSyncRows.some((state) => state.status === "error");
+      const running = ideaRuns.some((run) => run.status === "running" || run.status === "queued") || generationRows.some((run) => run.status === "running" || run.status === "queued") || publicationRows.some((publication) => publication.status === "publishing") || socialSyncRows.some((state) => state.status === "syncing");
       return {
         lens: input.lens,
         asOf,
@@ -392,6 +437,7 @@ export class PostgresOperationalViews {
           { key: "ideas", label: "Idées sourcées", value: valueOf(ideaCount) },
           { key: "assets", label: "Contenus", value: valueOf(assetCount) },
           { key: "publications", label: "Publications", value: valueOf(publicationCount) },
+          { key: "observed-posts", label: "Posts observés", value: valueOf(socialCount) },
         ],
         items,
         pagination: { nextCursor: hasNext ? String(offset + limit) : null },
@@ -683,6 +729,10 @@ function toConversationView(row: ConversationRow): ConversationWorkspaceView {
 
 function valueOf(row: readonly [{ value: number | string }] | readonly { value: number | string }[]): number {
   return Number(row[0]?.value ?? 0);
+}
+
+function mostRecent(...values: (Date | null | undefined)[]): Date | null {
+  return values.reduce<Date | null>((latest, value) => !value || latest && latest >= value ? latest : value, null);
 }
 
 function attentionItem(type: "account" | "job" | "campaign" | "decision" | "conversation", severity: "info" | "warning" | "critical", resourceId: string, message: string, createdAt: Date, href: string, correlationId: string | null) {

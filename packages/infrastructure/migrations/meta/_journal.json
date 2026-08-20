@@ -505,6 +505,13 @@
       "when": 1797775440000,
       "tag": "0071_noosphere_durable_publications",
       "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1797775500000,
+      "tag": "0072_noosphere_linkedin_content_sync",
+      "breakpoints": true
     }
   ]
 }

@@ -5,6 +5,8 @@ import { inArray } from "drizzle-orm";
 import { createDatabase } from "@outbound/infrastructure/database/client";
 import {
   authUsers,
+  connectedAccounts,
+  contentMetricSnapshots,
   contentPublicationAttempts,
   contentPublications,
   contentIdeaDiscoveryRuns,
@@ -17,11 +19,15 @@ import {
   offerClaims,
   offers,
   offerVersions,
+  socialContentItems,
+  socialContentSyncStates,
   workspaces,
 } from "@outbound/infrastructure/database/schema";
 import { PostgresContentGenerationRepository } from "@outbound/infrastructure/content/postgres-content-generation-repository";
 import { PostgresContentPublicationRepository } from "@outbound/infrastructure/content/postgres-content-publication-repository";
 import { PostgresOperationalViews } from "@outbound/infrastructure/workspaces/postgres-operational-views";
+import { PostgresSocialContentSyncRepository } from "@outbound/infrastructure/content/postgres-social-content-sync-repository";
+import { SocialContentSynchronizer } from "@outbound/application/content/social-content-sync";
 
 const databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
 const databaseDescribe = databaseUrl ? describe : describe.skip;
@@ -42,6 +48,7 @@ databaseDescribe("CNT-101 durable content generation", () => {
   const icpVersionId = crypto.randomUUID();
   const strategyId = crypto.randomUUID();
   const strategyVersionId = crypto.randomUUID();
+  const connectedAccountId = crypto.randomUUID();
   const discoveryRunId = crypto.randomUUID();
   const ideaId = crypto.randomUUID();
   const now = new Date("2026-08-20T08:00:00.000Z");
@@ -53,6 +60,7 @@ databaseDescribe("CNT-101 durable content generation", () => {
       { id: otherWorkspaceId, slug: `content-b-${otherWorkspaceId}`, name: "Content B" },
     ]);
     await database.db.insert(authUsers).values({ id: userId, name: "Content Owner", email: `content-${userId}@example.com` });
+    await database.db.insert(connectedAccounts).values({ id: connectedAccountId, workspaceId, provider: "unipile", providerAccountId: "linkedin-account-fixture", displayName: "LinkedIn fixture", status: "connected", capabilities: { linkedin: true }, encryptedSecret: "integration-fixture", createdBy: userId });
     await database.db.insert(offers).values({ id: offerId, workspaceId, name: "Noosphere", status: "draft", currentVersion: 1, category: "saas", valueProposition: "Relier contenu et revenu", targetAudience: "Équipes B2B", createdBy: userId });
     await database.db.insert(offerVersions).values({ id: offerVersionId, workspaceId, offerId, version: 1, name: "Noosphere", category: "saas", valueProposition: "Relier contenu et revenu", targetAudience: "Équipes B2B", publishedBy: userId, publishedAt: now });
     await database.db.insert(offerClaims).values({ id: claimId, workspaceId, offerVersionId, claim: "Noosphere relie le contenu aux conversations", validationStatus: "validated", evidenceUri: "https://example.com/proof" });
@@ -71,6 +79,9 @@ databaseDescribe("CNT-101 durable content generation", () => {
     await database.client`delete from audit_logs where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`delete from outbox_events where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`delete from content_operation_requests where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
+    await database.db.delete(contentMetricSnapshots).where(inArray(contentMetricSnapshots.workspaceId, [workspaceId, otherWorkspaceId]));
+    await database.db.delete(socialContentItems).where(inArray(socialContentItems.workspaceId, [workspaceId, otherWorkspaceId]));
+    await database.db.delete(socialContentSyncStates).where(inArray(socialContentSyncStates.workspaceId, [workspaceId, otherWorkspaceId]));
     await database.db.delete(contentPublicationAttempts).where(inArray(contentPublicationAttempts.workspaceId, [workspaceId, otherWorkspaceId]));
     await database.db.delete(contentPublications).where(inArray(contentPublications.workspaceId, [workspaceId, otherWorkspaceId]));
     await database.client`alter table content_asset_versions disable trigger content_asset_versions_immutable_trg`;
@@ -100,6 +111,7 @@ databaseDescribe("CNT-101 durable content generation", () => {
     await database.client`delete from icp_versions where workspace_id = ${workspaceId}`;
     await database.client`alter table icp_versions enable trigger icp_versions_immutable_trg`;
     await database.client`delete from icps where workspace_id = ${workspaceId}`;
+    await database.db.delete(connectedAccounts).where(inArray(connectedAccounts.workspaceId, [workspaceId, otherWorkspaceId]));
     await database.client`delete from auth_users where id = ${userId}`;
     await database.client`delete from workspaces where id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`create trigger audit_logs_immutable_trg before update or delete on audit_logs for each row execute function reject_audit_log_mutation()`;
@@ -179,6 +191,38 @@ databaseDescribe("CNT-101 durable content generation", () => {
     expect(await publicationRepository.find({ workspaceId, publicationId: publishable.id })).toMatchObject({ status: "published", providerPostId: "provider-post-fixture", providerUrl: "https://www.linkedin.com/feed/update/fixture" });
     await expectRejected(() => publicationRepository.markFailed({ workspaceId, publicationId: publishable.id, code: "STALE_WORKER", message: "A stale preflight must not overwrite success", now }), "CONTENT_PUBLICATION_EXECUTION_CONFLICT");
     expect((await publicationRepository.find({ workspaceId, publicationId: publishable.id }))?.status).toBe("published");
+
+    const socialSyncRepository = new PostgresSocialContentSyncRepository(database.db);
+    const socialPage = [
+      { providerPostId: "provider-post-fixture", socialId: "social-fixture", authorProviderId: "owner-fixture", text: draft.body, url: "https://www.linkedin.com/feed/update/fixture", publishedAt: now, observedAt: now },
+      { providerPostId: "external-post-fixture", socialId: "urn:li:activity:999", authorProviderId: "owner-fixture", text: "Post publié hors Noosphere", url: "https://www.linkedin.com/feed/update/urn:li:activity:999", publishedAt: new Date(now.getTime() - 60_000), observedAt: now },
+    ];
+    const firstSocialSync = new SocialContentSynchronizer(
+      socialSyncRepository,
+      { async listOwnContent() { return { data: socialPage, nextCursor: null }; } },
+      { async readMetrics() { return socialPage.map((post, index) => ({ providerPostId: post.providerPostId, impressions: 100 + index, reactions: 5 + index, comments: 2, reposts: 1, observedAt: now })); } },
+      { now: () => now },
+    );
+    expect(await firstSocialSync.reconcile(workspaceId)).toBe(2);
+    const observed = await socialSyncRepository.list({ workspaceId, limit: 20 });
+    expect(observed.data).toContainEqual(expect.objectContaining({ providerPostId: "provider-post-fixture", publicationId: publishable.id, origin: "internal", impressions: 100 }));
+    expect(observed.data).toContainEqual(expect.objectContaining({ providerPostId: "external-post-fixture", publicationId: null, origin: "external", impressions: 101 }));
+    expect((await socialSyncRepository.list({ workspaceId: otherWorkspaceId, limit: 20 })).data).toEqual([]);
+
+    const restartedAt = new Date(now.getTime() + 60_000);
+    await database.db.update(socialContentSyncStates).set({ nextSyncAt: restartedAt }).where(inArray(socialContentSyncStates.workspaceId, [workspaceId]));
+    const restartedSocialSync = new SocialContentSynchronizer(
+      new PostgresSocialContentSyncRepository(database.db),
+      { async listOwnContent() { return { data: socialPage.map((post) => ({ ...post, observedAt: restartedAt })), nextCursor: null }; } },
+      { async readMetrics() { return socialPage.map((post, index) => ({ providerPostId: post.providerPostId, impressions: 150 + index, reactions: 8 + index, comments: 3, reposts: 1, observedAt: restartedAt })); } },
+      { now: () => restartedAt },
+    );
+    expect(await restartedSocialSync.reconcile(workspaceId)).toBe(2);
+    const converged = await socialSyncRepository.list({ workspaceId, limit: 20 });
+    expect(converged.data).toHaveLength(2);
+    expect(converged.data).toContainEqual(expect.objectContaining({ providerPostId: "provider-post-fixture", origin: "internal", impressions: 150, metricsObservedAt: restartedAt }));
+    expect((await database.client<{ count: number }[]>`select count(*)::int as count from content_metric_snapshots where workspace_id = ${workspaceId}`)[0]?.count).toBe(4);
+    expect(await socialSyncRepository.status({ workspaceId })).toMatchObject({ status: "idle", backfillComplete: true, lastSuccessAt: restartedAt });
 
     const firstPublicationPage = await publicationRepository.list({ workspaceId, limit: 1 });
     const secondPublicationPage = await publicationRepository.list({ workspaceId, cursor: firstPublicationPage.nextCursor!, limit: 1 });

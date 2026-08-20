@@ -89,6 +89,9 @@ import { ContentPublicationJobProcessor, type SocialPublishingAccountResolver } 
 import { SocialProviderError, type SocialPublisher } from "@outbound/application/content/social-ports";
 import { PostgresContentPublicationRepository, PostgresSocialPublishingAccountResolver } from "@outbound/infrastructure/content/postgres-content-publication-repository";
 import { UnipileSocialPublisher } from "@outbound/infrastructure/content/unipile-social-publisher";
+import { SocialContentSynchronizer } from "@outbound/application/content/social-content-sync";
+import { PostgresSocialContentSyncRepository } from "@outbound/infrastructure/content/postgres-social-content-sync-repository";
+import { UnipileSocialContentReader } from "@outbound/infrastructure/content/unipile-social-content-reader";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
@@ -327,20 +330,39 @@ const unipileInboxSynchronizer = process.env.UNIPILE_DSN
       { dsn: process.env.UNIPILE_DSN, apiKey: process.env.UNIPILE_API_KEY },
     )
   : null;
+const socialContentReader = unipileDsn && unipileApiKey
+  ? new UnipileSocialContentReader({
+      dsn: unipileDsn,
+      apiKey: unipileApiKey,
+      timeoutMs: positiveIntegerEnvironment("UNIPILE_TIMEOUT_MS", 10_000),
+    })
+  : null;
+const socialContentSynchronizer = socialContentReader && process.env.UNIPILE_SOCIAL_CONTENT_SYNC_ENABLED !== "false"
+  ? new SocialContentSynchronizer(
+      new PostgresSocialContentSyncRepository(database.db),
+      socialContentReader,
+      socialContentReader,
+      { now: () => clock.now() },
+    )
+  : null;
 const maintenance = {
   async reconcile() {
-    const [dailyRuns, dailyIdeaRuns, assessmentJobs, repairedCampaigns, retainedSourcing, inboundEvents] = await Promise.all([
+    const [dailyRuns, dailyIdeaRuns, assessmentJobs, repairedCampaigns, retainedSourcing, inboundEvents, observedSocialPosts] = await Promise.all([
       dailyProspectingScheduler.reconcile(),
       dailyContentIdeaScheduler.reconcile(),
       prospectAssessmentReconciler.reconcile(),
       campaignHealthReconciler.reconcile(),
       sourcingRetentionReconciler.reconcile(),
       unipileInboxSynchronizer?.reconcile() ?? Promise.resolve(0),
+      socialContentSynchronizer?.reconcile() ?? Promise.resolve(0),
     ]);
     if (inboundEvents > 0) {
       console.info(JSON.stringify({ event: "unipile_inbox_mirror_updated", importedMessages: inboundEvents }));
     }
-    return dailyRuns + dailyIdeaRuns + assessmentJobs + repairedCampaigns + retainedSourcing + inboundEvents;
+    if (observedSocialPosts > 0) {
+      console.info(JSON.stringify({ event: "linkedin_social_content_synchronized", observedPosts: observedSocialPosts }));
+    }
+    return dailyRuns + dailyIdeaRuns + assessmentJobs + repairedCampaigns + retainedSourcing + inboundEvents + observedSocialPosts;
   },
 };
 const orchestrator = new ResearchOrchestrator(

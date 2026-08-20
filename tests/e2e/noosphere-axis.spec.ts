@@ -76,6 +76,9 @@ test("the LinkedIn publication calendar exposes durable empty state without a pr
   await expect(page).toHaveURL(new RegExp(`/w/${workspaceSlug}/content/calendar`));
   await expect(page.getByRole("heading", { name: "Publications LinkedIn" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Aucune publication planifiée" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Posts observés sur le compte" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Aucun post observé" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Synchronisation LinkedIn" })).toBeVisible();
   expect(mutations).toEqual([]);
 });
 
