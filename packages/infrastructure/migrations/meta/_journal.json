@@ -470,6 +470,20 @@
       "when": 1790031600000,
       "tag": "0066_continuous_empty_campaign_sourcing",
       "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1797775200000,
+      "tag": "0067_noosphere_editorial_strategy",
+      "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1797775260000,
+      "tag": "0068_editorial_strategy_immutability",
+      "breakpoints": true
     }
   ]
 }

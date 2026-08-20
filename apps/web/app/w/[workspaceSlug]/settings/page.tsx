@@ -59,6 +59,7 @@ export default async function WorkspaceSettingsPage({ params, searchParams }: { 
     <section className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
       <SettingLink href={`/w/${workspaceSlug}/offers`} icon={<Package size={17} />} label="Produit et offre" detail="Ce que l’IA doit vendre" />
       <SettingLink href={`/w/${workspaceSlug}/icps`} icon={<Target size={17} />} label="ICP et segments" detail="Les profils à rechercher" />
+      <SettingLink href={`/w/${workspaceSlug}/content/strategy`} icon={<Sparkles size={17} />} label="Stratégie Inbound" detail="Audience, piliers, preuves et cadence LinkedIn" />
       <SettingLink href={`/w/${workspaceSlug}/settings/channels`} icon={<MessageCircle size={17} />} label="Comptes et canaux" detail="LinkedIn, email, WhatsApp" />
       <SettingLink href={`/w/${workspaceSlug}/settings/automation`} icon={<Bot size={17} />} label="Automatisation" detail="Setter, relances et sécurité" />
       <SettingLink href={`/w/${workspaceSlug}/settings/calendar`} icon={<CalendarDays size={17} />} label="Agenda" detail="Créneaux et réservations" />

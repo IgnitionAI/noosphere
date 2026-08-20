@@ -112,6 +112,31 @@ export interface ActivityWorkspacePage {
   readonly pagination: { readonly nextCursor: string | null };
 }
 
+export interface EditorialStrategySnapshot {
+  readonly audience: { readonly name: string; readonly summary: string; readonly awareness: "unaware" | "problem_aware" | "solution_aware" | "product_aware" | "mixed" };
+  readonly pillars: readonly { readonly name: string; readonly promise: string; readonly proofTypes: readonly string[] }[];
+  readonly voice: { readonly traits: readonly string[]; readonly avoid: readonly string[] };
+  readonly formats: readonly ("linkedin_text" | "linkedin_document" | "linkedin_image" | "linkedin_video")[];
+  readonly cadence: { readonly postsPerWeek: number; readonly preferredDays: readonly number[]; readonly timezone: string };
+  readonly callsToAction: readonly string[];
+  readonly allowedClaimIds: readonly string[];
+  readonly forbiddenTopics: readonly string[];
+}
+
+export interface EditorialStrategy {
+  readonly id: string;
+  readonly name: string;
+  readonly offerId: string;
+  readonly offerVersionId: string;
+  readonly icpId: string;
+  readonly icpVersionId: string;
+  readonly currentVersion: number;
+  readonly draft: EditorialStrategySnapshot;
+  readonly derivation: { readonly provider: string; readonly model: string; readonly promptVersion: string; readonly aiRunId: string | null };
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
 export interface SetupReadinessItem {
   readonly key: "product" | "icp" | "accounts" | "automation" | "calendar" | "knowledge";
   readonly label: string;
@@ -176,6 +201,23 @@ export async function getOperationalSummary(workspaceSlug: string, input: { atte
   if (input.attentionCursor) params.set("attentionCursor", input.attentionCursor);
   if (input.attentionLimit) params.set("attentionLimit", String(input.attentionLimit));
   return crmFetch(workspaceSlug, `/api/v1/workspace/operational-summary${params.size ? `?${params}` : ""}`);
+}
+
+export async function getEditorialStrategy(workspaceSlug: string): Promise<EditorialStrategy | null> {
+  try {
+    return await crmFetch(workspaceSlug, "/api/v1/content/strategy");
+  } catch (error) {
+    if (error instanceof OutboundApiError && error.status === 404) return null;
+    throw error;
+  }
+}
+
+export async function deriveEditorialStrategy(workspaceSlug: string, requestKey: string): Promise<EditorialStrategy> {
+  return crmFetch(workspaceSlug, "/api/v1/content/strategy/derive", { method: "POST", body: { requestKey } });
+}
+
+export async function publishEditorialStrategy(workspaceSlug: string, requestKey: string): Promise<{ readonly id: string; readonly version: number }> {
+  return crmFetch(workspaceSlug, "/api/v1/content/strategy/publish", { method: "POST", body: { requestKey } });
 }
 
 export async function getActivity(workspaceSlug: string, lens: NoosphereLens, cursor?: string): Promise<ActivityWorkspacePage> {
