@@ -1,10 +1,12 @@
 # Préparation produit
 
-Ce dossier transforme l’architecture et le prototype d’Ignition Outbound en
-backlog d’implémentation.
+Ce dossier transforme l’architecture et le prototype de Noosphere, auparavant
+Ignition Outbound, en backlog d’implémentation.
 
 ## Documents
 
+- [Backlog Noosphere Outbound + Content Inbound](NOOSPHERE_BACKLOG.md)
+- [Architecture produit Noosphere](../architecture/NOOSPHERE_PRODUCT_ARCHITECTURE.md)
 - [Catalogue des features](FEATURE_CATALOG.md)
 - [Plan de livraison](DELIVERY_PLAN.md)
 - [Frontière IA](AI_BOUNDARY.md)

@@ -1,8 +1,10 @@
-# Ignition Outbound
+# Noosphere
 
-Ignition Outbound est une application interne de prospection multicanale conçue
-pour IgnitionAI, avec une architecture permettant une évolution ultérieure vers
-un produit SaaS multi-workspace.
+Noosphere est le système GTM interne d'IgnitionAI. Il réunit le moteur Outbound
+existant — ICP, campagnes, conversations et rendez-vous — et un moteur Content
+Inbound planifié pour LinkedIn, X, YouTube Shorts et TikTok Shorts. Son
+architecture multi-workspace permet une évolution ultérieure vers un produit
+SaaS sans refonte du domaine.
 
 Ce dépôt contient les spécifications d’architecture, un prototype frontend
 HTML/Tailwind navigable et la première tranche verticale Bun/PostgreSQL/Next.js
@@ -90,6 +92,8 @@ sont détaillées dans le runbook F-009.
 
 ## Documents
 
+- [Architecture produit Noosphere](docs/architecture/NOOSPHERE_PRODUCT_ARCHITECTURE.md)
+- [Backlog Outbound + Content Inbound](docs/product/NOOSPHERE_BACKLOG.md)
 - [Préparation produit et catalogue des features](docs/product/README.md)
 - [Plan de livraison des features](docs/product/DELIVERY_PLAN.md)
 - [Frontière IA](docs/product/AI_BOUNDARY.md)
