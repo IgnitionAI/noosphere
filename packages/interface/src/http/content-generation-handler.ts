@@ -7,6 +7,7 @@ import { RequestAuthenticationError, WorkspaceAccessDeniedError, WorkspaceContex
 const uuid = z.string().uuid();
 
 export function isContentGenerationRoute(pathname: string): boolean {
+  if (pathname === "/api/v1/content/ideas/discover") return false;
   return /^\/api\/v1\/content\/ideas\/[^/]+(?:\/brief)?$/.test(pathname)
     || /^\/api\/v1\/content\/assets\/[^/]+\/improve$/.test(pathname)
     || /^\/api\/v1\/content\/generation-runs\/[^/]+$/.test(pathname);
