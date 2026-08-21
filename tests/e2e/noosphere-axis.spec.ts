@@ -32,7 +32,8 @@ test("the five destinations and Noosphere Axis remain GET-only", async ({ page }
 
   await page.getByRole("tab", { name: "Symbiose" }).click();
   await expect(page).toHaveURL(new RegExp(`/w/${workspaceSlug}/activity\\?lens=symbiosis`));
-  await expect(page.getByRole("heading", { name: "Relier contenu et revenu" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Transformer les signaux" })).toBeVisible();
+  await expect(page.getByText("Données à jour")).toBeVisible();
 
   await page.getByRole("tab", { name: "Outbound" }).click();
   await expect(page).toHaveURL(new RegExp(`/w/${workspaceSlug}/activity\\?lens=outbound`));

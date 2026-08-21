@@ -1,4 +1,4 @@
-import { and, count, desc, eq, gte, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import type {
   ActivityWorkspacePage,
   CampaignWorkspaceView,
@@ -13,6 +13,7 @@ import type { Database } from "@outbound/infrastructure/database/client";
 import {
   accountHealthAlerts,
   aiPolicyVersions,
+  attributionTouches,
   calendarBookings,
   calendarConnections,
   campaigns,
@@ -463,6 +464,7 @@ export class PostgresOperationalViews {
         lens: input.lens,
         asOf,
         state: strategies.length ? (failed ? "attention" : running ? "active" : strategies[0]!.status === "active" ? "idle" : "attention") : "not_configured",
+        quality: failed ? "partial" : "fresh",
         headline: strategies.length ? (running ? "Le radar quotidien recherche et déduplique des angles sourcés." : schedule[0] ? `Le radar est prêt pour son prochain passage automatique.` : "La stratégie éditoriale LinkedIn est durable et ancrée dans l’offre et l’ICP publiés.") : "Publiez une offre et un ICP pour dériver la stratégie Inbound.",
         counters: [
           { key: "strategies", label: "Stratégies", value: strategies.length },
@@ -477,22 +479,7 @@ export class PostgresOperationalViews {
         pagination: { nextCursor: hasNext ? String(offset + limit) : null },
       };
     }
-    if (input.lens === "symbiosis") {
-      const summary = await this.getSummary(input.workspaceId, { attentionLimit: 1 });
-      return {
-        lens: input.lens,
-        asOf,
-        state: "not_configured",
-        headline: "La Symbiose s’activera après la première publication Inbound attribuable.",
-        counters: [
-          { key: "signals", label: "Signaux partagés", value: 0 },
-          { key: "conversations", label: "Conversations ouvertes", value: summary.counts.openConversations },
-          { key: "calls", label: "Appels réservés", value: summary.counts.bookedCalls },
-        ],
-        items: [],
-        pagination: { nextCursor: null },
-      };
-    }
+    if (input.lens === "symbiosis") return this.#getSymbiosisActivity({ workspaceId: input.workspaceId, lens: "symbiosis", offset, limit, asOf });
     const summary = await this.getSummary(input.workspaceId, { attentionLimit: 1 });
     const rows = await this.database.select({
       id: campaigns.id,
@@ -523,6 +510,7 @@ export class PostgresOperationalViews {
       lens: input.lens,
       asOf,
       state: summary.engines.outbound.status === "degraded" ? "attention" : summary.engines.outbound.status === "running" ? "active" : "idle",
+      quality: summary.engines.outbound.status === "degraded" ? "partial" : "fresh",
       headline: summary.engines.outbound.summary,
       counters: [
         { key: "campaigns", label: "Campagnes actives", value: summary.counts.activeCampaigns },
@@ -532,6 +520,167 @@ export class PostgresOperationalViews {
       ],
       items,
       pagination: { nextCursor: hasNext ? String(offset + limit) : null },
+    };
+  }
+
+  async #getSymbiosisActivity(input: { workspaceId: string; lens: "symbiosis"; offset: number; limit: number; asOf: Date }): Promise<ActivityWorkspacePage> {
+    const [rows, statsRows, contentRows, syncRows] = await Promise.all([
+      this.database.select({
+        id: socialInteractions.id,
+        type: socialInteractions.type,
+        actorName: socialInteractions.actorName,
+        body: socialInteractions.body,
+        reaction: socialInteractions.reaction,
+        occurredAt: socialInteractions.occurredAt,
+        lastSeenAt: socialInteractions.lastSeenAt,
+        postText: socialContentItems.text,
+        identityId: attributionTouches.id,
+        identityContactId: attributionTouches.contactId,
+        identityRule: attributionTouches.rule,
+        identityConfidence: attributionTouches.confidence,
+        contactFirstName: contacts.firstName,
+        contactLastName: contacts.lastName,
+      }).from(socialInteractions)
+        .innerJoin(socialContentItems, and(
+          eq(socialContentItems.workspaceId, socialInteractions.workspaceId),
+          eq(socialContentItems.id, socialInteractions.socialContentId),
+        ))
+        .leftJoin(attributionTouches, and(
+          eq(attributionTouches.workspaceId, socialInteractions.workspaceId),
+          eq(attributionTouches.socialInteractionId, socialInteractions.id),
+          eq(attributionTouches.logicalKey, "identity"),
+          eq(attributionTouches.status, "active"),
+        ))
+        .leftJoin(contacts, and(
+          eq(contacts.workspaceId, attributionTouches.workspaceId),
+          eq(contacts.id, attributionTouches.contactId),
+        ))
+        .where(and(
+          eq(socialInteractions.workspaceId, input.workspaceId),
+          eq(socialInteractions.status, "observed"),
+          sql`${socialInteractions.direction} <> 'owner'`,
+        ))
+        .orderBy(desc(socialInteractions.lastSeenAt), desc(socialInteractions.id))
+        .limit(input.limit + 1)
+        .offset(input.offset),
+      this.database.execute<SymbiosisStatsRow>(sql`
+        SELECT
+          count(distinct i.id) FILTER (WHERE i.type <> 'reaction')::int AS explicit_signals,
+          count(distinct i.id) FILTER (WHERE identity.contact_id IS NOT NULL)::int AS resolved_identities,
+          count(distinct destinations.conversation_id)::int AS conversations,
+          count(distinct destinations.booking_id)::int AS calls,
+          count(distinct i.id) FILTER (WHERE identity.id IS NULL OR identity.contact_id IS NULL)::int AS unresolved
+        FROM social_interactions i
+        LEFT JOIN attribution_touches identity
+          ON identity.workspace_id = i.workspace_id
+         AND identity.social_interaction_id = i.id
+         AND identity.logical_key = 'identity'
+         AND identity.status = 'active'
+        LEFT JOIN attribution_touches destinations
+          ON destinations.workspace_id = i.workspace_id
+         AND destinations.social_interaction_id = i.id
+         AND destinations.status = 'active'
+        WHERE i.workspace_id = ${input.workspaceId}
+          AND i.status = 'observed'
+          AND i.direction <> 'owner'
+      `),
+      this.database.select({ value: count() }).from(socialContentItems).where(eq(socialContentItems.workspaceId, input.workspaceId)),
+      this.database.select({
+        status: socialInteractionSyncStates.status,
+        lastSuccessAt: socialInteractionSyncStates.lastSuccessAt,
+      }).from(socialInteractionSyncStates).where(eq(socialInteractionSyncStates.workspaceId, input.workspaceId)),
+    ]);
+    const hasNext = rows.length > input.limit;
+    const page = rows.slice(0, input.limit);
+    const interactionIds = page.map((row) => row.id);
+    const destinationRows = interactionIds.length ? await this.database.select({
+      interactionId: attributionTouches.socialInteractionId,
+      kind: attributionTouches.kind,
+      certainty: attributionTouches.certainty,
+    }).from(attributionTouches).where(and(
+      eq(attributionTouches.workspaceId, input.workspaceId),
+      inArray(attributionTouches.socialInteractionId, interactionIds),
+      eq(attributionTouches.status, "active"),
+      sql`${attributionTouches.kind} <> 'identity'`,
+    )) : [];
+    const destinations = new Map<string, Array<{ kind: string; certainty: string }>>();
+    for (const destination of destinationRows) {
+      const values = destinations.get(destination.interactionId) ?? [];
+      values.push({ kind: destination.kind, certainty: destination.certainty });
+      destinations.set(destination.interactionId, values);
+    }
+    const stats = statsRows[0];
+    const explicitSignals = Number(stats?.explicit_signals ?? 0);
+    const resolvedIdentities = Number(stats?.resolved_identities ?? 0);
+    const conversationCount = Number(stats?.conversations ?? 0);
+    const callCount = Number(stats?.calls ?? 0);
+    const unresolved = Number(stats?.unresolved ?? 0);
+    const configured = valueOf(contentRows) > 0;
+    const syncError = syncRows.some((row) => row.status === "error");
+    const syncing = syncRows.some((row) => row.status === "syncing");
+    const stale = syncRows.length > 0 && !syncing && syncRows.some((row) => !row.lastSuccessAt || input.asOf.getTime() - row.lastSuccessAt.getTime() > 24 * 60 * 60_000);
+    const quality = syncError || unresolved > 0 ? "partial" as const : stale ? "stale" as const : "fresh" as const;
+    const items = page.map((row) => {
+      const related = destinations.get(row.id) ?? [];
+      const hasConversation = related.some((touch) => touch.kind === "conversation");
+      const hasCampaign = related.some((touch) => touch.kind === "campaign");
+      const hasCall = related.some((touch) => touch.kind === "booking");
+      const ambiguous = row.identityRule?.startsWith("ambiguous_") ?? false;
+      const resolved = Boolean(row.identityContactId);
+      const pending = !row.identityId;
+      const contactName = [row.contactFirstName, row.contactLastName].filter(Boolean).join(" ") || row.actorName;
+      return {
+        id: `symbiosis:${row.id}`,
+        kind: "signal" as const,
+        source: hasCampaign ? "mixed" as const : "inbound" as const,
+        status: pending ? "running" as const : resolved ? "completed" as const : "attention" as const,
+        title: symbiosisSignalTitle(row.type, contactName, resolved, ambiguous),
+        detail: symbiosisSignalDetail({
+          type: row.type,
+          postText: row.postText,
+          confidence: Number(row.identityConfidence ?? 0),
+          resolved,
+          ambiguous,
+          pending,
+          hasConversation,
+          hasCall,
+        }),
+        occurredAt: row.occurredAt ?? row.lastSeenAt,
+        href: `/attribution?interactionId=${row.id}`,
+        correlationId: null,
+      };
+    }).sort((left, right) => activityPriority(left.status) - activityPriority(right.status) || right.occurredAt.getTime() - left.occurredAt.getTime());
+    const state = !configured && explicitSignals === 0 && unresolved === 0
+      ? "not_configured" as const
+      : syncError || unresolved > 0
+        ? "attention" as const
+        : syncing || explicitSignals > 0
+          ? "active" as const
+          : "idle" as const;
+    return {
+      lens: input.lens,
+      asOf: input.asOf,
+      state,
+      quality,
+      headline: state === "not_configured"
+        ? "La Symbiose s’activera après la première publication LinkedIn observable."
+        : syncError
+          ? "Les interactions brutes sont conservées ; les attributions disponibles restent partielles."
+          : stale
+            ? "La dernière lecture LinkedIn est ancienne ; aucune activation n’est déduite de données périmées."
+            : unresolved > 0
+              ? `${unresolved} identité${unresolved === 1 ? " reste" : "s restent"} à résoudre sans fusion faible.`
+              : resolvedIdentities > 0
+                ? `${resolvedIdentities} identité${resolvedIdentities === 1 ? " résolue" : "s résolues"} relie le contenu aux suites réellement observées.`
+                : "Inbound et Outbound continuent ; aucun signal partagé n’est encore attribuable.",
+      counters: [
+        { key: "explicit-signals", label: "Signaux explicites", value: explicitSignals },
+        { key: "resolved-identities", label: "Identités résolues", value: resolvedIdentities },
+        { key: "conversations", label: "Conversations reliées", value: conversationCount },
+        { key: "calls", label: "Appels attribués", value: callCount },
+      ],
+      items,
+      pagination: { nextCursor: hasNext ? String(input.offset + input.limit) : null },
     };
   }
 
@@ -738,6 +887,14 @@ type InboxSyncRow = {
   last_success_at: Date | null;
 };
 
+type SymbiosisStatsRow = {
+  explicit_signals: number | string;
+  resolved_identities: number | string;
+  conversations: number | string;
+  calls: number | string;
+  unresolved: number | string;
+};
+
 function toConversationView(row: ConversationRow): ConversationWorkspaceView {
   return {
     id: row.id,
@@ -827,6 +984,30 @@ function socialInteractionTitle(type: string, direction: string, actorName: stri
   const actor = direction === "owner" ? "Compte LinkedIn associé" : actorName ?? "Identité LinkedIn inconnue";
   const label = ({ comment: "a commenté", reply: "a répondu", reaction: "a réagi", mention: "a mentionné le compte" } as Record<string, string>)[type] ?? "a interagi";
   return `${actor} ${label}`;
+}
+
+function symbiosisSignalTitle(type: string, contactName: string | null, resolved: boolean, ambiguous: boolean): string {
+  if (!resolved) {
+    if (type === "reaction") return ambiguous ? "Réaction LinkedIn avec deux identités possibles" : "Réaction LinkedIn sans identité fiable";
+    return ambiguous ? "Interaction LinkedIn avec une identité ambiguë" : "Interaction LinkedIn à résoudre";
+  }
+  const label = ({ comment: "a commenté un post", reply: "a répondu à un commentaire", reaction: "a réagi à un post", mention: "a mentionné le compte" } as Record<string, string>)[type] ?? "a interagi";
+  return `${contactName ?? "Un prospect résolu"} ${label}`;
+}
+
+function symbiosisSignalDetail(input: { type: string; postText: string; confidence: number; resolved: boolean; ambiguous: boolean; pending: boolean; hasConversation: boolean; hasCall: boolean }): string {
+  const excerpt = `${input.postText.slice(0, 72)}${input.postText.length > 72 ? "…" : ""}`;
+  if (input.type === "reaction") {
+    const identity = input.resolved ? `identité exacte ${Math.round(input.confidence * 100)} %` : input.ambiguous ? "identité ambiguë" : input.pending ? "résolution en cours" : "identité inconnue";
+    return `Aucun message automatique · ${identity} · sur « ${excerpt} »`;
+  }
+  if (!input.resolved) return `${input.pending ? "Résolution exacte en cours" : input.ambiguous ? "Deux identités exactes se contredisent" : "Aucune identité exacte"} · aucune activation automatique · sur « ${excerpt} »`;
+  const outcomes = [input.hasConversation ? "conversation reliée" : null, input.hasCall ? "appel attribué par inférence" : null].filter(Boolean).join(" · ");
+  return `Identité prouvée ${Math.round(input.confidence * 100)} %${outcomes ? ` · ${outcomes}` : " · aucune suite observée"} · sur « ${excerpt} »`;
+}
+
+function activityPriority(status: "pending" | "running" | "completed" | "attention"): number {
+  return ({ attention: 0, running: 1, pending: 2, completed: 3 })[status];
 }
 
 function timelineFor(currentStep: string, health: string) {

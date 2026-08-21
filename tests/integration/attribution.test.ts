@@ -5,6 +5,7 @@ import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { AttributionReconciler } from "@outbound/application/attribution/attribution";
 import { PostgresAttributionRepository } from "@outbound/infrastructure/attribution/postgres-attribution-repository";
 import { createDatabase } from "@outbound/infrastructure/database/client";
+import { PostgresOperationalViews } from "@outbound/infrastructure/workspaces/postgres-operational-views";
 import {
   attributionTouches,
   authUsers,
@@ -16,6 +17,7 @@ import {
   conversations,
   socialContentItems,
   socialInteractions,
+  socialInteractionSyncStates,
   workspaces,
 } from "@outbound/infrastructure/database/schema";
 
@@ -30,7 +32,9 @@ databaseDescribe("ATT-101 evidence-led attribution", () => {
   const otherWorkspaceId = crypto.randomUUID();
   const userId = crypto.randomUUID();
   const accountId = crypto.randomUUID();
+  const otherAccountId = crypto.randomUUID();
   const postId = crypto.randomUUID();
+  const otherPostId = crypto.randomUUID();
   const contactId = crypto.randomUUID();
   const secondContactId = crypto.randomUUID();
   const conversationId = crypto.randomUUID();
@@ -49,7 +53,10 @@ databaseDescribe("ATT-101 evidence-led attribution", () => {
       { id: otherWorkspaceId, slug: `attribution-b-${otherWorkspaceId}`, name: "Attribution B" },
     ]);
     await database.db.insert(authUsers).values({ id: userId, name: "Attribution Owner", email: `attribution-${userId}@example.com` });
-    await database.db.insert(connectedAccounts).values({ id: accountId, workspaceId, provider: "unipile", providerAccountId: "linkedin-account-attribution", displayName: "LinkedIn attribution", status: "connected", capabilities: { linkedin: true }, encryptedSecret: "fixture", createdBy: userId });
+    await database.db.insert(connectedAccounts).values([
+      { id: accountId, workspaceId, provider: "unipile", providerAccountId: "linkedin-account-attribution", displayName: "LinkedIn attribution", status: "connected", capabilities: { linkedin: true }, encryptedSecret: "fixture", createdBy: userId },
+      { id: otherAccountId, workspaceId: otherWorkspaceId, provider: "unipile", providerAccountId: "linkedin-account-other", displayName: "LinkedIn other", status: "connected", capabilities: { linkedin: true }, encryptedSecret: "fixture", createdBy: userId },
+    ]);
     await database.db.insert(contacts).values([
       { id: contactId, workspaceId, firstName: "Ada", lastName: "Lovelace", source: "provider" },
       { id: secondContactId, workspaceId, firstName: "Grace", lastName: "Hopper", source: "discovery" },
@@ -61,12 +68,16 @@ databaseDescribe("ATT-101 evidence-led attribution", () => {
     await database.db.insert(conversations).values({ id: conversationId, workspaceId, contactId, connectedAccountId: accountId, provider: "unipile", providerAccountId: "linkedin-account-attribution", providerThreadId: "thread-ada", channel: "linkedin", origin: "outside_campaign", automationMode: "human", status: "open", lastMessageAt: new Date(now.getTime() + 30 * 60_000) });
     await database.db.insert(calendarConnections).values({ id: connectionId, workspaceId, provider: "calcom", bookingUrl: "https://cal.com/ada", status: "active", isDefault: true });
     await database.db.insert(calendarBookings).values({ id: bookingId, workspaceId, connectionId, providerBookingId: "booking-ada", contactId, status: "accepted", attendeeName: "Ada Lovelace", startAt: new Date(now.getTime() + 48 * 60 * 60_000) });
-    await database.db.insert(socialContentItems).values({ id: postId, workspaceId, connectedAccountId: accountId, providerAccountId: "linkedin-account-attribution", origin: "internal", providerPostId: "post-attribution", socialId: "urn:li:activity:attribution", authorProviderId: "owner-id", text: "Preuve et attribution", url: "https://linkedin.com/feed/update/attribution", status: "observed", firstSeenAt: now, lastSeenAt: now });
+    await database.db.insert(socialContentItems).values([
+      { id: postId, workspaceId, connectedAccountId: accountId, providerAccountId: "linkedin-account-attribution", origin: "internal", providerPostId: "post-attribution", socialId: "urn:li:activity:attribution", authorProviderId: "owner-id", text: "Preuve et attribution", url: "https://linkedin.com/feed/update/attribution", status: "observed", firstSeenAt: now, lastSeenAt: now },
+      { id: otherPostId, workspaceId: otherWorkspaceId, connectedAccountId: otherAccountId, providerAccountId: "linkedin-account-other", origin: "external", providerPostId: "post-other", socialId: "urn:li:activity:other", authorProviderId: "owner-other", text: "Contenu sans signal", url: "https://linkedin.com/feed/update/other", status: "observed", firstSeenAt: now, lastSeenAt: now },
+    ]);
+    await database.db.insert(socialInteractionSyncStates).values({ id: crypto.randomUUID(), workspaceId: otherWorkspaceId, socialContentId: otherPostId, connectedAccountId: otherAccountId, providerAccountId: "linkedin-account-other", providerSocialId: "urn:li:activity:other", kind: "comments", scopeKey: "post", status: "idle", nextSyncAt: new Date(now.getTime() + 60 * 60_000), lastSuccessAt: new Date(now.getTime() - 48 * 60 * 60_000) });
     await database.db.insert(socialInteractions).values([
       interaction(firstInteractionId, "provider-ada", "https://linkedin.com/in/ada", now),
       interaction(lastInteractionId, "provider-ada", "https://linkedin.com/in/ada", new Date(now.getTime() + 60 * 60_000)),
       interaction(ambiguousInteractionId, "provider-ada", "https://linkedin.com/in/grace", new Date(now.getTime() + 2 * 60 * 60_000)),
-      interaction(unknownInteractionId, "provider-unknown", null, new Date(now.getTime() + 3 * 60 * 60_000)),
+      interaction(unknownInteractionId, "provider-unknown", null, new Date(now.getTime() + 3 * 60 * 60_000), "reaction"),
     ]);
   }, 30_000);
 
@@ -95,6 +106,21 @@ databaseDescribe("ATT-101 evidence-led attribution", () => {
     expect(journeys.data.find((item) => item.interaction.id === unknownInteractionId)).toMatchObject({ resolution: "unknown" });
     expect((await database.db.select().from(contacts).where(eq(contacts.workspaceId, workspaceId)))).toHaveLength(2);
     expect((await repository.listJourneys({ workspaceId: otherWorkspaceId, limit: 20 })).data).toEqual([]);
+
+    const activity = await new PostgresOperationalViews(database.db).getActivity({ workspaceId, lens: "symbiosis", limit: 20 });
+    expect(activity).toMatchObject({ state: "attention", quality: "partial" });
+    expect(Object.fromEntries(activity.counters.map((counter) => [counter.key, counter.value]))).toEqual({
+      "explicit-signals": 3,
+      "resolved-identities": 2,
+      conversations: 1,
+      calls: 1,
+    });
+    expect(activity.items.find((item) => item.id === `symbiosis:${unknownInteractionId}`)).toMatchObject({
+      status: "attention",
+      href: `/attribution?interactionId=${unknownInteractionId}`,
+    });
+    expect(activity.items.find((item) => item.id === `symbiosis:${unknownInteractionId}`)?.detail).toContain("Aucun message automatique");
+    expect(await new PostgresOperationalViews(database.db).getActivity({ workspaceId: otherWorkspaceId, lens: "symbiosis", limit: 20 })).toMatchObject({ state: "idle", quality: "stale", items: [] });
   });
 
   test("reproduces first and last touch while labelling the booking link as inference", async () => {
@@ -119,7 +145,7 @@ databaseDescribe("ATT-101 evidence-led attribution", () => {
     expect(new Set(after.map((touch) => `${touch.socialInteractionId}:${touch.logicalKey}`)).size).toBe(after.length);
   });
 
-  function interaction(id: string, actorProviderId: string, actorProfileUrl: string | null, observedAt: Date) {
-    return { id, workspaceId, socialContentId: postId, connectedAccountId: accountId, providerAccountId: "linkedin-account-attribution", syncKind: "comments", scopeKey: "post", type: "comment", providerInteractionId: `provider-${id}`, direction: "incoming", actorProviderId, actorName: "LinkedIn actor", actorProfileUrl, body: "Je souhaite en savoir plus", status: "observed", firstSeenAt: observedAt, lastSeenAt: observedAt, lastScanToken: crypto.randomUUID(), createdAt: observedAt, updatedAt: observedAt } as const;
+  function interaction(id: string, actorProviderId: string, actorProfileUrl: string | null, observedAt: Date, type: "comment" | "reaction" = "comment") {
+    return { id, workspaceId, socialContentId: postId, connectedAccountId: accountId, providerAccountId: "linkedin-account-attribution", syncKind: type === "reaction" ? "reactions" : "comments", scopeKey: "post", type, providerInteractionId: `provider-${id}`, direction: "incoming", actorProviderId, actorName: "LinkedIn actor", actorProfileUrl, body: type === "reaction" ? null : "Je souhaite en savoir plus", reaction: type === "reaction" ? "like" : null, status: "observed", firstSeenAt: observedAt, lastSeenAt: observedAt, lastScanToken: crypto.randomUUID(), createdAt: observedAt, updatedAt: observedAt } as const;
   }
 });

@@ -96,6 +96,7 @@ export interface ActivityWorkspacePage {
   readonly lens: NoosphereLens;
   readonly asOf: string;
   readonly state: "not_configured" | "idle" | "active" | "attention";
+  readonly quality: "fresh" | "partial" | "stale";
   readonly headline: string;
   readonly counters: readonly { readonly key: string; readonly label: string; readonly value: number }[];
   readonly items: readonly {
