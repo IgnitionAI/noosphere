@@ -1,0 +1,263 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-21T12:21:12.212Z",
+  "topology": "standard_without_docling_or_proxy",
+  "workspaceSlug": "ignition-ai",
+  "runtime": {
+    "bun": "1.3.4",
+    "platform": "darwin",
+    "architecture": "arm64",
+    "docker": "CPUs=10 Memory=8218034176"
+  },
+  "configuration": {
+    "requestCount": 1000,
+    "concurrency": 20,
+    "ssrRequestCount": 200,
+    "ssrConcurrency": 5
+  },
+  "scenarios": [
+    {
+      "name": "health_ready",
+      "target": "http://127.0.0.1:63001/health/ready",
+      "requests": 1000,
+      "concurrency": 20,
+      "durationMs": 169.42,
+      "throughputPerSecond": 5902.56,
+      "errors": 0,
+      "latencyMs": {
+        "p50": 1.53,
+        "p95": 10.74,
+        "p99": 22.55,
+        "max": 70.91
+      },
+      "resourcePeaks": {
+        "api": {
+          "cpuPercent": 0.68,
+          "memoryMiB": 195.3
+        },
+        "web": {
+          "cpuPercent": 1.97,
+          "memoryMiB": 621.4
+        },
+        "worker": {
+          "cpuPercent": 3.57,
+          "memoryMiB": 92.93
+        },
+        "decision-worker": {
+          "cpuPercent": 0.74,
+          "memoryMiB": 97.62
+        },
+        "database": {
+          "cpuPercent": 0.89,
+          "memoryMiB": 199.9
+        },
+        "minio": {
+          "cpuPercent": 0.08,
+          "memoryMiB": 228.7
+        },
+        "searxng": {
+          "cpuPercent": 0,
+          "memoryMiB": 161
+        },
+        "crawler": {
+          "cpuPercent": 0.14,
+          "memoryMiB": 132.5
+        }
+      }
+    },
+    {
+      "name": "operational_read_mix",
+      "target": "http://127.0.0.1:63001/mixed",
+      "requests": 1000,
+      "concurrency": 20,
+      "durationMs": 11457.9,
+      "throughputPerSecond": 87.28,
+      "errors": 0,
+      "latencyMs": {
+        "p50": 135.91,
+        "p95": 865.33,
+        "p99": 997.74,
+        "max": 1160.55
+      },
+      "resourcePeaks": {
+        "api": {
+          "cpuPercent": 59.99,
+          "memoryMiB": 193.8
+        },
+        "web": {
+          "cpuPercent": 3.81,
+          "memoryMiB": 621.5
+        },
+        "worker": {
+          "cpuPercent": 3.16,
+          "memoryMiB": 93.08
+        },
+        "decision-worker": {
+          "cpuPercent": 1.66,
+          "memoryMiB": 98.6
+        },
+        "database": {
+          "cpuPercent": 828.27,
+          "memoryMiB": 359.1
+        },
+        "minio": {
+          "cpuPercent": 0.14,
+          "memoryMiB": 229.2
+        },
+        "searxng": {
+          "cpuPercent": 0,
+          "memoryMiB": 161
+        },
+        "crawler": {
+          "cpuPercent": 0.17,
+          "memoryMiB": 410.4
+        }
+      }
+    },
+    {
+      "name": "today_ssr",
+      "target": "http://127.0.0.1:63000/w/ignition-ai",
+      "requests": 200,
+      "concurrency": 5,
+      "durationMs": 3773.52,
+      "throughputPerSecond": 53,
+      "errors": 0,
+      "latencyMs": {
+        "p50": 86.47,
+        "p95": 173.07,
+        "p99": 209.98,
+        "max": 216.07
+      },
+      "resourcePeaks": {
+        "api": {
+          "cpuPercent": 94.52,
+          "memoryMiB": 184.2
+        },
+        "web": {
+          "cpuPercent": 222.44,
+          "memoryMiB": 654.3
+        },
+        "worker": {
+          "cpuPercent": 0.38,
+          "memoryMiB": 92.91
+        },
+        "decision-worker": {
+          "cpuPercent": 0.52,
+          "memoryMiB": 98.41
+        },
+        "database": {
+          "cpuPercent": 73.14,
+          "memoryMiB": 331.2
+        },
+        "minio": {
+          "cpuPercent": 0.03,
+          "memoryMiB": 229.2
+        },
+        "searxng": {
+          "cpuPercent": 0,
+          "memoryMiB": 161
+        },
+        "crawler": {
+          "cpuPercent": 16.47,
+          "memoryMiB": 410.4
+        }
+      }
+    },
+    {
+      "name": "prospects_ssr",
+      "target": "http://127.0.0.1:63000/w/ignition-ai/prospects?campaignScope=outside_campaign",
+      "requests": 200,
+      "concurrency": 5,
+      "durationMs": 9047.19,
+      "throughputPerSecond": 22.11,
+      "errors": 0,
+      "latencyMs": {
+        "p50": 210.61,
+        "p95": 366.4,
+        "p99": 602.64,
+        "max": 604.86
+      },
+      "resourcePeaks": {
+        "api": {
+          "cpuPercent": 66.22,
+          "memoryMiB": 193.2
+        },
+        "web": {
+          "cpuPercent": 270.38,
+          "memoryMiB": 955.3
+        },
+        "worker": {
+          "cpuPercent": 1.31,
+          "memoryMiB": 92.83
+        },
+        "decision-worker": {
+          "cpuPercent": 0.46,
+          "memoryMiB": 98.64
+        },
+        "database": {
+          "cpuPercent": 44.65,
+          "memoryMiB": 331.7
+        },
+        "minio": {
+          "cpuPercent": 0.03,
+          "memoryMiB": 230.6
+        },
+        "searxng": {
+          "cpuPercent": 0,
+          "memoryMiB": 161.1
+        },
+        "crawler": {
+          "cpuPercent": 12.8,
+          "memoryMiB": 410.7
+        }
+      }
+    }
+  ],
+  "crawler": {
+    "name": "crawler_four_public_domains",
+    "targets": [
+      "https://example.com/",
+      "https://www.iana.org/help/example-domains",
+      "https://www.rfc-editor.org/rfc/rfc2606",
+      "https://httpbin.org/html"
+    ],
+    "durationMs": 5466.64,
+    "completed": 4,
+    "errors": [],
+    "pagesProduced": 4,
+    "resourcePeaks": {
+      "api": {
+        "cpuPercent": 1.03,
+        "memoryMiB": 195.3
+      },
+      "web": {
+        "cpuPercent": 5.62,
+        "memoryMiB": 621.5
+      },
+      "worker": {
+        "cpuPercent": 4.52,
+        "memoryMiB": 93.05
+      },
+      "decision-worker": {
+        "cpuPercent": 6.6,
+        "memoryMiB": 98.6
+      },
+      "database": {
+        "cpuPercent": 1.58,
+        "memoryMiB": 200.3
+      },
+      "minio": {
+        "cpuPercent": 0.08,
+        "memoryMiB": 229.2
+      },
+      "searxng": {
+        "cpuPercent": 0,
+        "memoryMiB": 161
+      },
+      "crawler": {
+        "cpuPercent": 235.29,
+        "memoryMiB": 938.6
+      }
+    }
+  }
+}

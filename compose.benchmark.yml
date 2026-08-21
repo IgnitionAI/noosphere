@@ -1,0 +1,19 @@
+services:
+  database:
+    ports:
+      - "127.0.0.1:${BENCHMARK_POSTGRES_PORT:-55432}:5432"
+
+  crawler:
+    ports:
+      - "127.0.0.1:${BENCHMARK_CRAWLER_PORT:-63080}:8000"
+
+  api:
+    environment:
+      BETTER_AUTH_URL: http://localhost:${BENCHMARK_WEB_PORT:-63000}
+      BETTER_AUTH_TRUSTED_ORIGINS: http://localhost:${BENCHMARK_WEB_PORT:-63000},http://127.0.0.1:${BENCHMARK_WEB_PORT:-63000}
+    ports:
+      - "127.0.0.1:${BENCHMARK_API_PORT:-63001}:3001"
+
+  web:
+    ports:
+      - "127.0.0.1:${BENCHMARK_WEB_PORT:-63000}:3000"
