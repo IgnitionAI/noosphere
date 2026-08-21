@@ -17,7 +17,10 @@ import {
 const workspaceSlug = process.env.BOOTSTRAP_WORKSPACE_SLUG ?? "ignition-ai";
 const email = process.env.BOOTSTRAP_OWNER_EMAIL ?? "owner@ignition.local";
 const password = process.env.BOOTSTRAP_OWNER_PASSWORD ?? "change-me-in-env";
-const databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
+// Browser journeys exercise the API runtime, which always reads DATABASE_URL.
+// TEST_DATABASE_URL is reserved for the integration-test harness and may point
+// at a distinct database in CI.
+const databaseUrl = process.env.DATABASE_URL;
 
 test("Symbiose renders a proved journey and keeps an unresolved reaction inert", async ({ page }) => {
   if (!databaseUrl) throw new Error("DATABASE_URL is required for the Symbiose browser proof");
