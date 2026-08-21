@@ -10,7 +10,7 @@ describe("F-043 calendar booking HTTP", () => {
     const response = await handler("viewer")(request("/api/v1/calendar-bookings"));
     expect(response.status).toBe(200);
     const body = await response.json() as { data: Array<Record<string, unknown>> };
-    expect(body.data[0]).toMatchObject({ attendeeName: null, attendeeEmail: null, meetingUrl: null, contactId: null, contactName: null, campaignName: null });
+    expect(body.data[0]).toMatchObject({ attendeeName: null, attendeeEmail: null, meetingUrl: null, contactId: null, contactName: null, campaignName: null, source: "inbound", attribution: { certainty: "inference", firstTouch: { actorName: null, body: null } } });
   });
 
   test("allows operators to mutate bookings but not meeting type configuration", async () => {
@@ -30,7 +30,8 @@ describe("F-043 calendar booking HTTP", () => {
 });
 
 function handler(role: "owner" | "operator" | "reviewer" | "viewer") {
-  const booking = { id: bookingId, contactId: userId, contactName: "Marie Martin", campaignId: null, campaignName: null, opportunityId: null, opportunityStage: null, status: "booked", attendeeName: "Marie", attendeeEmail: "marie@example.com", attendeePhone: "+33123456789", attendeeTimeZone: "Europe/Paris", organizerTimeZone: "Europe/Madrid", startAt: new Date("2027-01-10T10:00:00.000Z"), endAt: new Date("2027-01-10T10:30:00.000Z"), meetingUrl: "https://meet.example/secret", cancellationReason: null, noShowAt: null, rescheduleCount: 0, meetingType: null, history: [], createdAt: new Date(), updatedAt: new Date() };
+  const attributionTouch = { id: "00000000-0000-4000-8000-000000000504", interactionId: "00000000-0000-4000-8000-000000000505", type: "comment" as const, position: "first_and_last" as const, certainty: "inference" as const, confidence: 0.6, rule: "same_verified_contact_after_touch_90d_v1", proofType: "contact_time_correlation", proofHref: "/attribution?interactionId=00000000-0000-4000-8000-000000000505", actorName: "Marie Martin", body: "Je souhaite échanger", occurredAt: new Date("2027-01-01T10:00:00.000Z"), socialContentId: "00000000-0000-4000-8000-000000000506", postText: "Comment prouver la valeur", postUrl: "https://linkedin.com/feed/update/proof" };
+  const booking = { id: bookingId, contactId: userId, contactName: "Marie Martin", campaignId: null, campaignName: null, source: "inbound" as const, attribution: { certainty: "inference" as const, firstTouch: attributionTouch, lastTouch: attributionTouch, touches: [attributionTouch] }, opportunityId: null, opportunityStage: null, status: "booked", attendeeName: "Marie", attendeeEmail: "marie@example.com", attendeePhone: "+33123456789", attendeeTimeZone: "Europe/Paris", organizerTimeZone: "Europe/Madrid", startAt: new Date("2027-01-10T10:00:00.000Z"), endAt: new Date("2027-01-10T10:30:00.000Z"), meetingUrl: "https://meet.example/secret", cancellationReason: null, noShowAt: null, rescheduleCount: 0, meetingType: null, history: [], createdAt: new Date(), updatedAt: new Date() };
   const integration = {
     async listBookings() { return [booking]; },
     async listMeetingTypes() { return []; },

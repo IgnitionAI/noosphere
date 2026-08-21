@@ -1,8 +1,9 @@
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import type { OpportunityStage } from "@outbound/domain/pipeline/opportunity";
 import type { Database } from "@outbound/infrastructure/database/client";
 import {
   auditLogs,
+  attributionTouches,
   calendarBookingHistory,
   calendarBookings,
   calendarConnections,
@@ -17,6 +18,8 @@ import {
   outboxEvents,
   outreachActions,
   sequenceEnrollments,
+  socialContentItems,
+  socialInteractions,
 } from "@outbound/infrastructure/database/schema";
 import { upsertOpportunityStage } from "@outbound/infrastructure/pipeline/opportunity-stage-writer";
 import {
@@ -97,11 +100,40 @@ export interface CalendarBookingResult {
   readonly label: string;
 }
 
+export type CalendarBookingSource = "inbound" | "outbound" | "mixed" | "unknown";
+
+export interface CalendarBookingAttributionTouchView {
+  readonly id: string;
+  readonly interactionId: string;
+  readonly type: "comment" | "reply" | "mention";
+  readonly position: "first" | "last" | "first_and_last" | "middle";
+  readonly certainty: "inference";
+  readonly confidence: number;
+  readonly rule: string;
+  readonly proofType: string;
+  readonly proofHref: string;
+  readonly actorName: string | null;
+  readonly body: string | null;
+  readonly occurredAt: Date;
+  readonly socialContentId: string;
+  readonly postText: string;
+  readonly postUrl: string | null;
+}
+
+export interface CalendarBookingAttributionView {
+  readonly certainty: "inference" | "none";
+  readonly firstTouch: CalendarBookingAttributionTouchView | null;
+  readonly lastTouch: CalendarBookingAttributionTouchView | null;
+  readonly touches: readonly CalendarBookingAttributionTouchView[];
+}
+
 export interface CalendarProductBookingView {
   readonly id: string;
   readonly contactId: string | null;
   readonly campaignId: string | null;
   readonly campaignName: string | null;
+  readonly source: CalendarBookingSource;
+  readonly attribution: CalendarBookingAttributionView;
   readonly opportunityId: string | null;
   readonly opportunityStage: OpportunityStage | null;
   readonly contactName: string | null;
@@ -727,7 +759,10 @@ export class PostgresCalendarIntegration implements WorkspaceCalendarScheduler {
       .orderBy(desc(calendarBookings.startAt))
       .limit(input.limit);
     const ids = rows.map((row) => row.booking.id);
-    const history = ids.length ? await this.database.select().from(calendarBookingHistory).where(and(eq(calendarBookingHistory.workspaceId, input.workspaceId), inArray(calendarBookingHistory.bookingId, ids))).orderBy(calendarBookingHistory.createdAt) : [];
+    const [history, attribution] = await Promise.all([
+      ids.length ? this.database.select().from(calendarBookingHistory).where(and(eq(calendarBookingHistory.workspaceId, input.workspaceId), inArray(calendarBookingHistory.bookingId, ids))).orderBy(calendarBookingHistory.createdAt) : [],
+      this.#bookingAttribution(input.workspaceId, ids),
+    ]);
     return rows.map(({ booking, meetingType, campaignName, contactFirstName, contactLastName, opportunityStage }) => productBookingView(
       booking,
       meetingType,
@@ -736,8 +771,84 @@ export class PostgresCalendarIntegration implements WorkspaceCalendarScheduler {
         campaignName,
         contactName: [contactFirstName, contactLastName].filter(Boolean).join(" ") || null,
         opportunityStage: opportunityStage as OpportunityStage | null,
+        attribution: attribution.get(booking.id) ?? emptyBookingAttribution(),
       },
     ));
+  }
+
+  async #bookingAttribution(workspaceId: string, bookingIds: readonly string[]): Promise<Map<string, CalendarBookingAttributionView>> {
+    const result = new Map<string, CalendarBookingAttributionView>();
+    if (!bookingIds.length) return result;
+    const bookingTouchRows = await this.database.select({
+      touch: attributionTouches,
+      interaction: socialInteractions,
+      post: socialContentItems,
+    }).from(attributionTouches)
+      .innerJoin(socialInteractions, and(
+        eq(socialInteractions.workspaceId, attributionTouches.workspaceId),
+        eq(socialInteractions.id, attributionTouches.socialInteractionId),
+      ))
+      .innerJoin(socialContentItems, and(
+        eq(socialContentItems.workspaceId, attributionTouches.workspaceId),
+        eq(socialContentItems.id, attributionTouches.socialContentId),
+      ))
+      .where(and(
+        eq(attributionTouches.workspaceId, workspaceId),
+        inArray(attributionTouches.bookingId, bookingIds),
+        eq(attributionTouches.kind, "booking"),
+        eq(attributionTouches.status, "active"),
+        eq(attributionTouches.certainty, "inference"),
+        eq(socialInteractions.status, "observed"),
+        eq(socialInteractions.direction, "incoming"),
+        inArray(socialInteractions.type, ["comment", "reply", "mention"]),
+      ))
+      .orderBy(asc(attributionTouches.occurredAt), asc(attributionTouches.id));
+    const interactionIds = [...new Set(bookingTouchRows.map(({ interaction }) => interaction.id))];
+    const identities = interactionIds.length ? await this.database.select({
+      interactionId: attributionTouches.socialInteractionId,
+      contactId: attributionTouches.contactId,
+    }).from(attributionTouches).where(and(
+      eq(attributionTouches.workspaceId, workspaceId),
+      inArray(attributionTouches.socialInteractionId, interactionIds),
+      eq(attributionTouches.kind, "identity"),
+      eq(attributionTouches.status, "active"),
+      eq(attributionTouches.certainty, "evidence"),
+    )) : [];
+    const exactIdentities = new Map(identities.map((identity) => [identity.interactionId, identity.contactId]));
+    const grouped = new Map<string, typeof bookingTouchRows>();
+    for (const row of bookingTouchRows) {
+      if (!row.touch.bookingId || !row.touch.contactId || exactIdentities.get(row.interaction.id) !== row.touch.contactId) continue;
+      const values = grouped.get(row.touch.bookingId) ?? [];
+      values.push(row);
+      grouped.set(row.touch.bookingId, values);
+    }
+    for (const bookingId of bookingIds) {
+      const rows = grouped.get(bookingId) ?? [];
+      const touches = rows.map(({ touch, interaction, post }, index): CalendarBookingAttributionTouchView => ({
+        id: touch.id,
+        interactionId: interaction.id,
+        type: interaction.type as CalendarBookingAttributionTouchView["type"],
+        position: rows.length === 1 ? "first_and_last" : index === 0 ? "first" : index === rows.length - 1 ? "last" : "middle",
+        certainty: "inference",
+        confidence: Number(touch.confidence),
+        rule: touch.rule,
+        proofType: touch.proofType,
+        proofHref: `/attribution?interactionId=${interaction.id}`,
+        actorName: interaction.actorName,
+        body: interaction.body,
+        occurredAt: touch.occurredAt,
+        socialContentId: post.id,
+        postText: post.text,
+        postUrl: post.url,
+      }));
+      result.set(bookingId, {
+        certainty: touches.length ? "inference" : "none",
+        firstTouch: touches[0] ?? null,
+        lastTouch: touches.at(-1) ?? null,
+        touches,
+      });
+    }
+    return result;
   }
 
   async rescheduleById(input: { workspaceId: string; bookingId: string; start: string; reason: string; requestKey: string; actorUserId: string; now: Date }): Promise<CalendarBookingResult> {
@@ -773,7 +884,13 @@ export class PostgresCalendarIntegration implements WorkspaceCalendarScheduler {
     });
     const [meetingType] = persisted.meetingTypeId ? await this.database.select().from(calendarMeetingTypes).where(and(eq(calendarMeetingTypes.workspaceId, input.workspaceId), eq(calendarMeetingTypes.id, persisted.meetingTypeId))).limit(1) : [];
     const history = await this.database.select().from(calendarBookingHistory).where(and(eq(calendarBookingHistory.workspaceId, input.workspaceId), eq(calendarBookingHistory.bookingId, persisted.id))).orderBy(calendarBookingHistory.createdAt);
-    return productBookingView(persisted, meetingType ?? null, history);
+    const attribution = (await this.#bookingAttribution(input.workspaceId, [persisted.id])).get(persisted.id) ?? emptyBookingAttribution();
+    return productBookingView(persisted, meetingType ?? null, history, {
+      campaignName: null,
+      contactName: null,
+      opportunityStage: null,
+      attribution,
+    });
   }
 
   async #syncMeetingTypes(connection: typeof calendarConnections.$inferSelect, discovered: readonly import("@outbound/infrastructure/calendar/calcom-client").CalcomEventType[], now: Date): Promise<void> {
@@ -1206,17 +1323,22 @@ function productBookingView(
   booking: typeof calendarBookings.$inferSelect,
   meetingType: typeof calendarMeetingTypes.$inferSelect | null,
   history: readonly (typeof calendarBookingHistory.$inferSelect)[],
-  context: { campaignName: string | null; contactName: string | null; opportunityStage: OpportunityStage | null } = {
+  context: { campaignName: string | null; contactName: string | null; opportunityStage: OpportunityStage | null; attribution: CalendarBookingAttributionView } = {
     campaignName: null,
     contactName: null,
     opportunityStage: null,
+    attribution: emptyBookingAttribution(),
   },
 ): CalendarProductBookingView {
+  const hasInbound = context.attribution.touches.length > 0;
+  const source: CalendarBookingSource = hasInbound && booking.campaignId ? "mixed" : hasInbound ? "inbound" : booking.campaignId ? "outbound" : "unknown";
   return {
     id: booking.id,
     contactId: booking.contactId,
     campaignId: booking.campaignId,
     campaignName: context.campaignName,
+    source,
+    attribution: context.attribution,
     opportunityId: booking.opportunityId,
     opportunityStage: context.opportunityStage,
     contactName: context.contactName,
@@ -1237,6 +1359,10 @@ function productBookingView(
     createdAt: booking.createdAt,
     updatedAt: booking.updatedAt,
   };
+}
+
+function emptyBookingAttribution(): CalendarBookingAttributionView {
+  return { certainty: "none", firstTouch: null, lastTouch: null, touches: [] };
 }
 
 function meetingTypeBookingUrl(fallback: string, username: string | null, slug: string): string {

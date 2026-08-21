@@ -1207,6 +1207,13 @@ export interface CalendarBooking {
   readonly contactId: string | null;
   readonly campaignId: string | null;
   readonly campaignName: string | null;
+  readonly source: "inbound" | "outbound" | "mixed" | "unknown";
+  readonly attribution: {
+    readonly certainty: "inference" | "none";
+    readonly firstTouch: CalendarBookingAttributionTouch | null;
+    readonly lastTouch: CalendarBookingAttributionTouch | null;
+    readonly touches: readonly CalendarBookingAttributionTouch[];
+  };
   readonly opportunityId: string | null;
   readonly opportunityStage: string | null;
   readonly contactName: string | null;
@@ -1226,6 +1233,24 @@ export interface CalendarBooking {
   readonly history: readonly { readonly id: string; readonly action: string; readonly fromStatus: string | null; readonly toStatus: string; readonly previousStartAt: string | null; readonly newStartAt: string | null; readonly reason: string | null; readonly source: string; readonly createdAt: string }[];
   readonly createdAt: string;
   readonly updatedAt: string;
+}
+
+export interface CalendarBookingAttributionTouch {
+  readonly id: string;
+  readonly interactionId: string;
+  readonly type: "comment" | "reply" | "mention";
+  readonly position: "first" | "last" | "first_and_last" | "middle";
+  readonly certainty: "inference";
+  readonly confidence: number;
+  readonly rule: string;
+  readonly proofType: string;
+  readonly proofHref: string;
+  readonly actorName: string | null;
+  readonly body: string | null;
+  readonly occurredAt: string;
+  readonly socialContentId: string;
+  readonly postText: string;
+  readonly postUrl: string | null;
 }
 
 export async function getCalendarConnection(
