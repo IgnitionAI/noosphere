@@ -12,10 +12,13 @@ import {
   authUsers,
   calendarBookings,
   calendarConnections,
+  campaigns,
   connectedAccounts,
   contactIdentities,
   contacts,
   conversations,
+  icps,
+  icpVersions,
   socialContentItems,
   socialInteractions,
   socialInteractionSyncStates,
@@ -45,6 +48,7 @@ databaseDescribe("ATT-101 evidence-led attribution", () => {
   const lastInteractionId = crypto.randomUUID();
   const ambiguousInteractionId = crypto.randomUUID();
   const unknownInteractionId = crypto.randomUUID();
+  const socialOnlyInteractionId = crypto.randomUUID();
   const now = new Date("2026-08-21T08:00:00.000Z");
 
   beforeAll(async () => {
@@ -79,6 +83,7 @@ databaseDescribe("ATT-101 evidence-led attribution", () => {
       interaction(lastInteractionId, "provider-ada", "https://linkedin.com/in/ada", new Date(now.getTime() + 60 * 60_000)),
       interaction(ambiguousInteractionId, "provider-ada", "https://linkedin.com/in/grace", new Date(now.getTime() + 2 * 60 * 60_000)),
       interaction(unknownInteractionId, "provider-unknown", null, new Date(now.getTime() + 3 * 60 * 60_000), "reaction"),
+      interaction(socialOnlyInteractionId, "provider-grace", "https://linkedin.com/in/grace", new Date(now.getTime() + 4 * 60 * 60_000)),
     ]);
   }, 30_000);
 
@@ -99,9 +104,9 @@ databaseDescribe("ATT-101 evidence-led attribution", () => {
 
   test("resolves only exact identities and keeps ambiguous or unknown actors unmerged", async () => {
     const reconciler = new AttributionReconciler(repository, { now: () => new Date(now.getTime() + 4 * 60 * 60_000) });
-    expect(await reconciler.reconcile(workspaceId)).toBe(4);
+    expect(await reconciler.reconcile(workspaceId)).toBe(5);
     const journeys = await repository.listJourneys({ workspaceId, limit: 20 });
-    expect(journeys.data).toHaveLength(4);
+    expect(journeys.data).toHaveLength(5);
     expect(journeys.data.find((item) => item.interaction.id === firstInteractionId)).toMatchObject({ resolution: "resolved" });
     expect(journeys.data.find((item) => item.interaction.id === ambiguousInteractionId)).toMatchObject({ resolution: "ambiguous" });
     expect(journeys.data.find((item) => item.interaction.id === unknownInteractionId)).toMatchObject({ resolution: "unknown" });
@@ -111,8 +116,8 @@ databaseDescribe("ATT-101 evidence-led attribution", () => {
     const activity = await new PostgresOperationalViews(database.db).getActivity({ workspaceId, lens: "symbiosis", limit: 20 });
     expect(activity).toMatchObject({ state: "attention", quality: "partial" });
     expect(Object.fromEntries(activity.counters.map((counter) => [counter.key, counter.value]))).toEqual({
-      "explicit-signals": 3,
-      "resolved-identities": 2,
+      "explicit-signals": 4,
+      "resolved-identities": 3,
       conversations: 1,
       calls: 1,
     });
@@ -162,13 +167,69 @@ databaseDescribe("ATT-101 evidence-led attribution", () => {
     })).toMatchObject({ socialBoost: 0, effectiveScore: 70, openLinkedinConversation: false });
   });
 
+  test("projects proved social interactions into Conversations without inventing messages", async () => {
+    const views = new PostgresOperationalViews(database.db);
+    const page = await views.listConversations({ workspaceId, page: 1, pageSize: 20 });
+    const messageThread = page.data.find((item) => item.id === conversationId);
+    expect(messageThread).toMatchObject({
+      kind: "message_thread",
+      source: "inbound",
+      origin: "outside_campaign",
+      socialEventCount: 2,
+    });
+    const socialThread = page.data.find((item) => item.id === socialOnlyInteractionId);
+    expect(socialThread).toMatchObject({
+      kind: "social_thread",
+      source: "inbound",
+      contactId: secondContactId,
+      origin: "outside_campaign",
+      socialEventCount: 1,
+    });
+    expect(page.data.some((item) => item.id === unknownInteractionId || item.id === ambiguousInteractionId)).toBe(false);
+
+    const messageDetail = await views.getConversation(workspaceId, conversationId);
+    expect(messageDetail?.messages).toEqual([]);
+    expect(messageDetail?.socialEvents.map((event) => event.id)).toEqual([firstInteractionId, lastInteractionId]);
+    const socialDetail = await views.getConversation(workspaceId, socialOnlyInteractionId);
+    expect(socialDetail).toMatchObject({ kind: "social_thread", source: "inbound", latestCommand: null, decision: null });
+    expect(socialDetail?.messages).toEqual([]);
+    expect(socialDetail?.socialEvents).toHaveLength(1);
+
+    const inbound = await views.listConversations({ workspaceId, source: "inbound", page: 1, pageSize: 20 });
+    expect(inbound.data.map((item) => item.id).sort()).toEqual([conversationId, socialOnlyInteractionId].sort());
+    expect((await views.listConversations({ workspaceId: otherWorkspaceId, source: "inbound", page: 1, pageSize: 20 })).data).toEqual([]);
+  });
+
+  test("labels an attributed campaign thread as mixed without rewriting its origin", async () => {
+    const rollback = new Error("ROLLBACK_MIXED_SOURCE_FIXTURE");
+    try {
+      await database.db.transaction(async (transaction) => {
+        const icpId = crypto.randomUUID();
+        const icpVersionId = crypto.randomUUID();
+        const campaignId = crypto.randomUUID();
+        await transaction.insert(icps).values({ id: icpId, workspaceId, name: "Mixed source fixture", currentVersion: 1 });
+        await transaction.insert(icpVersions).values({ id: icpVersionId, workspaceId, icpId, version: 1, name: "Mixed source fixture", confidence: "1.0000", criteria: {}, buyingCommittee: [], problems: [], signals: [], exclusions: [], unknowns: [], unresolvedContradictions: [], blockedFindings: [], publishedBy: userId, publishedAt: now });
+        await transaction.insert(campaigns).values({ id: campaignId, workspaceId, name: "Mixed campaign", icpVersionId, channel: "linkedin", sequenceId: crypto.randomUUID(), createdBy: userId });
+        await transaction.update(conversations).set({ campaignId }).where(and(eq(conversations.workspaceId, workspaceId), eq(conversations.id, conversationId)));
+
+        const views = new PostgresOperationalViews(transaction as never);
+        const mixed = await views.listConversations({ workspaceId, source: "mixed", page: 1, pageSize: 20 });
+        expect(mixed.data.find((item) => item.id === conversationId)).toMatchObject({ source: "mixed", origin: "outside_campaign", campaignId });
+        expect((await views.getConversation(workspaceId, conversationId))).toMatchObject({ source: "mixed", origin: "outside_campaign", campaignId });
+        throw rollback;
+      });
+    } catch (error) {
+      if (error !== rollback) throw error;
+    }
+  });
+
   test("replays idempotently without duplicating attribution edges", async () => {
     const before = await database.db.select().from(attributionTouches).where(eq(attributionTouches.workspaceId, workspaceId));
     await database.db.update(attributionTouches).set({ nextResolutionAt: now }).where(and(
       eq(attributionTouches.workspaceId, workspaceId),
       eq(attributionTouches.logicalKey, "identity"),
     ));
-    expect(await new AttributionReconciler(repository, { now: () => new Date(now.getTime() + 5 * 60 * 60_000) }).reconcile(workspaceId)).toBe(4);
+    expect(await new AttributionReconciler(repository, { now: () => new Date(now.getTime() + 5 * 60 * 60_000) }).reconcile(workspaceId)).toBe(5);
     const after = await database.db.select().from(attributionTouches).where(eq(attributionTouches.workspaceId, workspaceId));
     expect(after).toHaveLength(before.length);
     expect(new Set(after.map((touch) => `${touch.socialInteractionId}:${touch.logicalKey}`)).size).toBe(after.length);

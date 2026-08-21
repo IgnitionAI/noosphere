@@ -14,6 +14,7 @@ type Query = {
   search?: string;
   channel?: string;
   scope?: string;
+  source?: string;
   period?: string;
   read?: string;
   page?: string;
@@ -32,12 +33,14 @@ export default async function InboxPage({
   const query = await searchParams;
   const channel = validChannel(query.channel);
   const scope = validScope(query.scope);
+  const source = validSource(query.source);
   const period = validPeriod(query.period);
   const read = query.read === "unread" ? "unread" : undefined;
   const page = positivePage(query.page);
   const result = await listWorkspaceConversations(workspaceSlug, {
     ...(channel ? { channel } : {}),
     ...(scope ? { scope } : {}),
+    ...(source ? { source } : {}),
     ...(period ? { period } : {}),
     ...(read ? { read } : {}),
     ...(query.search?.trim() ? { search: query.search.trim() } : {}),
@@ -86,7 +89,7 @@ export default async function InboxPage({
       </nav>
 
       <section className="panel mb-5">
-        <form className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-5" method="get">
+        <form className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-6" method="get">
           <label className="relative sm:col-span-2">
             <Search className="pointer-events-none absolute left-3 top-3 text-muted" size={15} />
             <input className="control w-full pl-9" name="search" defaultValue={query.search ?? ""} placeholder="Contact, campagne, compte ou contenu…" />
@@ -102,6 +105,13 @@ export default async function InboxPage({
             <option value="campaign">En campagne</option>
             <option value="outside_campaign">Hors campagne</option>
           </select>
+          <select aria-label="Source" className="control" name="source" defaultValue={source ?? ""}>
+            <option value="">Toutes les sources</option>
+            <option value="inbound">Inbound</option>
+            <option value="outbound">Outbound</option>
+            <option value="mixed">Mixte</option>
+            <option value="unknown">Sans attribution</option>
+          </select>
           <select aria-label="Période" className="control" name="period" defaultValue={period ?? ""}>
             <option value="">Toutes les dates</option>
             <option value="today">Aujourd’hui</option>
@@ -113,7 +123,7 @@ export default async function InboxPage({
             <option value="">Lus et non lus</option>
             <option value="unread">Non lus uniquement</option>
           </select>
-          <div className="flex gap-2 sm:col-span-2 xl:col-span-4 xl:justify-end">
+          <div className="flex gap-2 sm:col-span-2 xl:col-span-6 xl:justify-end">
             <button className="button button-signal" type="submit">Filtrer</button>
             <Link className="button" href={`/w/${workspaceSlug}/inbox`}>Effacer</Link>
           </div>
@@ -167,6 +177,8 @@ function ConversationRow({ conversation, href }: { conversation: WorkspaceConver
             <strong className="text-sm">{conversation.firstName} {conversation.lastName}</strong>
             {conversation.unreadCount > 0 ? <span className="badge badge-signal">{conversation.unreadCount} non lu{conversation.unreadCount > 1 ? "s" : ""}</span> : null}
             <span className={conversation.origin === "campaign" ? "badge badge-success" : "badge"}>{conversation.origin === "campaign" ? "campagne" : "hors campagne"}</span>
+            <span className={conversation.source === "inbound" || conversation.source === "mixed" ? "badge badge-signal" : "badge"}>{sourceLabel(conversation.source)}</span>
+            {conversation.socialEventCount > 0 ? <span className="badge">{conversation.socialEventCount} interaction{conversation.socialEventCount > 1 ? "s" : ""}</span> : null}
           </div>
           {conversation.subject ? <p className="mt-1 truncate text-xs font-medium">{conversation.subject}</p> : null}
           <p className="mt-1 truncate text-xs text-muted">{conversation.lastMessage?.body ?? "Aucun contenu"}</p>
@@ -202,6 +214,10 @@ function validScope(value?: string): "campaign" | "outside_campaign" | undefined
   return value === "campaign" || value === "outside_campaign" ? value : undefined;
 }
 
+function validSource(value?: string): "inbound" | "outbound" | "mixed" | "unknown" | undefined {
+  return value === "inbound" || value === "outbound" || value === "mixed" || value === "unknown" ? value : undefined;
+}
+
 function validPeriod(value?: string): "today" | "7d" | "30d" | "90d" | undefined {
   return value === "today" || value === "7d" || value === "30d" || value === "90d" ? value : undefined;
 }
@@ -213,6 +229,10 @@ function positivePage(value?: string): number {
 
 function channelLabel(value: WorkspaceConversationView["channel"]): string {
   return value === "linkedin" ? "LinkedIn" : value === "whatsapp" ? "WhatsApp" : "Email";
+}
+
+function sourceLabel(value: WorkspaceConversationView["source"]): string {
+  return value === "inbound" ? "inbound" : value === "outbound" ? "outbound" : value === "mixed" ? "mixte" : "sans attribution";
 }
 
 function formatRelative(value: string): string {

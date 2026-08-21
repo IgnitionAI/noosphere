@@ -1,4 +1,4 @@
-import { Bot, ExternalLink, MessageCircle, PauseCircle, UserRound, X } from "lucide-react";
+import { Bot, ExternalLink, MessageCircle, MessageSquareText, PauseCircle, UserRound, X } from "lucide-react";
 import Link from "next/link";
 import { sendProspectMessageAction } from "@/app/w/[workspaceSlug]/prospects/actions";
 import { setConversationAutomationAction } from "@/app/w/[workspaceSlug]/inbox/actions";
@@ -50,6 +50,7 @@ export function WorkspaceConversationDrawer({
                     {conversation.origin === "campaign" ? conversation.campaignName ?? "Campagne" : "Hors campagne"}
                   </span>
                   <span className="badge">{automationLabel(conversation.automationMode)}</span>
+                  <span className={conversation.source === "inbound" || conversation.source === "mixed" ? "badge badge-signal" : "badge"}>{sourceLabel(conversation.source)}</span>
                 </div>
               </div>
             </div>
@@ -60,7 +61,7 @@ export function WorkspaceConversationDrawer({
             <Link className="button" href={`/w/${workspaceSlug}/prospects/${conversation.contactId}`}>
               <ExternalLink size={13} />Fiche prospect
             </Link>
-            {conversation.campaignId ? (
+            {conversation.kind === "message_thread" && conversation.campaignId ? (
               conversation.automationMode === "setter" ? (
                 <form action={setAutomation}>
                   <input name="mode" type="hidden" value="human" />
@@ -72,13 +73,37 @@ export function WorkspaceConversationDrawer({
                   <button className="button button-signal" type="submit"><Bot size={13} />Laisser agir le Setter</button>
                 </form>
               )
-            ) : (
+            ) : conversation.kind === "message_thread" ? (
               <span className="text-[11px] text-muted">Aucune réponse automatique hors campagne.</span>
+            ) : (
+              <span className="text-[11px] text-muted">Interaction sociale en lecture seule · aucun message automatique.</span>
             )}
           </div>
         </header>
 
         <div className="flex-1 space-y-3 overflow-y-auto p-4 sm:p-5">
+          {conversation.socialEvents.length ? (
+            <section className="space-y-2" aria-label="Interactions sociales prouvées">
+              <div className="flex items-center justify-between gap-2">
+                <strong className="flex items-center gap-2 text-xs"><MessageSquareText size={14} />Interactions sociales prouvées</strong>
+                <span className="badge badge-signal">{conversation.socialEvents.length}</span>
+              </div>
+              {conversation.socialEvents.map((event) => (
+                <article className="rounded-xl border border-brand-blue/25 bg-blue-50 p-3" key={event.id}>
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted">
+                    <span>{socialEventLabel(event.type)} · {event.actorName ?? `${conversation.firstName} ${conversation.lastName}`}</span>
+                    <span>{formatDate(event.at)}</span>
+                  </div>
+                  <p className="mt-2 whitespace-pre-wrap text-xs leading-5">{event.body || "Interaction sans texte exploitable."}</p>
+                  <p className="mt-2 line-clamp-2 text-[11px] text-muted">Sur le post : {event.postText}</p>
+                  <div className="mt-2 flex flex-wrap gap-3 text-[11px] font-semibold text-brand-blue">
+                    <Link href={workspaceProofHref(workspaceSlug, event.proofHref)}>Voir la preuve</Link>
+                    {event.postUrl ? <a href={event.postUrl} rel="noreferrer" target="_blank">Ouvrir le post</a> : null}
+                  </div>
+                </article>
+              ))}
+            </section>
+          ) : null}
           {conversation.messages.length ? conversation.messages.map((message) => (
             <div className={`flex ${message.direction === "outbound" ? "justify-end" : "justify-start"}`} key={message.id}>
               <div className={`max-w-[88%] rounded-2xl border px-3 py-2 text-xs leading-5 ${message.direction === "outbound" ? "border-navy bg-navy text-white" : "border-line bg-white"}`}>
@@ -88,9 +113,9 @@ export function WorkspaceConversationDrawer({
                 </p>
               </div>
             </div>
-          )) : (
+          )) : conversation.kind === "message_thread" ? (
             <div className="py-16 text-center"><MessageCircle className="mx-auto text-muted" size={28} /><p className="mt-3 text-sm font-semibold">Conversation vide</p></div>
-          )}
+          ) : null}
         </div>
 
         {conversation.decision ? (
@@ -104,12 +129,16 @@ export function WorkspaceConversationDrawer({
           </section>
         ) : null}
 
-        <footer className="border-t border-line bg-white p-4 sm:p-5">
+        {conversation.kind === "message_thread" ? <footer className="border-t border-line bg-white p-4 sm:p-5">
           {conversation.latestCommand && ["scheduled", "sending"].includes(conversation.latestCommand.status) ? (
             <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">Message en cours de préparation ou d’envoi…</p>
           ) : null}
           <ConversationComposer conversationId={conversation.id} sendAction={send} workspaceSlug={workspaceSlug} />
-        </footer>
+        </footer> : (
+          <footer className="border-t border-line bg-white p-4 text-xs leading-5 text-muted sm:p-5">
+            Ce signal Inbound est visible pour comprendre le prospect. Il n’ouvre pas de DM et ne déclenche aucune action automatique.
+          </footer>
+        )}
       </aside>
     </>
   );
@@ -121,6 +150,18 @@ function channelLabel(channel: WorkspaceConversationDetail["channel"]): string {
 
 function automationLabel(mode: WorkspaceConversationDetail["automationMode"]): string {
   return mode === "setter" ? "Setter actif" : mode === "disabled" ? "Automatisation arrêtée" : "Pilotage humain";
+}
+
+function sourceLabel(source: WorkspaceConversationDetail["source"]): string {
+  return source === "inbound" ? "Source Inbound" : source === "outbound" ? "Source Outbound" : source === "mixed" ? "Source mixte" : "Sans attribution";
+}
+
+function socialEventLabel(type: WorkspaceConversationDetail["socialEvents"][number]["type"]): string {
+  return type === "comment" ? "Commentaire LinkedIn" : type === "reply" ? "Réponse LinkedIn" : "Mention LinkedIn";
+}
+
+function workspaceProofHref(workspaceSlug: string, href: string): string {
+  return href.startsWith(`/w/${workspaceSlug}/`) ? href : `/w/${workspaceSlug}${href.startsWith("/") ? href : `/${href}`}`;
 }
 
 function senderLabel(senderType: string): string {
