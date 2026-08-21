@@ -286,6 +286,41 @@ export interface SocialContentSyncStatus {
   readonly lastErrorMessage: string | null;
 }
 
+export interface SocialInteraction {
+  readonly id: string;
+  readonly socialContentId: string;
+  readonly publicationId: string | null;
+  readonly postText: string;
+  readonly postUrl: string | null;
+  readonly type: "comment" | "reply" | "reaction" | "mention";
+  readonly providerInteractionId: string;
+  readonly parentProviderInteractionId: string | null;
+  readonly direction: "owner" | "incoming" | "unknown";
+  readonly actorProviderId: string | null;
+  readonly actorName: string | null;
+  readonly actorHeadline: string | null;
+  readonly actorProfileUrl: string | null;
+  readonly body: string | null;
+  readonly reaction: string | null;
+  readonly mentionedProviderId: string | null;
+  readonly mentionedName: string | null;
+  readonly status: "observed" | "removed";
+  readonly occurredAt: string | null;
+  readonly firstSeenAt: string;
+  readonly lastSeenAt: string;
+  readonly removedAt: string | null;
+}
+
+export interface SocialEngagementSyncStatus {
+  readonly status: "not_configured" | "idle" | "syncing" | "error";
+  readonly observed: number;
+  readonly incoming: number;
+  readonly lastSuccessAt: string | null;
+  readonly nextSyncAt: string | null;
+  readonly lastErrorCode: string | null;
+  readonly lastErrorMessage: string | null;
+}
+
 export interface SetupReadinessItem {
   readonly key: "product" | "icp" | "accounts" | "automation" | "calendar" | "knowledge";
   readonly label: string;
@@ -417,6 +452,16 @@ export async function listSocialContent(workspaceSlug: string, cursor?: string):
 
 export async function getSocialContentSyncStatus(workspaceSlug: string): Promise<SocialContentSyncStatus> {
   return crmFetch(workspaceSlug, "/api/v1/content/social-posts/status");
+}
+
+export async function listSocialInteractions(workspaceSlug: string, cursor?: string): Promise<{ readonly data: readonly SocialInteraction[]; readonly nextCursor: string | null }> {
+  const params = new URLSearchParams({ status: "observed" });
+  if (cursor) params.set("cursor", cursor);
+  return crmFetch(workspaceSlug, `/api/v1/content/interactions?${params}`);
+}
+
+export async function getSocialEngagementSyncStatus(workspaceSlug: string): Promise<SocialEngagementSyncStatus> {
+  return crmFetch(workspaceSlug, "/api/v1/content/interactions/status");
 }
 
 export async function scheduleContentPublication(workspaceSlug: string, assetId: string, requestKey: string, scheduledFor: string): Promise<ContentPublication> {

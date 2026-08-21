@@ -76,6 +76,9 @@ import { createContentPublicationHttpHandler, isContentPublicationRoute } from "
 import { SocialContentSyncApplication } from "@outbound/application/content/social-content-sync";
 import { PostgresSocialContentSyncRepository } from "@outbound/infrastructure/content/postgres-social-content-sync-repository";
 import { createSocialContentHttpHandler, isSocialContentRoute } from "@outbound/interface/http/social-content-handler";
+import { SocialEngagementApplication } from "@outbound/application/content/social-engagement-sync";
+import { PostgresSocialEngagementSyncRepository } from "@outbound/infrastructure/content/postgres-social-engagement-sync-repository";
+import { createSocialEngagementHttpHandler, isSocialEngagementRoute } from "@outbound/interface/http/social-engagement-handler";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
@@ -312,6 +315,10 @@ const socialContent = createSocialContentHttpHandler({
   contextResolver: auth.contextResolver,
   application: new SocialContentSyncApplication(new PostgresSocialContentSyncRepository(database.db)),
 });
+const socialEngagements = createSocialEngagementHttpHandler({
+  contextResolver: auth.contextResolver,
+  application: new SocialEngagementApplication(new PostgresSocialEngagementSyncRepository(database.db)),
+});
 const port = positiveIntegerEnvironment("PORT", 3000);
 const server = Bun.serve({
   port,
@@ -341,6 +348,7 @@ const server = Bun.serve({
     if (isWorkspaceOnboardingRoute(pathname)) return workspaceOnboarding(request);
     if (isWorkspaceDataRoute(pathname, request.method)) return workspaceData(request);
     if (isContentStrategyRoute(pathname)) return contentStrategy(request);
+    if (isSocialEngagementRoute(pathname)) return socialEngagements(request);
     if (isSocialContentRoute(pathname)) return socialContent(request);
     if (isContentPublicationRoute(pathname)) return contentPublications(request);
     if (isContentGenerationRoute(pathname)) return contentGeneration(request);

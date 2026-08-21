@@ -79,6 +79,9 @@ test("the LinkedIn publication calendar exposes durable empty state without a pr
   await expect(page.getByRole("heading", { name: "Posts observés sur le compte" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Aucun post observé" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Synchronisation LinkedIn" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Commentaires, réponses et réactions" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Aucun engagement observé" })).toBeVisible();
+  await expect(page.getByText("Une réaction seule ne déclenche aucun message.")).toBeVisible();
   expect(mutations).toEqual([]);
 });
 
