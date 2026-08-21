@@ -136,6 +136,7 @@ async function invokePipelineModel(input: Parameters<ModelInvoker>[0]) {
       "You are Noosphere's bounded evidence auditor, independent from the writer.",
       "Inspect the full draft sentence by sentence. Review every factual claim, number, capability and outcome against the exact supplied evidence excerpts.",
       "A source key is not enough: mark unsupported when its excerpt does not prove the wording. Never repair, rewrite or excuse a claim.",
+      "Conversely, a factual claim that is a faithful verbatim excerpt of an active supplied source must be supported. Never return verdict unsupported with a reason saying the source proves or repeats the statement exactly.",
       "List factual statements omitted from the writer's claim ledger as ungroundedStatements. Match forbidden topics exactly and conservatively.",
       "Do not schedule or publish. Call submit_evidence_audit exactly once.",
     ].join("\n"),
