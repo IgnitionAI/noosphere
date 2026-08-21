@@ -122,6 +122,8 @@ async function invokePipelineModel(input: Parameters<ModelInvoker>[0]) {
       "If validationFeedback contains CONTENT_DRAFT_UNSOURCED_NUMBER, remove every number absent from evidence or add the exact sourced sentence to factualClaims.",
       "If validationFeedback contains CONTENT_DRAFT_CLAIM_NOT_IN_BODY, make each claim statement an exact excerpt of body.",
       "If validationFeedback contains CONTENT_DRAFT_UNRESOLVED_CLAIM, use only evidence keys present in the supplied context.",
+      "If validationFeedback contains CONTENT_AUDIT_UNGROUNDED_STATEMENT, either add the exact factual sentence to factualClaims only when supplied evidence directly proves it, or remove/narrow it. Do not hide a verifiable claim in opinionStatements.",
+      "If validationFeedback contains CONTENT_AUDIT_UNSUPPORTED_CLAIM, remove or narrow the claim to the exact supplied evidence. Never override or argue with the auditor.",
       "Mark personal analysis explicitly in opinionStatements. Do not turn an opinion into a fact.",
       "The body is the complete ready-to-review post, including hook and CTA. Do not schedule or publish. Call submit_linkedin_draft exactly once.",
     ].join("\n"),

@@ -214,6 +214,9 @@ databaseDescribe("CNT-101 durable content generation", () => {
     await repository.startRun({ workspaceId, runId: improved.id, now });
     await repository.saveBrief({ workspaceId, runId: improved.id, brief, now });
     await repository.saveDraft({ workspaceId, runId: improved.id, draft: { ...draft, hook: "Le précédent n’est utile que s’il est retrouvable." }, now });
+    const auditRepairedDraft = { ...draft, hook: "Une preuve auditée reste résoluble." };
+    await repository.reviseDraftAfterAudit({ workspaceId, runId: improved.id, draft: auditRepairedDraft, now });
+    expect((await repository.loadContext({ workspaceId, runId: improved.id })).draft?.hook).toBe(auditRepairedDraft.hook);
     await repository.saveAudit({ workspaceId, runId: improved.id, audit, now });
     await repository.completeRun({ workspaceId, runId: improved.id, critique, readiness: { ready: true, blockers: [] }, now });
     expect((await repository.findAssetByIdea({ workspaceId, ideaId }))?.latestVersion).toBe(2);

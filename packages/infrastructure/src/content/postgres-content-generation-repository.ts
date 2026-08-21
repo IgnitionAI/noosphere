@@ -208,6 +208,10 @@ export class PostgresContentGenerationRepository implements ContentGenerationRep
     await this.advance(input.workspaceId, input.runId, "writer", { draftSnapshot: input.draft, stage: "audit", updatedAt: input.now }, "ContentDraftWritten", input.now);
   }
 
+  async reviseDraftAfterAudit(input: Parameters<ContentGenerationRepository["reviseDraftAfterAudit"]>[0]): Promise<void> {
+    await this.advance(input.workspaceId, input.runId, "audit", { draftSnapshot: input.draft, auditSnapshot: null, updatedAt: input.now }, "ContentDraftRepairedAfterAudit", input.now, "audit");
+  }
+
   async saveAudit(input: Parameters<ContentGenerationRepository["saveAudit"]>[0]): Promise<void> {
     await this.advance(input.workspaceId, input.runId, "audit", { auditSnapshot: input.audit, stage: "critic", updatedAt: input.now }, "ContentEvidenceAudited", input.now);
   }
@@ -245,13 +249,13 @@ export class PostgresContentGenerationRepository implements ContentGenerationRep
     }).where(and(eq(contentGenerationRuns.workspaceId, input.workspaceId), eq(contentGenerationRuns.id, input.runId), sql`${contentGenerationRuns.status} in ('queued', 'running')`));
   }
 
-  private async advance(workspaceId: string, runId: string, expected: ContentGenerationStage, values: Record<string, unknown>, eventType: string, now: Date): Promise<void> {
+  private async advance(workspaceId: string, runId: string, expected: ContentGenerationStage, values: Record<string, unknown>, eventType: string, now: Date, resultingStage?: ContentGenerationStage): Promise<void> {
     await this.database.transaction(async (tx) => {
       const run = (await tx.select().from(contentGenerationRuns).where(and(eq(contentGenerationRuns.workspaceId, workspaceId), eq(contentGenerationRuns.id, runId))).limit(1).for("update"))[0];
       if (!run) throw new Error("CONTENT_GENERATION_RUN_NOT_FOUND");
       if (stageAfter(run.stage as ContentGenerationStage, expected)) return;
       if (run.stage !== expected) throw new Error("CONTENT_GENERATION_STAGE_CONFLICT");
-      await tx.update(contentGenerationRuns).set(values).where(and(eq(contentGenerationRuns.workspaceId, workspaceId), eq(contentGenerationRuns.id, runId)));
+      await tx.update(contentGenerationRuns).set({ ...values, ...(resultingStage ? { stage: resultingStage } : {}) }).where(and(eq(contentGenerationRuns.workspaceId, workspaceId), eq(contentGenerationRuns.id, runId)));
       await appendEvent(tx, { workspaceId, userId: null, runId, eventType, changes: { at: now.toISOString() } });
     });
   }

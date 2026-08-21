@@ -79,6 +79,37 @@ describe("CNT-101 grounded content pipeline", () => {
     await processor.process(job(context.run.workspaceId, context.run.id));
     expect(calls).toEqual(["start", "audit", "audit_saved", "critic", "ready", "ack"]);
   });
+
+  test("repairs one audit-rejected draft before the critic sees it", async () => {
+    const calls: string[] = [];
+    const feedback: Array<readonly string[] | undefined> = [];
+    const context = pipelineContext("audit");
+    const repository = {
+      async loadContext() { return context; },
+      async startRun() { calls.push("start"); },
+      async reviseDraftAfterAudit() { calls.push("draft_repaired"); },
+      async saveAudit() { calls.push("audit_saved"); },
+      async completeRun(input: { readiness: { ready: boolean } }) { calls.push(input.readiness.ready ? "ready" : "blocked"); },
+      async failRun() {},
+    } as unknown as ContentGenerationRepository;
+    const queue = { async acknowledge() { calls.push("ack"); } } as unknown as JobQueue;
+    let auditAttempt = 0;
+    const processor = new ContentGenerationJobProcessor(repository, {
+      async buildBrief() { throw new Error("brief must not replay"); },
+      async write(input) { calls.push("writer_repair"); feedback.push(input.validationFeedback); return draft(); },
+      async audit() {
+        calls.push("audit");
+        auditAttempt += 1;
+        return auditAttempt === 1 ? { ...audit(), ungroundedStatements: ["Le hook factuel manque au registre."] } : audit();
+      },
+      async critique() { calls.push("critic"); return critique(); },
+    }, queue);
+
+    await processor.process(job(context.run.workspaceId, context.run.id));
+
+    expect(feedback).toEqual([["CONTENT_AUDIT_UNGROUNDED_STATEMENT: Le hook factuel manque au registre."]]);
+    expect(calls).toEqual(["start", "audit", "writer_repair", "draft_repaired", "audit", "audit_saved", "critic", "ready", "ack"]);
+  });
 });
 
 function draft() { return { hook: "Une clause introuvable coûte plus qu’une recherche.", body: "Une clause introuvable coûte plus qu’une recherche. Les équipes juridiques ont besoin d’une preuve résoluble avant de décider. Noosphere relie le contenu aux conversations.", callToAction: "Comment vérifiez-vous vos preuves ?", factualClaims: [{ statement: "Noosphere relie le contenu aux conversations.", sourceKeys: ["proof:1"] }], opinionStatements: ["Une clause introuvable coûte plus qu’une recherche."] }; }
