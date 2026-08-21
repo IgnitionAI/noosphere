@@ -95,6 +95,8 @@ import { UnipileSocialContentReader } from "@outbound/infrastructure/content/uni
 import { SocialEngagementSynchronizer } from "@outbound/application/content/social-engagement-sync";
 import { PostgresSocialEngagementSyncRepository } from "@outbound/infrastructure/content/postgres-social-engagement-sync-repository";
 import { UnipileSocialEngagementReader } from "@outbound/infrastructure/content/unipile-social-engagement-reader";
+import { AttributionReconciler } from "@outbound/application/attribution/attribution";
+import { PostgresAttributionRepository } from "@outbound/infrastructure/attribution/postgres-attribution-repository";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
@@ -359,6 +361,10 @@ const socialEngagementSynchronizer = unipileDsn && unipileApiKey && process.env.
       { now: () => clock.now() },
     )
   : null;
+const attributionReconciler = new AttributionReconciler(
+  new PostgresAttributionRepository(database.db),
+  { now: () => clock.now() },
+);
 const maintenance = {
   async reconcile() {
     const [dailyRuns, dailyIdeaRuns, assessmentJobs, repairedCampaigns, retainedSourcing, inboundEvents, observedSocialPosts, observedSocialEngagements] = await Promise.all([
@@ -380,7 +386,11 @@ const maintenance = {
     if (observedSocialEngagements > 0) {
       console.info(JSON.stringify({ event: "linkedin_social_engagements_synchronized", observedEngagements: observedSocialEngagements }));
     }
-    return dailyRuns + dailyIdeaRuns + assessmentJobs + repairedCampaigns + retainedSourcing + inboundEvents + observedSocialPosts + observedSocialEngagements;
+    const attributedInteractions = await attributionReconciler.reconcile();
+    if (attributedInteractions > 0) {
+      console.info(JSON.stringify({ event: "linkedin_attribution_reconciled", interactions: attributedInteractions }));
+    }
+    return dailyRuns + dailyIdeaRuns + assessmentJobs + repairedCampaigns + retainedSourcing + inboundEvents + observedSocialPosts + observedSocialEngagements + attributedInteractions;
   },
 };
 const orchestrator = new ResearchOrchestrator(

@@ -3542,6 +3542,52 @@ export const calendarBookings = pgTable(
   ],
 );
 
+export const attributionTouches = pgTable(
+  "attribution_touches",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    socialContentId: uuid("social_content_id").notNull(),
+    socialInteractionId: uuid("social_interaction_id").notNull(),
+    publicationId: uuid("publication_id"),
+    contactId: uuid("contact_id"),
+    conversationId: uuid("conversation_id").references(() => conversations.id, { onDelete: "cascade" }),
+    campaignId: uuid("campaign_id"),
+    bookingId: uuid("booking_id"),
+    opportunityId: uuid("opportunity_id"),
+    kind: varchar("kind", { length: 40 }).notNull(),
+    certainty: varchar("certainty", { length: 40 }).notNull(),
+    rule: varchar("rule", { length: 160 }).notNull(),
+    modelVersion: varchar("model_version", { length: 80 }).notNull(),
+    confidence: numeric("confidence", { precision: 5, scale: 4 }).notNull(),
+    proofType: varchar("proof_type", { length: 80 }).notNull(),
+    proofRef: text("proof_ref"),
+    proofHref: text("proof_href"),
+    logicalKey: text("logical_key").notNull(),
+    status: varchar("status", { length: 40 }).notNull().default("active"),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    nextResolutionAt: timestamp("next_resolution_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({ columns: [table.workspaceId, table.socialContentId], foreignColumns: [socialContentItems.workspaceId, socialContentItems.id], name: "attribution_touches_workspace_content_fk" }).onDelete("cascade"),
+    foreignKey({ columns: [table.workspaceId, table.socialInteractionId], foreignColumns: [socialInteractions.workspaceId, socialInteractions.id], name: "attribution_touches_workspace_interaction_fk" }).onDelete("cascade"),
+    foreignKey({ columns: [table.workspaceId, table.publicationId], foreignColumns: [contentPublications.workspaceId, contentPublications.id], name: "attribution_touches_workspace_publication_fk" }).onDelete("cascade"),
+    foreignKey({ columns: [table.workspaceId, table.contactId], foreignColumns: [contacts.workspaceId, contacts.id], name: "attribution_touches_workspace_contact_fk" }).onDelete("cascade"),
+    foreignKey({ columns: [table.workspaceId, table.campaignId], foreignColumns: [campaigns.workspaceId, campaigns.id], name: "attribution_touches_workspace_campaign_fk" }).onDelete("cascade"),
+    foreignKey({ columns: [table.workspaceId, table.bookingId], foreignColumns: [calendarBookings.workspaceId, calendarBookings.id], name: "attribution_touches_workspace_booking_fk" }).onDelete("cascade"),
+    foreignKey({ columns: [table.workspaceId, table.opportunityId], foreignColumns: [opportunities.workspaceId, opportunities.id], name: "attribution_touches_workspace_opportunity_fk" }).onDelete("cascade"),
+    unique("attribution_touches_workspace_id_uq").on(table.workspaceId, table.id),
+    uniqueIndex("attribution_touches_logical_uq").on(table.workspaceId, table.socialInteractionId, table.logicalKey),
+    index("attribution_touches_booking_idx").on(table.workspaceId, table.bookingId, table.status, table.kind, table.occurredAt, table.socialInteractionId),
+    check("attribution_touches_kind_ck", sql`${table.kind} in ('identity', 'conversation', 'campaign', 'booking', 'opportunity')`),
+    check("attribution_touches_certainty_ck", sql`${table.certainty} in ('evidence', 'inference', 'unknown')`),
+    check("attribution_touches_status_ck", sql`${table.status} in ('active', 'superseded')`),
+    check("attribution_touches_confidence_ck", sql`${table.confidence} >= 0 and ${table.confidence} <= 1 and (${table.certainty} <> 'unknown' or ${table.confidence} = 0)`),
+  ],
+);
+
 export const calendarBookingHistory = pgTable(
   "calendar_booking_history",
   {

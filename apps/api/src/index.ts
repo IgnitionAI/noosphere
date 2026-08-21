@@ -79,6 +79,9 @@ import { createSocialContentHttpHandler, isSocialContentRoute } from "@outbound/
 import { SocialEngagementApplication } from "@outbound/application/content/social-engagement-sync";
 import { PostgresSocialEngagementSyncRepository } from "@outbound/infrastructure/content/postgres-social-engagement-sync-repository";
 import { createSocialEngagementHttpHandler, isSocialEngagementRoute } from "@outbound/interface/http/social-engagement-handler";
+import { AttributionApplication } from "@outbound/application/attribution/attribution";
+import { PostgresAttributionRepository } from "@outbound/infrastructure/attribution/postgres-attribution-repository";
+import { createAttributionHttpHandler, isAttributionRoute } from "@outbound/interface/http/attribution-handler";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
@@ -319,6 +322,10 @@ const socialEngagements = createSocialEngagementHttpHandler({
   contextResolver: auth.contextResolver,
   application: new SocialEngagementApplication(new PostgresSocialEngagementSyncRepository(database.db)),
 });
+const attribution = createAttributionHttpHandler({
+  contextResolver: auth.contextResolver,
+  application: new AttributionApplication(new PostgresAttributionRepository(database.db)),
+});
 const port = positiveIntegerEnvironment("PORT", 3000);
 const server = Bun.serve({
   port,
@@ -348,6 +355,7 @@ const server = Bun.serve({
     if (isWorkspaceOnboardingRoute(pathname)) return workspaceOnboarding(request);
     if (isWorkspaceDataRoute(pathname, request.method)) return workspaceData(request);
     if (isContentStrategyRoute(pathname)) return contentStrategy(request);
+    if (isAttributionRoute(pathname)) return attribution(request);
     if (isSocialEngagementRoute(pathname)) return socialEngagements(request);
     if (isSocialContentRoute(pathname)) return socialContent(request);
     if (isContentPublicationRoute(pathname)) return contentPublications(request);
