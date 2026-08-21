@@ -101,6 +101,8 @@ import { ContentAutopilotReconciler } from "@outbound/application/content/conten
 import { PostgresContentAutopilotRepository } from "@outbound/infrastructure/content/postgres-content-autopilot-repository";
 import { EditorialLearningReconciler } from "@outbound/application/content/editorial-learning";
 import { PostgresEditorialLearningRepository } from "@outbound/infrastructure/content/postgres-editorial-learning-repository";
+import { ContentPublicationOutcomeReconciler } from "@outbound/application/content/content-publication-reconciliation";
+import { PostgresContentPublicationReconciliationRepository } from "@outbound/infrastructure/content/postgres-content-publication-reconciliation-repository";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
@@ -367,6 +369,13 @@ const socialContentSynchronizer = socialContentReader && process.env.UNIPILE_SOC
       { now: () => clock.now() },
     )
   : null;
+const contentPublicationOutcomeReconciler = socialContentReader
+  ? new ContentPublicationOutcomeReconciler(
+      new PostgresContentPublicationReconciliationRepository(database.db),
+      socialContentReader,
+      { now: () => clock.now() },
+    )
+  : null;
 const socialEngagementSynchronizer = unipileDsn && unipileApiKey && process.env.UNIPILE_SOCIAL_ENGAGEMENT_SYNC_ENABLED !== "false"
   ? new SocialEngagementSynchronizer(
       new PostgresSocialEngagementSyncRepository(database.db),
@@ -388,16 +397,17 @@ const editorialLearningReconciler = new EditorialLearningReconciler(
 );
 const maintenance = {
   async reconcile() {
-    const [dailyRuns, dailyIdeaRuns, assessmentJobs, repairedCampaigns, retainedSourcing, inboundEvents, observedSocialPosts, observedSocialEngagements] = await Promise.all([
+    const [dailyRuns, dailyIdeaRuns, assessmentJobs, repairedCampaigns, retainedSourcing, inboundEvents, observedSocialEngagements] = await Promise.all([
       dailyProspectingScheduler.reconcile(),
       dailyContentIdeaScheduler.reconcile(),
       prospectAssessmentReconciler.reconcile(),
       campaignHealthReconciler.reconcile(),
       sourcingRetentionReconciler.reconcile(),
       unipileInboxSynchronizer?.reconcile() ?? Promise.resolve(0),
-      socialContentSynchronizer?.reconcile() ?? Promise.resolve(0),
       socialEngagementSynchronizer?.reconcile() ?? Promise.resolve(0),
     ]);
+    const reconciledProviderEffects = await contentPublicationOutcomeReconciler?.reconcile() ?? 0;
+    const observedSocialPosts = await socialContentSynchronizer?.reconcile() ?? 0;
     const automatedContentActions = await contentAutopilotReconciler.reconcile();
     if (automatedContentActions > 0) {
       console.info(JSON.stringify({ event: "linkedin_content_autopilot_progressed", actions: automatedContentActions }));
@@ -407,6 +417,9 @@ const maintenance = {
     }
     if (observedSocialPosts > 0) {
       console.info(JSON.stringify({ event: "linkedin_social_content_synchronized", observedPosts: observedSocialPosts }));
+    }
+    if (reconciledProviderEffects > 0) {
+      console.info(JSON.stringify({ event: "linkedin_provider_effects_reconciled", decisions: reconciledProviderEffects }));
     }
     if (observedSocialEngagements > 0) {
       console.info(JSON.stringify({ event: "linkedin_social_engagements_synchronized", observedEngagements: observedSocialEngagements }));
@@ -419,7 +432,7 @@ const maintenance = {
     if (editorialLearningVersions > 0) {
       console.info(JSON.stringify({ event: "linkedin_editorial_learning_updated", versions: editorialLearningVersions }));
     }
-    return dailyRuns + dailyIdeaRuns + automatedContentActions + assessmentJobs + repairedCampaigns + retainedSourcing + inboundEvents + observedSocialPosts + observedSocialEngagements + attributedInteractions + editorialLearningVersions;
+    return dailyRuns + dailyIdeaRuns + automatedContentActions + assessmentJobs + repairedCampaigns + retainedSourcing + inboundEvents + reconciledProviderEffects + observedSocialPosts + observedSocialEngagements + attributedInteractions + editorialLearningVersions;
   },
 };
 const orchestrator = new ResearchOrchestrator(

@@ -73,6 +73,7 @@ Elle ne remplace pas les DTO OpenAPI à écrire avant chaque vertical slice.
 | F-053 | workspace endpoints | audit read, export et anonymize |
 | AUT-101 | `GET/PUT /api/v1/content/autopilot`, routes Content idées/assets/publications | livré : boucle quotidienne durable et policy finale |
 | AUT-102 | `GET /api/v1/content/learning` | livré : versions immuables, séparation faits/inférences et consommation bornée par le radar |
+| OPS-102 | `GET /api/v1/content/publications` | livré : état de réconciliation durable inclus dans chaque publication inconnue, sans route de replay |
 
 ## Features et événements
 
@@ -96,6 +97,7 @@ Elle ne remplace pas les DTO OpenAPI à écrire avant chaque vertical slice.
 | F-043 | `MeetingBooked` |
 | F-044 | `OpportunityWon` |
 | AUT-102 | `EditorialLearningVersionDerived` |
+| OPS-102 | `ContentPublicationResultUnknown`, `ContentPublicationReconciled`, `ContentPublicationReconciliationDecided` |
 
 ## Couverture du prototype
 

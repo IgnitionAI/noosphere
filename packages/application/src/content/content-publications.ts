@@ -1,6 +1,7 @@
 import type { JobQueue, LeasedJob } from "@outbound/application/jobs/job-queue";
 import type { SocialPublishResult, SocialPublisher } from "@outbound/application/content/social-ports";
 import { SocialProviderError } from "@outbound/application/content/social-ports";
+import type { ContentPublicationReconciliationView } from "@outbound/application/content/content-publication-reconciliation";
 
 export const CONTENT_PUBLICATION_JOB_TYPE = "content.publication.publish";
 
@@ -58,6 +59,7 @@ export interface ContentPublicationView {
   readonly publishedAt: Date | null;
   readonly cancelledAt: Date | null;
   readonly unknownAt: Date | null;
+  readonly reconciliation: ContentPublicationReconciliationView | null;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }

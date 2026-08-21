@@ -22,6 +22,7 @@ et remonte sur la campagne, la conversation ou la configuration concernée.
 | optimisation campagne | métriques déterministes | recommandations évaluées |
 | contenu LinkedIn | stratégie, preuves, cadence et compte vérifiés | recherche, rédaction, audit, critique et publication autonomes ; exception localisée par asset |
 | apprentissage éditorial | agrégation déterministe des réponses et appels attribués | recommandations versionnées consommables uniquement dans les piliers et l'ICP actifs |
+| résultat provider incertain | recherche déterministe par compte, fingerprint et fenêtre | aucun passage modèle et aucun replay automatique |
 
 ## Contrats à prévoir dès le socle
 
@@ -75,6 +76,9 @@ est insuffisamment prouvée.
     hebdomadaire ; le modèle ne peut contourner cette frontière.
 11. l'apprentissage éditorial distingue faits et inférences ; il ne peut ni
     ajouter un claim ou un canal, ni augmenter une cadence, ni élargir un ICP.
+12. une réponse provider perdue après mutation ne devient jamais un ordre de
+    réessai : OPS-102 décide `matched`, `not_found` ou `ambiguous` à partir
+    d'une preuve provider résoluble et conserve une correlation expurgée.
 
 ## Conditions d’exploitation de l’IA
 

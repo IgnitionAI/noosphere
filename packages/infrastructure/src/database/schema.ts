@@ -1743,6 +1743,42 @@ export const contentPublicationAttempts = pgTable(
   ],
 );
 
+export const contentPublicationReconciliations = pgTable(
+  "content_publication_reconciliations",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    publicationId: uuid("publication_id").notNull(),
+    status: varchar("status", { length: 40 }).notNull().default("pending"),
+    criteriaSnapshot: jsonb("criteria_snapshot").notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    maxAttempts: integer("max_attempts").notNull().default(18),
+    leaseToken: uuid("lease_token"),
+    lockedUntil: timestamp("locked_until", { withTimezone: true }),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
+    candidatesCount: integer("candidates_count").notNull().default(0),
+    matchedProviderPostId: text("matched_provider_post_id"),
+    matchedProviderSocialId: text("matched_provider_social_id"),
+    matchedProviderUrl: text("matched_provider_url"),
+    matchedPublishedAt: timestamp("matched_published_at", { withTimezone: true }),
+    lastErrorCode: varchar("last_error_code", { length: 160 }),
+    lastErrorMessage: text("last_error_message"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({ columns: [table.workspaceId, table.publicationId], foreignColumns: [contentPublications.workspaceId, contentPublications.id], name: "content_publication_reconciliations_workspace_publication_fk" }).onDelete("cascade"),
+    unique("content_publication_reconciliations_workspace_id_uq").on(table.workspaceId, table.id),
+    uniqueIndex("content_publication_reconciliations_publication_uq").on(table.workspaceId, table.publicationId),
+    index("content_publication_reconciliations_due_idx").on(table.status, table.nextAttemptAt),
+    check("content_publication_reconciliations_status_ck", sql`${table.status} in ('pending', 'searching', 'matched', 'not_found', 'ambiguous', 'error')`),
+    check("content_publication_reconciliations_attempts_ck", sql`${table.attempts} >= 0 and ${table.maxAttempts} > 0 and ${table.attempts} <= ${table.maxAttempts}`),
+    check("content_publication_reconciliations_candidates_ck", sql`${table.candidatesCount} >= 0`),
+  ],
+);
+
 export const socialContentSyncStates = pgTable(
   "social_content_sync_states",
   {

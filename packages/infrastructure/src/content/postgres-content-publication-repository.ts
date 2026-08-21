@@ -10,6 +10,7 @@ import type {
   SocialPublishingAccountResolver,
 } from "@outbound/application/content/content-publications";
 import { CONTENT_PUBLICATION_JOB_TYPE } from "@outbound/application/content/content-publications";
+import { textFingerprint, type ContentPublicationReconciliationView } from "@outbound/application/content/content-publication-reconciliation";
 import type { Database } from "@outbound/infrastructure/database/client";
 import {
   auditLogs,
@@ -18,6 +19,7 @@ import {
   contentIdeas,
   contentOperationRequests,
   contentPublicationAttempts,
+  contentPublicationReconciliations,
   contentPublications,
   editorialStrategies,
   editorialStrategyVersions,
@@ -164,17 +166,29 @@ export class PostgresContentPublicationRepository implements ContentPublicationR
       )!] : []),
     )).orderBy(desc(contentPublications.createdAt), desc(contentPublications.id)).limit(input.limit + 1);
     const hasMore = rows.length > input.limit;
-    const data = rows.slice(0, input.limit).map(toPublication);
+    const retained = rows.slice(0, input.limit);
+    const reconciliations = retained.length ? await this.database.select().from(contentPublicationReconciliations).where(and(
+      eq(contentPublicationReconciliations.workspaceId, input.workspaceId),
+      inArray(contentPublicationReconciliations.publicationId, retained.map((row) => row.id)),
+    )) : [];
+    const byPublication = new Map(reconciliations.map((row) => [row.publicationId, toReconciliation(row)]));
+    const data = retained.map((row) => toPublication(row, byPublication.get(row.id) ?? null));
     const last = data.at(-1);
     return { data, nextCursor: hasMore && last ? `${last.createdAt.toISOString()}|${last.id}` : null };
   }
 
   async find(input: Parameters<ContentPublicationRepository["find"]>[0]): Promise<ContentPublicationView | null> {
-    const row = (await this.database.select().from(contentPublications).where(and(
-      eq(contentPublications.workspaceId, input.workspaceId),
-      eq(contentPublications.id, input.publicationId),
-    )).limit(1))[0];
-    return row ? toPublication(row) : null;
+    const [publicationRows, reconciliationRows] = await Promise.all([
+      this.database.select().from(contentPublications).where(and(
+        eq(contentPublications.workspaceId, input.workspaceId),
+        eq(contentPublications.id, input.publicationId),
+      )).limit(1),
+      this.database.select().from(contentPublicationReconciliations).where(and(
+        eq(contentPublicationReconciliations.workspaceId, input.workspaceId),
+        eq(contentPublicationReconciliations.publicationId, input.publicationId),
+      )).limit(1),
+    ]);
+    return publicationRows[0] ? toPublication(publicationRows[0], reconciliationRows[0] ? toReconciliation(reconciliationRows[0]) : null) : null;
   }
 
   async reschedule(input: Parameters<ContentPublicationRepository["reschedule"]>[0]): Promise<ContentPublicationView> {
@@ -218,6 +232,7 @@ export class PostgresContentPublicationRepository implements ContentPublicationR
       if (row.status === "publishing") {
         await tx.update(contentPublications).set({ status: "unknown", unknownAt: input.now, lastErrorCode: "CONTENT_PUBLICATION_LEASE_LOST", lastErrorMessage: "A prior publication attempt lost its lease after the provider boundary was entered.", updatedAt: input.now }).where(and(eq(contentPublications.workspaceId, input.workspaceId), eq(contentPublications.id, row.id)));
         if (row.executionToken) await tx.update(contentPublicationAttempts).set({ status: "unknown", errorCode: "CONTENT_PUBLICATION_LEASE_LOST", errorMessage: "Worker lease lost", completedAt: input.now }).where(and(eq(contentPublicationAttempts.workspaceId, input.workspaceId), eq(contentPublicationAttempts.executionToken, row.executionToken)));
+        await createUnknownReconciliation(tx, row, input.now);
         await appendEvent(tx, { workspaceId: input.workspaceId, userId: null, publicationId: row.id, eventType: "ContentPublicationResultUnknown", changes: { code: "CONTENT_PUBLICATION_LEASE_LOST" } });
         return "unknown";
       }
@@ -329,16 +344,17 @@ export class PostgresContentPublicationRepository implements ContentPublicationR
         ...(input.scheduledFor ? { scheduledFor: input.scheduledFor } : {}),
         ...(input.unknownAt ? { unknownAt: input.unknownAt } : {}),
         updatedAt: input.now,
-      }).where(and(...conditions)).returning({ id: contentPublications.id });
+      }).where(and(...conditions)).returning();
       if (!updated[0]) throw new Error("CONTENT_PUBLICATION_EXECUTION_CONFLICT");
       if (input.executionToken) await tx.update(contentPublicationAttempts).set({ status: input.attemptStatus, errorCode: input.code, errorMessage: input.message.slice(0, 4_000), completedAt: input.now }).where(and(eq(contentPublicationAttempts.workspaceId, input.workspaceId), eq(contentPublicationAttempts.executionToken, input.executionToken)));
+      if (input.status === "unknown") await createUnknownReconciliation(tx, updated[0], input.now);
       const eventType = input.status === "retry" ? "ContentPublicationRetryScheduled" : input.status === "unknown" ? "ContentPublicationResultUnknown" : "ContentPublicationFailed";
       await appendEvent(tx, { workspaceId: input.workspaceId, userId: null, publicationId: input.publicationId, eventType, changes: { code: input.code, ...(input.scheduledFor ? { scheduledFor: input.scheduledFor.toISOString() } : {}) } });
     });
   }
 }
 
-function toPublication(row: typeof contentPublications.$inferSelect): ContentPublicationView {
+function toPublication(row: typeof contentPublications.$inferSelect, reconciliation: ContentPublicationReconciliationView | null = null): ContentPublicationView {
   return {
     id: row.id,
     workspaceId: row.workspaceId,
@@ -361,8 +377,24 @@ function toPublication(row: typeof contentPublications.$inferSelect): ContentPub
     publishedAt: row.publishedAt,
     cancelledAt: row.cancelledAt,
     unknownAt: row.unknownAt,
+    reconciliation,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+  };
+}
+
+function toReconciliation(row: typeof contentPublicationReconciliations.$inferSelect): ContentPublicationReconciliationView {
+  const criteria = objectValue(row.criteriaSnapshot);
+  return {
+    status: row.status as ContentPublicationReconciliationView["status"],
+    attempts: row.attempts,
+    maxAttempts: row.maxAttempts,
+    candidatesCount: row.candidatesCount,
+    nextAttemptAt: row.nextAttemptAt,
+    startedAt: row.startedAt,
+    completedAt: row.completedAt,
+    lastErrorCode: row.lastErrorCode,
+    correlationId: typeof criteria.correlationId === "string" ? criteria.correlationId : `content-publication:${row.publicationId}`,
   };
 }
 
@@ -382,6 +414,32 @@ function accountSnapshot(value: unknown): ContentPublicationAccountSnapshot {
   const record = objectValue(value);
   if (record.provider !== "unipile" || typeof record.providerAccountId !== "string" || typeof record.displayName !== "string" || typeof record.selectionVersion !== "string" || typeof record.observedAt !== "string") throw new Error("CONTENT_PUBLICATION_ACCOUNT_SNAPSHOT_INVALID");
   return { provider: "unipile", providerAccountId: record.providerAccountId, displayName: record.displayName, selectionVersion: record.selectionVersion, observedAt: record.observedAt };
+}
+
+async function createUnknownReconciliation(tx: any, publication: typeof contentPublications.$inferSelect, now: Date): Promise<void> {
+  const account = accountSnapshot(publication.accountSnapshot);
+  const content = contentSnapshot(publication.contentSnapshot);
+  const boundary = publication.publishStartedAt ?? publication.scheduledFor;
+  await tx.insert(contentPublicationReconciliations).values({
+    id: crypto.randomUUID(),
+    workspaceId: publication.workspaceId,
+    publicationId: publication.id,
+    status: "pending",
+    criteriaSnapshot: {
+      schemaVersion: 1,
+      provider: "unipile",
+      providerAccountId: account.providerAccountId,
+      contentFingerprint: textFingerprint(content.body),
+      windowStart: new Date(boundary.getTime() - 5 * 60_000).toISOString(),
+      windowEnd: new Date(boundary.getTime() + 2 * 60 * 60_000).toISOString(),
+      correlationId: `content-publication:${publication.id}`,
+    },
+    nextAttemptAt: now,
+    createdAt: now,
+    updatedAt: now,
+  }).onConflictDoNothing({
+    target: [contentPublicationReconciliations.workspaceId, contentPublicationReconciliations.publicationId],
+  });
 }
 
 function localIsoDay(date: Date, timezone: string): number {
