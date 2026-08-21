@@ -4,6 +4,7 @@ import { SocialProviderError } from "@outbound/application/content/social-ports"
 import type { ContentPublicationReconciliationView } from "@outbound/application/content/content-publication-reconciliation";
 
 export const CONTENT_PUBLICATION_JOB_TYPE = "content.publication.publish";
+export const CONTENT_PUBLICATION_JOB_PRIORITY = 70;
 
 export type ContentPublicationStatus =
   | "scheduled"

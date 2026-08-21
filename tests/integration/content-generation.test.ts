@@ -142,7 +142,9 @@ databaseDescribe("CNT-101 durable content generation", () => {
     const first = await repository.createGeneration({ workspaceId, userId, ideaId, operation: "asset.generate", requestKey: "content:integration:1", now });
     const replay = await repository.createGeneration({ workspaceId, userId, ideaId, operation: "asset.generate", requestKey: "content:integration:1", now });
     expect(replay.id).toBe(first.id);
-    expect((await database.client<{ count: number }[]>`select count(*)::int as count from jobs where workspace_id = ${workspaceId} and type = 'content.asset.generate'`)[0]?.count).toBe(1);
+    const generationJobs = await database.client<{ count: number; priority: number }[]>`select count(*)::int as count, max(priority)::int as priority from jobs where workspace_id = ${workspaceId} and type = 'content.asset.generate'`;
+    expect(generationJobs[0]?.count).toBe(1);
+    expect(generationJobs[0]?.priority).toBe(60);
     const context = await repository.loadContext({ workspaceId, runId: first.id });
     const sourceKey = context.evidence[0]!.key;
     const brief = { objective: "explain" as const, audience: "Équipes juridiques", problem: "Les preuves sont dispersées dans les dossiers juridiques.", angle: "Relier une recherche documentaire à une décision commerciale.", format: "linkedin_text" as const, evidenceKeys: [sourceKey], allowedClaimIds: [claimId], callToAction: "Comment vérifiez-vous vos preuves ?", constraints: ["Aucun fait sans preuve"] };
@@ -202,6 +204,7 @@ databaseDescribe("CNT-101 durable content generation", () => {
       now,
     });
     expect(scheduledReplay.id).toBe(scheduled.id);
+    expect((await database.client<{ priority: number }[]>`select priority from jobs where workspace_id = ${workspaceId} and payload->>'publicationId' = ${scheduled.id}`)[0]?.priority).toBe(70);
     expect(await publicationRepository.find({ workspaceId: otherWorkspaceId, publicationId: scheduled.id })).toBeNull();
     const moved = await publicationRepository.reschedule({ workspaceId, userId, publicationId: scheduled.id, requestKey: "publication:move:1", scheduledFor: new Date(now.getTime() + 1_000), now });
     expect(moved.scheduledFor).toEqual(new Date(now.getTime() + 1_000));

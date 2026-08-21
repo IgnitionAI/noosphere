@@ -12,6 +12,7 @@ import type {
 import { assertGroundedContentDraft, evaluateContentReadiness } from "@outbound/domain/content/content-asset";
 
 export const CONTENT_GENERATION_JOB_TYPE = "content.asset.generate";
+export const CONTENT_GENERATION_JOB_PRIORITY = 60;
 
 export interface ContentGenerationRunView {
   readonly id: string;
@@ -82,7 +83,10 @@ export interface ContentGenerationRepository {
 
 export interface ContentPipelineAgent {
   buildBrief(input: Pick<ContentGenerationContext, "run" | "idea" | "strategy" | "evidence">): Promise<ContentBriefSnapshot>;
-  write(input: Pick<ContentGenerationContext, "run" | "idea" | "strategy" | "evidence" | "recentBodies"> & { readonly brief: ContentBriefSnapshot }): Promise<ContentDraftSnapshot>;
+  write(input: Pick<ContentGenerationContext, "run" | "idea" | "strategy" | "evidence" | "recentBodies"> & {
+    readonly brief: ContentBriefSnapshot;
+    readonly validationFeedback?: readonly string[];
+  }): Promise<ContentDraftSnapshot>;
   audit(input: Pick<ContentGenerationContext, "run" | "strategy" | "evidence"> & { readonly brief: ContentBriefSnapshot; readonly draft: ContentDraftSnapshot }): Promise<ContentEvidenceAudit>;
   critique(input: Pick<ContentGenerationContext, "run" | "idea" | "strategy" | "recentBodies"> & { readonly brief: ContentBriefSnapshot; readonly draft: ContentDraftSnapshot; readonly audit: ContentEvidenceAudit }): Promise<ContentEditorialCritique>;
 }
@@ -130,8 +134,7 @@ export class ContentGenerationJobProcessor {
       }
       if (stageAtOrBefore(context.run.stage, "writer")) {
         if (!context.brief) throw new Error("CONTENT_BRIEF_CHECKPOINT_MISSING");
-        const draft = await this.agent.write({ ...context, brief: context.brief });
-        assertGroundedContentDraft(draft, context.evidence.map((item) => item.key));
+        const draft = await writeGroundedDraft(this.agent, { ...context, brief: context.brief });
         await this.repository.saveDraft({ workspaceId: job.workspaceId, runId: payload.runId, draft, now: this.now() });
         context = { ...context, draft, run: { ...context.run, stage: "audit" } };
       }
@@ -155,6 +158,33 @@ export class ContentGenerationJobProcessor {
       throw error;
     }
   }
+}
+
+async function writeGroundedDraft(
+  agent: ContentPipelineAgent,
+  input: Parameters<ContentPipelineAgent["write"]>[0],
+): Promise<ContentDraftSnapshot> {
+  const evidenceKeys = input.evidence.map((item) => item.key);
+  let validationFeedback: readonly string[] = [];
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const draft = await agent.write({ ...input, ...(validationFeedback.length ? { validationFeedback } : {}) });
+    try {
+      assertGroundedContentDraft(draft, evidenceKeys);
+      return draft;
+    } catch (error) {
+      if (!isRepairableDraftError(error) || attempt === 2) throw error;
+      validationFeedback = [error.message];
+    }
+  }
+  throw new Error("CONTENT_DRAFT_REPAIR_EXHAUSTED");
+}
+
+function isRepairableDraftError(error: unknown): error is Error {
+  return error instanceof Error && [
+    "CONTENT_DRAFT_UNRESOLVED_CLAIM",
+    "CONTENT_DRAFT_CLAIM_NOT_IN_BODY",
+    "CONTENT_DRAFT_UNSOURCED_NUMBER",
+  ].includes(error.message);
 }
 
 function assertBriefGrounded(brief: ContentBriefSnapshot, context: ContentGenerationContext): void {

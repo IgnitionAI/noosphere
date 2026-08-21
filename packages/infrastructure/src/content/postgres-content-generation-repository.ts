@@ -6,7 +6,10 @@ import type {
   ContentGenerationRepository,
   ContentGenerationRunView,
 } from "@outbound/application/content/content-generation";
-import { CONTENT_GENERATION_JOB_TYPE } from "@outbound/application/content/content-generation";
+import {
+  CONTENT_GENERATION_JOB_PRIORITY,
+  CONTENT_GENERATION_JOB_TYPE,
+} from "@outbound/application/content/content-generation";
 import type { ContentIdeaEvidence, ContentIdeaView } from "@outbound/application/content/content-ideas";
 import type { ContentIdeaStatus } from "@outbound/domain/content/content-idea";
 import type { ContentGenerationStage, ContentGenerationStatus } from "@outbound/domain/content/content-asset";
@@ -111,7 +114,7 @@ export class PostgresContentGenerationRepository implements ContentGenerationRep
       await tx.insert(jobs).values({
         id: crypto.randomUUID(), workspaceId: input.workspaceId, type: CONTENT_GENERATION_JOB_TYPE,
         payload: { runId }, idempotencyKey: `content-generation:${runId}:v1`, correlationId: `content-generation:${runId}`,
-        maxAttempts: 4, priority: 10, availableAt: input.now, createdAt: input.now, updatedAt: input.now,
+        maxAttempts: 4, priority: CONTENT_GENERATION_JOB_PRIORITY, availableAt: input.now, createdAt: input.now, updatedAt: input.now,
       });
       await appendEvent(tx, { workspaceId: input.workspaceId, userId: input.userId, runId, eventType: "ContentGenerationScheduled", changes: { ideaId: idea.id, assetId: asset.id, operation: input.operation } });
       return toRun(run);

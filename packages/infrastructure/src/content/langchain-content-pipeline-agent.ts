@@ -88,6 +88,7 @@ function boundedContext(input: Partial<ContentGenerationContext> & Record<string
     brief: input.brief,
     draft: input.draft,
     audit: input.audit,
+    validationFeedback: input.validationFeedback,
     recentBodies: input.recentBodies?.slice(0, 12),
   };
 }
@@ -117,6 +118,10 @@ async function invokePipelineModel(input: Parameters<ModelInvoker>[0]) {
       "Use the complete offer context, audience, idea, brief, real evidence and recent posts. The post must be specific enough that it cannot be swapped into another company.",
       "Open with a concrete tension, observation or consequence. Never use empty thought-leadership hooks, fabricated urgency or generic B2B advice.",
       "Every factual statement, number, performance claim or product capability must appear verbatim in factualClaims with exact supplied source keys.",
+      "Every factualClaims.statement must also be a verbatim contiguous excerpt of body; never paraphrase the ledger separately.",
+      "If validationFeedback contains CONTENT_DRAFT_UNSOURCED_NUMBER, remove every number absent from evidence or add the exact sourced sentence to factualClaims.",
+      "If validationFeedback contains CONTENT_DRAFT_CLAIM_NOT_IN_BODY, make each claim statement an exact excerpt of body.",
+      "If validationFeedback contains CONTENT_DRAFT_UNRESOLVED_CLAIM, use only evidence keys present in the supplied context.",
       "Mark personal analysis explicitly in opinionStatements. Do not turn an opinion into a fact.",
       "The body is the complete ready-to-review post, including hook and CTA. Do not schedule or publish. Call submit_linkedin_draft exactly once.",
     ].join("\n"),
