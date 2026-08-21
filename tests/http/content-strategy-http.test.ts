@@ -38,6 +38,16 @@ describe("Noosphere content strategy HTTP", () => {
     expect(response.status).toBe(409);
     expect((await response.json()).code).toBe("EDITORIAL_STRATEGY_OFFER_REQUIRED");
   });
+
+  test("reports invalid model output as a recoverable upstream failure", async () => {
+    const handler = createContentStrategyHttpHandler({
+      contextResolver: context("owner"),
+      application: { async derive() { throw new Error("EDITORIAL_STRATEGY_OUTPUT_INVALID"); } } as never,
+    });
+    const response = await handler(request("/api/v1/content/strategy/derive", "POST", { requestKey: "derive:request:invalid-model" }));
+    expect(response.status).toBe(502);
+    expect((await response.json()).code).toBe("EDITORIAL_STRATEGY_OUTPUT_INVALID");
+  });
 });
 
 function context(role: "viewer" | "operator" | "owner") { return { async resolve() { return { workspaceId, userId, role }; } }; }

@@ -15,7 +15,12 @@ import {
 type StrategyModelInvoker = (input: {
   readonly fields: ConstructorParameters<typeof ChatOpenAI>[0];
   readonly grounding: EditorialStrategyGrounding;
+  readonly attempt: number;
+  readonly validationIssues: readonly string[];
 }) => Promise<unknown>;
+
+const promptVersion = "noosphere-editorial-strategy-v2";
+const maxStructuredOutputAttempts = 2;
 
 export class LangChainEditorialStrategyGenerator implements EditorialStrategyGenerator {
   readonly #configuration: ReturnType<typeof resolveResearchModelConfigurationFromEnvironment>;
@@ -33,33 +38,77 @@ export class LangChainEditorialStrategyGenerator implements EditorialStrategyGen
     const startedAt = performance.now();
     const workspacePolicy = await this.modelPolicyReader?.find(input.workspaceId);
     const model = workspacePolicy?.researchModels[0] ?? this.#configuration.researchModels[0]!;
-    const snapshot = editorialStrategySnapshotSchema.parse(await this.invokeModel({
-      fields: buildChatModelFields(this.#configuration, model, "max"),
-      grounding: input.grounding,
-    }));
-    const promptVersion = "noosphere-editorial-strategy-v1";
-    const aiRun = await this.aiRunRecorder?.record({
-      workspaceId: input.workspaceId,
-      purpose: "content_strategy",
-      provider: this.#configuration.provider,
-      model,
-      promptVersion,
-      shadow: false,
-      inputHash: new Bun.CryptoHasher("sha256").update(JSON.stringify(input.grounding)).digest("hex"),
-      output: snapshot,
-      status: "completed",
-      cost: null,
-      latencyMs: Math.max(0, Math.round(performance.now() - startedAt)),
-    });
-    return {
-      snapshot,
-      metadata: {
+    const fields = buildChatModelFields(this.#configuration, model, "max");
+    const inputHash = new Bun.CryptoHasher("sha256").update(JSON.stringify(input.grounding)).digest("hex");
+    let validationIssues: readonly string[] = [];
+
+    for (let attempt = 1; attempt <= maxStructuredOutputAttempts; attempt += 1) {
+      let rawOutput: unknown;
+      try {
+        rawOutput = await this.invokeModel({ fields, grounding: input.grounding, attempt, validationIssues });
+      } catch (error) {
+        if (!isRecoverableStructuredOutputError(error)) throw error;
+        validationIssues = [error instanceof Error ? error.message : "EDITORIAL_STRATEGY_TOOL_CALL_MISSING"];
+        if (attempt < maxStructuredOutputAttempts) continue;
+        await this.recordFailure({ workspaceId: input.workspaceId, model, inputHash, startedAt, validationIssues });
+        throw new Error("EDITORIAL_STRATEGY_OUTPUT_INVALID");
+      }
+
+      const parsed = editorialStrategySnapshotSchema.safeParse(rawOutput);
+      if (!parsed.success) {
+        validationIssues = parsed.error.issues.map((issue) => formatValidationIssue(issue));
+        if (attempt < maxStructuredOutputAttempts) continue;
+        await this.recordFailure({ workspaceId: input.workspaceId, model, inputHash, startedAt, validationIssues });
+        throw new Error("EDITORIAL_STRATEGY_OUTPUT_INVALID");
+      }
+
+      const aiRun = await this.aiRunRecorder?.record({
+        workspaceId: input.workspaceId,
+        purpose: "content_strategy",
         provider: this.#configuration.provider,
         model,
         promptVersion,
-        aiRunId: aiRun?.id ?? null,
-      },
-    };
+        shadow: false,
+        inputHash,
+        output: parsed.data,
+        status: "completed",
+        cost: null,
+        latencyMs: Math.max(0, Math.round(performance.now() - startedAt)),
+      });
+      return {
+        snapshot: parsed.data,
+        metadata: {
+          provider: this.#configuration.provider,
+          model,
+          promptVersion,
+          aiRunId: aiRun?.id ?? null,
+        },
+      };
+    }
+
+    throw new Error("EDITORIAL_STRATEGY_OUTPUT_INVALID");
+  }
+
+  private async recordFailure(input: {
+    readonly workspaceId: string;
+    readonly model: string;
+    readonly inputHash: string;
+    readonly startedAt: number;
+    readonly validationIssues: readonly string[];
+  }) {
+    await this.aiRunRecorder?.record({
+      workspaceId: input.workspaceId,
+      purpose: "content_strategy",
+      provider: this.#configuration.provider,
+      model: input.model,
+      promptVersion,
+      shadow: false,
+      inputHash: input.inputHash,
+      output: { errorCode: "EDITORIAL_STRATEGY_OUTPUT_INVALID", validationIssues: input.validationIssues },
+      status: "failed",
+      cost: null,
+      latencyMs: Math.max(0, Math.round(performance.now() - input.startedAt)),
+    });
   }
 }
 
@@ -72,6 +121,12 @@ async function invokeStrategyModel(input: Parameters<StrategyModelInvoker>[0]) {
   const authorizedClaims = input.grounding.offer.claims.filter((claim) =>
     claim.validationStatus === "sourced" || claim.validationStatus === "validated"
   );
+  const retryInstruction = input.validationIssues.length > 0
+    ? `Your previous structured output was rejected (${input.validationIssues.join(", ")}). Return a complete corrected object and do not omit required fields.`
+    : null;
+  // Kimi K3 rejects a named tool choice while thinking is enabled. `auto` keeps
+  // max reasoning available; completeness is enforced by the bounded parse/retry
+  // loop in the generator instead of by a provider-specific request option.
   const response = await new ChatOpenAI(input.fields).bindTools([submit], { tool_choice: "auto" }).invoke([
     {
       role: "system",
@@ -82,10 +137,14 @@ async function invokeStrategyModel(input: Parameters<StrategyModelInvoker>[0]) {
         "Only IDs listed in authorizedClaims may appear in allowedClaimIds. Hypothesis and invalidated claims are forbidden.",
         "Pillars must map a real ICP problem to the offer and name the proof type required before a factual post can be written.",
         "Voice traits must be operational. Avoid generic B2B language, empty thought leadership, manufactured urgency and interchangeable hooks.",
+        "Keep each voice.traits item to 120 characters maximum and each voice.avoid item to 240 characters maximum. Use short imperatives, never paragraph-length style guides.",
+        "Return 3 to 6 pillars, 2 to 8 voice traits, 1 to 12 avoid rules, and only UUIDs supplied in authorizedClaims for allowedClaimIds.",
         "Use linkedin_text as the only format unless the supplied constraints explicitly prove another format is available.",
         "Cadence must be sustainable: default to three posts per week in Europe/Paris unless the inputs justify less.",
         "Call submit_editorial_strategy exactly once.",
-      ].join("\n"),
+        retryInstruction,
+        `Structured output attempt ${input.attempt} of ${maxStructuredOutputAttempts}.`,
+      ].filter(Boolean).join("\n"),
     },
     {
       role: "user",
@@ -95,4 +154,14 @@ async function invokeStrategyModel(input: Parameters<StrategyModelInvoker>[0]) {
   const call = response.tool_calls?.find((candidate) => candidate.name === "submit_editorial_strategy");
   if (!call) throw new Error("EDITORIAL_STRATEGY_TOOL_CALL_MISSING");
   return call.args;
+}
+
+function isRecoverableStructuredOutputError(error: unknown): boolean {
+  return error instanceof Error && error.message === "EDITORIAL_STRATEGY_TOOL_CALL_MISSING";
+}
+
+function formatValidationIssue(issue: { readonly path: readonly PropertyKey[]; readonly code: string; readonly message: string }): string {
+  const path = issue.path.map(String).join(".") || "root";
+  const message = issue.message.replace(/\s+/g, " ").slice(0, 240);
+  return `${path}:${issue.code}:${message}`;
 }
