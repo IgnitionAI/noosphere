@@ -670,7 +670,8 @@ databaseDescribe("V3 automatic ICP publication", () => {
     const actions = await database.db
       .select()
       .from(outreachActions)
-      .where(eq(outreachActions.campaignId, firstCampaign.id));
+      .where(eq(outreachActions.campaignId, firstCampaign.id))
+      .orderBy(outreachActions.stepPosition);
     expect(actions).toHaveLength(2);
     expect(actions.every((action) => action.status === "scheduled")).toBe(true);
     expect(actions.map((action) => action.stepKind)).toEqual(["linkedin_invite", "linkedin_message"]);
