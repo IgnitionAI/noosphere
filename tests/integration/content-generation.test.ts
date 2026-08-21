@@ -221,6 +221,31 @@ databaseDescribe("CNT-101 durable content generation", () => {
     await repository.completeRun({ workspaceId, runId: improved.id, critique, readiness: { ready: true, blockers: [] }, now });
     expect((await repository.findAssetByIdea({ workspaceId, ideaId }))?.latestVersion).toBe(2);
 
+    const stale = await repository.createGeneration({ workspaceId, userId, assetId: asset!.id, operation: "asset.improve", requestKey: "content:integration:stale", now: new Date(now.getTime() + 2_000) });
+    await repository.startRun({ workspaceId, runId: stale.id, now });
+    await repository.saveBrief({ workspaceId, runId: stale.id, brief, now });
+    await repository.saveDraft({ workspaceId, runId: stale.id, draft: { ...draft, body: `${draft.body} Ancien brouillon.` }, now });
+    await repository.saveAudit({ workspaceId, runId: stale.id, audit, now });
+    const newer = await repository.createGeneration({ workspaceId, userId, assetId: asset!.id, operation: "asset.improve", requestKey: "content:integration:newer", now: new Date(now.getTime() + 3_000) });
+    await repository.startRun({ workspaceId, runId: newer.id, now });
+    await repository.saveBrief({ workspaceId, runId: newer.id, brief, now });
+    await repository.saveDraft({ workspaceId, runId: newer.id, draft, now });
+    await repository.saveAudit({ workspaceId, runId: newer.id, audit, now });
+    await repository.completeRun({ workspaceId, runId: newer.id, critique, readiness: { ready: true, blockers: [] }, now });
+    const newestAsset = await repository.findAssetByIdea({ workspaceId, ideaId });
+    await repository.completeRun({ workspaceId, runId: stale.id, critique, readiness: { ready: false, blockers: ["editorial_blocker"] }, now: new Date(now.getTime() + 4_000) });
+    expect(await repository.findAssetByIdea({ workspaceId, ideaId })).toMatchObject({ latestVersion: newestAsset?.latestVersion, status: "ready", latest: { id: newestAsset?.latest?.id } });
+    expect(await repository.findRun({ workspaceId, runId: stale.id })).toMatchObject({ status: "blocked", assetVersionId: null, lastErrorCode: "CONTENT_GENERATION_SUPERSEDED" });
+
+    await database.client`update content_assets set latest_version = ${newestAsset!.latestVersion - 1} where workspace_id = ${workspaceId} and id = ${asset!.id}`;
+    const afterRollback = await repository.createGeneration({ workspaceId, userId, assetId: asset!.id, operation: "asset.improve", requestKey: "content:integration:after-rollback", now: new Date(now.getTime() + 5_000) });
+    await repository.startRun({ workspaceId, runId: afterRollback.id, now });
+    await repository.saveBrief({ workspaceId, runId: afterRollback.id, brief, now });
+    await repository.saveDraft({ workspaceId, runId: afterRollback.id, draft, now });
+    await repository.saveAudit({ workspaceId, runId: afterRollback.id, audit, now });
+    await repository.completeRun({ workspaceId, runId: afterRollback.id, critique, readiness: { ready: true, blockers: [] }, now: new Date(now.getTime() + 6_000) });
+    expect((await repository.findAssetByIdea({ workspaceId, ideaId }))?.latestVersion).toBe(newestAsset!.latestVersion + 1);
+
     const execution = await publicationRepository.claimExecution({ workspaceId, publicationId: scheduled.id, currentAccountId: "linkedin-account-fixture", executionToken: crypto.randomUUID(), now: new Date(now.getTime() + 2_000) });
     expect(execution.text).toBe(draft.body);
     expect(await publicationRepository.inspectExecution({ workspaceId, publicationId: scheduled.id, now: new Date(now.getTime() + 3_000) })).toBe("unknown");
