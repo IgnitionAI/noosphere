@@ -512,6 +512,13 @@
       "when": 1797775500000,
       "tag": "0072_noosphere_linkedin_content_sync",
       "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1797775560000,
+      "tag": "0073_noosphere_linkedin_engagements",
+      "breakpoints": true
     }
   ]
 }

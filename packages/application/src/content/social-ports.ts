@@ -66,6 +66,45 @@ export interface SocialMetricsReader {
   }): Promise<readonly SocialMetricsSnapshot[]>;
 }
 
+export type SocialEngagementKind = "comments" | "reactions";
+export type SocialEngagementType = "comment" | "reply" | "reaction" | "mention";
+
+export interface SocialEngagementActorSnapshot {
+  readonly providerId: string | null;
+  readonly name: string | null;
+  readonly headline: string | null;
+  readonly profileUrl: string | null;
+}
+
+export interface SocialEngagementSnapshot {
+  readonly providerInteractionId: string;
+  readonly type: SocialEngagementType;
+  readonly parentProviderInteractionId: string | null;
+  readonly actor: SocialEngagementActorSnapshot;
+  readonly body: string | null;
+  readonly reaction: string | null;
+  readonly mentionedProviderId: string | null;
+  readonly mentionedName: string | null;
+  readonly occurredAt: Date | null;
+  readonly observedAt: Date;
+  readonly replyCount: number;
+  readonly reactionCount: number;
+}
+
+export interface SocialEngagementReader {
+  listEngagements(input: {
+    readonly accountId: string;
+    readonly providerSocialId: string;
+    readonly kind: SocialEngagementKind;
+    readonly parentProviderInteractionId: string | null;
+    readonly cursor: string | null;
+    readonly limit: number;
+  }): Promise<{
+    readonly data: readonly SocialEngagementSnapshot[];
+    readonly nextCursor: string | null;
+  }>;
+}
+
 export type SocialProviderErrorCode =
   | "SOCIAL_REQUEST_INVALID"
   | "SOCIAL_ACCOUNT_UNAVAILABLE"

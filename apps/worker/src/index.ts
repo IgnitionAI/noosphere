@@ -92,6 +92,9 @@ import { UnipileSocialPublisher } from "@outbound/infrastructure/content/unipile
 import { SocialContentSynchronizer } from "@outbound/application/content/social-content-sync";
 import { PostgresSocialContentSyncRepository } from "@outbound/infrastructure/content/postgres-social-content-sync-repository";
 import { UnipileSocialContentReader } from "@outbound/infrastructure/content/unipile-social-content-reader";
+import { SocialEngagementSynchronizer } from "@outbound/application/content/social-engagement-sync";
+import { PostgresSocialEngagementSyncRepository } from "@outbound/infrastructure/content/postgres-social-engagement-sync-repository";
+import { UnipileSocialEngagementReader } from "@outbound/infrastructure/content/unipile-social-engagement-reader";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
@@ -345,9 +348,20 @@ const socialContentSynchronizer = socialContentReader && process.env.UNIPILE_SOC
       { now: () => clock.now() },
     )
   : null;
+const socialEngagementSynchronizer = unipileDsn && unipileApiKey && process.env.UNIPILE_SOCIAL_ENGAGEMENT_SYNC_ENABLED !== "false"
+  ? new SocialEngagementSynchronizer(
+      new PostgresSocialEngagementSyncRepository(database.db),
+      new UnipileSocialEngagementReader({
+        dsn: unipileDsn,
+        apiKey: unipileApiKey,
+        timeoutMs: positiveIntegerEnvironment("UNIPILE_TIMEOUT_MS", 10_000),
+      }),
+      { now: () => clock.now() },
+    )
+  : null;
 const maintenance = {
   async reconcile() {
-    const [dailyRuns, dailyIdeaRuns, assessmentJobs, repairedCampaigns, retainedSourcing, inboundEvents, observedSocialPosts] = await Promise.all([
+    const [dailyRuns, dailyIdeaRuns, assessmentJobs, repairedCampaigns, retainedSourcing, inboundEvents, observedSocialPosts, observedSocialEngagements] = await Promise.all([
       dailyProspectingScheduler.reconcile(),
       dailyContentIdeaScheduler.reconcile(),
       prospectAssessmentReconciler.reconcile(),
@@ -355,6 +369,7 @@ const maintenance = {
       sourcingRetentionReconciler.reconcile(),
       unipileInboxSynchronizer?.reconcile() ?? Promise.resolve(0),
       socialContentSynchronizer?.reconcile() ?? Promise.resolve(0),
+      socialEngagementSynchronizer?.reconcile() ?? Promise.resolve(0),
     ]);
     if (inboundEvents > 0) {
       console.info(JSON.stringify({ event: "unipile_inbox_mirror_updated", importedMessages: inboundEvents }));
@@ -362,7 +377,10 @@ const maintenance = {
     if (observedSocialPosts > 0) {
       console.info(JSON.stringify({ event: "linkedin_social_content_synchronized", observedPosts: observedSocialPosts }));
     }
-    return dailyRuns + dailyIdeaRuns + assessmentJobs + repairedCampaigns + retainedSourcing + inboundEvents + observedSocialPosts;
+    if (observedSocialEngagements > 0) {
+      console.info(JSON.stringify({ event: "linkedin_social_engagements_synchronized", observedEngagements: observedSocialEngagements }));
+    }
+    return dailyRuns + dailyIdeaRuns + assessmentJobs + repairedCampaigns + retainedSourcing + inboundEvents + observedSocialPosts + observedSocialEngagements;
   },
 };
 const orchestrator = new ResearchOrchestrator(

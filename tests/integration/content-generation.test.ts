@@ -21,6 +21,8 @@ import {
   offerVersions,
   socialContentItems,
   socialContentSyncStates,
+  socialInteractions,
+  socialInteractionSyncStates,
   workspaces,
 } from "@outbound/infrastructure/database/schema";
 import { PostgresContentGenerationRepository } from "@outbound/infrastructure/content/postgres-content-generation-repository";
@@ -28,6 +30,8 @@ import { PostgresContentPublicationRepository } from "@outbound/infrastructure/c
 import { PostgresOperationalViews } from "@outbound/infrastructure/workspaces/postgres-operational-views";
 import { PostgresSocialContentSyncRepository } from "@outbound/infrastructure/content/postgres-social-content-sync-repository";
 import { SocialContentSynchronizer } from "@outbound/application/content/social-content-sync";
+import { SocialEngagementSynchronizer } from "@outbound/application/content/social-engagement-sync";
+import { PostgresSocialEngagementSyncRepository } from "@outbound/infrastructure/content/postgres-social-engagement-sync-repository";
 
 const databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
 const databaseDescribe = databaseUrl ? describe : describe.skip;
@@ -80,6 +84,8 @@ databaseDescribe("CNT-101 durable content generation", () => {
     await database.client`delete from outbox_events where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`delete from content_operation_requests where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.db.delete(contentMetricSnapshots).where(inArray(contentMetricSnapshots.workspaceId, [workspaceId, otherWorkspaceId]));
+    await database.db.delete(socialInteractions).where(inArray(socialInteractions.workspaceId, [workspaceId, otherWorkspaceId]));
+    await database.db.delete(socialInteractionSyncStates).where(inArray(socialInteractionSyncStates.workspaceId, [workspaceId, otherWorkspaceId]));
     await database.db.delete(socialContentItems).where(inArray(socialContentItems.workspaceId, [workspaceId, otherWorkspaceId]));
     await database.db.delete(socialContentSyncStates).where(inArray(socialContentSyncStates.workspaceId, [workspaceId, otherWorkspaceId]));
     await database.db.delete(contentPublicationAttempts).where(inArray(contentPublicationAttempts.workspaceId, [workspaceId, otherWorkspaceId]));
@@ -224,6 +230,59 @@ databaseDescribe("CNT-101 durable content generation", () => {
     expect((await database.client<{ count: number }[]>`select count(*)::int as count from content_metric_snapshots where workspace_id = ${workspaceId}`)[0]?.count).toBe(4);
     expect(await socialSyncRepository.status({ workspaceId })).toMatchObject({ status: "idle", backfillComplete: true, lastSuccessAt: restartedAt });
 
+    const engagementRepository = new PostgresSocialEngagementSyncRepository(database.db);
+    let engagementRevision = 1;
+    const engagementReader = {
+      async listEngagements(input: { providerSocialId: string; kind: "comments" | "reactions"; parentProviderInteractionId: string | null }) {
+        if (input.providerSocialId !== "social-fixture") return { data: [], nextCursor: null };
+        if (input.kind === "comments" && input.parentProviderInteractionId === null) return {
+          data: [{ providerInteractionId: "comment-fixture", type: "comment" as const, parentProviderInteractionId: null, actor: { providerId: "prospect-provider", name: "Prospect", headline: "Juriste", profileUrl: "https://www.linkedin.com/in/prospect" }, body: engagementRevision === 1 ? "Commentaire initial" : "Commentaire modifié", reaction: null, mentionedProviderId: null, mentionedName: null, occurredAt: restartedAt, observedAt: new Date(restartedAt.getTime() + engagementRevision), replyCount: engagementRevision === 1 ? 1 : 0, reactionCount: engagementRevision === 1 ? 1 : 0 }],
+          nextCursor: null,
+        };
+        if (input.kind === "comments" && input.parentProviderInteractionId === "comment-fixture") return {
+          data: engagementRevision === 1 ? [{ providerInteractionId: "reply-fixture", type: "reply" as const, parentProviderInteractionId: "comment-fixture", actor: { providerId: "owner-fixture", name: "Owner", headline: null, profileUrl: null }, body: "Réponse du propriétaire", reaction: null, mentionedProviderId: null, mentionedName: null, occurredAt: restartedAt, observedAt: new Date(restartedAt.getTime() + engagementRevision), replyCount: 0, reactionCount: 0 }] : [],
+          nextCursor: null,
+        };
+        if (input.kind === "reactions") return {
+          data: engagementRevision === 1 ? [{ providerInteractionId: `reaction:${input.parentProviderInteractionId ?? "post"}:prospect-provider:LIKE`, type: "reaction" as const, parentProviderInteractionId: input.parentProviderInteractionId, actor: { providerId: "prospect-provider", name: "Prospect", headline: "Juriste", profileUrl: "https://www.linkedin.com/in/prospect" }, body: null, reaction: "LIKE", mentionedProviderId: null, mentionedName: null, occurredAt: null, observedAt: new Date(restartedAt.getTime() + engagementRevision), replyCount: 0, reactionCount: 0 }] : [],
+          nextCursor: null,
+        };
+        return { data: [], nextCursor: null };
+      },
+    };
+    const [messagesBefore, outreachJobsBefore] = await Promise.all([
+      database.client<{ count: number }[]>`select count(*)::int as count from messages where workspace_id = ${workspaceId}`,
+      database.client<{ count: number }[]>`select count(*)::int as count from jobs where workspace_id = ${workspaceId} and (type like '%outreach%' or type like '%reply%')`,
+    ]);
+    const firstEngagementSync = new SocialEngagementSynchronizer(engagementRepository, engagementReader, { now: () => new Date(restartedAt.getTime() + 1), targetLimit: 20 });
+    expect(await firstEngagementSync.reconcile(workspaceId)).toBeGreaterThanOrEqual(2);
+    const restartedEngagementSync = new SocialEngagementSynchronizer(new PostgresSocialEngagementSyncRepository(database.db), engagementReader, { now: () => new Date(restartedAt.getTime() + 2), targetLimit: 20 });
+    await restartedEngagementSync.reconcile(workspaceId);
+    const firstEngagements = await engagementRepository.list({ workspaceId, limit: 20 });
+    expect(firstEngagements.data).toContainEqual(expect.objectContaining({ providerInteractionId: "comment-fixture", type: "comment", direction: "incoming", body: "Commentaire initial", status: "observed" }));
+    expect(firstEngagements.data).toContainEqual(expect.objectContaining({ providerInteractionId: "reply-fixture", type: "reply", direction: "owner", status: "observed" }));
+    expect(firstEngagements.data.filter((item) => item.type === "reaction").length).toBeGreaterThanOrEqual(1);
+    expect((await engagementRepository.list({ workspaceId: otherWorkspaceId, limit: 20 })).data).toEqual([]);
+    const firstInteractionCount = firstEngagements.data.length;
+
+    engagementRevision = 2;
+    const modifiedAt = new Date(restartedAt.getTime() + 15 * 60_000 + 10);
+    await database.db.update(socialInteractionSyncStates).set({ nextSyncAt: modifiedAt }).where(inArray(socialInteractionSyncStates.workspaceId, [workspaceId]));
+    const modificationSync = new SocialEngagementSynchronizer(new PostgresSocialEngagementSyncRepository(database.db), engagementReader, { now: () => modifiedAt, targetLimit: 20 });
+    await modificationSync.reconcile(workspaceId);
+    const reconciledEngagements = await engagementRepository.list({ workspaceId, limit: 30 });
+    expect(reconciledEngagements.data).toContainEqual(expect.objectContaining({ providerInteractionId: "comment-fixture", body: "Commentaire modifié", status: "observed" }));
+    expect(reconciledEngagements.data).toContainEqual(expect.objectContaining({ providerInteractionId: "reply-fixture", status: "removed", removedAt: modifiedAt }));
+    expect(reconciledEngagements.data.filter((item) => item.status === "observed")).toHaveLength(1);
+    expect(reconciledEngagements.data).toHaveLength(firstInteractionCount);
+    const [messagesAfter, outreachJobsAfter] = await Promise.all([
+      database.client<{ count: number }[]>`select count(*)::int as count from messages where workspace_id = ${workspaceId}`,
+      database.client<{ count: number }[]>`select count(*)::int as count from jobs where workspace_id = ${workspaceId} and (type like '%outreach%' or type like '%reply%')`,
+    ]);
+    expect(messagesAfter[0]?.count).toBe(messagesBefore[0]?.count);
+    expect(outreachJobsAfter[0]?.count).toBe(outreachJobsBefore[0]?.count);
+    expect(await engagementRepository.status({ workspaceId })).toMatchObject({ status: "idle", observed: 1, incoming: 1 });
+
     const firstPublicationPage = await publicationRepository.list({ workspaceId, limit: 1 });
     const secondPublicationPage = await publicationRepository.list({ workspaceId, cursor: firstPublicationPage.nextCursor!, limit: 1 });
     const thirdPublicationPage = await publicationRepository.list({ workspaceId, cursor: secondPublicationPage.nextCursor!, limit: 1 });
@@ -248,6 +307,8 @@ databaseDescribe("CNT-101 durable content generation", () => {
     expect(summary.nextOutcomes).toContainEqual(expect.objectContaining({ id: `content:${asset!.id}`, type: "publication", source: "inbound" }));
     expect(activity.counters).toContainEqual({ key: "assets", label: "Contenus", value: 1 });
     expect(activity.counters).toContainEqual({ key: "publications", label: "Publications", value: 3 });
+    expect(activity.counters).toContainEqual({ key: "interactions", label: "Engagements", value: 1 });
+    expect(activity.items).toContainEqual(expect.objectContaining({ id: expect.stringContaining("social-interaction:"), kind: "signal", source: "inbound", status: "completed" }));
     expect(activity.items).toContainEqual(expect.objectContaining({ id: `publication:${scheduled.id}`, status: "attention", href: "/content/calendar" }));
     expect(activity.items).toContainEqual(expect.objectContaining({ id: `publication:${publishable.id}`, status: "completed", href: "/content/calendar" }));
     expect(activity.items).toContainEqual(expect.objectContaining({ id: `content-asset:${asset!.id}`, status: "completed", href: `/content/ideas/${ideaId}` }));
