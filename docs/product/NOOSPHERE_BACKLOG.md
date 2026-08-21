@@ -412,6 +412,12 @@ le rapport distingue clairement le réel du simulé.
 duplication après redémarrage ; URLs résolubles ; verdict L0-L5 ; aucune
 revendication “prêt” avant succès.
 
+**État.** Runner et contrat fail-closed livrés ; preuve simulée disponible. Le
+verdict reste `blocked_unverified` jusqu'à l'autorisation puis l'exécution du
+compte et du contenu exacts. Voir
+[`PTC-IN-LI-001`](product-truth/PTC-IN-LI-001.md) et le
+[`runbook canary`](../runbooks/linkedin-product-truth-canary.md).
+
 ## 10. Lots ultérieurs
 
 ### MED-201 — Médias et brand kit
