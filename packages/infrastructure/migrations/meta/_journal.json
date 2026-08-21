@@ -519,6 +519,20 @@
       "when": 1797775560000,
       "tag": "0073_noosphere_linkedin_engagements",
       "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1797775620000,
+      "tag": "0074_noosphere_attribution_touches",
+      "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1797775680000,
+      "tag": "0075_noosphere_attribution_booking_index",
+      "breakpoints": true
     }
   ]
 }

@@ -321,6 +321,35 @@ export interface SocialEngagementSyncStatus {
   readonly lastErrorMessage: string | null;
 }
 
+export interface AttributionTouch {
+  readonly id: string;
+  readonly kind: "identity" | "conversation" | "campaign" | "booking" | "opportunity";
+  readonly certainty: "evidence" | "inference" | "unknown";
+  readonly rule: string;
+  readonly modelVersion: string;
+  readonly confidence: number;
+  readonly proofType: string;
+  readonly proofRef: string | null;
+  readonly proofHref: string | null;
+  readonly contactId: string | null;
+  readonly contactName: string | null;
+  readonly conversationId: string | null;
+  readonly campaignId: string | null;
+  readonly campaignName: string | null;
+  readonly bookingId: string | null;
+  readonly bookingStartAt: string | null;
+  readonly opportunityId: string | null;
+  readonly position: "first" | "last" | "first_and_last" | "middle" | null;
+  readonly occurredAt: string;
+}
+
+export interface AttributionJourney {
+  readonly interaction: { readonly id: string; readonly type: "comment" | "reply" | "reaction" | "mention"; readonly actorName: string | null; readonly actorProfileUrl: string | null; readonly body: string | null; readonly reaction: string | null; readonly occurredAt: string };
+  readonly source: { readonly socialContentId: string; readonly publicationId: string | null; readonly text: string; readonly url: string | null };
+  readonly resolution: "resolved" | "ambiguous" | "unknown" | "excluded";
+  readonly touches: readonly AttributionTouch[];
+}
+
 export interface SetupReadinessItem {
   readonly key: "product" | "icp" | "accounts" | "automation" | "calendar" | "knowledge";
   readonly label: string;
@@ -462,6 +491,15 @@ export async function listSocialInteractions(workspaceSlug: string, cursor?: str
 
 export async function getSocialEngagementSyncStatus(workspaceSlug: string): Promise<SocialEngagementSyncStatus> {
   return crmFetch(workspaceSlug, "/api/v1/content/interactions/status");
+}
+
+export async function listAttributionJourneys(workspaceSlug: string, input: { cursor?: string; interactionId?: string; bookingId?: string; limit?: number } = {}): Promise<{ readonly data: readonly AttributionJourney[]; readonly nextCursor: string | null }> {
+  const params = new URLSearchParams();
+  if (input.cursor) params.set("cursor", input.cursor);
+  if (input.interactionId) params.set("interactionId", input.interactionId);
+  if (input.bookingId) params.set("bookingId", input.bookingId);
+  if (input.limit) params.set("limit", String(input.limit));
+  return crmFetch(workspaceSlug, `/api/v1/attribution/journeys${params.size ? `?${params}` : ""}`);
 }
 
 export async function scheduleContentPublication(workspaceSlug: string, assetId: string, requestKey: string, scheduledFor: string): Promise<ContentPublication> {

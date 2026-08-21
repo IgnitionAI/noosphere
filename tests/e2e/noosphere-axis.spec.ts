@@ -82,6 +82,11 @@ test("the LinkedIn publication calendar exposes durable empty state without a pr
   await expect(page.getByRole("heading", { name: "Commentaires, réponses et réactions" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Aucun engagement observé" })).toBeVisible();
   await expect(page.getByText("Une réaction seule ne déclenche aucun message.")).toBeVisible();
+  await page.getByRole("link", { name: "Parcours attribués" }).click();
+  await expect(page).toHaveURL(new RegExp(`/w/${workspaceSlug}/attribution`));
+  await expect(page.getByRole("heading", { name: "Parcours attribués" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Aucun parcours attribuable" })).toBeVisible();
+  await expect(page.getByText("Noosphere ne fusionne jamais un contact à partir de son nom ou de son titre.")).toBeVisible();
   expect(mutations).toEqual([]);
 });
 
