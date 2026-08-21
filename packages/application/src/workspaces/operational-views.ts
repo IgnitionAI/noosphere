@@ -121,6 +121,8 @@ export interface CampaignWorkspaceView {
 
 export interface ConversationWorkspaceView {
   readonly id: string;
+  readonly kind: "message_thread" | "social_thread";
+  readonly source: "inbound" | "outbound" | "mixed" | "unknown";
   readonly contactId: string;
   readonly firstName: string;
   readonly lastName: string;
@@ -134,6 +136,7 @@ export interface ConversationWorkspaceView {
   readonly subject: string | null;
   readonly status: string;
   readonly unreadCount: number;
+  readonly socialEventCount: number;
   readonly lastMessage: { readonly body: string; readonly direction: string; readonly at: Date } | null;
   readonly lastMessageAt: Date;
 }
@@ -146,6 +149,16 @@ export interface ConversationWorkspaceDetail extends ConversationWorkspaceView {
     readonly senderType: string;
     readonly body: string;
     readonly at: Date;
+  }[];
+  readonly socialEvents: readonly {
+    readonly id: string;
+    readonly type: "comment" | "reply" | "mention";
+    readonly actorName: string | null;
+    readonly body: string;
+    readonly at: Date;
+    readonly postText: string;
+    readonly postUrl: string | null;
+    readonly proofHref: string;
   }[];
   readonly decision: {
     readonly intent: string;

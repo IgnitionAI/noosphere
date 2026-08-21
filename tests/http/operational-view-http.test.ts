@@ -18,9 +18,9 @@ describe("workspace operational view HTTP routes", () => {
     expect(activity.status).toBe(200);
     expect(calls.at(-1)).toBe(`activity:${workspaceId}:outbound:25`);
 
-    const conversations = await handler(new Request("http://localhost/api/v1/conversations?channel=linkedin&scope=outside_campaign&page=2&pageSize=10&search=salim"));
+    const conversations = await handler(new Request("http://localhost/api/v1/conversations?channel=linkedin&scope=outside_campaign&source=inbound&page=2&pageSize=10&search=salim"));
     expect(conversations.status).toBe(200);
-    expect(calls.at(-1)).toBe(`conversations:${workspaceId}:linkedin:outside_campaign:salim:2:10`);
+    expect(calls.at(-1)).toBe(`conversations:${workspaceId}:linkedin:outside_campaign:inbound:salim:2:10`);
   });
 
   test("exposes campaign and pipeline projections while rejecting invalid methods", async () => {
@@ -43,6 +43,8 @@ describe("workspace operational view HTTP routes", () => {
     const handler = createOperationalViewHttpHandler({ contextResolver: context("viewer"), database: undefined as never, views: fakeViews([]) });
     const response = await handler(new Request("http://localhost/api/v1/conversations?channel=carrier-pigeon"));
     expect(response.status).toBe(422);
+    const invalidSource = await handler(new Request("http://localhost/api/v1/conversations?source=viral"));
+    expect(invalidSource.status).toBe(422);
   });
 
   test("treats the Noosphere Axis as read-only projection navigation", async () => {
@@ -72,7 +74,7 @@ function fakeViews(calls: string[]): OperationalViewsPort {
     async getActivity(input) { calls.push(`activity:${input.workspaceId}:${input.lens}:${input.offset ?? 0}`); return { lens: input.lens, asOf: new Date(), state: "idle", quality: "fresh", headline: "", counters: [], items: [], pagination: { nextCursor: null } }; },
     async getSetupReadiness() { return { ready: true, asOf: new Date(), items: [] }; },
     async getCampaignView() { return { campaign: {}, autopilot: {}, population: { total: 0, eligible: 0, contacted: 0, replies: 0 }, timeline: [], nextAction: null } as never; },
-    async listConversations(input) { calls.push(`conversations:${input.workspaceId}:${input.channel}:${input.scope}:${input.search}:${input.page}:${input.pageSize}`); return { data: [], pagination: { page: input.page, pageSize: input.pageSize, total: 0, hasNext: false }, sync: { totalAccounts: 0, readyAccounts: 0, backfillingAccounts: 0, errorAccounts: 0, lastSuccessAt: null } }; },
+    async listConversations(input) { calls.push(`conversations:${input.workspaceId}:${input.channel}:${input.scope}:${input.source}:${input.search}:${input.page}:${input.pageSize}`); return { data: [], pagination: { page: input.page, pageSize: input.pageSize, total: 0, hasNext: false }, sync: { totalAccounts: 0, readyAccounts: 0, backfillingAccounts: 0, errorAccounts: 0, lastSuccessAt: null } }; },
     async getConversation() { return null; },
     async getPipeline() { return { data: [] }; },
   };

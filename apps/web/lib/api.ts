@@ -368,6 +368,8 @@ export interface SetupReadinessView {
 
 export interface WorkspaceConversationView {
   readonly id: string;
+  readonly kind: "message_thread" | "social_thread";
+  readonly source: "inbound" | "outbound" | "mixed" | "unknown";
   readonly contactId: string;
   readonly firstName: string;
   readonly lastName: string;
@@ -381,6 +383,7 @@ export interface WorkspaceConversationView {
   readonly subject: string | null;
   readonly status: string;
   readonly unreadCount: number;
+  readonly socialEventCount: number;
   readonly lastMessage: { readonly body: string; readonly direction: string; readonly at: string } | null;
   readonly lastMessageAt: string;
 }
@@ -393,6 +396,16 @@ export interface WorkspaceConversationDetail extends WorkspaceConversationView {
     readonly senderType: string;
     readonly body: string;
     readonly at: string;
+  }[];
+  readonly socialEvents: readonly {
+    readonly id: string;
+    readonly type: "comment" | "reply" | "mention";
+    readonly actorName: string | null;
+    readonly body: string;
+    readonly at: string;
+    readonly postText: string;
+    readonly postUrl: string | null;
+    readonly proofHref: string;
   }[];
   readonly decision: { readonly intent: string; readonly confidence: number; readonly action: string; readonly rationale: string; readonly createdAt: string } | null;
   readonly latestCommand: { readonly id: string; readonly mode: "manual" | "setter"; readonly status: string; readonly errorMessage: string | null; readonly createdAt: string } | null;
@@ -529,10 +542,11 @@ export async function getCampaignWorkspaceView(workspaceSlug: string, campaignId
   return crmFetch(workspaceSlug, `/api/v1/campaigns/${campaignId}/workspace-view`);
 }
 
-export async function listWorkspaceConversations(workspaceSlug: string, filters: { channel?: string; scope?: string; search?: string; period?: string; read?: string; campaignId?: string; page?: number; pageSize?: number } = {}): Promise<WorkspaceConversationPage> {
+export async function listWorkspaceConversations(workspaceSlug: string, filters: { channel?: string; scope?: string; source?: string; search?: string; period?: string; read?: string; campaignId?: string; page?: number; pageSize?: number } = {}): Promise<WorkspaceConversationPage> {
   const params = new URLSearchParams();
   if (filters.channel) params.set("channel", filters.channel);
   if (filters.scope) params.set("scope", filters.scope);
+  if (filters.source) params.set("source", filters.source);
   if (filters.search) params.set("search", filters.search);
   if (filters.period) params.set("period", filters.period);
   if (filters.read) params.set("read", filters.read);

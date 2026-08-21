@@ -743,7 +743,7 @@ export class PostgresOperationalViews {
     };
   }
 
-  async listConversations(input: { workspaceId: string; channel?: string; scope?: string; search?: string; period?: string; read?: string; campaignId?: string; page: number; pageSize: number }): Promise<ConversationWorkspacePage> {
+  async listConversations(input: { workspaceId: string; channel?: string; scope?: string; source?: string; search?: string; period?: string; read?: string; campaignId?: string; page: number; pageSize: number }): Promise<ConversationWorkspacePage> {
     const conditions = [
       sql`c.workspace_id = ${input.workspaceId}`,
       // The unified inbox is an account mirror. Historical outside-campaign
@@ -755,24 +755,60 @@ export class PostgresOperationalViews {
     if (input.channel && ["linkedin", "email", "whatsapp"].includes(input.channel)) conditions.push(sql`c.channel = ${input.channel}`);
     if (input.scope === "campaign") conditions.push(sql`c.campaign_id is not null`);
     if (input.scope === "outside_campaign") conditions.push(sql`c.campaign_id is null`);
+    if (input.source === "inbound") conditions.push(sql`c.campaign_id is null and coalesce(social.event_count, 0) > 0`);
+    if (input.source === "outbound") conditions.push(sql`c.campaign_id is not null and coalesce(social.event_count, 0) = 0`);
+    if (input.source === "mixed") conditions.push(sql`c.campaign_id is not null and coalesce(social.event_count, 0) > 0`);
+    if (input.source === "unknown") conditions.push(sql`c.campaign_id is null and coalesce(social.event_count, 0) = 0`);
     if (input.read === "unread") conditions.push(sql`c.unread_count > 0`);
     if (input.campaignId) conditions.push(sql`c.campaign_id = ${input.campaignId}`);
-    if (input.period === "today") conditions.push(sql`c.last_message_at >= date_trunc('day', now())`);
-    if (input.period === "7d") conditions.push(sql`c.last_message_at >= now() - interval '7 days'`);
-    if (input.period === "30d") conditions.push(sql`c.last_message_at >= now() - interval '30 days'`);
-    if (input.period === "90d") conditions.push(sql`c.last_message_at >= now() - interval '90 days'`);
+    if (input.period === "today") conditions.push(sql`greatest(c.last_message_at, social.last_event_at) >= date_trunc('day', now())`);
+    if (input.period === "7d") conditions.push(sql`greatest(c.last_message_at, social.last_event_at) >= now() - interval '7 days'`);
+    if (input.period === "30d") conditions.push(sql`greatest(c.last_message_at, social.last_event_at) >= now() - interval '30 days'`);
+    if (input.period === "90d") conditions.push(sql`greatest(c.last_message_at, social.last_event_at) >= now() - interval '90 days'`);
     if (input.search?.trim()) {
       const query = `%${input.search.trim().toLowerCase()}%`;
-      conditions.push(sql`lower(concat_ws(' ', ct.first_name, ct.last_name, ca.name, ac.display_name, c.subject, lm.body)) like ${query}`);
+      conditions.push(sql`lower(concat_ws(' ', ct.first_name, ct.last_name, ca.name, ac.display_name, c.subject, lm.body, social.last_event_body, social.post_text)) like ${query}`);
     }
     const where = sql.join(conditions, sql` AND `);
     const offset = (input.page - 1) * input.pageSize;
-    const [rows, totalRows, syncRows] = await Promise.all([
-      this.database.execute<ConversationRow>(sql`SELECT c.id, c.contact_id, ct.first_name, ct.last_name, c.campaign_id, ca.name AS campaign_name, c.connected_account_id, ac.display_name AS account_name, c.channel, c.origin, c.automation_mode, c.subject, c.status, c.unread_count, c.last_message_at, lm.body AS last_message_body, lm.direction AS last_message_direction, lm.message_at AS last_message_at_actual FROM conversations c JOIN contacts ct ON ct.workspace_id = c.workspace_id AND ct.id = c.contact_id LEFT JOIN campaigns ca ON ca.workspace_id = c.workspace_id AND ca.id = c.campaign_id LEFT JOIN connected_accounts ac ON ac.workspace_id = c.workspace_id AND ac.id = c.connected_account_id LEFT JOIN LATERAL (SELECT m.body, m.direction, coalesce(m.sent_at, m.received_at, m.created_at) AS message_at FROM messages m WHERE m.workspace_id = c.workspace_id AND m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1) lm ON true WHERE ${where} ORDER BY c.last_message_at DESC LIMIT ${input.pageSize} OFFSET ${offset}`),
-      this.database.execute<{ total: number | string }>(sql`SELECT count(*)::int AS total FROM conversations c JOIN contacts ct ON ct.workspace_id = c.workspace_id AND ct.id = c.contact_id LEFT JOIN campaigns ca ON ca.workspace_id = c.workspace_id AND ca.id = c.campaign_id LEFT JOIN connected_accounts ac ON ac.workspace_id = c.workspace_id AND ac.id = c.connected_account_id LEFT JOIN LATERAL (SELECT m.body FROM messages m WHERE m.workspace_id = c.workspace_id AND m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1) lm ON true WHERE ${where}`),
+    const mergedLimit = offset + input.pageSize;
+    const socialConditions = [
+      sql`i.workspace_id = ${input.workspaceId}`,
+      sql`i.status = 'observed'`,
+      sql`i.direction = 'incoming'`,
+      sql`i.type in ('comment', 'reply', 'mention')`,
+      sql`identity.status = 'active'`,
+      sql`identity.kind = 'identity'`,
+      sql`identity.certainty = 'evidence'`,
+      sql`identity.proof_type = 'contact_identity'`,
+      sql`identity.confidence >= 0.95`,
+      sql`identity.contact_id is not null`,
+      sql`not exists (select 1 from conversations existing where existing.workspace_id = i.workspace_id and existing.contact_id = identity.contact_id and existing.channel = 'linkedin' and existing.connected_account_id = i.connected_account_id)`,
+    ];
+    if (input.channel && input.channel !== "linkedin") socialConditions.push(sql`false`);
+    if (input.scope === "campaign" || input.campaignId || input.read === "unread") socialConditions.push(sql`false`);
+    if (input.source && input.source !== "inbound") socialConditions.push(sql`false`);
+    if (input.period === "today") socialConditions.push(sql`coalesce(i.occurred_at, i.first_seen_at) >= date_trunc('day', now())`);
+    if (input.period === "7d") socialConditions.push(sql`coalesce(i.occurred_at, i.first_seen_at) >= now() - interval '7 days'`);
+    if (input.period === "30d") socialConditions.push(sql`coalesce(i.occurred_at, i.first_seen_at) >= now() - interval '30 days'`);
+    if (input.period === "90d") socialConditions.push(sql`coalesce(i.occurred_at, i.first_seen_at) >= now() - interval '90 days'`);
+    if (input.search?.trim()) {
+      const query = `%${input.search.trim().toLowerCase()}%`;
+      socialConditions.push(sql`lower(concat_ws(' ', ct.first_name, ct.last_name, ac.display_name, i.actor_name, i.body, sc.text)) like ${query}`);
+    }
+    const socialWhere = sql.join(socialConditions, sql` AND `);
+    const conversationJoins = sql`FROM conversations c JOIN contacts ct ON ct.workspace_id = c.workspace_id AND ct.id = c.contact_id LEFT JOIN campaigns ca ON ca.workspace_id = c.workspace_id AND ca.id = c.campaign_id LEFT JOIN connected_accounts ac ON ac.workspace_id = c.workspace_id AND ac.id = c.connected_account_id LEFT JOIN LATERAL (SELECT m.body, m.direction, coalesce(m.sent_at, m.received_at, m.created_at) AS message_at FROM messages m WHERE m.workspace_id = c.workspace_id AND m.conversation_id = c.id ORDER BY coalesce(m.sent_at, m.received_at, m.created_at) DESC, m.created_at DESC LIMIT 1) lm ON true LEFT JOIN LATERAL (SELECT count(distinct i.id)::int AS event_count, max(coalesce(i.occurred_at, i.first_seen_at)) AS last_event_at, (array_agg(i.body ORDER BY coalesce(i.occurred_at, i.first_seen_at) DESC, i.id DESC))[1] AS last_event_body, (array_agg(sc.text ORDER BY coalesce(i.occurred_at, i.first_seen_at) DESC, i.id DESC))[1] AS post_text FROM attribution_touches touch JOIN social_interactions i ON i.workspace_id = touch.workspace_id AND i.id = touch.social_interaction_id AND i.status = 'observed' AND i.direction = 'incoming' AND i.type in ('comment', 'reply', 'mention') JOIN social_content_items sc ON sc.workspace_id = i.workspace_id AND sc.id = i.social_content_id WHERE touch.workspace_id = c.workspace_id AND touch.conversation_id = c.id AND touch.kind = 'conversation' AND touch.status = 'active' AND touch.certainty = 'evidence') social ON true`;
+    const [conversationRows, conversationTotalRows, socialRows, socialTotalRows, syncRows] = await Promise.all([
+      this.database.execute<ConversationRow>(sql`SELECT c.id, 'message_thread'::text AS conversation_kind, CASE WHEN c.campaign_id is not null AND coalesce(social.event_count, 0) > 0 THEN 'mixed' WHEN c.campaign_id is not null THEN 'outbound' WHEN coalesce(social.event_count, 0) > 0 THEN 'inbound' ELSE 'unknown' END AS source, c.contact_id, ct.first_name, ct.last_name, c.campaign_id, ca.name AS campaign_name, c.connected_account_id, ac.display_name AS account_name, c.channel, c.origin, c.automation_mode, c.subject, c.status, c.unread_count, coalesce(social.event_count, 0)::int AS social_event_count, greatest(c.last_message_at, social.last_event_at) AS last_message_at, CASE WHEN social.last_event_at is not null AND (lm.message_at is null OR social.last_event_at > lm.message_at) THEN social.last_event_body ELSE lm.body END AS last_message_body, CASE WHEN social.last_event_at is not null AND (lm.message_at is null OR social.last_event_at > lm.message_at) THEN 'social' ELSE lm.direction END AS last_message_direction, greatest(lm.message_at, social.last_event_at) AS last_message_at_actual ${conversationJoins} WHERE ${where} ORDER BY greatest(c.last_message_at, social.last_event_at) DESC, c.id DESC LIMIT ${mergedLimit}`),
+      this.database.execute<{ total: number | string }>(sql`SELECT count(*)::int AS total ${conversationJoins} WHERE ${where}`),
+      this.database.execute<ConversationRow>(sql`SELECT * FROM (SELECT DISTINCT ON (identity.contact_id, i.connected_account_id, i.social_content_id) i.id, 'social_thread'::text AS conversation_kind, 'inbound'::text AS source, identity.contact_id, ct.first_name, ct.last_name, null::uuid AS campaign_id, null::text AS campaign_name, i.connected_account_id, ac.display_name AS account_name, 'linkedin'::text AS channel, 'outside_campaign'::text AS origin, 'human'::text AS automation_mode, null::text AS subject, 'open'::text AS status, 0::int AS unread_count, count(*) OVER (PARTITION BY identity.contact_id, i.connected_account_id, i.social_content_id)::int AS social_event_count, max(coalesce(i.occurred_at, i.first_seen_at)) OVER (PARTITION BY identity.contact_id, i.connected_account_id, i.social_content_id) AS last_message_at, first_value(i.body) OVER (PARTITION BY identity.contact_id, i.connected_account_id, i.social_content_id ORDER BY coalesce(i.occurred_at, i.first_seen_at) DESC, i.id DESC) AS last_message_body, 'social'::text AS last_message_direction, max(coalesce(i.occurred_at, i.first_seen_at)) OVER (PARTITION BY identity.contact_id, i.connected_account_id, i.social_content_id) AS last_message_at_actual FROM social_interactions i JOIN attribution_touches identity ON identity.workspace_id = i.workspace_id AND identity.social_interaction_id = i.id JOIN contacts ct ON ct.workspace_id = identity.workspace_id AND ct.id = identity.contact_id JOIN connected_accounts ac ON ac.workspace_id = i.workspace_id AND ac.id = i.connected_account_id JOIN social_content_items sc ON sc.workspace_id = i.workspace_id AND sc.id = i.social_content_id WHERE ${socialWhere} ORDER BY identity.contact_id, i.connected_account_id, i.social_content_id, coalesce(i.occurred_at, i.first_seen_at) DESC, i.id DESC) social_threads ORDER BY last_message_at DESC, id DESC LIMIT ${mergedLimit}`),
+      this.database.execute<{ total: number | string }>(sql`SELECT count(*)::int AS total FROM (SELECT identity.contact_id, i.connected_account_id, i.social_content_id FROM social_interactions i JOIN attribution_touches identity ON identity.workspace_id = i.workspace_id AND identity.social_interaction_id = i.id JOIN contacts ct ON ct.workspace_id = identity.workspace_id AND ct.id = identity.contact_id JOIN connected_accounts ac ON ac.workspace_id = i.workspace_id AND ac.id = i.connected_account_id JOIN social_content_items sc ON sc.workspace_id = i.workspace_id AND sc.id = i.social_content_id WHERE ${socialWhere} GROUP BY identity.contact_id, i.connected_account_id, i.social_content_id) social_threads`),
       this.database.execute<InboxSyncRow>(sql`SELECT count(ac.id)::int AS total_accounts, count(ac.id) FILTER (WHERE s.backfill_complete = true AND s.status = 'idle')::int AS ready_accounts, count(ac.id) FILTER (WHERE s.id IS NULL OR s.backfill_complete = false OR s.status = 'syncing')::int AS backfilling_accounts, count(ac.id) FILTER (WHERE s.status = 'error')::int AS error_accounts, max(s.last_success_at) AS last_success_at FROM connected_accounts ac LEFT JOIN inbox_sync_states s ON s.workspace_id = ac.workspace_id AND s.connected_account_id = ac.id WHERE ac.workspace_id = ${input.workspaceId} AND ac.provider = 'unipile' AND ac.status = 'connected' AND (ac.capabilities ? 'linkedin' OR ac.capabilities ? 'email' OR ac.capabilities ? 'whatsapp')`),
     ]);
-    const total = Number(totalRows[0]?.total ?? 0);
+    const rows = [...conversationRows, ...socialRows]
+      .sort((left, right) => asDate(right.last_message_at).getTime() - asDate(left.last_message_at).getTime() || right.id.localeCompare(left.id))
+      .slice(offset, offset + input.pageSize);
+    const total = Number(conversationTotalRows[0]?.total ?? 0) + Number(socialTotalRows[0]?.total ?? 0);
     const sync = syncRows[0];
     return {
       data: rows.map(toConversationView),
@@ -788,11 +824,12 @@ export class PostgresOperationalViews {
   }
 
   async getConversation(workspaceId: string, conversationId: string): Promise<ConversationWorkspaceDetail | null> {
-    const rows = await this.database.execute<ConversationRow>(sql`SELECT c.id, c.contact_id, ct.first_name, ct.last_name, c.campaign_id, ca.name AS campaign_name, c.connected_account_id, ac.display_name AS account_name, c.channel, c.origin, c.automation_mode, c.subject, c.status, c.unread_count, c.last_message_at, lm.body AS last_message_body, lm.direction AS last_message_direction, lm.message_at AS last_message_at_actual FROM conversations c JOIN contacts ct ON ct.workspace_id = c.workspace_id AND ct.id = c.contact_id LEFT JOIN campaigns ca ON ca.workspace_id = c.workspace_id AND ca.id = c.campaign_id LEFT JOIN connected_accounts ac ON ac.workspace_id = c.workspace_id AND ac.id = c.connected_account_id LEFT JOIN LATERAL (SELECT m.body, m.direction, coalesce(m.sent_at, m.received_at, m.created_at) AS message_at FROM messages m WHERE m.workspace_id = c.workspace_id AND m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1) lm ON true WHERE c.workspace_id = ${workspaceId} AND c.id = ${conversationId} LIMIT 1`);
+    const rows = await this.database.execute<ConversationRow>(sql`SELECT c.id, 'message_thread'::text AS conversation_kind, CASE WHEN c.campaign_id is not null AND coalesce(social.event_count, 0) > 0 THEN 'mixed' WHEN c.campaign_id is not null THEN 'outbound' WHEN coalesce(social.event_count, 0) > 0 THEN 'inbound' ELSE 'unknown' END AS source, c.contact_id, ct.first_name, ct.last_name, c.campaign_id, ca.name AS campaign_name, c.connected_account_id, ac.display_name AS account_name, c.channel, c.origin, c.automation_mode, c.subject, c.status, c.unread_count, coalesce(social.event_count, 0)::int AS social_event_count, greatest(c.last_message_at, social.last_event_at) AS last_message_at, CASE WHEN social.last_event_at is not null AND (lm.message_at is null OR social.last_event_at > lm.message_at) THEN social.last_event_body ELSE lm.body END AS last_message_body, CASE WHEN social.last_event_at is not null AND (lm.message_at is null OR social.last_event_at > lm.message_at) THEN 'social' ELSE lm.direction END AS last_message_direction, greatest(lm.message_at, social.last_event_at) AS last_message_at_actual FROM conversations c JOIN contacts ct ON ct.workspace_id = c.workspace_id AND ct.id = c.contact_id LEFT JOIN campaigns ca ON ca.workspace_id = c.workspace_id AND ca.id = c.campaign_id LEFT JOIN connected_accounts ac ON ac.workspace_id = c.workspace_id AND ac.id = c.connected_account_id LEFT JOIN LATERAL (SELECT m.body, m.direction, coalesce(m.sent_at, m.received_at, m.created_at) AS message_at FROM messages m WHERE m.workspace_id = c.workspace_id AND m.conversation_id = c.id ORDER BY coalesce(m.sent_at, m.received_at, m.created_at) DESC, m.created_at DESC LIMIT 1) lm ON true LEFT JOIN LATERAL (SELECT count(distinct i.id)::int AS event_count, max(coalesce(i.occurred_at, i.first_seen_at)) AS last_event_at, (array_agg(i.body ORDER BY coalesce(i.occurred_at, i.first_seen_at) DESC, i.id DESC))[1] AS last_event_body FROM attribution_touches touch JOIN social_interactions i ON i.workspace_id = touch.workspace_id AND i.id = touch.social_interaction_id AND i.status = 'observed' AND i.direction = 'incoming' AND i.type in ('comment', 'reply', 'mention') WHERE touch.workspace_id = c.workspace_id AND touch.conversation_id = c.id AND touch.kind = 'conversation' AND touch.status = 'active' AND touch.certainty = 'evidence') social ON true WHERE c.workspace_id = ${workspaceId} AND c.id = ${conversationId} LIMIT 1`);
     const row = rows[0];
-    if (!row) return null;
-    const [messageRows, decisionRows, commandRows] = await Promise.all([
+    if (!row) return this.getSocialConversation(workspaceId, conversationId);
+    const [messageRows, socialEventRows, decisionRows, commandRows] = await Promise.all([
       this.database.execute<ConversationMessageRow>(sql`SELECT id, provider_message_id, direction, sender_type, body, coalesce(sent_at, received_at, created_at) AS message_at FROM messages WHERE workspace_id = ${workspaceId} AND conversation_id = ${conversationId} ORDER BY coalesce(sent_at, received_at, created_at), created_at`),
+      this.database.execute<SocialConversationEventRow>(sql`SELECT i.id, i.type, i.actor_name, coalesce(i.body, '') AS body, coalesce(i.occurred_at, i.first_seen_at) AS event_at, sc.text AS post_text, sc.url AS post_url, concat('/attribution?interactionId=', i.id) AS proof_href FROM attribution_touches touch JOIN social_interactions i ON i.workspace_id = touch.workspace_id AND i.id = touch.social_interaction_id JOIN social_content_items sc ON sc.workspace_id = i.workspace_id AND sc.id = i.social_content_id WHERE touch.workspace_id = ${workspaceId} AND touch.conversation_id = ${conversationId} AND touch.kind = 'conversation' AND touch.status = 'active' AND touch.certainty = 'evidence' AND i.status = 'observed' AND i.direction = 'incoming' AND i.type in ('comment', 'reply', 'mention') ORDER BY event_at, i.id`),
       this.database.execute<ConversationDecisionRow>(sql`SELECT rc.intent, rc.confidence, rc.action, rc.rationale, rc.created_at FROM reply_classifications rc JOIN messages m ON m.workspace_id = rc.workspace_id AND m.id = rc.message_id WHERE rc.workspace_id = ${workspaceId} AND m.conversation_id = ${conversationId} ORDER BY rc.created_at DESC LIMIT 1`),
       this.database.execute<ConversationCommandRow>(sql`SELECT id, mode, status, error_message, created_at FROM conversation_commands WHERE workspace_id = ${workspaceId} AND conversation_id = ${conversationId} ORDER BY created_at DESC LIMIT 1`),
     ]);
@@ -809,6 +846,7 @@ export class PostgresOperationalViews {
         body: message.body,
         at: message.message_at,
       })),
+      socialEvents: socialEventRows.map(toSocialConversationEvent),
       decision: decision ? {
         intent: decision.intent,
         confidence: Number(decision.confidence),
@@ -826,6 +864,41 @@ export class PostgresOperationalViews {
     };
   }
 
+  private async getSocialConversation(workspaceId: string, interactionId: string): Promise<ConversationWorkspaceDetail | null> {
+    const anchors = await this.database.execute<SocialConversationAnchorRow>(sql`SELECT i.id, identity.contact_id, ct.first_name, ct.last_name, i.connected_account_id, ac.display_name AS account_name, i.social_content_id FROM social_interactions i JOIN attribution_touches identity ON identity.workspace_id = i.workspace_id AND identity.social_interaction_id = i.id JOIN contacts ct ON ct.workspace_id = identity.workspace_id AND ct.id = identity.contact_id JOIN connected_accounts ac ON ac.workspace_id = i.workspace_id AND ac.id = i.connected_account_id WHERE i.workspace_id = ${workspaceId} AND i.id = ${interactionId} AND i.status = 'observed' AND i.direction = 'incoming' AND i.type in ('comment', 'reply', 'mention') AND identity.status = 'active' AND identity.kind = 'identity' AND identity.certainty = 'evidence' AND identity.proof_type = 'contact_identity' AND identity.confidence >= 0.95 AND identity.contact_id is not null AND not exists (select 1 from conversations existing where existing.workspace_id = i.workspace_id and existing.contact_id = identity.contact_id and existing.channel = 'linkedin' and existing.connected_account_id = i.connected_account_id) LIMIT 1`);
+    const anchor = anchors[0];
+    if (!anchor) return null;
+    const eventRows = await this.database.execute<SocialConversationEventRow>(sql`SELECT i.id, i.type, i.actor_name, coalesce(i.body, '') AS body, coalesce(i.occurred_at, i.first_seen_at) AS event_at, sc.text AS post_text, sc.url AS post_url, concat('/attribution?interactionId=', i.id) AS proof_href FROM social_interactions i JOIN attribution_touches identity ON identity.workspace_id = i.workspace_id AND identity.social_interaction_id = i.id JOIN social_content_items sc ON sc.workspace_id = i.workspace_id AND sc.id = i.social_content_id WHERE i.workspace_id = ${workspaceId} AND identity.contact_id = ${anchor.contact_id} AND i.connected_account_id = ${anchor.connected_account_id} AND i.social_content_id = ${anchor.social_content_id} AND i.status = 'observed' AND i.direction = 'incoming' AND i.type in ('comment', 'reply', 'mention') AND identity.status = 'active' AND identity.kind = 'identity' AND identity.certainty = 'evidence' AND identity.proof_type = 'contact_identity' AND identity.confidence >= 0.95 ORDER BY event_at, i.id`);
+    const socialEvents = eventRows.map(toSocialConversationEvent).sort((left, right) => left.at.getTime() - right.at.getTime());
+    const latest = socialEvents.at(-1);
+    if (!latest) return null;
+    return {
+      id: anchor.id,
+      kind: "social_thread",
+      source: "inbound",
+      contactId: anchor.contact_id,
+      firstName: anchor.first_name,
+      lastName: anchor.last_name,
+      campaignId: null,
+      campaignName: null,
+      connectedAccountId: anchor.connected_account_id,
+      accountName: anchor.account_name,
+      channel: "linkedin",
+      origin: "outside_campaign",
+      automationMode: "human",
+      subject: null,
+      status: "open",
+      unreadCount: 0,
+      socialEventCount: socialEvents.length,
+      lastMessage: { body: latest.body, direction: "social", at: latest.at },
+      lastMessageAt: latest.at,
+      messages: [],
+      socialEvents,
+      decision: null,
+      latestCommand: null,
+    };
+  }
+
   async getPipeline(workspaceId: string, role?: string) {
     const result = await this.opportunitiesRepository.list(workspaceId);
     if (role !== "viewer") return result;
@@ -835,6 +908,8 @@ export class PostgresOperationalViews {
 
 type ConversationRow = {
   id: string;
+  conversation_kind: "message_thread" | "social_thread";
+  source: "inbound" | "outbound" | "mixed" | "unknown";
   contact_id: string;
   first_name: string;
   last_name: string;
@@ -848,10 +923,11 @@ type ConversationRow = {
   subject: string | null;
   status: string;
   unread_count: number;
-  last_message_at: Date;
+  social_event_count: number | string;
+  last_message_at: Date | string;
   last_message_body: string | null;
   last_message_direction: string | null;
-  last_message_at_actual: Date | null;
+  last_message_at_actual: Date | string | null;
 };
 
 type ConversationMessageRow = {
@@ -879,6 +955,27 @@ type ConversationCommandRow = {
   created_at: Date;
 };
 
+type SocialConversationEventRow = {
+  id: string;
+  type: "comment" | "reply" | "mention";
+  actor_name: string | null;
+  body: string;
+  event_at: Date | string;
+  post_text: string;
+  post_url: string | null;
+  proof_href: string;
+};
+
+type SocialConversationAnchorRow = {
+  id: string;
+  contact_id: string;
+  first_name: string;
+  last_name: string;
+  connected_account_id: string;
+  account_name: string | null;
+  social_content_id: string;
+};
+
 type InboxSyncRow = {
   total_accounts: number | string;
   ready_accounts: number | string;
@@ -898,6 +995,8 @@ type SymbiosisStatsRow = {
 function toConversationView(row: ConversationRow): ConversationWorkspaceView {
   return {
     id: row.id,
+    kind: row.conversation_kind,
+    source: row.source,
     contactId: row.contact_id,
     firstName: row.first_name,
     lastName: row.last_name,
@@ -911,11 +1010,29 @@ function toConversationView(row: ConversationRow): ConversationWorkspaceView {
     subject: row.subject,
     status: row.status,
     unreadCount: row.unread_count,
+    socialEventCount: Number(row.social_event_count),
     lastMessage: row.last_message_body && row.last_message_at_actual
-      ? { body: row.last_message_body, direction: row.last_message_direction ?? "unknown", at: row.last_message_at_actual }
+        ? { body: row.last_message_body, direction: row.last_message_direction ?? "unknown", at: asDate(row.last_message_at_actual) }
       : null,
-    lastMessageAt: row.last_message_at,
+    lastMessageAt: asDate(row.last_message_at),
   };
+}
+
+function toSocialConversationEvent(row: SocialConversationEventRow): ConversationWorkspaceDetail["socialEvents"][number] {
+  return {
+    id: row.id,
+    type: row.type,
+    actorName: row.actor_name,
+    body: row.body,
+    at: asDate(row.event_at),
+    postText: row.post_text,
+    postUrl: row.post_url,
+    proofHref: row.proof_href,
+  };
+}
+
+function asDate(value: Date | string): Date {
+  return value instanceof Date ? value : new Date(value);
 }
 
 function valueOf(row: readonly [{ value: number | string }] | readonly { value: number | string }[]): number {

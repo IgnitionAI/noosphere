@@ -24,7 +24,7 @@ export type OperationalViewsPort = {
   getActivity(input: { workspaceId: string; lens: NoosphereLens; offset?: number; limit?: number }): Promise<ActivityWorkspacePage>;
   getSetupReadiness(workspaceId: string): Promise<SetupReadinessView>;
   getCampaignView(workspaceId: string, campaignId: string): Promise<CampaignWorkspaceView | null>;
-  listConversations(input: { workspaceId: string; channel?: string; scope?: string; search?: string; period?: string; read?: string; campaignId?: string; page: number; pageSize: number }): Promise<ConversationWorkspacePage>;
+  listConversations(input: { workspaceId: string; channel?: string; scope?: string; source?: string; search?: string; period?: string; read?: string; campaignId?: string; page: number; pageSize: number }): Promise<ConversationWorkspacePage>;
   getConversation(workspaceId: string, conversationId: string): Promise<ConversationWorkspaceDetail | null>;
   getPipeline(workspaceId: string, role?: string): Promise<unknown>;
 };
@@ -66,6 +66,7 @@ export function createOperationalViewHttpHandler(input: {
         const pageSize = parsePositiveInt(url.searchParams.get("pageSize"), 25, 100);
         const channel = z.enum(["linkedin", "email", "whatsapp"]).optional().parse(url.searchParams.get("channel") || undefined);
         const scope = z.enum(["campaign", "outside_campaign"]).optional().parse(url.searchParams.get("scope") || undefined);
+        const source = z.enum(["inbound", "outbound", "mixed", "unknown"]).optional().parse(url.searchParams.get("source") || undefined);
         const period = z.enum(["today", "7d", "30d", "90d"]).optional().parse(url.searchParams.get("period") || undefined);
         const read = z.literal("unread").optional().parse(url.searchParams.get("read") || undefined);
         const campaignId = z.string().uuid().optional().parse(url.searchParams.get("campaignId") || undefined);
@@ -75,6 +76,7 @@ export function createOperationalViewHttpHandler(input: {
           pageSize,
           ...(channel ? { channel } : {}),
           ...(scope ? { scope } : {}),
+          ...(source ? { source } : {}),
           ...(period ? { period } : {}),
           ...(read ? { read } : {}),
           ...(campaignId ? { campaignId } : {}),

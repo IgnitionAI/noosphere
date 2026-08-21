@@ -52,6 +52,15 @@ test("Symbiose renders a proved journey and keeps an unresolved reaction inert",
     await expect(page.getByText("+8 social")).toBeVisible();
     await expect(page.getByText(/Une conversation LinkedIn est déjà ouverte/)).toBeVisible();
     await expect(page.getByText(/Une réaction seule ne modifie jamais le score/)).toBeVisible();
+
+    await page.goto(`/w/${workspaceSlug}/inbox?source=inbound&conversation=${fixture.conversationId}`);
+    await expect(page.getByRole("combobox", { name: "Source" })).toHaveValue("inbound");
+    await expect(page.getByText("Source Inbound")).toBeVisible();
+    const socialRegion = page.getByRole("region", { name: "Interactions sociales prouvées" });
+    await expect(socialRegion).toBeVisible();
+    await expect(socialRegion.getByText("Le lien entre preuve et revenu m’intéresse.")).toBeVisible();
+    await expect(page.getByText(/Aucune réponse automatique hors campagne/)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Envoyer moi-même" })).toBeVisible();
     expect(mutationRequests).toEqual([]);
   } finally {
     await fixture.cleanup();
@@ -95,6 +104,7 @@ async function seedSymbiosisFixture(url: string) {
   ]);
   return {
     contactId,
+    conversationId,
     async cleanup() {
       await database.db.delete(attributionTouches).where(and(eq(attributionTouches.workspaceId, workspace.id), inArray(attributionTouches.socialInteractionId, [resolvedInteractionId, unresolvedInteractionId])));
       await database.db.delete(calendarBookings).where(and(eq(calendarBookings.workspaceId, workspace.id), eq(calendarBookings.id, bookingId)));
