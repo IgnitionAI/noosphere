@@ -258,7 +258,11 @@ export class PostgresContentGenerationRepository implements ContentGenerationRep
         return;
       }
       const versionId = crypto.randomUUID();
-      const version = asset.latestVersion + 1;
+      const maxVersion = (await tx.select({ value: sql<number>`coalesce(max(${contentAssetVersions.version}), 0)` }).from(contentAssetVersions).where(and(
+        eq(contentAssetVersions.workspaceId, input.workspaceId),
+        eq(contentAssetVersions.assetId, asset.id),
+      )))[0]?.value ?? 0;
+      const version = Number(maxVersion) + 1;
       const draft = contentDraftSnapshotSchema.parse(run.draftSnapshot);
       const audit = contentEvidenceAuditSchema.parse(run.auditSnapshot);
       await tx.insert(contentAssetVersions).values({
