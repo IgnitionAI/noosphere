@@ -385,6 +385,8 @@ au prochain run dans les bornes déjà autorisées.
 
 ### OPS-102 — Réconcilier les effets provider inconnus
 
+**État.** Livré et validé en simulation provider le 21 août 2026.
+
 **Build.** Étendre la reprise aux publications, commentaires et réponses dont
 le provider a peut-être accepté l'effet avant timeout ou crash.
 
@@ -393,6 +395,9 @@ décision finale ; aucun bouton ne rejoue aveuglément l'action.
 
 **Acceptation.** Deux workers ne publient jamais le même snapshot ; correlation
 complète ; payloads expurgés ; reprise testée après kill du worker.
+
+**Spécification.**
+[`OPS-102-PROVIDER-EFFECT-RECONCILIATION.md`](features/OPS-102-PROVIDER-EFFECT-RECONCILIATION.md).
 
 ### PTC-101 — Prouver le parcours LinkedIn réel de bout en bout
 

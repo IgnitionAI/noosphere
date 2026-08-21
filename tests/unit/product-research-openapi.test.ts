@@ -135,6 +135,8 @@ test("the OpenAPI contract declares every F-009 HTTP route", () => {
       "/api/v1/content/ideas/{ideaId}/brief",
       "/api/v1/content/assets/{assetId}/improve",
       "/api/v1/content/generation-runs/{runId}",
+      "/api/v1/content/publications",
+      "/api/v1/content/publications/{publicationId}",
       "/api/v1/conversations",
       "/api/v1/opportunities",
       "/api/v1/opportunities/{opportunityId}",

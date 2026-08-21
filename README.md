@@ -128,4 +128,6 @@ auditée. Son envoi réseau réel reste volontairement fermé jusqu'au canary
 PTC-101 explicitement autorisé. AUT-102 versionne désormais les apprentissages
 tirés des réponses et appels attribués, en séparant faits et inférences ; le
 radar suivant peut prioriser un angle existant sans modifier claims, canaux,
-cadence ou ICP.
+cadence ou ICP. OPS-102 réconcilie en outre les résultats LinkedIn incertains
+par compte, fingerprint et fenêtre temporelle : match, absence ou ambiguïté
+sont auditables, sans jamais republier le snapshot à l'aveugle.

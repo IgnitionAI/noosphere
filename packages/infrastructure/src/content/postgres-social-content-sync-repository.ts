@@ -9,11 +9,9 @@ import type {
 import type { SocialContentSnapshot, SocialMetricsSnapshot } from "@outbound/application/content/social-ports";
 import type { Database } from "@outbound/infrastructure/database/client";
 import {
-  auditLogs,
   connectedAccounts,
   contentMetricSnapshots,
   contentPublications,
-  outboxEvents,
   socialContentItems,
   socialContentSyncStates,
 } from "@outbound/infrastructure/database/schema";
@@ -112,8 +110,7 @@ export class PostgresSocialContentSyncRepository implements SocialContentSyncRep
       let highWatermark = input.lease.highWatermark;
       for (const post of input.posts) {
         highWatermark = latestDate(highWatermark, post.publishedAt);
-        let publication = await matchingPublication(tx, input.lease, post);
-        if (!publication) publication = await reconcileUnknownPublication(tx, input.lease, post, input.now);
+        const publication = await matchingPublication(tx, input.lease, post);
         const metric = metrics.get(post.providerPostId) ?? (post.socialId ? metrics.get(numericActivityId(post.socialId) ?? post.socialId) : undefined);
         const [stored] = await tx.insert(socialContentItems).values({
           id: crypto.randomUUID(),
@@ -254,52 +251,10 @@ async function matchingPublication(tx: any, lease: SocialContentSyncLease, post:
   )).limit(1))[0] as typeof contentPublications.$inferSelect | undefined;
 }
 
-async function reconcileUnknownPublication(tx: any, lease: SocialContentSyncLease, post: SocialContentSnapshot, now: Date) {
-  if (!post.publishedAt) return undefined;
-  const candidates = await tx.select().from(contentPublications).where(and(
-    eq(contentPublications.workspaceId, lease.workspaceId),
-    eq(contentPublications.status, "unknown"),
-    sql`${contentPublications.accountSnapshot}->>'providerAccountId' = ${lease.providerAccountId}`,
-  )).limit(20) as (typeof contentPublications.$inferSelect)[];
-  const matches = candidates.filter((candidate) => {
-    const snapshot = objectValue(candidate.contentSnapshot);
-    const boundary = candidate.publishStartedAt ?? candidate.scheduledFor;
-    return snapshot.body === post.text && Math.abs(boundary.getTime() - post.publishedAt!.getTime()) <= 2 * 60 * 60_000;
-  });
-  if (matches.length !== 1) return undefined;
-  const candidate = matches[0]!;
-  const [updated] = await tx.update(contentPublications).set({
-    status: "published",
-    providerPostId: post.providerPostId,
-    providerSocialId: post.socialId,
-    providerUrl: post.url,
-    publishedAt: post.publishedAt,
-    unknownAt: null,
-    lastErrorCode: null,
-    lastErrorMessage: null,
-    updatedAt: now,
-  }).where(and(
-    eq(contentPublications.workspaceId, lease.workspaceId),
-    eq(contentPublications.id, candidate.id),
-    eq(contentPublications.status, "unknown"),
-  )).returning();
-  if (!updated) return undefined;
-  const [event] = await tx.insert(outboxEvents).values({
-    workspaceId: lease.workspaceId,
-    aggregateType: "ContentPublication",
-    aggregateId: candidate.id,
-    eventType: "ContentPublicationReconciled",
-    payload: { type: "ContentPublicationReconciled", workspaceId: lease.workspaceId, publicationId: candidate.id, providerPostId: post.providerPostId },
-  }).returning({ id: outboxEvents.id });
-  if (event) await tx.insert(auditLogs).values({ workspaceId: lease.workspaceId, actorUserId: null, action: "ContentPublicationReconciled", subjectType: "ContentPublication", subjectId: candidate.id, changes: { providerPostId: post.providerPostId }, sourceEventId: event.id });
-  return updated;
-}
-
 function metricValues(metric: SocialMetricsSnapshot) { return { impressions: metric.impressions, reactions: metric.reactions, comments: metric.comments, reposts: metric.reposts }; }
 function toLease(row: typeof socialContentSyncStates.$inferSelect): SocialContentSyncLease { if (!row.leaseToken) throw new Error("SOCIAL_CONTENT_SYNC_LEASE_MISSING"); return { stateId: row.id, leaseToken: row.leaseToken, workspaceId: row.workspaceId, connectedAccountId: row.connectedAccountId, providerAccountId: row.providerAccountId, cursor: row.cursor, highWatermark: row.highWatermark, backfillComplete: row.backfillComplete }; }
 function toView(row: typeof socialContentItems.$inferSelect): SocialContentItemView { return { id: row.id, publicationId: row.publicationId, origin: row.origin as "internal" | "external", providerPostId: row.providerPostId, socialId: row.socialId, text: row.text, url: row.url, publishedAt: row.publishedAt, status: row.status as "observed" | "unavailable", impressions: row.impressions, reactions: row.reactions, comments: row.comments, reposts: row.reposts, metricsObservedAt: row.metricsObservedAt, firstSeenAt: row.firstSeenAt, lastSeenAt: row.lastSeenAt }; }
 function parseCursor(value: string) { const separator = value.indexOf("|"); const at = new Date(separator > 0 ? value.slice(0, separator) : ""); const id = separator > 0 ? value.slice(separator + 1) : ""; if (Number.isNaN(at.getTime()) || !/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(id)) throw new Error("SOCIAL_CONTENT_CURSOR_INVALID"); return { at, id }; }
-function objectValue(value: unknown): Record<string, unknown> { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
 function numericActivityId(value: string): string | null { return value.match(/^urn:li:activity:(\d+)$/)?.[1] ?? null; }
 function latestDate(...values: (Date | null)[]): Date | null { return values.reduce<Date | null>((latest, value) => !value || latest && latest >= value ? latest : value, null); }
 function earliestDate(...values: (Date | null)[]): Date | null { return values.reduce<Date | null>((earliest, value) => !value || earliest && earliest <= value ? earliest : value, null); }

@@ -255,6 +255,17 @@ export interface ContentPublication {
   readonly publishedAt: string | null;
   readonly cancelledAt: string | null;
   readonly unknownAt: string | null;
+  readonly reconciliation: {
+    readonly status: "pending" | "searching" | "matched" | "not_found" | "ambiguous" | "error";
+    readonly attempts: number;
+    readonly maxAttempts: number;
+    readonly candidatesCount: number;
+    readonly nextAttemptAt: string | null;
+    readonly startedAt: string | null;
+    readonly completedAt: string | null;
+    readonly lastErrorCode: string | null;
+    readonly correlationId: string;
+  } | null;
   readonly createdAt: string;
   readonly updatedAt: string;
 }

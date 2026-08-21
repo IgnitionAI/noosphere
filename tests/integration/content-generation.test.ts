@@ -8,6 +8,7 @@ import {
   connectedAccounts,
   contentMetricSnapshots,
   contentPublicationAttempts,
+  contentPublicationReconciliations,
   contentPublications,
   contentIdeaDiscoveryRuns,
   contentIdeaSources,
@@ -39,6 +40,8 @@ import { ContentPublicationApplication } from "@outbound/application/content/con
 import { EditorialLearningReconciler } from "@outbound/application/content/editorial-learning";
 import { PostgresEditorialLearningRepository } from "@outbound/infrastructure/content/postgres-editorial-learning-repository";
 import { PostgresContentIdeaRepository } from "@outbound/infrastructure/content/postgres-content-idea-repository";
+import { ContentPublicationOutcomeReconciler } from "@outbound/application/content/content-publication-reconciliation";
+import { PostgresContentPublicationReconciliationRepository } from "@outbound/infrastructure/content/postgres-content-publication-reconciliation-repository";
 
 const databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
 const databaseDescribe = databaseUrl ? describe : describe.skip;
@@ -95,6 +98,7 @@ databaseDescribe("CNT-101 durable content generation", () => {
     await database.db.delete(socialInteractionSyncStates).where(inArray(socialInteractionSyncStates.workspaceId, [workspaceId, otherWorkspaceId]));
     await database.db.delete(socialContentItems).where(inArray(socialContentItems.workspaceId, [workspaceId, otherWorkspaceId]));
     await database.db.delete(socialContentSyncStates).where(inArray(socialContentSyncStates.workspaceId, [workspaceId, otherWorkspaceId]));
+    await database.db.delete(contentPublicationReconciliations).where(inArray(contentPublicationReconciliations.workspaceId, [workspaceId, otherWorkspaceId]));
     await database.db.delete(contentPublicationAttempts).where(inArray(contentPublicationAttempts.workspaceId, [workspaceId, otherWorkspaceId]));
     await database.db.delete(contentPublications).where(inArray(contentPublications.workspaceId, [workspaceId, otherWorkspaceId]));
     await database.client`alter table content_asset_versions disable trigger content_asset_versions_immutable_trg`;
@@ -362,6 +366,71 @@ databaseDescribe("CNT-101 durable content generation", () => {
     await expectRejected(() => database.client`update content_asset_versions set body = 'mutated' where workspace_id = ${workspaceId}`, "CONTENT_SNAPSHOT_IMMUTABLE");
     await expectRejected(() => database.client`update content_publications set content_snapshot = '{"body":"mutated"}'::jsonb where workspace_id = ${workspaceId}`, "CONTENT_PUBLICATION_SNAPSHOT_IMMUTABLE");
     await expectRejected(() => database.client`update editorial_learning_versions set model_version = 'mutated' where workspace_id = ${workspaceId}`, "EDITORIAL_LEARNING_VERSION_IMMUTABLE");
+  });
+
+  test("reconciles a lost provider result once and closes an absent result without replay", async () => {
+    const reconciliationRepository = new PostgresContentPublicationReconciliationRepository(database.db);
+    const searchAt = new Date(now.getTime() + 4_000);
+    const targets = await reconciliationRepository.listDue({ workspaceId, now: searchAt });
+    expect(targets).toHaveLength(1);
+    expect(await reconciliationRepository.listDue({ workspaceId: otherWorkspaceId, now: searchAt })).toEqual([]);
+
+    const acquisitions = await Promise.all([
+      reconciliationRepository.acquire({ ...targets[0]!, now: searchAt, leaseMs: 60_000 }),
+      reconciliationRepository.acquire({ ...targets[0]!, now: searchAt, leaseMs: 60_000 }),
+    ]);
+    const lease = acquisitions.find((value) => value !== null);
+    expect(acquisitions.filter((value) => value !== null)).toHaveLength(1);
+    expect(lease).toBeDefined();
+    await reconciliationRepository.markProviderError({ lease: lease!, code: "SOCIAL_RATE_LIMITED", terminal: false, nextAttemptAt: searchAt, now: searchAt });
+
+    const unknown = (await database.db.select().from(contentPublications).where(inArray(contentPublications.id, [targets[0]!.publicationId])).limit(1))[0]!;
+    const body = (unknown.contentSnapshot as { body: string }).body;
+    let publishCalls = 0;
+    const reconciler = new ContentPublicationOutcomeReconciler(
+      reconciliationRepository,
+      { async listOwnContent() { return { data: [{ providerPostId: "provider-post-recovered", socialId: "urn:li:activity:recovered", authorProviderId: "owner-fixture", text: body, url: "https://www.linkedin.com/feed/update/recovered", publishedAt: unknown.publishStartedAt, observedAt: searchAt }], nextCursor: null }; } },
+      { now: () => searchAt },
+    );
+    expect(await reconciler.reconcile(workspaceId)).toBe(1);
+    expect(publishCalls).toBe(0);
+    expect(await publicationRepository.find({ workspaceId, publicationId: unknown.id })).toMatchObject({
+      status: "published",
+      providerPostId: "provider-post-recovered",
+      reconciliation: { status: "matched", candidatesCount: 1, correlationId: `content-publication:${unknown.id}` },
+    });
+    expect((await database.db.select().from(contentPublicationAttempts).where(inArray(contentPublicationAttempts.publicationId, [unknown.id])))[0]?.status).toBe("published");
+
+    const asset = await repository.findAssetByIdea({ workspaceId, ideaId });
+    const absent = await publicationRepository.schedule({
+      workspaceId,
+      userId,
+      assetId: asset!.id,
+      requestKey: "publication:integration:not-found",
+      scheduledFor: searchAt,
+      account: { provider: "unipile", providerAccountId: "linkedin-account-fixture", displayName: "Compte LinkedIn fixture", selectionVersion: searchAt.toISOString(), observedAt: searchAt.toISOString() },
+      now: searchAt,
+    });
+    await publicationRepository.claimExecution({ workspaceId, publicationId: absent.id, currentAccountId: "linkedin-account-fixture", executionToken: crypto.randomUUID(), now: searchAt });
+    await publicationRepository.inspectExecution({ workspaceId, publicationId: absent.id, now: new Date(searchAt.getTime() + 1) });
+    const afterWindow = new Date(searchAt.getTime() + 2 * 60 * 60_000 + 1);
+    const noMatch = new ContentPublicationOutcomeReconciler(
+      reconciliationRepository,
+      { async listOwnContent() { return { data: [], nextCursor: null }; } },
+      { now: () => afterWindow },
+    );
+    expect(await noMatch.reconcile(workspaceId)).toBe(1);
+    expect(await publicationRepository.find({ workspaceId, publicationId: absent.id })).toMatchObject({
+      status: "unknown",
+      reconciliation: { status: "not_found", candidatesCount: 0, lastErrorCode: "CONTENT_PUBLICATION_PROVIDER_NOT_FOUND" },
+    });
+    const [criteria] = await database.db.select({ snapshot: contentPublicationReconciliations.criteriaSnapshot }).from(contentPublicationReconciliations).where(inArray(contentPublicationReconciliations.publicationId, [absent.id]));
+    expect(JSON.stringify(criteria?.snapshot)).not.toContain(body);
+    expect((await database.db.select().from(contentPublicationReconciliations).where(inArray(contentPublicationReconciliations.publicationId, [absent.id])))[0]?.completedAt).toEqual(afterWindow);
+    const decisions = await database.client<{ event_type: string; payload: unknown }[]>`select event_type, payload from outbox_events where workspace_id = ${workspaceId} and aggregate_id in (${unknown.id}, ${absent.id}) and event_type in ('ContentPublicationReconciled', 'ContentPublicationReconciliationDecided') order by event_type`;
+    expect(decisions.map((decision) => decision.event_type)).toEqual(["ContentPublicationReconciled", "ContentPublicationReconciliationDecided"]);
+    expect(JSON.stringify(decisions)).not.toContain(body);
+    await expectRejected(() => database.client`update content_publication_reconciliations set status = 'pending', completed_at = null where workspace_id = ${workspaceId} and publication_id = ${absent.id}`, "CONTENT_PUBLICATION_RECONCILIATION_FINAL");
   });
 });
 
