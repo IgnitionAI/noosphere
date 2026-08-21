@@ -85,6 +85,9 @@ import { createAttributionHttpHandler, isAttributionRoute } from "@outbound/inte
 import { ContentAutopilotApplication } from "@outbound/application/content/content-autopilot";
 import { PostgresContentAutopilotRepository } from "@outbound/infrastructure/content/postgres-content-autopilot-repository";
 import { createContentAutopilotHttpHandler, isContentAutopilotRoute } from "@outbound/interface/http/content-autopilot-handler";
+import { EditorialLearningApplication } from "@outbound/application/content/editorial-learning";
+import { PostgresEditorialLearningRepository } from "@outbound/infrastructure/content/postgres-editorial-learning-repository";
+import { createEditorialLearningHttpHandler, isEditorialLearningRoute } from "@outbound/interface/http/editorial-learning-handler";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
@@ -302,6 +305,10 @@ const contentAutopilot = createContentAutopilotHttpHandler({
     clock,
   ),
 });
+const editorialLearning = createEditorialLearningHttpHandler({
+  contextResolver: auth.contextResolver,
+  application: new EditorialLearningApplication(new PostgresEditorialLearningRepository(database.db)),
+});
 const contentIdeas = createContentIdeaHttpHandler({
   contextResolver: auth.contextResolver,
   application: new ContentIdeaApplication(new PostgresContentIdeaRepository(database.db)),
@@ -366,6 +373,7 @@ const server = Bun.serve({
     if (isWorkspaceDataRoute(pathname, request.method)) return workspaceData(request);
     if (isContentStrategyRoute(pathname)) return contentStrategy(request);
     if (isContentAutopilotRoute(pathname)) return contentAutopilot(request);
+    if (isEditorialLearningRoute(pathname)) return editorialLearning(request);
     if (isAttributionRoute(pathname)) return attribution(request);
     if (isSocialEngagementRoute(pathname)) return socialEngagements(request);
     if (isSocialContentRoute(pathname)) return socialContent(request);

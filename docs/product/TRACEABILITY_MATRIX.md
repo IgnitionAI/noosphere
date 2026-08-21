@@ -34,6 +34,7 @@ Elle ne remplace pas les DTO OpenAPI à écrire avant chaque vertical slice.
 | `settings.html` | `/w/[workspaceSlug]/settings` | F-002, F-053 | members, roles, policies, export |
 | `screen-activity-inbound.html` | `/w/[workspaceSlug]/activity?lens=inbound` | AUT-101 | état du radar, assets et publications LinkedIn |
 | `screen-configuration.html` | `/w/[workspaceSlug]/content/strategy` | AUT-101 | stratégie, cadence, pause et reprise de l'autopilote Content |
+| `screen-configuration.html` | `/w/[workspaceSlug]/content/strategy` | AUT-102 | réponses prouvées, appels attribués et recommandations bornées |
 | `components.html` | Storybook | F-004 | primitives and business components |
 
 ## Features et contrats API existants
@@ -71,6 +72,7 @@ Elle ne remplace pas les DTO OpenAPI à écrire avant chaque vertical slice.
 | F-052 | `GET /workspaces/:id/onboarding`, actions `complete`/`skip` | progression 7 étapes, prérequis réels et reprise |
 | F-053 | workspace endpoints | audit read, export et anonymize |
 | AUT-101 | `GET/PUT /api/v1/content/autopilot`, routes Content idées/assets/publications | livré : boucle quotidienne durable et policy finale |
+| AUT-102 | `GET /api/v1/content/learning` | livré : versions immuables, séparation faits/inférences et consommation bornée par le radar |
 
 ## Features et événements
 
@@ -93,6 +95,7 @@ Elle ne remplace pas les DTO OpenAPI à écrire avant chaque vertical slice.
 | F-042 | `ReplyDraftApproved` |
 | F-043 | `MeetingBooked` |
 | F-044 | `OpportunityWon` |
+| AUT-102 | `EditorialLearningVersionDerived` |
 
 ## Couverture du prototype
 

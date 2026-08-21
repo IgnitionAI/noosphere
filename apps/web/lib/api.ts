@@ -275,6 +275,38 @@ export interface ContentAutopilot {
   readonly exceptions: number;
 }
 
+export interface EditorialLearningVersion {
+  readonly id: string;
+  readonly strategyVersionId: string;
+  readonly version: number;
+  readonly facts: readonly EditorialLearningEvidence[];
+  readonly inferences: readonly EditorialLearningEvidence[];
+  readonly recommendations: readonly {
+    readonly action: "prioritize";
+    readonly audience: string;
+    readonly pillar: string;
+    readonly angle: string;
+    readonly score: number;
+    readonly rationale: string;
+    readonly evidenceRefs: readonly string[];
+  }[];
+  readonly bounds: { readonly icpVersionId: string; readonly allowedPillars: readonly string[]; readonly allowedClaimIds: readonly string[]; readonly formats: readonly string[]; readonly postsPerWeek: number };
+  readonly modelVersion: string;
+  readonly windowStartedAt: string;
+  readonly windowEndedAt: string;
+  readonly createdAt: string;
+}
+
+export interface EditorialLearningEvidence {
+  readonly kind: "response" | "booking";
+  readonly certainty: "fact" | "inference";
+  readonly pillar: string;
+  readonly angle: string;
+  readonly sourceRef: string;
+  readonly sourceHref: string;
+  readonly occurredAt: string;
+}
+
 export interface SocialContentItem {
   readonly id: string;
   readonly publicationId: string | null;
@@ -469,6 +501,15 @@ export async function getContentAutopilot(workspaceSlug: string): Promise<Conten
 
 export async function configureContentAutopilot(workspaceSlug: string, input: { requestKey: string; enabled: boolean; localTime: string; timezone: string }): Promise<ContentAutopilot> {
   return crmFetch(workspaceSlug, "/api/v1/content/autopilot", { method: "PUT", body: input });
+}
+
+export async function getEditorialLearning(workspaceSlug: string): Promise<EditorialLearningVersion | null> {
+  try {
+    return await crmFetch(workspaceSlug, "/api/v1/content/learning");
+  } catch (error) {
+    if (error instanceof OutboundApiError && error.status === 404) return null;
+    throw error;
+  }
 }
 
 export async function listContentIdeas(workspaceSlug: string, input: { cursor?: string; status?: ContentIdeaStatus; limit?: number } = {}): Promise<{ data: readonly ContentIdea[]; nextCursor: string | null }> {

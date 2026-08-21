@@ -99,6 +99,8 @@ import { AttributionReconciler } from "@outbound/application/attribution/attribu
 import { PostgresAttributionRepository } from "@outbound/infrastructure/attribution/postgres-attribution-repository";
 import { ContentAutopilotReconciler } from "@outbound/application/content/content-autopilot";
 import { PostgresContentAutopilotRepository } from "@outbound/infrastructure/content/postgres-content-autopilot-repository";
+import { EditorialLearningReconciler } from "@outbound/application/content/editorial-learning";
+import { PostgresEditorialLearningRepository } from "@outbound/infrastructure/content/postgres-editorial-learning-repository";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
@@ -380,6 +382,10 @@ const attributionReconciler = new AttributionReconciler(
   new PostgresAttributionRepository(database.db),
   { now: () => clock.now() },
 );
+const editorialLearningReconciler = new EditorialLearningReconciler(
+  new PostgresEditorialLearningRepository(database.db),
+  () => clock.now(),
+);
 const maintenance = {
   async reconcile() {
     const [dailyRuns, dailyIdeaRuns, assessmentJobs, repairedCampaigns, retainedSourcing, inboundEvents, observedSocialPosts, observedSocialEngagements] = await Promise.all([
@@ -409,7 +415,11 @@ const maintenance = {
     if (attributedInteractions > 0) {
       console.info(JSON.stringify({ event: "linkedin_attribution_reconciled", interactions: attributedInteractions }));
     }
-    return dailyRuns + dailyIdeaRuns + automatedContentActions + assessmentJobs + repairedCampaigns + retainedSourcing + inboundEvents + observedSocialPosts + observedSocialEngagements + attributedInteractions;
+    const editorialLearningVersions = await editorialLearningReconciler.reconcile();
+    if (editorialLearningVersions > 0) {
+      console.info(JSON.stringify({ event: "linkedin_editorial_learning_updated", versions: editorialLearningVersions }));
+    }
+    return dailyRuns + dailyIdeaRuns + automatedContentActions + assessmentJobs + repairedCampaigns + retainedSourcing + inboundEvents + observedSocialPosts + observedSocialEngagements + attributedInteractions + editorialLearningVersions;
   },
 };
 const orchestrator = new ResearchOrchestrator(

@@ -21,6 +21,7 @@ et remonte sur la campagne, la conversation ou la configuration concernée.
 | recherche connaissance | filtres workspace et claims sourcés | retrieval hybride lorsque nécessaire |
 | optimisation campagne | métriques déterministes | recommandations évaluées |
 | contenu LinkedIn | stratégie, preuves, cadence et compte vérifiés | recherche, rédaction, audit, critique et publication autonomes ; exception localisée par asset |
+| apprentissage éditorial | agrégation déterministe des réponses et appels attribués | recommandations versionnées consommables uniquement dans les piliers et l'ICP actifs |
 
 ## Contrats à prévoir dès le socle
 
@@ -72,6 +73,8 @@ est insuffisamment prouvée.
 10. avant une publication LinkedIn automatique, le serveur relit le compte
     sélectionné, les claims autorisés, les jours de cadence et le budget
     hebdomadaire ; le modèle ne peut contourner cette frontière.
+11. l'apprentissage éditorial distingue faits et inférences ; il ne peut ni
+    ajouter un claim ou un canal, ni augmenter une cadence, ni élargir un ICP.
 
 ## Conditions d’exploitation de l’IA
 
