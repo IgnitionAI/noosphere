@@ -23,6 +23,7 @@
     "test:integration": "bun scripts/run-integration-tests.ts",
     "test:e2e": "bun run bootstrap:owner && playwright test",
     "canary:linkedin": "bun scripts/run-linkedin-product-truth-canary.ts",
+    "benchmark:capacity": "bun scripts/benchmark-local-capacity.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "bun packages/infrastructure/src/database/migrate.ts",
     "bootstrap:owner": "bun scripts/bootstrap-owner.ts",
