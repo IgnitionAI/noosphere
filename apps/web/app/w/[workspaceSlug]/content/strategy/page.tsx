@@ -1,14 +1,15 @@
-import { AlertTriangle, ArrowLeft, CheckCircle2, ShieldCheck, Sparkles } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Bot, CheckCircle2, PauseCircle, ShieldCheck, Sparkles } from "lucide-react";
 import Link from "next/link";
-import { getEditorialStrategy } from "@/lib/api";
+import { getContentAutopilot, getEditorialStrategy } from "@/lib/api";
 import { StrategyActions } from "./strategy-actions";
+import { AutopilotControls } from "./autopilot-controls";
 
 export const metadata = { title: "Stratégie Inbound — Noosphere" };
 export const dynamic = "force-dynamic";
 
 export default async function EditorialStrategyPage({ params }: { params: Promise<{ workspaceSlug: string }> }) {
   const { workspaceSlug } = await params;
-  const strategy = await getEditorialStrategy(workspaceSlug);
+  const [strategy, autopilot] = await Promise.all([getEditorialStrategy(workspaceSlug), getContentAutopilot(workspaceSlug)]);
   return (
     <>
       <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
@@ -30,6 +31,18 @@ export default async function EditorialStrategyPage({ params }: { params: Promis
             <Metric label="Audience" value={strategy.draft.audience.name} />
             <Metric label="Cadence" value={`${strategy.draft.cadence.postsPerWeek} posts / semaine`} />
             <Metric label="Version active" value={strategy.currentVersion ? `v${strategy.currentVersion}` : "Brouillon"} />
+          </section>
+
+          <section className={`panel mt-4 p-5 ${autopilot.enabled ? "border-success/30" : "border-warning/40"}`}>
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div className="max-w-2xl">
+                <div className="flex items-center gap-2"><span className={autopilot.enabled ? "badge badge-success" : "badge badge-warning"}>{autopilot.enabled ? <Bot size={13} /> : <PauseCircle size={13} />}{autopilot.enabled ? "Autopilote actif" : "Autopilote en pause"}</span></div>
+                <h2 className="mt-3 text-lg font-semibold text-navy">De la recherche à la publication, sans validation manuelle</h2>
+                <p className="mt-2 text-sm leading-6 text-muted">Chaque jour, Noosphere recherche des sujets sourcés, sélectionne les meilleurs, rédige, audite les preuves, critique le texte puis planifie LinkedIn selon la cadence. Un contenu bloqué n’arrête pas les autres.</p>
+                <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted"><span className="badge">{autopilot.queuedIdeas} idées</span><span className="badge">{autopilot.generatingAssets} en rédaction</span><span className="badge">{autopilot.scheduledPublications} planifiées</span>{autopilot.exceptions ? <span className="badge badge-warning">{autopilot.exceptions} exception{autopilot.exceptions === 1 ? "" : "s"}</span> : null}</div>
+              </div>
+              <div className="w-full shrink-0 lg:w-[360px]"><AutopilotControls enabled={autopilot.enabled} localTime={autopilot.localTime} timezone={autopilot.timezone} workspaceSlug={workspaceSlug} /></div>
+            </div>
           </section>
 
           <section className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(280px,0.65fr)]">

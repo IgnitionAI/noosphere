@@ -32,6 +32,9 @@ import { PostgresSocialContentSyncRepository } from "@outbound/infrastructure/co
 import { SocialContentSynchronizer } from "@outbound/application/content/social-content-sync";
 import { SocialEngagementSynchronizer } from "@outbound/application/content/social-engagement-sync";
 import { PostgresSocialEngagementSyncRepository } from "@outbound/infrastructure/content/postgres-social-engagement-sync-repository";
+import { PostgresContentAutopilotRepository } from "@outbound/infrastructure/content/postgres-content-autopilot-repository";
+import { ContentAutopilotReconciler } from "@outbound/application/content/content-autopilot";
+import { ContentPublicationApplication } from "@outbound/application/content/content-publications";
 
 const databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
 const databaseDescribe = databaseUrl ? describe : describe.skip;
@@ -147,6 +150,27 @@ databaseDescribe("CNT-101 durable content generation", () => {
     expect(await repository.findAssetByIdea({ workspaceId: otherWorkspaceId, ideaId })).toBeNull();
     expect((await repository.findRun({ workspaceId, runId: first.id }))?.status).toBe("ready");
     expect(await repository.findRun({ workspaceId: otherWorkspaceId, runId: first.id })).toBeNull();
+
+    const autopilotRepository = new PostgresContentAutopilotRepository(database.db);
+    const autopilotClock = { now: () => now };
+    const autopilotPublishing = new ContentPublicationApplication(
+      publicationRepository,
+      { async resolveLinkedin() { return { accountId: "linkedin-account-fixture", displayName: "Compte LinkedIn fixture", selectionVersion: now.toISOString() }; } },
+      { async observeCapabilities() { return { network: "linkedin" as const, accountId: "linkedin-account-fixture", accountHealthy: true, textPublishing: "available" as const, observedAt: now }; }, async publishText() { throw new Error("SIMULATED_PTC_MUST_NOT_REACH_PROVIDER"); } },
+    );
+    await autopilotRepository.configure({ workspaceId, userId, requestKey: "autopilot:integration:enable", enabled: true, localTime: "06:00", timezone: "Europe/Paris", now });
+    const autopilot = new ContentAutopilotReconciler(autopilotRepository, repository, autopilotPublishing, autopilotClock);
+    expect(await autopilot.reconcile()).toBe(1);
+    const firstAutopilot = (await database.client<{ id: string; status: string }[]>`select id, status from content_publications where workspace_id = ${workspaceId} and request_key like 'autopilot:publication:%' order by created_at desc limit 1`)[0]!;
+    await autopilotRepository.configure({ workspaceId, userId, requestKey: "autopilot:integration:pause", enabled: false, localTime: "06:00", timezone: "Europe/Paris", now });
+    expect((await publicationRepository.find({ workspaceId, publicationId: firstAutopilot.id }))?.status).toBe("cancelled");
+    await autopilotRepository.configure({ workspaceId, userId, requestKey: "autopilot:integration:resume", enabled: true, localTime: "06:00", timezone: "Europe/Paris", now });
+    expect(await autopilot.reconcile()).toBe(1);
+    const resumedAutopilot = (await database.client<{ id: string; status: string; request_key: string }[]>`select id, status, request_key from content_publications where workspace_id = ${workspaceId} and request_key like 'autopilot:publication:%:v2' limit 1`)[0]!;
+    expect(resumedAutopilot.id).not.toBe(firstAutopilot.id);
+    expect(resumedAutopilot.request_key).toEndWith(":v2");
+    await autopilotRepository.configure({ workspaceId, userId, requestKey: "autopilot:integration:pause-again", enabled: false, localTime: "06:00", timezone: "Europe/Paris", now });
+    expect((await publicationRepository.find({ workspaceId, publicationId: resumedAutopilot.id }))?.status).toBe("cancelled");
 
     const scheduled = await publicationRepository.schedule({
       workspaceId,
@@ -283,15 +307,14 @@ databaseDescribe("CNT-101 durable content generation", () => {
     expect(outreachJobsAfter[0]?.count).toBe(outreachJobsBefore[0]?.count);
     expect(await engagementRepository.status({ workspaceId })).toMatchObject({ status: "idle", observed: 1, incoming: 1 });
 
-    const firstPublicationPage = await publicationRepository.list({ workspaceId, limit: 1 });
-    const secondPublicationPage = await publicationRepository.list({ workspaceId, cursor: firstPublicationPage.nextCursor!, limit: 1 });
-    const thirdPublicationPage = await publicationRepository.list({ workspaceId, cursor: secondPublicationPage.nextCursor!, limit: 1 });
-    expect(new Set([
-      firstPublicationPage.data[0]?.id,
-      secondPublicationPage.data[0]?.id,
-      thirdPublicationPage.data[0]?.id,
-    ])).toEqual(new Set([scheduled.id, cancellable.id, publishable.id]));
-    expect(thirdPublicationPage.nextCursor).toBeNull();
+    const publicationIds: string[] = [];
+    let publicationCursor: string | undefined;
+    do {
+      const page = await publicationRepository.list({ workspaceId, ...(publicationCursor ? { cursor: publicationCursor } : {}), limit: 1 });
+      publicationIds.push(...page.data.map((item) => item.id));
+      publicationCursor = page.nextCursor ?? undefined;
+    } while (publicationCursor);
+    expect(new Set(publicationIds)).toEqual(new Set([firstAutopilot.id, resumedAutopilot.id, scheduled.id, cancellable.id, publishable.id]));
 
     const [summary, activity, isolatedActivity] = await Promise.all([
       operationalViews.getSummary(workspaceId),
@@ -306,7 +329,7 @@ databaseDescribe("CNT-101 durable content generation", () => {
     expect(summary.engines.inbound.nextAction).toEqual({ label: "Voir l’exception", href: "/content/calendar" });
     expect(summary.nextOutcomes).toContainEqual(expect.objectContaining({ id: `content:${asset!.id}`, type: "publication", source: "inbound" }));
     expect(activity.counters).toContainEqual({ key: "assets", label: "Contenus", value: 1 });
-    expect(activity.counters).toContainEqual({ key: "publications", label: "Publications", value: 3 });
+    expect(activity.counters).toContainEqual({ key: "publications", label: "Publications", value: 5 });
     expect(activity.counters).toContainEqual({ key: "interactions", label: "Engagements", value: 1 });
     expect(activity.items).toContainEqual(expect.objectContaining({ id: expect.stringContaining("social-interaction:"), kind: "signal", source: "inbound", status: "completed" }));
     expect(activity.items).toContainEqual(expect.objectContaining({ id: `publication:${scheduled.id}`, status: "attention", href: "/content/calendar" }));

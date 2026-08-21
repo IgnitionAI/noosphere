@@ -85,7 +85,7 @@ import { DailyContentIdeaScheduler } from "@outbound/infrastructure/content/dail
 import { ContentGenerationJobProcessor } from "@outbound/application/content/content-generation";
 import { PostgresContentGenerationRepository } from "@outbound/infrastructure/content/postgres-content-generation-repository";
 import { LangChainContentPipelineAgent } from "@outbound/infrastructure/content/langchain-content-pipeline-agent";
-import { ContentPublicationJobProcessor, type SocialPublishingAccountResolver } from "@outbound/application/content/content-publications";
+import { ContentPublicationApplication, ContentPublicationJobProcessor, type SocialPublishingAccountResolver } from "@outbound/application/content/content-publications";
 import { SocialProviderError, type SocialPublisher } from "@outbound/application/content/social-ports";
 import { PostgresContentPublicationRepository, PostgresSocialPublishingAccountResolver } from "@outbound/infrastructure/content/postgres-content-publication-repository";
 import { UnipileSocialPublisher } from "@outbound/infrastructure/content/unipile-social-publisher";
@@ -97,6 +97,8 @@ import { PostgresSocialEngagementSyncRepository } from "@outbound/infrastructure
 import { UnipileSocialEngagementReader } from "@outbound/infrastructure/content/unipile-social-engagement-reader";
 import { AttributionReconciler } from "@outbound/application/attribution/attribution";
 import { PostgresAttributionRepository } from "@outbound/infrastructure/attribution/postgres-attribution-repository";
+import { ContentAutopilotReconciler } from "@outbound/application/content/content-autopilot";
+import { PostgresContentAutopilotRepository } from "@outbound/infrastructure/content/postgres-content-autopilot-repository";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
@@ -303,8 +305,9 @@ const dailyContentIdeaScheduler = new DailyContentIdeaScheduler(database.db, con
   localTime: process.env.DAILY_CONTENT_IDEA_TIME ?? "06:00",
   timezone: process.env.DAILY_CONTENT_IDEA_TIMEZONE ?? "Europe/Paris",
 });
+const contentGenerationRepository = new PostgresContentGenerationRepository(database.db);
 const contentGenerationProcessor = new ContentGenerationJobProcessor(
-  new PostgresContentGenerationRepository(database.db),
+  contentGenerationRepository,
   new LangChainContentPipelineAgent(process.env, workspaceAiSettings, aiRunRecorder),
   queue,
   () => clock.now(),
@@ -315,12 +318,24 @@ const socialPublisher: SocialPublisher = unipileDsn && unipileApiKey
 const socialPublishingAccounts: SocialPublishingAccountResolver = unipileChannelConnections
   ? new PostgresSocialPublishingAccountResolver(unipileChannelConnections)
   : unavailableSocialPublishingAccounts();
+const contentPublicationRepository = new PostgresContentPublicationRepository(database.db);
+const contentPublicationApplication = new ContentPublicationApplication(
+  contentPublicationRepository,
+  socialPublishingAccounts,
+  socialPublisher,
+);
 const contentPublicationProcessor = new ContentPublicationJobProcessor(
-  new PostgresContentPublicationRepository(database.db),
+  contentPublicationRepository,
   socialPublishingAccounts,
   socialPublisher,
   queue,
   () => clock.now(),
+);
+const contentAutopilotReconciler = new ContentAutopilotReconciler(
+  new PostgresContentAutopilotRepository(database.db),
+  contentGenerationRepository,
+  contentPublicationApplication,
+  clock,
 );
 const prospectAssessmentReconciler = new ProspectAssessmentReconciler(database.db, clock);
 const campaignHealthReconciler = new CampaignHealthReconciler(database.db, clock);
@@ -377,6 +392,10 @@ const maintenance = {
       socialContentSynchronizer?.reconcile() ?? Promise.resolve(0),
       socialEngagementSynchronizer?.reconcile() ?? Promise.resolve(0),
     ]);
+    const automatedContentActions = await contentAutopilotReconciler.reconcile();
+    if (automatedContentActions > 0) {
+      console.info(JSON.stringify({ event: "linkedin_content_autopilot_progressed", actions: automatedContentActions }));
+    }
     if (inboundEvents > 0) {
       console.info(JSON.stringify({ event: "unipile_inbox_mirror_updated", importedMessages: inboundEvents }));
     }
@@ -390,7 +409,7 @@ const maintenance = {
     if (attributedInteractions > 0) {
       console.info(JSON.stringify({ event: "linkedin_attribution_reconciled", interactions: attributedInteractions }));
     }
-    return dailyRuns + dailyIdeaRuns + assessmentJobs + repairedCampaigns + retainedSourcing + inboundEvents + observedSocialPosts + observedSocialEngagements + attributedInteractions;
+    return dailyRuns + dailyIdeaRuns + automatedContentActions + assessmentJobs + repairedCampaigns + retainedSourcing + inboundEvents + observedSocialPosts + observedSocialEngagements + attributedInteractions;
   },
 };
 const orchestrator = new ResearchOrchestrator(

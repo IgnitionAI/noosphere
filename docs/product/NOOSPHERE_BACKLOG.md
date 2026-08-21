@@ -352,6 +352,9 @@ recalculable ; aucune source absente transformée en zéro.
 
 ### AUT-101 — Exécuter la boucle éditoriale LinkedIn quotidienne
 
+**État.** Livré et validé en simulation provider le 21 août 2026 ; le canary
+réel reste couvert par PTC-101.
+
 **Build.** À l'heure configurée : chercher des idées, générer les briefs,
 rédiger, critiquer, planifier et publier selon stratégie, cadence et budget.
 
@@ -360,6 +363,9 @@ exceptions suspendent seulement l'asset concerné.
 
 **Acceptation.** Pause/reprise immédiate et auditée ; collisions évitées ; jobs
 reprenables ; budget atteint restitue un résultat partiel sans perte.
+
+**Spécification.**
+[`AUT-101-LINKEDIN-EDITORIAL-AUTOPILOT.md`](features/AUT-101-LINKEDIN-EDITORIAL-AUTOPILOT.md).
 
 ### AUT-102 — Apprendre des réponses sans modifier la policy seul
 

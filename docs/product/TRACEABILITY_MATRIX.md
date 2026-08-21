@@ -32,6 +32,8 @@ Elle ne remplace pas les DTO OpenAPI à écrire avant chaque vertical slice.
 | `analytics.html` | `/w/[workspaceSlug]/analytics` | F-051 | campaign and pipeline projections |
 | `integrations.html` | `/w/[workspaceSlug]/integrations` | F-035, F-043 | accounts, health, calendar |
 | `settings.html` | `/w/[workspaceSlug]/settings` | F-002, F-053 | members, roles, policies, export |
+| `screen-activity-inbound.html` | `/w/[workspaceSlug]/activity?lens=inbound` | AUT-101 | état du radar, assets et publications LinkedIn |
+| `screen-configuration.html` | `/w/[workspaceSlug]/content/strategy` | AUT-101 | stratégie, cadence, pause et reprise de l'autopilote Content |
 | `components.html` | Storybook | F-004 | primitives and business components |
 
 ## Features et contrats API existants
@@ -68,6 +70,7 @@ Elle ne remplace pas les DTO OpenAPI à écrire avant chaque vertical slice.
 | F-051 | campaign/pipeline analytics | export et metric definitions |
 | F-052 | `GET /workspaces/:id/onboarding`, actions `complete`/`skip` | progression 7 étapes, prérequis réels et reprise |
 | F-053 | workspace endpoints | audit read, export et anonymize |
+| AUT-101 | `GET/PUT /api/v1/content/autopilot`, routes Content idées/assets/publications | livré : boucle quotidienne durable et policy finale |
 
 ## Features et événements
 

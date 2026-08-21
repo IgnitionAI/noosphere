@@ -1,4 +1,4 @@
-import { and, desc, eq, lt, or, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, lt, ne, or, sql } from "drizzle-orm";
 import type {
   ContentPublicationAccountSnapshot,
   ContentPublicationContentSnapshot,
@@ -22,9 +22,11 @@ import {
   editorialStrategies,
   editorialStrategyVersions,
   jobs,
+  offerClaims,
   outboxEvents,
 } from "@outbound/infrastructure/database/schema";
 import type { PostgresUnipileChannelConnections } from "@outbound/infrastructure/channels/postgres-unipile-channel-connections";
+import { editorialStrategySnapshotSchema } from "@outbound/contracts/content";
 
 export class PostgresSocialPublishingAccountResolver implements SocialPublishingAccountResolver {
   constructor(private readonly connections: PostgresUnipileChannelConnections) {}
@@ -236,7 +238,7 @@ export class PostgresContentPublicationRepository implements ContentPublicationR
       if (account.providerAccountId !== input.currentAccountId) throw new Error("CONTENT_PUBLICATION_ACCOUNT_CHANGED");
       if (policy.policyVersion !== "linkedin-publishing-v1" || policy.network !== "linkedin" || policy.claimsGate !== "passed") throw new Error("CONTENT_PUBLICATION_POLICY_INVALID");
 
-      const version = (await tx.select({ ready: contentAssetVersions.ready, body: contentAssetVersions.body, assetStatus: contentAssets.status, strategyVersionId: contentIdeas.strategyVersionId, strategyStatus: editorialStrategies.status, deletedAt: editorialStrategies.deletedAt })
+      const version = (await tx.select({ ready: contentAssetVersions.ready, body: contentAssetVersions.body, assetStatus: contentAssets.status, strategyVersionId: contentIdeas.strategyVersionId, strategyStatus: editorialStrategies.status, deletedAt: editorialStrategies.deletedAt, strategySnapshot: editorialStrategyVersions.snapshot })
         .from(contentAssetVersions)
         .innerJoin(contentAssets, and(eq(contentAssets.workspaceId, contentAssetVersions.workspaceId), eq(contentAssets.id, contentAssetVersions.assetId)))
         .innerJoin(contentIdeas, and(eq(contentIdeas.workspaceId, contentAssets.workspaceId), eq(contentIdeas.id, contentAssets.ideaId)))
@@ -246,6 +248,27 @@ export class PostgresContentPublicationRepository implements ContentPublicationR
       if (!version || !version.ready || version.assetStatus !== "ready") throw new Error("CONTENT_PUBLICATION_ASSET_NO_LONGER_READY");
       if (version.strategyStatus !== "active" || version.deletedAt || version.strategyVersionId !== policy.strategyVersionId) throw new Error("CONTENT_PUBLICATION_STRATEGY_INACTIVE");
       if (version.body !== content.body || sha256(version.body) !== content.contentHash || content.assetVersionId !== row.assetVersionId) throw new Error("CONTENT_PUBLICATION_SNAPSHOT_MISMATCH");
+      const strategy = editorialStrategySnapshotSchema.parse(version.strategySnapshot);
+      if (strategy.allowedClaimIds.length) {
+        const validClaims = (await tx.select({ value: count() }).from(offerClaims).where(and(
+          eq(offerClaims.workspaceId, input.workspaceId),
+          inArray(offerClaims.id, [...strategy.allowedClaimIds]),
+          sql`${offerClaims.validationStatus} in ('sourced', 'validated')`,
+        )))[0]?.value ?? 0;
+        if (validClaims !== strategy.allowedClaimIds.length) throw new Error("CONTENT_PUBLICATION_CLAIMS_NO_LONGER_VALID");
+      }
+      if (row.requestKey.startsWith("autopilot:publication:")) {
+        if (!strategy.cadence.preferredDays.includes(localIsoDay(row.scheduledFor, strategy.cadence.timezone))) throw new Error("CONTENT_PUBLICATION_CADENCE_CHANGED");
+        const window = localIsoWeekWindow(row.scheduledFor, strategy.cadence.timezone);
+        const publishedThisWeek = (await tx.select({ value: count() }).from(contentPublications).where(and(
+          eq(contentPublications.workspaceId, input.workspaceId),
+          ne(contentPublications.id, row.id),
+          sql`${contentPublications.status} in ('publishing', 'published')`,
+          gte(contentPublications.scheduledFor, window.start),
+          lt(contentPublications.scheduledFor, window.end),
+        )))[0]?.value ?? 0;
+        if (publishedThisWeek >= strategy.cadence.postsPerWeek) throw new Error("CONTENT_PUBLICATION_WEEKLY_BUDGET_REACHED");
+      }
 
       const attempt = row.attempts + 1;
       await tx.update(contentPublications).set({ status: "publishing", attempts: attempt, executionToken: input.executionToken, publishStartedAt: input.now, lastErrorCode: null, lastErrorMessage: null, updatedAt: input.now }).where(and(eq(contentPublications.workspaceId, input.workspaceId), eq(contentPublications.id, row.id)));
@@ -359,6 +382,41 @@ function accountSnapshot(value: unknown): ContentPublicationAccountSnapshot {
   const record = objectValue(value);
   if (record.provider !== "unipile" || typeof record.providerAccountId !== "string" || typeof record.displayName !== "string" || typeof record.selectionVersion !== "string" || typeof record.observedAt !== "string") throw new Error("CONTENT_PUBLICATION_ACCOUNT_SNAPSHOT_INVALID");
   return { provider: "unipile", providerAccountId: record.providerAccountId, displayName: record.displayName, selectionVersion: record.selectionVersion, observedAt: record.observedAt };
+}
+
+function localIsoDay(date: Date, timezone: string): number {
+  const parts = zonedParts(date, timezone);
+  const day = new Date(Date.UTC(parts.year, parts.month - 1, parts.day)).getUTCDay();
+  return day === 0 ? 7 : day;
+}
+
+function localIsoWeekWindow(date: Date, timezone: string): { start: Date; end: Date } {
+  const parts = zonedParts(date, timezone);
+  const calendar = new Date(Date.UTC(parts.year, parts.month - 1, parts.day));
+  const day = calendar.getUTCDay() || 7;
+  const monday = new Date(Date.UTC(parts.year, parts.month - 1, parts.day - day + 1));
+  const nextMonday = new Date(Date.UTC(monday.getUTCFullYear(), monday.getUTCMonth(), monday.getUTCDate() + 7));
+  return {
+    start: localMidnight(monday.getUTCFullYear(), monday.getUTCMonth() + 1, monday.getUTCDate(), timezone),
+    end: localMidnight(nextMonday.getUTCFullYear(), nextMonday.getUTCMonth() + 1, nextMonday.getUTCDate(), timezone),
+  };
+}
+
+function localMidnight(year: number, month: number, day: number, timezone: string): Date {
+  const calendar = new Date(Date.UTC(year, month - 1, day));
+  let result = new Date(calendar.getTime() - timezoneOffsetMs(calendar, timezone));
+  result = new Date(calendar.getTime() - timezoneOffsetMs(result, timezone));
+  return result;
+}
+
+function zonedParts(date: Date, timezone: string): { year: number; month: number; day: number } {
+  const values = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(date).map((part) => [part.type, part.value]));
+  return { year: Number(values.year), month: Number(values.month), day: Number(values.day) };
+}
+
+function timezoneOffsetMs(date: Date, timezone: string): number {
+  const values = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" }).formatToParts(date).map((part) => [part.type, part.value]));
+  return Date.UTC(Number(values.year), Number(values.month) - 1, Number(values.day), Number(values.hour), Number(values.minute), Number(values.second)) - date.getTime();
 }
 
 function objectValue(value: unknown): Record<string, unknown> {

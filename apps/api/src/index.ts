@@ -82,6 +82,9 @@ import { createSocialEngagementHttpHandler, isSocialEngagementRoute } from "@out
 import { AttributionApplication } from "@outbound/application/attribution/attribution";
 import { PostgresAttributionRepository } from "@outbound/infrastructure/attribution/postgres-attribution-repository";
 import { createAttributionHttpHandler, isAttributionRoute } from "@outbound/interface/http/attribution-handler";
+import { ContentAutopilotApplication } from "@outbound/application/content/content-autopilot";
+import { PostgresContentAutopilotRepository } from "@outbound/infrastructure/content/postgres-content-autopilot-repository";
+import { createContentAutopilotHttpHandler, isContentAutopilotRoute } from "@outbound/interface/http/content-autopilot-handler";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
@@ -292,6 +295,13 @@ const contentStrategy = createContentStrategyHttpHandler({
     ),
   ),
 });
+const contentAutopilot = createContentAutopilotHttpHandler({
+  contextResolver: auth.contextResolver,
+  application: new ContentAutopilotApplication(
+    new PostgresContentAutopilotRepository(database.db),
+    clock,
+  ),
+});
 const contentIdeas = createContentIdeaHttpHandler({
   contextResolver: auth.contextResolver,
   application: new ContentIdeaApplication(new PostgresContentIdeaRepository(database.db)),
@@ -355,6 +365,7 @@ const server = Bun.serve({
     if (isWorkspaceOnboardingRoute(pathname)) return workspaceOnboarding(request);
     if (isWorkspaceDataRoute(pathname, request.method)) return workspaceData(request);
     if (isContentStrategyRoute(pathname)) return contentStrategy(request);
+    if (isContentAutopilotRoute(pathname)) return contentAutopilot(request);
     if (isAttributionRoute(pathname)) return attribution(request);
     if (isSocialEngagementRoute(pathname)) return socialEngagements(request);
     if (isSocialContentRoute(pathname)) return socialContent(request);
