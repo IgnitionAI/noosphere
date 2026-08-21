@@ -28,6 +28,12 @@ type CrawlerScenarioResult = {
   readonly resourcePeaks: Readonly<Record<string, { cpuPercent: number; memoryMiB: number }>>;
 };
 
+type CrawlerStatus = {
+  readonly status: "pending" | "running" | "completed" | "failed" | "cancelled";
+  readonly error?: string | null;
+  readonly result?: { readonly pagesCount?: number } | null;
+};
+
 const apiUrl = new URL(process.env.BENCHMARK_API_URL ?? "http://127.0.0.1:63001");
 const webUrl = new URL(process.env.BENCHMARK_WEB_URL ?? "http://127.0.0.1:63000");
 const crawlerUrl = new URL(process.env.BENCHMARK_CRAWLER_URL ?? "http://127.0.0.1:63080");
@@ -218,48 +224,49 @@ async function runCrawlerScenario(): Promise<CrawlerScenarioResult> {
     }
   })();
   const startedAt = performance.now();
-  const jobs = await Promise.all(targets.map(async (target) => {
-    const response = await fetch(new URL("/crawl/pages", crawlerUrl), {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-api-key": crawlerApiKey },
-      body: JSON.stringify({
-        urls: [target],
-        includeImages: false,
-        correlationId: `perf-001:${target}`,
-        idempotencyKey: `perf-001-${crypto.randomUUID()}`,
-      }),
-    });
-    if (!response.ok) {
-      const detail = await response.text();
-      throw new Error(`Crawler start failed for ${target}: ${response.status} ${detail.slice(0, 200)}`);
-    }
-    return await response.json() as { id: string };
-  }));
-  const finalStatuses = await Promise.all(jobs.map(async ({ id }, index) => {
-    const deadline = Date.now() + 120_000;
-    while (Date.now() < deadline) {
-      const response = await fetch(new URL(`/crawl/${id}`, crawlerUrl), {
-        headers: { "x-api-key": crawlerApiKey },
+  let finalStatuses: CrawlerStatus[] = [];
+  let durationMs = 0;
+  try {
+    const jobs = await Promise.all(targets.map(async (target) => {
+      const response = await fetch(new URL("/crawl/pages", crawlerUrl), {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-api-key": crawlerApiKey },
+        body: JSON.stringify({
+          urls: [target],
+          includeImages: false,
+          correlationId: `perf-001:${target}`,
+          idempotencyKey: `perf-001-${crypto.randomUUID()}`,
+        }),
       });
-      if (!response.ok) throw new Error(`Crawler status failed: ${response.status}`);
-      const status = await response.json() as {
-        status: "pending" | "running" | "completed" | "failed" | "cancelled";
-        error?: string | null;
-        result?: { pagesCount?: number } | null;
-      };
-      if (["completed", "failed", "cancelled"].includes(status.status)) {
-        if (status.status !== "completed") errors.push(`${targets[index]}: ${status.error ?? status.status}`);
-        return status;
+      if (!response.ok) {
+        const detail = await response.text();
+        throw new Error(`Crawler start failed for ${target}: ${response.status} ${detail.slice(0, 200)}`);
       }
-      await Bun.sleep(250);
-    }
-    errors.push(`${targets[index]}: timeout`);
-    return { status: "failed" as const, result: null };
-  }));
-  const durationMs = performance.now() - startedAt;
-  sampling = false;
-  await sampler;
-  samples.push(await sampleDocker());
+      return await response.json() as { id: string };
+    }));
+    finalStatuses = await Promise.all(jobs.map(async ({ id }, index): Promise<CrawlerStatus> => {
+      const deadline = Date.now() + 120_000;
+      while (Date.now() < deadline) {
+        const response = await fetch(new URL(`/crawl/${id}`, crawlerUrl), {
+          headers: { "x-api-key": crawlerApiKey },
+        });
+        if (!response.ok) throw new Error(`Crawler status failed: ${response.status}`);
+        const status = await response.json() as CrawlerStatus;
+        if (["completed", "failed", "cancelled"].includes(status.status)) {
+          if (status.status !== "completed") errors.push(`${targets[index]}: ${status.error ?? status.status}`);
+          return status;
+        }
+        await Bun.sleep(250);
+      }
+      errors.push(`${targets[index]}: timeout`);
+      return { status: "failed", result: null };
+    }));
+    durationMs = performance.now() - startedAt;
+  } finally {
+    sampling = false;
+    await sampler;
+    samples.push(await sampleDocker());
+  }
   return {
     name: "crawler_four_public_domains",
     targets,
