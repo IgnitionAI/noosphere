@@ -1874,6 +1874,7 @@ export const socialInteractions = pgTable(
     foreignKey({ columns: [table.workspaceId, table.socialContentId], foreignColumns: [socialContentItems.workspaceId, socialContentItems.id], name: "social_interactions_workspace_content_fk" }).onDelete("cascade"),
     unique("social_interactions_workspace_id_uq").on(table.workspaceId, table.id),
     uniqueIndex("social_interactions_provider_event_uq").on(table.workspaceId, table.socialContentId, table.type, table.providerInteractionId),
+    index("social_interactions_workspace_activity_idx").on(table.workspaceId, table.status, table.lastSeenAt, table.id),
     check("social_interactions_network_ck", sql`${table.network} in ('linkedin')`),
     check("social_interactions_sync_kind_ck", sql`${table.syncKind} in ('comments', 'reactions')`),
     check("social_interactions_type_ck", sql`${table.type} in ('comment', 'reply', 'reaction', 'mention')`),

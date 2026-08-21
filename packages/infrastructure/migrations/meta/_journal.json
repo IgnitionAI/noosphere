@@ -533,6 +533,13 @@
       "when": 1797775680000,
       "tag": "0075_noosphere_attribution_booking_index",
       "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "7",
+      "when": 1797775740000,
+      "tag": "0076_noosphere_symbiosis_activity_index",
+      "breakpoints": true
     }
   ]
 }
