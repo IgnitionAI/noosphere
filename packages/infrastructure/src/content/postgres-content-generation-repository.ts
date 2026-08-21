@@ -226,6 +226,37 @@ export class PostgresContentGenerationRepository implements ContentGenerationRep
       if (!brief) throw new Error("CONTENT_BRIEF_CHECKPOINT_MISSING");
       const asset = (await tx.select().from(contentAssets).where(and(eq(contentAssets.workspaceId, input.workspaceId), eq(contentAssets.id, run.assetId))).limit(1).for("update"))[0];
       if (!asset) throw new Error("CONTENT_ASSET_NOT_FOUND");
+      const latestVersion = asset.latestVersion > 0
+        ? (await tx.select({ id: contentAssetVersions.id, generationRunId: contentAssetVersions.generationRunId }).from(contentAssetVersions).where(and(
+            eq(contentAssetVersions.workspaceId, input.workspaceId),
+            eq(contentAssetVersions.assetId, asset.id),
+            eq(contentAssetVersions.version, asset.latestVersion),
+          )).limit(1))[0]
+        : null;
+      const latestGeneration = latestVersion
+        ? (await tx.select({ createdAt: contentGenerationRuns.createdAt }).from(contentGenerationRuns).where(and(
+            eq(contentGenerationRuns.workspaceId, input.workspaceId),
+            eq(contentGenerationRuns.id, latestVersion.generationRunId),
+          )).limit(1))[0]
+        : null;
+      if (latestVersion && latestGeneration && latestGeneration.createdAt.getTime() > run.createdAt.getTime()) {
+        await tx.update(contentGenerationRuns).set({
+          status: "blocked",
+          stage: "completed",
+          lastErrorCode: "CONTENT_GENERATION_SUPERSEDED",
+          lastErrorMessage: "A newer generation already finalized this asset",
+          completedAt: input.now,
+          updatedAt: input.now,
+        }).where(and(eq(contentGenerationRuns.workspaceId, input.workspaceId), eq(contentGenerationRuns.id, run.id)));
+        await appendEvent(tx, {
+          workspaceId: input.workspaceId,
+          userId: null,
+          runId: run.id,
+          eventType: "ContentGenerationSuperseded",
+          changes: { assetId: asset.id, latestVersionId: latestVersion.id },
+        });
+        return;
+      }
       const versionId = crypto.randomUUID();
       const version = asset.latestVersion + 1;
       const draft = contentDraftSnapshotSchema.parse(run.draftSnapshot);
