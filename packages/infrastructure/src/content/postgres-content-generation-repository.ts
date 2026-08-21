@@ -30,6 +30,7 @@ import {
   contentIdeaSources,
   contentIdeas,
   contentOperationRequests,
+  contentPublications,
   editorialStrategyVersions,
   jobs,
   outboxEvents,
@@ -152,15 +153,28 @@ export class PostgresContentGenerationRepository implements ContentGenerationRep
     const current = rows[0];
     if (!current) throw new Error("CONTENT_GENERATION_RUN_NOT_FOUND");
     const sourceRows = await this.database.select().from(contentIdeaSources).where(and(eq(contentIdeaSources.workspaceId, input.workspaceId), eq(contentIdeaSources.ideaId, current.idea.id))).orderBy(desc(contentIdeaSources.collectedAt));
-    const recent = await this.database.select({ body: contentAssetVersions.body }).from(contentAssetVersions)
-      .where(eq(contentAssetVersions.workspaceId, input.workspaceId)).orderBy(desc(contentAssetVersions.createdAt)).limit(12);
+    const recent = await this.database.select({
+      body: contentAssetVersions.body,
+      publishedAt: contentPublications.publishedAt,
+    }).from(contentAssetVersions)
+      .innerJoin(contentPublications, and(
+        eq(contentPublications.workspaceId, contentAssetVersions.workspaceId),
+        eq(contentPublications.assetVersionId, contentAssetVersions.id),
+      ))
+      .where(and(
+        eq(contentAssetVersions.workspaceId, input.workspaceId),
+        eq(contentPublications.status, "published"),
+      ))
+      .orderBy(desc(contentPublications.publishedAt))
+      .limit(24);
     const evidence = sourceRows.map(toEvidence);
+    const recentBodies = [...new Set(recent.map((item) => item.body))].slice(0, 12);
     return {
       run: toRun(current.run),
       idea: toIdea(current.idea, evidence),
       strategy: editorialStrategySnapshotSchema.parse(current.strategy),
       evidence,
-      recentBodies: recent.map((item) => item.body),
+      recentBodies,
       brief: current.run.briefSnapshot ? contentBriefSnapshotSchema.parse(current.run.briefSnapshot) : null,
       draft: current.run.draftSnapshot ? contentDraftSnapshotSchema.parse(current.run.draftSnapshot) : null,
       audit: current.run.auditSnapshot ? contentEvidenceAuditSchema.parse(current.run.auditSnapshot) : null,

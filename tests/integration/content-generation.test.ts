@@ -210,6 +210,7 @@ databaseDescribe("CNT-101 durable content generation", () => {
     expect(moved.scheduledFor).toEqual(new Date(now.getTime() + 1_000));
 
     const improved = await repository.createGeneration({ workspaceId, userId, assetId: asset!.id, operation: "asset.improve", requestKey: "content:integration:2", instruction: "Un hook plus concret", now: new Date(now.getTime() + 1_000) });
+    expect((await repository.loadContext({ workspaceId, runId: improved.id })).recentBodies).toEqual([]);
     await repository.startRun({ workspaceId, runId: improved.id, now });
     await repository.saveBrief({ workspaceId, runId: improved.id, brief, now });
     await repository.saveDraft({ workspaceId, runId: improved.id, draft: { ...draft, hook: "Le précédent n’est utile que s’il est retrouvable." }, now });
@@ -233,6 +234,7 @@ databaseDescribe("CNT-101 durable content generation", () => {
     await publicationRepository.claimExecution({ workspaceId, publicationId: publishable.id, currentAccountId: "linkedin-account-fixture", executionToken: publishToken, now });
     await publicationRepository.markPublished({ workspaceId, publicationId: publishable.id, executionToken: publishToken, result: { providerPostId: "provider-post-fixture", socialId: "social-fixture", url: "https://www.linkedin.com/feed/update/fixture", publishedAt: now }, now });
     expect(await publicationRepository.find({ workspaceId, publicationId: publishable.id })).toMatchObject({ status: "published", providerPostId: "provider-post-fixture", providerUrl: "https://www.linkedin.com/feed/update/fixture" });
+    expect((await repository.loadContext({ workspaceId, runId: improved.id })).recentBodies).toContain(draft.body);
     await expectRejected(() => publicationRepository.markFailed({ workspaceId, publicationId: publishable.id, code: "STALE_WORKER", message: "A stale preflight must not overwrite success", now }), "CONTENT_PUBLICATION_EXECUTION_CONFLICT");
     expect((await publicationRepository.find({ workspaceId, publicationId: publishable.id }))?.status).toBe("published");
 
