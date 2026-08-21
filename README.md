@@ -131,3 +131,9 @@ radar suivant peut prioriser un angle existant sans modifier claims, canaux,
 cadence ou ICP. OPS-102 réconcilie en outre les résultats LinkedIn incertains
 par compte, fingerprint et fenêtre temporelle : match, absence ou ambiguïté
 sont auditables, sans jamais republier le snapshot à l'aveugle.
+
+Le contrat et le runner fail-closed de PTC-101 sont disponibles dans
+[`docs/product/product-truth/PTC-IN-LI-001.md`](docs/product/product-truth/PTC-IN-LI-001.md).
+Ils refusent tout canary si l'ID du compte ou le hash du contenu diffèrent de
+l'autorisation explicite ; l'état produit reste `blocked_unverified` tant que
+le parcours réel complet n'a pas été exécuté.

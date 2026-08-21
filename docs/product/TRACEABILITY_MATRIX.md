@@ -74,6 +74,7 @@ Elle ne remplace pas les DTO OpenAPI à écrire avant chaque vertical slice.
 | AUT-101 | `GET/PUT /api/v1/content/autopilot`, routes Content idées/assets/publications | livré : boucle quotidienne durable et policy finale |
 | AUT-102 | `GET /api/v1/content/learning` | livré : versions immuables, séparation faits/inférences et consommation bornée par le radar |
 | OPS-102 | `GET /api/v1/content/publications` | livré : état de réconciliation durable inclus dans chaque publication inconnue, sans route de replay |
+| PTC-101 | `bun run canary:linkedin` | livré : préflight/publish/verify fail-closed ; verdict réel bloqué jusqu'à autorisation du compte et du hash exacts |
 
 ## Features et événements
 
@@ -98,6 +99,7 @@ Elle ne remplace pas les DTO OpenAPI à écrire avant chaque vertical slice.
 | F-044 | `OpportunityWon` |
 | AUT-102 | `EditorialLearningVersionDerived` |
 | OPS-102 | `ContentPublicationResultUnknown`, `ContentPublicationReconciled`, `ContentPublicationReconciliationDecided` |
+| PTC-101 | Réutilise les événements Content, engagement, attribution, conversation et booking ; le rapport refuse les preuves simulées |
 
 ## Couverture du prototype
 
