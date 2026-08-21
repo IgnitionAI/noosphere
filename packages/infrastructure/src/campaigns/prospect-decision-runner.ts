@@ -12,6 +12,7 @@ import type { Database } from "@outbound/infrastructure/database/client";
 import {
   approvalItems,
   campaignEnrollments,
+  campaignProspects,
   campaigns,
   contactSuppressions,
   contacts,
@@ -23,10 +24,12 @@ import {
   outreachActions,
   prospectDecisions,
 } from "@outbound/infrastructure/database/schema";
+import { PostgresSocialProspectSignalReader } from "@outbound/infrastructure/crm/postgres-social-prospect-signal-reader";
 import { PostgresProspectDecisionScheduler } from "./postgres-prospect-decision-scheduler";
 
 export class ProspectDecisionJobProcessor {
   readonly #scheduler: PostgresProspectDecisionScheduler;
+  readonly #socialSignals: PostgresSocialProspectSignalReader;
 
   constructor(
     private readonly database: Database,
@@ -35,6 +38,7 @@ export class ProspectDecisionJobProcessor {
     private readonly clock: Clock,
   ) {
     this.#scheduler = new PostgresProspectDecisionScheduler(database, clock);
+    this.#socialSignals = new PostgresSocialProspectSignalReader(database);
   }
 
   async process(job: LeasedJob): Promise<void> {
@@ -55,13 +59,14 @@ export class ProspectDecisionJobProcessor {
           ? { status: state.campaign.status, executionMode: state.campaign.executionMode }
           : null,
         outreachAction: state.outreachAction
-          ? { status: state.outreachAction.status, dueAt: state.outreachAction.dueAt }
+          ? { status: state.outreachAction.status, dueAt: state.outreachAction.dueAt, channel: state.outreachAction.channel }
           : null,
+        openLinkedinConversation: state.socialSignalAssessment.openLinkedinConversation,
         now: this.clock.now(),
       }, proposal);
 
       if (isSimulationOnly(decision.payload)) {
-        await this.#finish(decision, proposal, policy, "completed");
+        await this.#finish(decision, state, proposal, policy, "completed");
         await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
         return;
       }
@@ -74,7 +79,7 @@ export class ProspectDecisionJobProcessor {
             dueAt: policy.retryAt,
             observation: { summary: proposal.observation },
             proposedAction: proposal.action,
-            result: { proposal },
+            result: decisionResult(proposal, state),
             policyDecision: policy,
             updatedAt: this.clock.now(),
           })
@@ -214,6 +219,23 @@ export class ProspectDecisionJobProcessor {
         isNull(contactSuppressions.liftedAt),
       ))
       .limit(1);
+    const [campaignMatch] = decision.campaignId
+      ? await this.database
+          .select({ score: campaignProspects.score })
+          .from(campaignProspects)
+          .where(and(
+            eq(campaignProspects.workspaceId, decision.workspaceId),
+            eq(campaignProspects.campaignId, decision.campaignId),
+            eq(campaignProspects.contactId, decision.contactId),
+          ))
+          .limit(1)
+      : [];
+    const socialSignalAssessment = await this.#socialSignals.read({
+      workspaceId: decision.workspaceId,
+      contactId: decision.contactId,
+      baseScore: campaignMatch?.score ?? null,
+      now: this.clock.now(),
+    });
 
     return {
       workspaceId: decision.workspaceId,
@@ -238,6 +260,7 @@ export class ProspectDecisionJobProcessor {
       latestMessages: latestMessages.reverse(),
       sentTouches: sent?.value ?? 0,
       suppressed: Boolean(suppression),
+      socialSignalAssessment,
     };
   }
 
@@ -250,7 +273,24 @@ export class ProspectDecisionJobProcessor {
     const { decision, state, proposal, policy } = input;
     const now = this.clock.now();
     if (!policy.allowed) {
-      await this.#finish(decision, proposal, policy, "cancelled");
+      if (policy.code === "LINKEDIN_CONVERSATION_ALREADY_OPEN" && decision.outreachActionId) {
+        await this.database.transaction(async (tx) => {
+          await tx.update(outreachActions).set({
+            status: "cancelled",
+            lastErrorCode: policy.code,
+            lastErrorMessage: policy.reason,
+            cancelledAt: now,
+            updatedAt: now,
+          }).where(and(
+            eq(outreachActions.workspaceId, decision.workspaceId),
+            eq(outreachActions.id, decision.outreachActionId!),
+            inArray(outreachActions.status, ["scheduled", "awaiting_approval"]),
+          ));
+          await this.#finishInTransaction(tx, decision, state, proposal, policy, "cancelled", now);
+        });
+      } else {
+        await this.#finish(decision, state, proposal, policy, "cancelled");
+      }
       return;
     }
 
@@ -281,7 +321,7 @@ export class ProspectDecisionJobProcessor {
             status: "awaiting_approval",
             observation: { summary: proposal.observation },
             proposedAction: proposal.action,
-            result: { proposal },
+            result: decisionResult(proposal, state),
             policyDecision: policy,
             completedAt: null,
             updatedAt: now,
@@ -316,7 +356,7 @@ export class ProspectDecisionJobProcessor {
           createdAt: now,
           updatedAt: now,
         }).onConflictDoNothing();
-        await this.#finishInTransaction(tx, decision, proposal, policy, "completed", now);
+        await this.#finishInTransaction(tx, decision, state, proposal, policy, "completed", now);
       });
       return;
     }
@@ -382,7 +422,7 @@ export class ProspectDecisionJobProcessor {
         correlationId: decision.correlationId,
         payload: { previousDecisionId: decision.id },
       });
-      await this.#finish(decision, proposal, policy, "completed");
+      await this.#finish(decision, state, proposal, policy, "completed");
       return;
     }
 
@@ -403,7 +443,7 @@ export class ProspectDecisionJobProcessor {
           eq(campaignEnrollments.contactId, decision.contactId),
           eq(campaignEnrollments.status, "active"),
         ));
-        await this.#finishInTransaction(tx, decision, proposal, policy, "completed", now);
+        await this.#finishInTransaction(tx, decision, state, proposal, policy, "completed", now);
       });
       return;
     }
@@ -439,7 +479,7 @@ export class ProspectDecisionJobProcessor {
           availableAt: now,
           createdAt: now,
         });
-        await this.#finishInTransaction(tx, decision, proposal, policy, "completed", now);
+        await this.#finishInTransaction(tx, decision, state, proposal, policy, "completed", now);
       });
       return;
     }
@@ -458,22 +498,24 @@ export class ProspectDecisionJobProcessor {
         createdAt: now,
         updatedAt: now,
       }).onConflictDoNothing();
-      await this.#finishInTransaction(tx, decision, proposal, policy, "awaiting_approval", now);
+      await this.#finishInTransaction(tx, decision, state, proposal, policy, "awaiting_approval", now);
     });
   }
 
   async #finish(
     decision: typeof prospectDecisions.$inferSelect,
+    state: ProspectDecisionState,
     proposal: ReturnType<typeof assertProspectDecisionProposal>,
     policy: ReturnType<typeof evaluateProspectDecisionPolicy>,
     status: "completed" | "cancelled" | "awaiting_approval",
   ): Promise<void> {
-    await this.database.transaction((tx) => this.#finishInTransaction(tx, decision, proposal, policy, status, this.clock.now()));
+    await this.database.transaction((tx) => this.#finishInTransaction(tx, decision, state, proposal, policy, status, this.clock.now()));
   }
 
   async #finishInTransaction(
     tx: Parameters<Parameters<Database["transaction"]>[0]>[0],
     decision: typeof prospectDecisions.$inferSelect,
+    state: ProspectDecisionState,
     proposal: ReturnType<typeof assertProspectDecisionProposal>,
     policy: ReturnType<typeof evaluateProspectDecisionPolicy>,
     status: "completed" | "cancelled" | "awaiting_approval",
@@ -483,7 +525,7 @@ export class ProspectDecisionJobProcessor {
       status,
       observation: { summary: proposal.observation },
       proposedAction: proposal.action,
-      result: { proposal },
+      result: decisionResult(proposal, state),
       policyDecision: policy,
       completedAt: status === "awaiting_approval" ? null : now,
       invalidatedAt: status === "cancelled" ? now : null,
@@ -523,4 +565,14 @@ function decisionPayload(value: unknown): { workspaceId: string; decisionId: str
 
 function isSimulationOnly(value: unknown): boolean {
   return Boolean(value && typeof value === "object" && !Array.isArray(value) && (value as Record<string, unknown>).simulationOnly === true);
+}
+
+function decisionResult(
+  proposal: ReturnType<typeof assertProspectDecisionProposal>,
+  state: ProspectDecisionState,
+) {
+  return {
+    proposal,
+    socialSignalAssessment: state.socialSignalAssessment,
+  };
 }

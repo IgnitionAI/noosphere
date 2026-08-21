@@ -1,8 +1,9 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { resolve } from "node:path";
-import { and, eq } from "drizzle-orm";
+import { and, count, eq } from "drizzle-orm";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import type { InboundReplyAgent } from "@outbound/application/campaigns/inbound-reply-agent";
+import { PROSPECT_DECISION_JOB_TYPE } from "@outbound/application/campaigns/prospect-decision";
 import type { LeasedJob } from "@outbound/application/jobs/job-queue";
 import { createDatabase } from "@outbound/infrastructure/database/client";
 import {
@@ -11,9 +12,11 @@ import {
   campaigns,
   contacts,
   connectedAccounts,
+  conversations,
   icps,
   icpVersions,
   jobs,
+  outboxEvents,
   outreachActions,
   prospectDecisions,
   prospectDiscoveryCandidates,
@@ -25,6 +28,8 @@ import {
 } from "@outbound/infrastructure/database/schema";
 import { InboundReplyJobProcessor } from "@outbound/infrastructure/campaigns/inbound-reply-runner";
 import { OutreachDispatchJobProcessor } from "@outbound/infrastructure/campaigns/outreach-dispatch-runner";
+import { PostgresProspectDecisionScheduler } from "@outbound/infrastructure/campaigns/postgres-prospect-decision-scheduler";
+import { ProspectDecisionJobProcessor } from "@outbound/infrastructure/campaigns/prospect-decision-runner";
 import { UnipileWebhookIngestor } from "@outbound/infrastructure/campaigns/unipile-webhook-ingestor";
 import { PostgresJobQueue } from "@outbound/infrastructure/jobs/postgres-job-queue";
 
@@ -345,6 +350,137 @@ databaseDescribe("outbound send safety", () => {
       connectedAccountId,
       lastErrorCode: null,
     });
+  });
+
+  test("an open LinkedIn thread atomically cancels a newly planned cold DM", async () => {
+    await database.client`delete from jobs where workspace_id = ${workspaceId}`;
+    await database.db
+      .update(campaignEnrollments)
+      .set({ status: "cancelled", completedAt: now })
+      .where(and(eq(campaignEnrollments.workspaceId, workspaceId), eq(campaignEnrollments.contactId, contactId)));
+    const fixture = await campaignFixture("open-thread-decision", `open-thread-account-${workspaceId}`, "scheduled");
+    await database.db.insert(campaignProspects).values({
+      workspaceId,
+      campaignId: fixture.campaignId,
+      candidateId,
+      contactId,
+      status: "enrolled",
+      score: 78,
+      eligible: true,
+    });
+    await database.db.insert(conversations).values({
+      id: crypto.randomUUID(),
+      workspaceId,
+      contactId,
+      campaignId: fixture.campaignId,
+      provider: "unipile",
+      providerAccountId: fixture.accountId,
+      providerThreadId: `open-thread-${fixture.actionId}`,
+      channel: "linkedin",
+      origin: "campaign",
+      status: "open",
+      lastMessageAt: now,
+    });
+
+    const decisionId = crypto.randomUUID();
+    const scheduler = new PostgresProspectDecisionScheduler(database.db, clock);
+    await scheduler.schedule({
+      id: decisionId,
+      workspaceId,
+      contactId,
+      campaignId: fixture.campaignId,
+      outreachActionId: fixture.actionId,
+      kind: "scheduled_touch",
+      reason: "Envoyer le premier DM LinkedIn.",
+      dueAt: now,
+      idempotencyKey: `open-thread:${fixture.actionId}`,
+      correlationId: decisionId,
+    });
+    const [decisionJob] = await queue.lease({
+      workerId: "open-thread-decision-worker",
+      types: [PROSPECT_DECISION_JOB_TYPE],
+      limit: 1,
+      leaseMs: 30_000,
+      now,
+    });
+    expect(decisionJob).toBeDefined();
+    let agentCalls = 0;
+    const processor = new ProspectDecisionJobProcessor(database.db, queue, {
+      async decide() {
+        agentCalls += 1;
+        return {
+          observation: "Le prospect correspond à l’ICP et le DM est prêt.",
+          action: "send",
+          reason: "Démarrer la séquence LinkedIn.",
+          nextDueAt: null,
+          nextReason: null,
+        };
+      },
+    }, clock);
+    await processor.process(decisionJob!);
+    const replay = await scheduler.schedule({
+      id: crypto.randomUUID(),
+      workspaceId,
+      contactId,
+      campaignId: fixture.campaignId,
+      outreachActionId: fixture.actionId,
+      kind: "scheduled_touch",
+      reason: "Rejouer la même décision logique.",
+      dueAt: now,
+      idempotencyKey: `open-thread:${fixture.actionId}`,
+      correlationId: decisionId,
+    });
+
+    expect(await action(fixture.actionId)).toMatchObject({
+      status: "cancelled",
+      lastErrorCode: "LINKEDIN_CONVERSATION_ALREADY_OPEN",
+      cancelledAt: now,
+    });
+    const [decision] = await database.db
+      .select()
+      .from(prospectDecisions)
+      .where(and(eq(prospectDecisions.workspaceId, workspaceId), eq(prospectDecisions.id, decisionId)));
+    expect(decision).toMatchObject({
+      status: "cancelled",
+      proposedAction: "send",
+    });
+    expect(decision?.result).toMatchObject({
+      socialSignalAssessment: {
+        baseScore: 78,
+        effectiveScore: 78,
+        openLinkedinConversation: true,
+        decisionImpact: "conversation_open",
+      },
+    });
+    const [dispatchCount] = await database.db
+      .select({ value: count() })
+      .from(jobs)
+      .where(and(
+        eq(jobs.workspaceId, workspaceId),
+        eq(jobs.type, "outreach.dispatch"),
+      ));
+    expect(dispatchCount?.value).toBe(0);
+    const [blockedBeforeReplay] = await database.db
+      .select({ value: count() })
+      .from(outboxEvents)
+      .where(and(
+        eq(outboxEvents.workspaceId, workspaceId),
+        eq(outboxEvents.aggregateId, decisionId),
+        eq(outboxEvents.eventType, "ProspectDecisionBlocked"),
+      ));
+
+    const [blockedAfterReplay] = await database.db
+      .select({ value: count() })
+      .from(outboxEvents)
+      .where(and(
+        eq(outboxEvents.workspaceId, workspaceId),
+        eq(outboxEvents.aggregateId, decisionId),
+        eq(outboxEvents.eventType, "ProspectDecisionBlocked"),
+      ));
+    expect(agentCalls).toBe(1);
+    expect(replay).toMatchObject({ created: false, decision: { id: decisionId, status: "cancelled" } });
+    expect(blockedBeforeReplay?.value).toBe(1);
+    expect(blockedAfterReplay?.value).toBe(1);
   });
 
   async function campaignFixture(

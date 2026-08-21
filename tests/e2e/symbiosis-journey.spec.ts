@@ -46,6 +46,12 @@ test("Symbiose renders a proved journey and keeps an unresolved reaction inert",
     await expect(page.getByText(/Aucun message automatique/)).toBeVisible();
     await expect(page.getByText("Inférence", { exact: true })).toBeVisible();
     await expect(page.getByRole("link", { name: "Voir toutes les preuves" })).toHaveAttribute("href", new RegExp(`/w/${workspaceSlug}/attribution\\?interactionId=`));
+
+    await page.goto(`/w/${workspaceSlug}/prospects/${fixture.contactId}`);
+    await expect(page.getByRole("heading", { name: "Signaux sociaux prouvés" })).toBeVisible();
+    await expect(page.getByText("+8 social")).toBeVisible();
+    await expect(page.getByText(/Une conversation LinkedIn est déjà ouverte/)).toBeVisible();
+    await expect(page.getByText(/Une réaction seule ne modifie jamais le score/)).toBeVisible();
     expect(mutationRequests).toEqual([]);
   } finally {
     await fixture.cleanup();
@@ -88,6 +94,7 @@ async function seedSymbiosisFixture(url: string) {
     { ...base, id: crypto.randomUUID(), socialInteractionId: unresolvedInteractionId, kind: "identity", certainty: "unknown", rule: "no_exact_linkedin_identity_v1", confidence: "0.0000", proofType: "none", proofRef: null, proofHref: `/content/calendar?interaction=${unresolvedInteractionId}`, logicalKey: "identity" },
   ]);
   return {
+    contactId,
     async cleanup() {
       await database.db.delete(attributionTouches).where(and(eq(attributionTouches.workspaceId, workspace.id), inArray(attributionTouches.socialInteractionId, [resolvedInteractionId, unresolvedInteractionId])));
       await database.db.delete(calendarBookings).where(and(eq(calendarBookings.workspaceId, workspace.id), eq(calendarBookings.id, bookingId)));

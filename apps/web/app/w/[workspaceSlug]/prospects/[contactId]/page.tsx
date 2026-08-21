@@ -1,4 +1,4 @@
-import { ArrowLeft, Ban, Bot, Briefcase, Fingerprint, Plus, TriangleAlert, UserRound } from "lucide-react";
+import { ArrowLeft, Ban, Bot, Briefcase, Fingerprint, MessageCircleMore, Plus, ShieldCheck, TriangleAlert, UserRound } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { CrmPermissionState } from "@/components/crm-states";
@@ -134,6 +134,7 @@ export default async function ContactDetailPage({
       <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
         <main className="min-w-0 space-y-4">
           {prospectView ? (
+            <>
             <section className="panel">
               <div className="panel-header">
                 <h2 className="flex items-center gap-2 font-semibold"><Bot size={15} className="text-brand-blue" /> Pilotage agentique</h2>
@@ -175,6 +176,56 @@ export default async function ContactDetailPage({
                 ) : null}
               </div>
             </section>
+            <section className="panel">
+              <div className="panel-header">
+                <h2 className="flex items-center gap-2 font-semibold"><MessageCircleMore size={15} className="text-brand-blue" /> Signaux sociaux prouvés</h2>
+                <span className={prospectView.socialSignalAssessment.socialBoost > 0 ? "badge badge-success" : "badge"}>
+                  +{prospectView.socialSignalAssessment.socialBoost} social
+                </span>
+              </div>
+              <div className="panel-body space-y-3">
+                <div className="grid gap-2 sm:grid-cols-3">
+                  <div className="rounded-lg border border-line p-3"><p className="text-[11px] uppercase tracking-wide text-muted">Score ICP</p><strong className="mt-1 block text-xl">{prospectView.socialSignalAssessment.baseScore ?? "—"}</strong></div>
+                  <div className="rounded-lg border border-line p-3"><p className="text-[11px] uppercase tracking-wide text-muted">Preuves sociales</p><strong className="mt-1 block text-xl">{prospectView.socialSignalAssessment.eligibleSignals.length}</strong></div>
+                  <div className="rounded-lg border border-brand-blue/20 bg-blue-50/40 p-3"><p className="text-[11px] uppercase tracking-wide text-muted">Score effectif</p><strong className="mt-1 block text-xl text-brand-blue">{prospectView.socialSignalAssessment.effectiveScore ?? "—"}</strong></div>
+                </div>
+                {prospectView.socialSignalAssessment.openLinkedinConversation ? (
+                  <p className="flex items-start gap-2 rounded-lg border border-warning/30 bg-amber-50 p-3 text-xs leading-5 text-warning">
+                    <ShieldCheck className="mt-0.5 shrink-0" size={14} />
+                    Une conversation LinkedIn est déjà ouverte. La policy annule tout nouveau DM froid et conserve le fil existant comme seule surface de réponse.
+                  </p>
+                ) : null}
+                {prospectView.socialSignalAssessment.eligibleSignals.length ? (
+                  <div className="space-y-2">
+                    {prospectView.socialSignalAssessment.eligibleSignals.map((signal) => (
+                      <div className="rounded-lg border border-line p-3" key={signal.id}>
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <strong className="text-xs">{socialSignalLabel(signal.type)} prouvé · +{signal.contribution}</strong>
+                          <span className="badge badge-success">identité {Math.round(signal.identityConfidence * 100)}%</span>
+                        </div>
+                        <p className="mt-2 text-xs leading-5 text-slate-700">{signal.summary}</p>
+                        <Link className="mt-2 inline-flex text-[11px] font-semibold text-brand-blue" href={`/w/${workspaceSlug}${signal.proofHref}`}>Voir la preuve et la règle</Link>
+                      </div>
+                    ))}
+                  </div>
+                ) : <p className="text-sm text-muted">Aucun commentaire, réponse ou mention récente avec identité exacte. Le score ICP reste inchangé.</p>}
+                {prospectView.socialSignalAssessment.ignoredSignals.length ? (
+                  <details>
+                    <summary className="cursor-pointer text-xs font-semibold text-muted">{prospectView.socialSignalAssessment.ignoredSignals.length} signal(aux) sans effet</summary>
+                    <div className="mt-2 space-y-2">
+                      {prospectView.socialSignalAssessment.ignoredSignals.map((signal) => (
+                        <div className="flex items-start justify-between gap-3 rounded-lg bg-slate-50 p-3 text-xs" key={signal.id}>
+                          <span>{signal.explanation}</span>
+                          <Link className="shrink-0 font-semibold text-brand-blue" href={`/w/${workspaceSlug}${signal.proofHref}`}>Preuve</Link>
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                ) : null}
+                <p className="text-[11px] leading-4 text-muted">Une réaction seule ne modifie jamais le score et ne crée aucune action automatique.</p>
+              </div>
+            </section>
+            </>
           ) : null}
           {enrichmentAccess ? <EnrichmentPanel addIdentityAction={addIdentity} canEnrich={canEdit} contact={contact} enrichAction={enrich} job={enrichmentJob} observations={observations} requestKey={requestKey} retryAction={retry} workspaceSlug={workspaceSlug} /> : <section className="panel"><div className="panel-header"><h2 className="font-semibold">Coordonnées</h2></div><div className="panel-body text-sm text-muted">Les coordonnées enrichies ne sont pas accessibles avec vos droits.</div></section>}
           <CalendarBookingsPanel bookings={calendarBookings} canMutate={canEdit} workspaceSlug={workspaceSlug} />
@@ -311,6 +362,10 @@ export default async function ContactDetailPage({
 
 function prospectDecisionLabel(value: string | null): string {
   return ({ send: "envoyer", wait: "attendre", research: "rechercher", pause: "mettre en pause", stop: "arrêter", handoff: "transmettre" } as Record<string, string>)[value ?? ""] ?? "à déterminer";
+}
+
+function socialSignalLabel(value: "comment" | "reply" | "mention"): string {
+  return value === "reply" ? "Réponse" : value === "mention" ? "Mention" : "Commentaire";
 }
 
 function formatDecisionDate(value: string): string {

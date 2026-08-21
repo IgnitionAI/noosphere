@@ -15,7 +15,8 @@ describe("prospect decision policy", () => {
     const base = {
       contactStatus: "active",
       suppressed: false,
-      outreachAction: { status: "scheduled", dueAt: now },
+      outreachAction: { status: "scheduled", dueAt: now, channel: "linkedin" },
+      openLinkedinConversation: false,
       now,
     };
     expect(evaluateProspectDecisionPolicy({ ...base, campaign: { status: "active", executionMode: "dry_run" } }, send))
@@ -25,9 +26,28 @@ describe("prospect decision policy", () => {
   });
 
   test("blocks suppression, inactive campaigns and actions that are no longer sendable", () => {
-    const base = { contactStatus: "active", suppressed: false, campaign: { status: "active", executionMode: "live" as const }, outreachAction: { status: "scheduled", dueAt: now }, now };
+    const base = { contactStatus: "active", suppressed: false, campaign: { status: "active", executionMode: "live" as const }, outreachAction: { status: "scheduled", dueAt: now, channel: "linkedin" }, openLinkedinConversation: false, now };
     expect(evaluateProspectDecisionPolicy({ ...base, suppressed: true }, send)).toMatchObject({ allowed: false, code: "PROSPECT_SUPPRESSED" });
     expect(evaluateProspectDecisionPolicy({ ...base, campaign: { ...base.campaign, status: "paused" } }, send)).toMatchObject({ allowed: false, code: "CAMPAIGN_NOT_ACTIVE" });
-    expect(evaluateProspectDecisionPolicy({ ...base, outreachAction: { status: "cancelled", dueAt: now } }, send)).toMatchObject({ allowed: false, code: "OUTREACH_ACTION_NOT_SENDABLE" });
+    expect(evaluateProspectDecisionPolicy({ ...base, outreachAction: { ...base.outreachAction, status: "cancelled" } }, send)).toMatchObject({ allowed: false, code: "OUTREACH_ACTION_NOT_SENDABLE" });
+  });
+
+  test("blocks a contradictory cold LinkedIn send when a thread is already open", () => {
+    const state = {
+      contactStatus: "active",
+      suppressed: false,
+      campaign: { status: "active", executionMode: "live" as const },
+      outreachAction: { status: "scheduled", dueAt: now, channel: "linkedin" },
+      openLinkedinConversation: true,
+      now,
+    };
+    expect(evaluateProspectDecisionPolicy(state, send)).toMatchObject({
+      allowed: false,
+      code: "LINKEDIN_CONVERSATION_ALREADY_OPEN",
+    });
+    expect(evaluateProspectDecisionPolicy({
+      ...state,
+      outreachAction: { ...state.outreachAction, channel: "email" },
+    }, send)).toMatchObject({ allowed: true });
   });
 });

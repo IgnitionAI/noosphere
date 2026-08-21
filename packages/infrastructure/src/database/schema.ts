@@ -3582,6 +3582,9 @@ export const attributionTouches = pgTable(
     unique("attribution_touches_workspace_id_uq").on(table.workspaceId, table.id),
     uniqueIndex("attribution_touches_logical_uq").on(table.workspaceId, table.socialInteractionId, table.logicalKey),
     index("attribution_touches_booking_idx").on(table.workspaceId, table.bookingId, table.status, table.kind, table.occurredAt, table.socialInteractionId),
+    index("attribution_touches_contact_identity_idx")
+      .on(table.workspaceId, table.contactId, table.occurredAt, table.socialInteractionId)
+      .where(sql`${table.status} = 'active' and ${table.kind} = 'identity' and ${table.contactId} is not null`),
     check("attribution_touches_kind_ck", sql`${table.kind} in ('identity', 'conversation', 'campaign', 'booking', 'opportunity')`),
     check("attribution_touches_certainty_ck", sql`${table.certainty} in ('evidence', 'inference', 'unknown')`),
     check("attribution_touches_status_ck", sql`${table.status} in ('active', 'superseded')`),
