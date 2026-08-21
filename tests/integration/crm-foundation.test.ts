@@ -437,6 +437,17 @@ databaseDescribe("F-020/F-021 CRM foundation", () => {
     const [decision] = await database.db.select().from(prospectDecisions).where(eq(prospectDecisions.id, result.decisionId));
     expect(decision?.campaignId).toBe(campaignId);
 
+    const prospectViewResponse = await handle(new Request(`http://localhost/api/v1/prospects/${contactId}`));
+    expect(prospectViewResponse.status).toBe(200);
+    expect(await prospectViewResponse.json()).toMatchObject({
+      socialSignalAssessment: {
+        baseScore: 80,
+        socialBoost: 0,
+        effectiveScore: 80,
+        openLinkedinConversation: false,
+      },
+    });
+
     expect((await postJson(`/api/v1/prospects/${contactId}/actions/dry-run`, {
       reason: "Refuser un contexte non lié.",
       requestKey: crypto.randomUUID(),

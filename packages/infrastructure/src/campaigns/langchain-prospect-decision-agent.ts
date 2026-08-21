@@ -45,6 +45,8 @@ export class LangChainProspectDecisionAgent implements ProspectDecisionAgent {
         "The campaign is a policy boundary, not a rigid sequence. The deterministic runtime will authorize or block your proposal.",
         "Never claim that a message was sent or that research was performed. You only propose the next action.",
         "Choose send only when the scheduled outreach action is due and no inbound answer appears in the state.",
+        "Treat eligible social signals as proved intent context, never as permission to bypass campaign, suppression, or channel policy.",
+        "A reaction is inert. If openLinkedinConversation is true, never propose a new cold send; prefer wait, stop, or handoff according to the thread context.",
         "Choose wait with a future ISO date when more time is appropriate.",
         "Choose research when the available evidence is insufficient; include a future recheck date.",
         "Choose stop after a clear refusal, suppression or exhausted strategy; choose handoff for an interested or ambiguous high-value reply.",

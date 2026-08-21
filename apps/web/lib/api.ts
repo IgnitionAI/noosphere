@@ -1745,6 +1745,8 @@ export interface ProspectViewSummary extends ContactSummary {
     readonly icpVersionId: string;
     readonly icpName: string;
     readonly score: number | null;
+    readonly effectiveScore: number | null;
+    readonly socialBoost: number;
     readonly eligible: boolean;
     readonly candidateId: string;
     readonly headline: string | null;
@@ -1758,6 +1760,32 @@ export interface ProspectViewSummary extends ContactSummary {
     readonly risks: readonly string[];
     readonly recommendedAngle: string | null;
   } | null;
+  readonly socialSignalAssessment: {
+    readonly evaluatedAt: string;
+    readonly baseScore: number | null;
+    readonly socialBoost: number;
+    readonly effectiveScore: number | null;
+    readonly openLinkedinConversation: boolean;
+    readonly decisionImpact: "boosted" | "conversation_open" | "none";
+    readonly eligibleSignals: readonly {
+      readonly id: string;
+      readonly type: "comment" | "reply" | "mention";
+      readonly summary: string;
+      readonly occurredAt: string;
+      readonly contribution: number;
+      readonly identityRule: string;
+      readonly identityConfidence: number;
+      readonly proofHref: string;
+    }[];
+    readonly ignoredSignals: readonly {
+      readonly id: string;
+      readonly type: "comment" | "reply" | "mention" | "reaction";
+      readonly occurredAt: string;
+      readonly reason: "reaction_inert" | "not_incoming" | "removed" | "identity_not_exact" | "expired";
+      readonly explanation: string;
+      readonly proofHref: string;
+    }[];
+  };
   readonly meeting: {
     readonly status: "requested" | "booked" | "cancelled" | "no_show" | "completed";
     readonly startAt: string;

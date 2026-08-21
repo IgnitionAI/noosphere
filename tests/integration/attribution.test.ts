@@ -4,6 +4,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { AttributionReconciler } from "@outbound/application/attribution/attribution";
 import { PostgresAttributionRepository } from "@outbound/infrastructure/attribution/postgres-attribution-repository";
+import { PostgresSocialProspectSignalReader } from "@outbound/infrastructure/crm/postgres-social-prospect-signal-reader";
 import { createDatabase } from "@outbound/infrastructure/database/client";
 import { PostgresOperationalViews } from "@outbound/infrastructure/workspaces/postgres-operational-views";
 import {
@@ -131,6 +132,34 @@ databaseDescribe("ATT-101 evidence-led attribution", () => {
     expect(firstTouch).toMatchObject({ certainty: "inference", confidence: 0.6, position: "first", rule: "same_verified_contact_after_touch_90d_v1" });
     expect(lastTouch).toMatchObject({ certainty: "inference", confidence: 0.6, position: "last", rule: "same_verified_contact_after_touch_90d_v1" });
     expect(firstTouch?.proofHref).toBe(`/appointments?booking=${bookingId}`);
+  });
+
+  test("projects only exact proved interactions onto the CRM score and isolates workspaces", async () => {
+    const reader = new PostgresSocialProspectSignalReader(database.db);
+    const assessment = await reader.read({
+      workspaceId,
+      contactId,
+      baseScore: 70,
+      now: new Date(now.getTime() + 4 * 60 * 60_000),
+    });
+    expect(assessment).toMatchObject({
+      baseScore: 70,
+      socialBoost: 16,
+      effectiveScore: 86,
+      openLinkedinConversation: true,
+      decisionImpact: "conversation_open",
+    });
+    expect(assessment.eligibleSignals.map((signal) => signal.id).sort()).toEqual([
+      firstInteractionId,
+      lastInteractionId,
+    ].sort());
+
+    expect(await reader.read({
+      workspaceId: otherWorkspaceId,
+      contactId,
+      baseScore: 70,
+      now: new Date(now.getTime() + 4 * 60 * 60_000),
+    })).toMatchObject({ socialBoost: 0, effectiveScore: 70, openLinkedinConversation: false });
   });
 
   test("replays idempotently without duplicating attribution edges", async () => {

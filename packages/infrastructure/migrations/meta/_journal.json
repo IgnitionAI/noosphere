@@ -540,6 +540,13 @@
       "when": 1797775740000,
       "tag": "0076_noosphere_symbiosis_activity_index",
       "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "7",
+      "when": 1797775800000,
+      "tag": "0077_noosphere_social_prospect_signal_index",
+      "breakpoints": true
     }
   ]
 }

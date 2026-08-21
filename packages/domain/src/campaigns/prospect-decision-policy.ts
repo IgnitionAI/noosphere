@@ -8,7 +8,8 @@ export interface ProspectDecisionPolicyState {
   readonly contactStatus: string;
   readonly suppressed: boolean;
   readonly campaign: { readonly status: string; readonly executionMode: "dry_run" | "live" } | null;
-  readonly outreachAction: { readonly status: string; readonly dueAt: Date } | null;
+  readonly outreachAction: { readonly status: string; readonly dueAt: Date; readonly channel: string } | null;
+  readonly openLinkedinConversation: boolean;
   readonly now: Date;
 }
 
@@ -27,6 +28,13 @@ export function evaluateProspectDecisionPolicy(
   }
   if (proposal.action !== "send") {
     return { allowed: true, requiresApproval: proposal.action === "handoff", executeAt: state.now };
+  }
+  if (state.openLinkedinConversation && state.outreachAction?.channel === "linkedin") {
+    return {
+      allowed: false,
+      code: "LINKEDIN_CONVERSATION_ALREADY_OPEN",
+      reason: "Une conversation LinkedIn est déjà ouverte : le DM froid planifié est annulé au profit du fil existant.",
+    };
   }
   if (!state.campaign || state.campaign.status !== "active") {
     return { allowed: false, code: "CAMPAIGN_NOT_ACTIVE", reason: "La campagne n’est pas active." };

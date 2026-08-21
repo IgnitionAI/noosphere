@@ -1,4 +1,5 @@
 import type { ProspectDecisionProposal } from "@outbound/domain/campaigns/prospect-decision";
+import type { SocialProspectSignalAssessment } from "@outbound/domain/crm/social-prospect-signal";
 
 export const PROSPECT_DECISION_JOB_TYPE = "prospect.decision.execute";
 
@@ -34,6 +35,7 @@ export interface ProspectDecisionState {
   }[];
   readonly sentTouches: number;
   readonly suppressed: boolean;
+  readonly socialSignalAssessment: SocialProspectSignalAssessment;
 }
 
 export interface ProspectDecisionAgent {

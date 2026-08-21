@@ -1,4 +1,5 @@
 import { and, desc, eq, gte, ilike, inArray, ne, or, sql, type SQL } from "drizzle-orm";
+import type { SocialProspectSignalAssessment } from "@outbound/domain/crm/social-prospect-signal";
 import type { Database } from "@outbound/infrastructure/database/client";
 import {
   campaignProspects,
@@ -18,9 +19,14 @@ import {
   prospectDecisions,
   replyClassifications,
 } from "@outbound/infrastructure/database/schema";
+import { PostgresSocialProspectSignalReader } from "./postgres-social-prospect-signal-reader";
 
 export class PostgresProspectViewRepository {
-  constructor(private readonly db: Database) {}
+  readonly #socialSignals: PostgresSocialProspectSignalReader;
+
+  constructor(private readonly db: Database) {
+    this.#socialSignals = new PostgresSocialProspectSignalReader(db);
+  }
 
   async list(input: {
     workspaceId: string;
@@ -328,6 +334,17 @@ export class PostgresProspectViewRepository {
     const identities = groupBy(identityRows, (row) => row.contactId);
     const employments = new Map(employmentRows.map((row) => [row.contactId, row]));
     const matches = groupBy(matchRows.filter((row) => row.contactId !== null), (row) => row.contactId!);
+    const socialAssessments = await this.#socialSignals.readMany({
+      workspaceId,
+      contacts: rows.map((row) => ({
+        id: row.id,
+        baseScore: (matches.get(row.id) ?? []).reduce<number | null>(
+          (best, match) => best === null || (match.score ?? -1) > best ? match.score : best,
+          null,
+        ),
+      })),
+      now: new Date(),
+    });
     const latestOutreach = new Map<string, ReturnType<typeof outreachActivityView>>();
     for (const action of outreachRows) {
       if (!latestOutreach.has(action.contactId)) latestOutreach.set(action.contactId, outreachActivityView(action));
@@ -343,6 +360,7 @@ export class PostgresProspectViewRepository {
     return rows.map((row) => {
       const contactMatches = (matches.get(row.id) ?? []).sort((left, right) => (right.score ?? 0) - (left.score ?? 0));
       const bestMatch = contactMatches[0] ?? null;
+      const socialSignalAssessment = socialAssessments.get(row.id)!;
       const conversation = latestConversations.get(row.id) ?? null;
       const lastMessage = conversation ? messageRows.find((message) => message.conversationId === conversation.id) ?? null : null;
       const decision = conversation ? decisionRows.find((item) => item.conversationId === conversation.id) ?? null : null;
@@ -374,6 +392,8 @@ export class PostgresProspectViewRepository {
           icpVersionId: match.icpVersionId,
           icpName: match.icpName,
           score: match.score,
+          effectiveScore: match.score === null ? null : Math.min(100, match.score + socialSignalAssessment.socialBoost),
+          socialBoost: socialSignalAssessment.socialBoost,
           eligible: match.eligible,
           scoreExplanation: match.scoreExplanation,
           aiAssessment: match.aiAssessment,
@@ -382,7 +402,13 @@ export class PostgresProspectViewRepository {
           companyName: match.companyName,
           updatedAt: match.updatedAt,
         })),
-        aiOpinion: bestMatch ? assessment(bestMatch.aiAssessment, bestMatch.score, bestMatch.scoreExplanation) : null,
+        aiOpinion: bestMatch ? assessment(
+          bestMatch.aiAssessment,
+          bestMatch.score === null ? null : Math.min(100, bestMatch.score + socialSignalAssessment.socialBoost),
+          bestMatch.scoreExplanation,
+          socialSignalAssessment,
+        ) : null,
+        socialSignalAssessment,
         meeting: latestBookings.get(row.id) ?? null,
         opportunity: latestOpportunities.get(row.id) ?? null,
         latestActivity,
@@ -489,18 +515,31 @@ function decisionView(row: { intent: string; confidence: string; action: string;
   return { intent: row.intent, confidence: Number(row.confidence), action: row.action, rationale: row.rationale, provider: stringOrNull(metadata.provider), model: stringOrNull(metadata.model), createdAt: row.createdAt };
 }
 
-function assessment(value: unknown, score: number | null, explanation: unknown) {
+function assessment(
+  value: unknown,
+  score: number | null,
+  explanation: unknown,
+  social: SocialProspectSignalAssessment,
+) {
   const data = record(value);
   const factors = Array.isArray(explanation) ? explanation.map(record) : [];
+  const baseStrengths = stringArray(data.strengths).length
+    ? stringArray(data.strengths)
+    : factors.filter((factor) => Number(factor.contribution) > 0).map((factor) => String(factor.explanation ?? "")).filter(Boolean);
+  const baseRisks = stringArray(data.risks).length
+    ? stringArray(data.risks)
+    : factors.filter((factor) => Number(factor.contribution) < 0).map((factor) => String(factor.explanation ?? "")).filter(Boolean);
+  const socialStrengths = social.eligibleSignals.map((signal) =>
+    `${signal.type === "reply" ? "Réponse" : signal.type === "mention" ? "Mention" : "Commentaire"} LinkedIn prouvé (+${signal.contribution}).`
+  );
+  const socialRisks = social.openLinkedinConversation
+    ? ["Conversation LinkedIn déjà ouverte : aucun nouveau DM froid ne sera envoyé."]
+    : [];
   return {
     score,
     summary: stringOrNull(data.summary) ?? "Qualification calculée à partir des correspondances ICP observées.",
-    strengths: stringArray(data.strengths).length
-      ? stringArray(data.strengths)
-      : factors.filter((factor) => Number(factor.contribution) > 0).map((factor) => String(factor.explanation ?? "")).filter(Boolean),
-    risks: stringArray(data.risks).length
-      ? stringArray(data.risks)
-      : factors.filter((factor) => Number(factor.contribution) < 0).map((factor) => String(factor.explanation ?? "")).filter(Boolean),
+    strengths: [...baseStrengths, ...socialStrengths],
+    risks: [...baseRisks, ...socialRisks],
     recommendedAngle: stringOrNull(data.recommendedAngle),
   };
 }
