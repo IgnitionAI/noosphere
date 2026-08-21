@@ -259,6 +259,22 @@ export interface ContentPublication {
   readonly updatedAt: string;
 }
 
+export interface ContentAutopilot {
+  readonly configured: boolean;
+  readonly enabled: boolean;
+  readonly localTime: string;
+  readonly timezone: string;
+  readonly lastRunAt: string | null;
+  readonly nextRunAt: string | null;
+  readonly nextPublicationAt: string | null;
+  readonly queuedIdeas: number;
+  readonly generatingAssets: number;
+  readonly readyAssets: number;
+  readonly scheduledPublications: number;
+  readonly blockedAssets: number;
+  readonly exceptions: number;
+}
+
 export interface SocialContentItem {
   readonly id: string;
   readonly publicationId: string | null;
@@ -445,6 +461,14 @@ export async function deriveEditorialStrategy(workspaceSlug: string, requestKey:
 
 export async function publishEditorialStrategy(workspaceSlug: string, requestKey: string): Promise<{ readonly id: string; readonly version: number }> {
   return crmFetch(workspaceSlug, "/api/v1/content/strategy/publish", { method: "POST", body: { requestKey } });
+}
+
+export async function getContentAutopilot(workspaceSlug: string): Promise<ContentAutopilot> {
+  return crmFetch(workspaceSlug, "/api/v1/content/autopilot");
+}
+
+export async function configureContentAutopilot(workspaceSlug: string, input: { requestKey: string; enabled: boolean; localTime: string; timezone: string }): Promise<ContentAutopilot> {
+  return crmFetch(workspaceSlug, "/api/v1/content/autopilot", { method: "PUT", body: input });
 }
 
 export async function listContentIdeas(workspaceSlug: string, input: { cursor?: string; status?: ContentIdeaStatus; limit?: number } = {}): Promise<{ data: readonly ContentIdea[]; nextCursor: string | null }> {

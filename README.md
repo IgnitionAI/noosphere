@@ -122,3 +122,7 @@ standard est légère (texte/HTML et PDF via `pdftotext`) ; Docling est une capa
 optionnelle du profil `documents-advanced`. L’autopilote
 opère dans les bornes de la policy publiée (F-012) : revérifications
 déterministes avant chaque envoi et exceptions explicites dans « À traiter ».
+La boucle Content LinkedIn AUT-101 est également branchée : radar quotidien,
+génération sourcée, critique, planification par cadence et pause/reprise
+auditée. Son envoi réseau réel reste volontairement fermé jusqu'au canary
+PTC-101 explicitement autorisé.

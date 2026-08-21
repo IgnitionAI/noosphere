@@ -20,6 +20,7 @@ et remonte sur la campagne, la conversation ou la configuration concernée.
 | réponse hors campagne | pilotage humain uniquement | amélioration de brouillon ou commande Setter explicite, jamais d’automatisme continu |
 | recherche connaissance | filtres workspace et claims sourcés | retrieval hybride lorsque nécessaire |
 | optimisation campagne | métriques déterministes | recommandations évaluées |
+| contenu LinkedIn | stratégie, preuves, cadence et compte vérifiés | recherche, rédaction, audit, critique et publication autonomes ; exception localisée par asset |
 
 ## Contrats à prévoir dès le socle
 
@@ -68,6 +69,9 @@ est insuffisamment prouvée.
    idempotente de l’orchestrateur ;
 9. chaque exécution conserve fournisseur, modèle, prompt, coût, latence et
    décision (politique appliquée ou exception déterministe).
+10. avant une publication LinkedIn automatique, le serveur relit le compte
+    sélectionné, les claims autorisés, les jours de cadence et le budget
+    hebdomadaire ; le modèle ne peut contourner cette frontière.
 
 ## Conditions d’exploitation de l’IA
 

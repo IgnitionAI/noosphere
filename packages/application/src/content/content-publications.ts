@@ -83,7 +83,7 @@ export interface ContentPublicationRepository {
   findRequest(input: { readonly workspaceId: string; readonly operation: string; readonly requestKey: string }): Promise<ContentPublicationView | null>;
   schedule(input: {
     readonly workspaceId: string;
-    readonly userId: string;
+    readonly userId: string | null;
     readonly assetId: string;
     readonly requestKey: string;
     readonly scheduledFor: Date;
@@ -112,7 +112,7 @@ export class ContentPublicationApplication {
   list(input: Parameters<ContentPublicationRepository["list"]>[0]) { return this.repository.list(input); }
   find(input: Parameters<ContentPublicationRepository["find"]>[0]) { return this.repository.find(input); }
 
-  async schedule(input: { readonly workspaceId: string; readonly userId: string; readonly assetId: string; readonly requestKey: string; readonly scheduledFor: Date; readonly now?: Date }) {
+  async schedule(input: { readonly workspaceId: string; readonly userId: string | null; readonly assetId: string; readonly requestKey: string; readonly scheduledFor: Date; readonly now?: Date }) {
     const replay = await this.repository.findRequest({ workspaceId: input.workspaceId, operation: "publication.schedule", requestKey: input.requestKey });
     if (replay) return replay;
     const now = input.now ?? new Date();

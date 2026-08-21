@@ -113,3 +113,17 @@ export const contentPublicationScheduleRequestSchema = z.object({
 export const contentPublicationMutationRequestSchema = z.object({
   requestKey: z.string().trim().min(8).max(300),
 }).strict();
+
+export const contentAutopilotConfigureRequestSchema = z.object({
+  requestKey: z.string().trim().min(8).max(300),
+  enabled: z.boolean(),
+  localTime: z.string().regex(/^(?:[01][0-9]|2[0-3]):[0-5][0-9]$/),
+  timezone: z.string().trim().min(1).max(120).refine((value) => {
+    try {
+      new Intl.DateTimeFormat("fr-FR", { timeZone: value }).format(new Date());
+      return true;
+    } catch {
+      return false;
+    }
+  }, "Invalid IANA timezone"),
+}).strict();
