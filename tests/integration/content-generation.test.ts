@@ -142,7 +142,9 @@ databaseDescribe("CNT-101 durable content generation", () => {
     const first = await repository.createGeneration({ workspaceId, userId, ideaId, operation: "asset.generate", requestKey: "content:integration:1", now });
     const replay = await repository.createGeneration({ workspaceId, userId, ideaId, operation: "asset.generate", requestKey: "content:integration:1", now });
     expect(replay.id).toBe(first.id);
-    expect((await database.client<{ count: number }[]>`select count(*)::int as count from jobs where workspace_id = ${workspaceId} and type = 'content.asset.generate'`)[0]?.count).toBe(1);
+    const generationJobs = await database.client<{ count: number; priority: number }[]>`select count(*)::int as count, max(priority)::int as priority from jobs where workspace_id = ${workspaceId} and type = 'content.asset.generate'`;
+    expect(generationJobs[0]?.count).toBe(1);
+    expect(generationJobs[0]?.priority).toBe(60);
     const context = await repository.loadContext({ workspaceId, runId: first.id });
     const sourceKey = context.evidence[0]!.key;
     const brief = { objective: "explain" as const, audience: "Équipes juridiques", problem: "Les preuves sont dispersées dans les dossiers juridiques.", angle: "Relier une recherche documentaire à une décision commerciale.", format: "linkedin_text" as const, evidenceKeys: [sourceKey], allowedClaimIds: [claimId], callToAction: "Comment vérifiez-vous vos preuves ?", constraints: ["Aucun fait sans preuve"] };
@@ -202,14 +204,19 @@ databaseDescribe("CNT-101 durable content generation", () => {
       now,
     });
     expect(scheduledReplay.id).toBe(scheduled.id);
+    expect((await database.client<{ priority: number }[]>`select priority from jobs where workspace_id = ${workspaceId} and payload->>'publicationId' = ${scheduled.id}`)[0]?.priority).toBe(70);
     expect(await publicationRepository.find({ workspaceId: otherWorkspaceId, publicationId: scheduled.id })).toBeNull();
     const moved = await publicationRepository.reschedule({ workspaceId, userId, publicationId: scheduled.id, requestKey: "publication:move:1", scheduledFor: new Date(now.getTime() + 1_000), now });
     expect(moved.scheduledFor).toEqual(new Date(now.getTime() + 1_000));
 
     const improved = await repository.createGeneration({ workspaceId, userId, assetId: asset!.id, operation: "asset.improve", requestKey: "content:integration:2", instruction: "Un hook plus concret", now: new Date(now.getTime() + 1_000) });
+    expect((await repository.loadContext({ workspaceId, runId: improved.id })).recentBodies).toEqual([]);
     await repository.startRun({ workspaceId, runId: improved.id, now });
     await repository.saveBrief({ workspaceId, runId: improved.id, brief, now });
     await repository.saveDraft({ workspaceId, runId: improved.id, draft: { ...draft, hook: "Le précédent n’est utile que s’il est retrouvable." }, now });
+    const auditRepairedDraft = { ...draft, hook: "Une preuve auditée reste résoluble." };
+    await repository.reviseDraftAfterAudit({ workspaceId, runId: improved.id, draft: auditRepairedDraft, now });
+    expect((await repository.loadContext({ workspaceId, runId: improved.id })).draft?.hook).toBe(auditRepairedDraft.hook);
     await repository.saveAudit({ workspaceId, runId: improved.id, audit, now });
     await repository.completeRun({ workspaceId, runId: improved.id, critique, readiness: { ready: true, blockers: [] }, now });
     expect((await repository.findAssetByIdea({ workspaceId, ideaId }))?.latestVersion).toBe(2);
@@ -230,6 +237,7 @@ databaseDescribe("CNT-101 durable content generation", () => {
     await publicationRepository.claimExecution({ workspaceId, publicationId: publishable.id, currentAccountId: "linkedin-account-fixture", executionToken: publishToken, now });
     await publicationRepository.markPublished({ workspaceId, publicationId: publishable.id, executionToken: publishToken, result: { providerPostId: "provider-post-fixture", socialId: "social-fixture", url: "https://www.linkedin.com/feed/update/fixture", publishedAt: now }, now });
     expect(await publicationRepository.find({ workspaceId, publicationId: publishable.id })).toMatchObject({ status: "published", providerPostId: "provider-post-fixture", providerUrl: "https://www.linkedin.com/feed/update/fixture" });
+    expect((await repository.loadContext({ workspaceId, runId: improved.id })).recentBodies).toContain(draft.body);
     await expectRejected(() => publicationRepository.markFailed({ workspaceId, publicationId: publishable.id, code: "STALE_WORKER", message: "A stale preflight must not overwrite success", now }), "CONTENT_PUBLICATION_EXECUTION_CONFLICT");
     expect((await publicationRepository.find({ workspaceId, publicationId: publishable.id }))?.status).toBe("published");
 

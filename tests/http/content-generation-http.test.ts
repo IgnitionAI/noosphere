@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createContentGenerationHttpHandler } from "@outbound/interface/http/content-generation-handler";
+import { createContentGenerationHttpHandler, isContentGenerationRoute } from "@outbound/interface/http/content-generation-handler";
 
 const workspaceId = "31000000-0000-4000-8000-000000000001";
 const userId = "31000000-0000-4000-8000-000000000002";
@@ -7,6 +7,11 @@ const ideaId = "31000000-0000-4000-8000-000000000003";
 const assetId = "31000000-0000-4000-8000-000000000004";
 
 describe("Noosphere content generation HTTP", () => {
+  test("never captures the reserved idea discovery route as an idea identifier", () => {
+    expect(isContentGenerationRoute("/api/v1/content/ideas/discover")).toBe(false);
+    expect(isContentGenerationRoute(`/api/v1/content/ideas/${ideaId}`)).toBe(true);
+  });
+
   test("derives tenant and user from the session and rejects body impersonation", async () => {
     const calls: unknown[] = [];
     const handler = createContentGenerationHttpHandler({ contextResolver: context("operator"), application: { async generate(input: unknown) { calls.push(input); return run(); } } as never });

@@ -56,6 +56,13 @@ export function createContentStrategyHttpHandler(input: {
       if (code === "EDITORIAL_STRATEGY_ICP_REQUIRED") return problem(409, code, "Publish an ICP before deriving the strategy");
       if (code === "EDITORIAL_STRATEGY_NOT_FOUND") return problem(404, code, "No editorial strategy exists for this workspace");
       if (code === "EDITORIAL_STRATEGY_UNAUTHORIZED_CLAIM") return problem(422, code, "The strategy references an unauthorized offer claim");
+      if (code === "EDITORIAL_STRATEGY_OUTPUT_INVALID") return problem(502, code, "The AI returned an invalid editorial strategy after a bounded retry. Retry without changing your product brief");
+      console.error(JSON.stringify({
+        event: "content_strategy_http_error",
+        path: new URL(request.url).pathname,
+        method: request.method,
+        error: code || "UNKNOWN_ERROR",
+      }));
       return problem(500, "INTERNAL_ERROR", "An unexpected error occurred");
     }
   };

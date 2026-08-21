@@ -6,7 +6,10 @@ import type {
   ContentGenerationRepository,
   ContentGenerationRunView,
 } from "@outbound/application/content/content-generation";
-import { CONTENT_GENERATION_JOB_TYPE } from "@outbound/application/content/content-generation";
+import {
+  CONTENT_GENERATION_JOB_PRIORITY,
+  CONTENT_GENERATION_JOB_TYPE,
+} from "@outbound/application/content/content-generation";
 import type { ContentIdeaEvidence, ContentIdeaView } from "@outbound/application/content/content-ideas";
 import type { ContentIdeaStatus } from "@outbound/domain/content/content-idea";
 import type { ContentGenerationStage, ContentGenerationStatus } from "@outbound/domain/content/content-asset";
@@ -27,6 +30,7 @@ import {
   contentIdeaSources,
   contentIdeas,
   contentOperationRequests,
+  contentPublications,
   editorialStrategyVersions,
   jobs,
   outboxEvents,
@@ -111,7 +115,7 @@ export class PostgresContentGenerationRepository implements ContentGenerationRep
       await tx.insert(jobs).values({
         id: crypto.randomUUID(), workspaceId: input.workspaceId, type: CONTENT_GENERATION_JOB_TYPE,
         payload: { runId }, idempotencyKey: `content-generation:${runId}:v1`, correlationId: `content-generation:${runId}`,
-        maxAttempts: 4, priority: 10, availableAt: input.now, createdAt: input.now, updatedAt: input.now,
+        maxAttempts: 4, priority: CONTENT_GENERATION_JOB_PRIORITY, availableAt: input.now, createdAt: input.now, updatedAt: input.now,
       });
       await appendEvent(tx, { workspaceId: input.workspaceId, userId: input.userId, runId, eventType: "ContentGenerationScheduled", changes: { ideaId: idea.id, assetId: asset.id, operation: input.operation } });
       return toRun(run);
@@ -149,15 +153,28 @@ export class PostgresContentGenerationRepository implements ContentGenerationRep
     const current = rows[0];
     if (!current) throw new Error("CONTENT_GENERATION_RUN_NOT_FOUND");
     const sourceRows = await this.database.select().from(contentIdeaSources).where(and(eq(contentIdeaSources.workspaceId, input.workspaceId), eq(contentIdeaSources.ideaId, current.idea.id))).orderBy(desc(contentIdeaSources.collectedAt));
-    const recent = await this.database.select({ body: contentAssetVersions.body }).from(contentAssetVersions)
-      .where(eq(contentAssetVersions.workspaceId, input.workspaceId)).orderBy(desc(contentAssetVersions.createdAt)).limit(12);
+    const recent = await this.database.select({
+      body: contentAssetVersions.body,
+      publishedAt: contentPublications.publishedAt,
+    }).from(contentAssetVersions)
+      .innerJoin(contentPublications, and(
+        eq(contentPublications.workspaceId, contentAssetVersions.workspaceId),
+        eq(contentPublications.assetVersionId, contentAssetVersions.id),
+      ))
+      .where(and(
+        eq(contentAssetVersions.workspaceId, input.workspaceId),
+        eq(contentPublications.status, "published"),
+      ))
+      .orderBy(desc(contentPublications.publishedAt))
+      .limit(24);
     const evidence = sourceRows.map(toEvidence);
+    const recentBodies = [...new Set(recent.map((item) => item.body))].slice(0, 12);
     return {
       run: toRun(current.run),
       idea: toIdea(current.idea, evidence),
       strategy: editorialStrategySnapshotSchema.parse(current.strategy),
       evidence,
-      recentBodies: recent.map((item) => item.body),
+      recentBodies,
       brief: current.run.briefSnapshot ? contentBriefSnapshotSchema.parse(current.run.briefSnapshot) : null,
       draft: current.run.draftSnapshot ? contentDraftSnapshotSchema.parse(current.run.draftSnapshot) : null,
       audit: current.run.auditSnapshot ? contentEvidenceAuditSchema.parse(current.run.auditSnapshot) : null,
@@ -189,6 +206,10 @@ export class PostgresContentGenerationRepository implements ContentGenerationRep
 
   async saveDraft(input: Parameters<ContentGenerationRepository["saveDraft"]>[0]): Promise<void> {
     await this.advance(input.workspaceId, input.runId, "writer", { draftSnapshot: input.draft, stage: "audit", updatedAt: input.now }, "ContentDraftWritten", input.now);
+  }
+
+  async reviseDraftAfterAudit(input: Parameters<ContentGenerationRepository["reviseDraftAfterAudit"]>[0]): Promise<void> {
+    await this.advance(input.workspaceId, input.runId, "audit", { draftSnapshot: input.draft, auditSnapshot: null, updatedAt: input.now }, "ContentDraftRepairedAfterAudit", input.now, "audit");
   }
 
   async saveAudit(input: Parameters<ContentGenerationRepository["saveAudit"]>[0]): Promise<void> {
@@ -228,13 +249,13 @@ export class PostgresContentGenerationRepository implements ContentGenerationRep
     }).where(and(eq(contentGenerationRuns.workspaceId, input.workspaceId), eq(contentGenerationRuns.id, input.runId), sql`${contentGenerationRuns.status} in ('queued', 'running')`));
   }
 
-  private async advance(workspaceId: string, runId: string, expected: ContentGenerationStage, values: Record<string, unknown>, eventType: string, now: Date): Promise<void> {
+  private async advance(workspaceId: string, runId: string, expected: ContentGenerationStage, values: Record<string, unknown>, eventType: string, now: Date, resultingStage?: ContentGenerationStage): Promise<void> {
     await this.database.transaction(async (tx) => {
       const run = (await tx.select().from(contentGenerationRuns).where(and(eq(contentGenerationRuns.workspaceId, workspaceId), eq(contentGenerationRuns.id, runId))).limit(1).for("update"))[0];
       if (!run) throw new Error("CONTENT_GENERATION_RUN_NOT_FOUND");
       if (stageAfter(run.stage as ContentGenerationStage, expected)) return;
       if (run.stage !== expected) throw new Error("CONTENT_GENERATION_STAGE_CONFLICT");
-      await tx.update(contentGenerationRuns).set(values).where(and(eq(contentGenerationRuns.workspaceId, workspaceId), eq(contentGenerationRuns.id, runId)));
+      await tx.update(contentGenerationRuns).set({ ...values, ...(resultingStage ? { stage: resultingStage } : {}) }).where(and(eq(contentGenerationRuns.workspaceId, workspaceId), eq(contentGenerationRuns.id, runId)));
       await appendEvent(tx, { workspaceId, userId: null, runId, eventType, changes: { at: now.toISOString() } });
     });
   }

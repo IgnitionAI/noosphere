@@ -12,6 +12,7 @@ import type {
 import { assertGroundedContentDraft, evaluateContentReadiness } from "@outbound/domain/content/content-asset";
 
 export const CONTENT_GENERATION_JOB_TYPE = "content.asset.generate";
+export const CONTENT_GENERATION_JOB_PRIORITY = 60;
 
 export interface ContentGenerationRunView {
   readonly id: string;
@@ -75,6 +76,7 @@ export interface ContentGenerationRepository {
   startRun(input: { workspaceId: string; runId: string; now: Date }): Promise<void>;
   saveBrief(input: { workspaceId: string; runId: string; brief: ContentBriefSnapshot; now: Date }): Promise<void>;
   saveDraft(input: { workspaceId: string; runId: string; draft: ContentDraftSnapshot; now: Date }): Promise<void>;
+  reviseDraftAfterAudit(input: { workspaceId: string; runId: string; draft: ContentDraftSnapshot; now: Date }): Promise<void>;
   saveAudit(input: { workspaceId: string; runId: string; audit: ContentEvidenceAudit; now: Date }): Promise<void>;
   completeRun(input: { workspaceId: string; runId: string; critique: ContentEditorialCritique; readiness: { ready: boolean; blockers: readonly string[] }; now: Date }): Promise<void>;
   failRun(input: { workspaceId: string; runId: string; code: string; message: string; now: Date }): Promise<void>;
@@ -82,7 +84,10 @@ export interface ContentGenerationRepository {
 
 export interface ContentPipelineAgent {
   buildBrief(input: Pick<ContentGenerationContext, "run" | "idea" | "strategy" | "evidence">): Promise<ContentBriefSnapshot>;
-  write(input: Pick<ContentGenerationContext, "run" | "idea" | "strategy" | "evidence" | "recentBodies"> & { readonly brief: ContentBriefSnapshot }): Promise<ContentDraftSnapshot>;
+  write(input: Pick<ContentGenerationContext, "run" | "idea" | "strategy" | "evidence" | "recentBodies"> & {
+    readonly brief: ContentBriefSnapshot;
+    readonly validationFeedback?: readonly string[];
+  }): Promise<ContentDraftSnapshot>;
   audit(input: Pick<ContentGenerationContext, "run" | "strategy" | "evidence"> & { readonly brief: ContentBriefSnapshot; readonly draft: ContentDraftSnapshot }): Promise<ContentEvidenceAudit>;
   critique(input: Pick<ContentGenerationContext, "run" | "idea" | "strategy" | "recentBodies"> & { readonly brief: ContentBriefSnapshot; readonly draft: ContentDraftSnapshot; readonly audit: ContentEvidenceAudit }): Promise<ContentEditorialCritique>;
 }
@@ -130,16 +135,22 @@ export class ContentGenerationJobProcessor {
       }
       if (stageAtOrBefore(context.run.stage, "writer")) {
         if (!context.brief) throw new Error("CONTENT_BRIEF_CHECKPOINT_MISSING");
-        const draft = await this.agent.write({ ...context, brief: context.brief });
-        assertGroundedContentDraft(draft, context.evidence.map((item) => item.key));
+        const draft = await writeGroundedDraft(this.agent, { ...context, brief: context.brief });
         await this.repository.saveDraft({ workspaceId: job.workspaceId, runId: payload.runId, draft, now: this.now() });
         context = { ...context, draft, run: { ...context.run, stage: "audit" } };
       }
       if (stageAtOrBefore(context.run.stage, "audit")) {
         if (!context.brief || !context.draft) throw new Error("CONTENT_DRAFT_CHECKPOINT_MISSING");
-        const audit = await this.agent.audit({ ...context, brief: context.brief, draft: context.draft });
+        let draft = context.draft;
+        let audit = await this.agent.audit({ ...context, brief: context.brief, draft });
+        const auditFeedback = repairableAuditFeedback(audit);
+        if (auditFeedback.length > 0) {
+          draft = await writeGroundedDraft(this.agent, { ...context, brief: context.brief }, auditFeedback);
+          await this.repository.reviseDraftAfterAudit({ workspaceId: job.workspaceId, runId: payload.runId, draft, now: this.now() });
+          audit = await this.agent.audit({ ...context, brief: context.brief, draft });
+        }
         await this.repository.saveAudit({ workspaceId: job.workspaceId, runId: payload.runId, audit, now: this.now() });
-        context = { ...context, audit, run: { ...context.run, stage: "critic" } };
+        context = { ...context, draft, audit, run: { ...context.run, stage: "critic" } };
       }
       if (stageAtOrBefore(context.run.stage, "critic")) {
         if (!context.brief || !context.draft || !context.audit) throw new Error("CONTENT_AUDIT_CHECKPOINT_MISSING");
@@ -155,6 +166,45 @@ export class ContentGenerationJobProcessor {
       throw error;
     }
   }
+}
+
+async function writeGroundedDraft(
+  agent: ContentPipelineAgent,
+  input: Parameters<ContentPipelineAgent["write"]>[0],
+  initialValidationFeedback: readonly string[] = [],
+): Promise<ContentDraftSnapshot> {
+  const evidenceKeys = input.evidence.map((item) => item.key);
+  let validationFeedback = initialValidationFeedback;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const draft = await agent.write({ ...input, ...(validationFeedback.length ? { validationFeedback } : {}) });
+    try {
+      assertGroundedContentDraft(draft, evidenceKeys);
+      return draft;
+    } catch (error) {
+      if (!isRepairableDraftError(error) || attempt === 2) throw error;
+      validationFeedback = [error.message];
+    }
+  }
+  throw new Error("CONTENT_DRAFT_REPAIR_EXHAUSTED");
+}
+
+function repairableAuditFeedback(audit: ContentEvidenceAudit): readonly string[] {
+  if (audit.forbiddenTopicMatches.length > 0) return [];
+  const feedback = [
+    ...audit.ungroundedStatements.map((statement) => `CONTENT_AUDIT_UNGROUNDED_STATEMENT: ${statement}`),
+    ...audit.reviewedClaims
+      .filter((claim) => claim.verdict !== "supported")
+      .map((claim) => `CONTENT_AUDIT_UNSUPPORTED_CLAIM: ${claim.statement} — ${claim.reason}`),
+  ];
+  return feedback.slice(0, 8).map((item) => item.slice(0, 1_000));
+}
+
+function isRepairableDraftError(error: unknown): error is Error {
+  return error instanceof Error && [
+    "CONTENT_DRAFT_UNRESOLVED_CLAIM",
+    "CONTENT_DRAFT_CLAIM_NOT_IN_BODY",
+    "CONTENT_DRAFT_UNSOURCED_NUMBER",
+  ].includes(error.message);
 }
 
 function assertBriefGrounded(brief: ContentBriefSnapshot, context: ContentGenerationContext): void {

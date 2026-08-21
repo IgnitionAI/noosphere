@@ -4,6 +4,7 @@ import type { ContentIdeaCandidate, ContentIdeaSourceType, ContentIdeaStatus } f
 import { assertGroundedIdeaCandidate } from "@outbound/domain/content/content-idea";
 
 export const CONTENT_IDEA_DISCOVERY_JOB_TYPE = "content.ideas.discover";
+export const CONTENT_IDEA_DISCOVERY_JOB_PRIORITY = 60;
 
 export interface ContentIdeaEvidence {
   readonly key: string;

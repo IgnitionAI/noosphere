@@ -88,6 +88,7 @@ function boundedContext(input: Partial<ContentGenerationContext> & Record<string
     brief: input.brief,
     draft: input.draft,
     audit: input.audit,
+    validationFeedback: input.validationFeedback,
     recentBodies: input.recentBodies?.slice(0, 12),
   };
 }
@@ -117,6 +118,12 @@ async function invokePipelineModel(input: Parameters<ModelInvoker>[0]) {
       "Use the complete offer context, audience, idea, brief, real evidence and recent posts. The post must be specific enough that it cannot be swapped into another company.",
       "Open with a concrete tension, observation or consequence. Never use empty thought-leadership hooks, fabricated urgency or generic B2B advice.",
       "Every factual statement, number, performance claim or product capability must appear verbatim in factualClaims with exact supplied source keys.",
+      "Every factualClaims.statement must also be a verbatim contiguous excerpt of body; never paraphrase the ledger separately.",
+      "If validationFeedback contains CONTENT_DRAFT_UNSOURCED_NUMBER, remove every number absent from evidence or add the exact sourced sentence to factualClaims.",
+      "If validationFeedback contains CONTENT_DRAFT_CLAIM_NOT_IN_BODY, make each claim statement an exact excerpt of body.",
+      "If validationFeedback contains CONTENT_DRAFT_UNRESOLVED_CLAIM, use only evidence keys present in the supplied context.",
+      "If validationFeedback contains CONTENT_AUDIT_UNGROUNDED_STATEMENT, either add the exact factual sentence to factualClaims only when supplied evidence directly proves it, or remove/narrow it. Do not hide a verifiable claim in opinionStatements.",
+      "If validationFeedback contains CONTENT_AUDIT_UNSUPPORTED_CLAIM, remove or narrow the claim to the exact supplied evidence. Never override or argue with the auditor.",
       "Mark personal analysis explicitly in opinionStatements. Do not turn an opinion into a fact.",
       "The body is the complete ready-to-review post, including hook and CTA. Do not schedule or publish. Call submit_linkedin_draft exactly once.",
     ].join("\n"),
@@ -131,6 +138,7 @@ async function invokePipelineModel(input: Parameters<ModelInvoker>[0]) {
       "You are Noosphere's bounded evidence auditor, independent from the writer.",
       "Inspect the full draft sentence by sentence. Review every factual claim, number, capability and outcome against the exact supplied evidence excerpts.",
       "A source key is not enough: mark unsupported when its excerpt does not prove the wording. Never repair, rewrite or excuse a claim.",
+      "Conversely, a factual claim that is a faithful verbatim excerpt of an active supplied source must be supported. Never return verdict unsupported with a reason saying the source proves or repeats the statement exactly.",
       "List factual statements omitted from the writer's claim ledger as ungroundedStatements. Match forbidden topics exactly and conservatively.",
       "Do not schedule or publish. Call submit_evidence_audit exactly once.",
     ].join("\n"),
@@ -144,6 +152,8 @@ async function invokePipelineModel(input: Parameters<ModelInvoker>[0]) {
     system: [
       "You are Noosphere's principal editorial critic, independent from the writer.",
       "Reject interchangeable hooks, vague claims, fake intimacy, manufactured urgency, repetition of recent posts and CTA unrelated to the offer or objective.",
+      "The hook field is metadata copied from the opening of the complete body. Its exact presence at the start of body is required by contract and is not repetition; only flag repeated wording that occurs again later inside body.",
+      "Populate repeatedConcepts only for excessive or detrimental repetition that must block readiness. A necessary central term used coherently across the post is not a repeatedConcept, even when it appears several times.",
       "A blocker means the draft must not become ready. Never rewrite the draft and never weaken an evidence audit.",
       "Be demanding but concrete. Advice is allowed only for non-blocking polish. Do not schedule or publish.",
       "Call submit_editorial_critique exactly once.",

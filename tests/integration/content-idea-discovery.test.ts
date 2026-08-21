@@ -87,8 +87,9 @@ databaseDescribe("IDE-101 durable content idea discovery", () => {
     const first = await repository.createDiscovery({ workspaceId, userId, requestKey: "ideas:integration:1", trigger: "manual", now });
     const replay = await repository.createDiscovery({ workspaceId, userId, requestKey: "ideas:integration:1", trigger: "manual", now });
     expect(replay.id).toBe(first.id);
-    const queued = await database.client<{ count: number }[]>`select count(*)::int as count from jobs where workspace_id = ${workspaceId} and type = 'content.ideas.discover'`;
+    const queued = await database.client<{ count: number; priority: number }[]>`select count(*)::int as count, max(priority)::int as priority from jobs where workspace_id = ${workspaceId} and type = 'content.ideas.discover'`;
     expect(queued[0]?.count).toBe(1);
+    expect(queued[0]?.priority).toBe(60);
 
     const context = await repository.loadDiscoveryContext({ workspaceId, runId: first.id });
     expect(context.strategy.allowedClaimIds).toEqual([claimId]);

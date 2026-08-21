@@ -6,7 +6,10 @@ import type {
   ContentIdeaRepository,
   ContentIdeaView,
 } from "@outbound/application/content/content-ideas";
-import { CONTENT_IDEA_DISCOVERY_JOB_TYPE } from "@outbound/application/content/content-ideas";
+import {
+  CONTENT_IDEA_DISCOVERY_JOB_PRIORITY,
+  CONTENT_IDEA_DISCOVERY_JOB_TYPE,
+} from "@outbound/application/content/content-ideas";
 import type { ContentIdeaStatus } from "@outbound/domain/content/content-idea";
 import { normalizeIdeaConcept } from "@outbound/domain/content/content-idea";
 import { editorialStrategySnapshotSchema } from "@outbound/contracts/content";
@@ -125,7 +128,7 @@ export class PostgresContentIdeaRepository implements ContentIdeaRepository {
         idempotencyKey: `ideas:${runId}:v1`,
         correlationId: `content-ideas:${runId}`,
         maxAttempts: 5,
-        priority: 10,
+        priority: CONTENT_IDEA_DISCOVERY_JOB_PRIORITY,
         availableAt: input.now,
         createdAt: input.now,
         updatedAt: input.now,

@@ -9,7 +9,10 @@ import type {
   ContentPublicationView,
   SocialPublishingAccountResolver,
 } from "@outbound/application/content/content-publications";
-import { CONTENT_PUBLICATION_JOB_TYPE } from "@outbound/application/content/content-publications";
+import {
+  CONTENT_PUBLICATION_JOB_PRIORITY,
+  CONTENT_PUBLICATION_JOB_TYPE,
+} from "@outbound/application/content/content-publications";
 import { textFingerprint, type ContentPublicationReconciliationView } from "@outbound/application/content/content-publication-reconciliation";
 import type { Database } from "@outbound/infrastructure/database/client";
 import {
@@ -146,7 +149,7 @@ export class PostgresContentPublicationRepository implements ContentPublicationR
         idempotencyKey: `content-publication:${publicationId}:v1`,
         correlationId: `content-publication:${publicationId}`,
         maxAttempts: 4,
-        priority: 10,
+        priority: CONTENT_PUBLICATION_JOB_PRIORITY,
         availableAt: input.scheduledFor,
         createdAt: input.now,
         updatedAt: input.now,
