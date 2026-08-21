@@ -60,7 +60,26 @@ export function createCalendarBookingHttpHandler(input: { integration: CalendarP
 
 function serializeBooking(booking: Awaited<ReturnType<PostgresCalendarIntegration["listBookings"]>>[number] | Awaited<ReturnType<PostgresCalendarIntegration["markNoShow"]>>, role: WorkspaceRole) {
   const redact = role === "viewer";
-  return { ...booking, ...(redact ? { contactId: null, contactName: null, campaignId: null, campaignName: null, opportunityId: null, attendeeName: null, attendeeEmail: null, attendeePhone: null, meetingUrl: null } : {}) };
+  if (!redact) return booking;
+  const touches = booking.attribution.touches.map((touch) => ({ ...touch, actorName: null, body: null }));
+  return {
+    ...booking,
+    contactId: null,
+    contactName: null,
+    campaignId: null,
+    campaignName: null,
+    opportunityId: null,
+    attendeeName: null,
+    attendeeEmail: null,
+    attendeePhone: null,
+    meetingUrl: null,
+    attribution: {
+      ...booking.attribution,
+      firstTouch: touches[0] ?? null,
+      lastTouch: touches.at(-1) ?? null,
+      touches,
+    },
+  };
 }
 class CalendarPermissionError extends Error {}
 function requireReader(role: WorkspaceRole) { if (!(["owner", "admin", "operator", "reviewer", "viewer"] as WorkspaceRole[]).includes(role)) throw new CalendarPermissionError("Workspace access required"); }

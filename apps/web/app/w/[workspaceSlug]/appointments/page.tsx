@@ -1,5 +1,6 @@
-import { CalendarCheck2, CalendarClock, ExternalLink, Settings2, Target, UserRound, Video } from "lucide-react";
+import { CalendarCheck2, CalendarClock, ExternalLink, Settings2, UserRound, Video } from "lucide-react";
 import Link from "next/link";
+import { BookingSourceAttribution } from "@/components/booking-source-attribution";
 import { CrmPermissionState } from "@/components/crm-states";
 import { getCalendarConnection, listCalendarBookings, OutboundApiError, type CalendarBooking } from "@/lib/api";
 
@@ -7,17 +8,19 @@ export const metadata = { title: "Appels" };
 export const dynamic = "force-dynamic";
 
 type View = "upcoming" | "past" | "all";
+type Source = CalendarBooking["source"] | "all";
 
 export default async function AppointmentsPage({
   params,
   searchParams,
 }: {
   params: Promise<{ workspaceSlug: string }>;
-  searchParams: Promise<{ view?: string }>;
+  searchParams: Promise<{ view?: string; source?: string; booking?: string }>;
 }) {
   const { workspaceSlug } = await params;
   const query = await searchParams;
   const view: View = query.view === "past" || query.view === "all" ? query.view : "upcoming";
+  const source: Source = ["inbound", "outbound", "mixed", "unknown"].includes(query.source ?? "") ? query.source as CalendarBooking["source"] : "all";
   let bookings: readonly CalendarBooking[];
   let connection: Awaited<ReturnType<typeof getCalendarConnection>>;
   try {
@@ -34,8 +37,9 @@ export default async function AppointmentsPage({
   const isUpcoming = (booking: CalendarBooking) => Date.parse(booking.startAt) >= now && !["cancelled", "completed", "no_show"].includes(booking.status);
   const upcoming = bookings.filter(isUpcoming).sort((a, b) => Date.parse(a.startAt) - Date.parse(b.startAt));
   const past = bookings.filter((booking) => !isUpcoming(booking)).sort((a, b) => Date.parse(b.startAt) - Date.parse(a.startAt));
-  const visible = view === "upcoming" ? upcoming : view === "past" ? past : [...upcoming, ...past];
-  const next = upcoming[0] ?? null;
+  const byView = view === "upcoming" ? upcoming : view === "past" ? past : [...upcoming, ...past];
+  const visible = byView.filter((booking) => (source === "all" || booking.source === source) && (!query.booking || booking.id === query.booking));
+  const next = upcoming.find((booking) => (source === "all" || booking.source === source) && (!query.booking || booking.id === query.booking)) ?? null;
 
   return (
     <>
@@ -58,7 +62,7 @@ export default async function AppointmentsPage({
       <section className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Metric label="À venir" value={upcoming.length} />
         <Metric label="Cette semaine" value={upcoming.filter((booking) => Date.parse(booking.startAt) <= now + 7 * 86_400_000).length} tone="signal" />
-        <Metric label="Attribués à l’Outbound" value={bookings.filter((booking) => booking.campaignId).length} />
+        <Metric label="Inbound ou mixtes" value={bookings.filter((booking) => booking.source === "inbound" || booking.source === "mixed").length} />
         <Metric label="Terminés" value={bookings.filter((booking) => booking.status === "completed").length} />
       </section>
 
@@ -67,17 +71,32 @@ export default async function AppointmentsPage({
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-start gap-3">
               <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-navy text-signal"><CalendarClock size={18} /></span>
-              <div><p className="text-[11px] font-semibold uppercase tracking-wide text-muted">Prochain appel</p><h2 className="mt-1 font-semibold text-navy">{displayName(next)}</h2><p className="mt-1 text-sm text-muted">{formatDate(next.startAt)} · {duration(next)}</p><BookingOrigin booking={next} workspaceSlug={workspaceSlug} /></div>
+              <div><p className="text-[11px] font-semibold uppercase tracking-wide text-muted">Prochain appel</p><h2 className="mt-1 font-semibold text-navy">{displayName(next)}</h2><p className="mt-1 text-sm text-muted">{formatDate(next.startAt)} · {duration(next)}</p><BookingSourceAttribution booking={next} workspaceSlug={workspaceSlug} /></div>
             </div>
             {next.meetingUrl ? <a className="button button-signal shrink-0" href={next.meetingUrl} rel="noreferrer" target="_blank"><Video size={15} /> Rejoindre l’appel</a> : null}
           </div>
         </section>
       ) : null}
 
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        <ViewLink active={view === "upcoming"} href={`/w/${workspaceSlug}/appointments?view=upcoming`} label={`À venir · ${upcoming.length}`} />
-        <ViewLink active={view === "past"} href={`/w/${workspaceSlug}/appointments?view=past`} label={`Historique · ${past.length}`} />
-        <ViewLink active={view === "all"} href={`/w/${workspaceSlug}/appointments?view=all`} label="Tous" />
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div className="flex flex-wrap items-center gap-2">
+          <ViewLink active={view === "upcoming"} href={viewHref(workspaceSlug, "upcoming", source)} label={`À venir · ${upcoming.length}`} />
+          <ViewLink active={view === "past"} href={viewHref(workspaceSlug, "past", source)} label={`Historique · ${past.length}`} />
+          <ViewLink active={view === "all"} href={viewHref(workspaceSlug, "all", source)} label="Tous" />
+        </div>
+        <form className="flex items-end gap-2">
+          <input name="view" type="hidden" value={view} />
+          <label className="text-xs font-semibold text-muted">Source
+            <select aria-label="Source" className="control mt-1 min-w-40" defaultValue={source} name="source">
+              <option value="all">Toutes</option>
+              <option value="inbound">Inbound</option>
+              <option value="outbound">Outbound</option>
+              <option value="mixed">Mixte</option>
+              <option value="unknown">Inconnue</option>
+            </select>
+          </label>
+          <button className="button button-primary" type="submit">Filtrer</button>
+        </form>
       </div>
 
       {visible.length ? (
@@ -86,7 +105,7 @@ export default async function AppointmentsPage({
             {visible.map((booking) => (
               <article className="grid gap-4 p-5 md:grid-cols-[160px_minmax(0,1fr)_170px_auto] md:items-center" key={booking.id}>
                 <div><p className="text-sm font-semibold text-navy">{formatDay(booking.startAt)}</p><p className="mt-1 text-xs text-muted">{formatTime(booking.startAt)} · {duration(booking)}</p></div>
-                <div className="flex min-w-0 items-center gap-3"><span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-slate-100 text-navy"><UserRound size={15} /></span><div className="min-w-0"><h2 className="truncate text-sm font-semibold">{booking.contactId ? <Link className="hover:text-brand-blue" href={`/w/${workspaceSlug}/prospects/${booking.contactId}`}>{displayName(booking)}</Link> : displayName(booking)}</h2><p className="mt-1 truncate text-xs text-muted">{booking.attendeeEmail ?? booking.attendeePhone ?? booking.meetingType?.title ?? "Prospect qualifié"}</p><BookingOrigin booking={booking} workspaceSlug={workspaceSlug} /></div></div>
+                <div className="flex min-w-0 items-center gap-3"><span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-slate-100 text-navy"><UserRound size={15} /></span><div className="min-w-0"><h2 className="truncate text-sm font-semibold">{booking.contactId ? <Link className="hover:text-brand-blue" href={`/w/${workspaceSlug}/prospects/${booking.contactId}`}>{displayName(booking)}</Link> : displayName(booking)}</h2><p className="mt-1 truncate text-xs text-muted">{booking.attendeeEmail ?? booking.attendeePhone ?? booking.meetingType?.title ?? "Prospect qualifié"}</p><BookingSourceAttribution booking={booking} compact workspaceSlug={workspaceSlug} /></div></div>
                 <div><span className={statusBadge(booking.status)}>{statusLabel(booking.status)}</span>{booking.opportunityStage ? <p className="mt-1 text-[11px] text-muted">Pipeline · {opportunityLabel(booking.opportunityStage)}</p> : null}{booking.rescheduleCount ? <p className="mt-1 text-[11px] text-muted">Replanifié {booking.rescheduleCount} fois</p> : null}<p className="mt-1 text-[11px] text-muted">{booking.attendeeTimeZone} → {booking.organizerTimeZone}</p></div>
                 <div className="flex justify-end gap-2">
                   {booking.opportunityId ? <Link className="button h-9 px-3" href={`/w/${workspaceSlug}/pipeline?opportunity=${booking.opportunityId}`}>Suivi</Link> : null}
@@ -116,11 +135,6 @@ function ViewLink({ active, href, label }: { active: boolean; href: string; labe
   return <Link aria-current={active ? "page" : undefined} className={active ? "button button-primary" : "button"} href={href}>{label}</Link>;
 }
 
-function BookingOrigin({ booking, workspaceSlug }: { booking: CalendarBooking; workspaceSlug: string }) {
-  if (!booking.campaignId) return <span className="mt-2 inline-flex items-center gap-1 text-[11px] text-muted"><Target size={11} /> Origine inconnue</span>;
-  return <Link className="mt-2 inline-flex items-center gap-1 text-[11px] font-semibold text-brand-blue hover:underline" href={`/w/${workspaceSlug}/campaigns/${booking.campaignId}`}><Target size={11} /> Outbound · {booking.campaignName ?? "Campagne"}</Link>;
-}
-
 function displayName(booking: CalendarBooking): string { return booking.contactName?.trim() || booking.attendeeName?.trim() || booking.attendeeEmail || booking.attendeePhone || "Prospect"; }
 function duration(booking: CalendarBooking): string { if (booking.meetingType) return `${booking.meetingType.lengthMinutes} min`; if (!booking.endAt) return "durée à confirmer"; return `${Math.max(1, Math.round((Date.parse(booking.endAt) - Date.parse(booking.startAt)) / 60_000))} min`; }
 function formatDate(value: string): string { return new Intl.DateTimeFormat("fr-FR", { dateStyle: "full", timeStyle: "short", timeZone: "Europe/Paris" }).format(new Date(value)); }
@@ -129,3 +143,4 @@ function formatTime(value: string): string { return new Intl.DateTimeFormat("fr-
 function statusLabel(status: string): string { return ({ requested: "Demandé", booked: "Confirmé", scheduled: "Confirmé", rescheduled: "Replanifié", completed: "Terminé", cancelled: "Annulé", no_show: "Absent" } as Record<string, string>)[status] ?? status; }
 function statusBadge(status: string): string { if (["requested", "booked", "scheduled", "rescheduled"].includes(status)) return "badge badge-success"; if (["cancelled", "no_show"].includes(status)) return "badge badge-warning"; return "badge"; }
 function opportunityLabel(stage: string): string { return ({ qualified: "Qualifié", meeting_requested: "Appel demandé", meeting_booked: "Appel réservé", meeting_completed: "Appel terminé", meeting_no_show: "À replanifier", won: "Gagné", lost: "Perdu" } as Record<string, string>)[stage] ?? stage; }
+function viewHref(workspaceSlug: string, view: View, source: Source): string { const query = new URLSearchParams({ view }); if (source !== "all") query.set("source", source); return `/w/${workspaceSlug}/appointments?${query}`; }

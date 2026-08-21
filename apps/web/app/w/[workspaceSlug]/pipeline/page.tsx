@@ -1,5 +1,6 @@
 import { CalendarCheck, CheckCircle2, CircleDollarSign, Flame, Kanban, RotateCcw, UserRound } from "lucide-react";
 import Link from "next/link";
+import { BookingSourceBadge } from "@/components/booking-source-attribution";
 import { CrmPermissionState } from "@/components/crm-states";
 import {
   getPipeline,
@@ -12,6 +13,7 @@ import {
   listWorkspaces,
   OutboundApiError,
   type OfferVersion,
+  type CalendarBooking,
   type PipelineOpportunity,
 } from "@/lib/api";
 import { OpportunityDrawer } from "./opportunity-drawer";
@@ -55,7 +57,10 @@ export default async function PipelinePage({
     listOffers(workspaceSlug).then((result) => result.data).catch(() => []),
     listWorkspaceMembers(workspaceSlug, workspace.id).catch(() => []),
   ]);
-  const selectedBookings = selected ? await listCalendarBookings(workspaceSlug, { opportunityId: selected.id, limit: 20 }).catch(() => []) : [];
+  const bookings = await listCalendarBookings(workspaceSlug, { limit: 200 }).catch(() => []);
+  const bookingByOpportunity = new Map<string, CalendarBooking>();
+  for (const booking of bookings) if (booking.opportunityId && !bookingByOpportunity.has(booking.opportunityId)) bookingByOpportunity.set(booking.opportunityId, booking);
+  const selectedBookings = selected ? bookings.filter((booking) => booking.opportunityId === selected.id).slice(0, 20) : [];
   const ownerOptions = ownerIds.map((id) => {
     const member = members.find((candidate) => candidate.userId === id);
     return { id, label: member?.name?.trim() || member?.email || `Membre · ${id.slice(0, 8)}` };
@@ -101,7 +106,7 @@ export default async function PipelinePage({
                 </div>
                 <div className="space-y-3">
                   {items.map((opportunity) => (
-                    <OpportunityCard key={opportunity.id} opportunity={opportunity} {...(opportunity.ownerUserId && ownerLabels.get(opportunity.ownerUserId) ? { ownerLabel: ownerLabels.get(opportunity.ownerUserId)! } : {})} workspaceSlug={workspaceSlug} />
+                    <OpportunityCard {...(bookingByOpportunity.get(opportunity.id) ? { booking: bookingByOpportunity.get(opportunity.id)! } : {})} key={opportunity.id} opportunity={opportunity} {...(opportunity.ownerUserId && ownerLabels.get(opportunity.ownerUserId) ? { ownerLabel: ownerLabels.get(opportunity.ownerUserId)! } : {})} workspaceSlug={workspaceSlug} />
                   ))}
                   {!items.length ? <div className="rounded-xl border border-dashed border-line bg-white/60 px-3 py-8 text-center text-xs text-muted">Aucune opportunité</div> : null}
                 </div>
@@ -123,7 +128,7 @@ export default async function PipelinePage({
   );
 }
 
-function OpportunityCard({ opportunity, workspaceSlug, ownerLabel }: { opportunity: PipelineOpportunity; workspaceSlug: string; ownerLabel?: string }) {
+function OpportunityCard({ opportunity, workspaceSlug, ownerLabel, booking }: { opportunity: PipelineOpportunity; workspaceSlug: string; ownerLabel?: string; booking?: CalendarBooking }) {
   return (
     <Link className="block rounded-xl border border-line bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md" href={`/w/${workspaceSlug}/pipeline?opportunity=${opportunity.id}`} scroll={false}>
       <div className="flex items-start gap-3">
@@ -137,6 +142,7 @@ function OpportunityCard({ opportunity, workspaceSlug, ownerLabel }: { opportuni
         <span className={stageBadge(opportunity.stage)}>{stageLabel(opportunity.stage)}</span>
         {opportunity.icpName ? <span className="badge truncate">{opportunity.icpName}</span> : null}
         <span className="badge">{opportunity.probability}%</span>
+        {booking ? <BookingSourceBadge source={booking.source} /> : null}
       </div>
       {opportunity.amount === undefined ? <p className="mt-3 text-xs text-muted">Montant masqué</p> : opportunity.amount !== null ? <p className="mt-3 text-xs font-semibold text-navy">{formatCurrency(opportunity.amount, opportunity.currency)}</p> : null}
       {opportunity.meeting ? <p className="mt-3 flex items-center gap-2 text-xs font-semibold text-emerald-800"><CalendarCheck size={13} />{formatDate(opportunity.meeting.startAt)}</p> : null}

@@ -61,6 +61,15 @@ test("Symbiose renders a proved journey and keeps an unresolved reaction inert",
     await expect(socialRegion.getByText("Le lien entre preuve et revenu m’intéresse.")).toBeVisible();
     await expect(page.getByText(/Aucune réponse automatique hors campagne/)).toBeVisible();
     await expect(page.getByRole("button", { name: "Envoyer moi-même" })).toBeVisible();
+
+    await page.goto(`/w/${workspaceSlug}/appointments?view=all&source=inbound`);
+    await expect(page.getByRole("heading", { name: "Appels" })).toBeVisible();
+    await expect(page.getByRole("combobox", { name: "Source" })).toHaveValue("inbound");
+    await expect(page.getByText("Source Inbound", { exact: true }).first()).toBeVisible();
+    await expect(page.getByText("Parcours social attribué · inférence, pas causalité").first()).toBeVisible();
+    await page.getByText("Parcours social attribué · inférence, pas causalité").first().click();
+    await expect(page.getByText(/Même contact LinkedIn vérifié, puis appel réservé/).first()).toBeVisible();
+    await expect(page.getByRole("link", { name: "Voir la preuve" }).first()).toHaveAttribute("href", new RegExp(`/w/${workspaceSlug}/attribution\\?interactionId=`));
     expect(mutationRequests).toEqual([]);
   } finally {
     await fixture.cleanup();

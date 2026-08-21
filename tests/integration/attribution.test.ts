@@ -4,6 +4,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { AttributionReconciler } from "@outbound/application/attribution/attribution";
 import { PostgresAttributionRepository } from "@outbound/infrastructure/attribution/postgres-attribution-repository";
+import { PostgresCalendarIntegration } from "@outbound/infrastructure/calendar/postgres-calendar-integration";
 import { PostgresSocialProspectSignalReader } from "@outbound/infrastructure/crm/postgres-social-prospect-signal-reader";
 import { createDatabase } from "@outbound/infrastructure/database/client";
 import { PostgresOperationalViews } from "@outbound/infrastructure/workspaces/postgres-operational-views";
@@ -137,6 +138,47 @@ databaseDescribe("ATT-101 evidence-led attribution", () => {
     expect(firstTouch).toMatchObject({ certainty: "inference", confidence: 0.6, position: "first", rule: "same_verified_contact_after_touch_90d_v1" });
     expect(lastTouch).toMatchObject({ certainty: "inference", confidence: 0.6, position: "last", rule: "same_verified_contact_after_touch_90d_v1" });
     expect(firstTouch?.proofHref).toBe(`/appointments?booking=${bookingId}`);
+
+    const [booking] = await new PostgresCalendarIntegration(database.db, "attribution-test-signing-key-with-32-characters").listBookings({ workspaceId, contactId, limit: 20 });
+    expect(booking).toMatchObject({
+      id: bookingId,
+      source: "inbound",
+      attribution: { certainty: "inference" },
+    });
+    expect(booking?.attribution.touches.map((touch) => ({ interactionId: touch.interactionId, position: touch.position }))).toEqual([
+      { interactionId: firstInteractionId, position: "first" },
+      { interactionId: lastInteractionId, position: "last" },
+    ]);
+    expect(booking?.attribution.firstTouch).toMatchObject({ type: "comment", confidence: 0.6, proofHref: `/attribution?interactionId=${firstInteractionId}` });
+  });
+
+  test("classifies calls as inbound, outbound, mixed or unknown without changing booking state", async () => {
+    const rollback = new Error("ROLLBACK_BOOKING_SOURCES_FIXTURE");
+    try {
+      await database.db.transaction(async (transaction) => {
+        const icpId = crypto.randomUUID();
+        const icpVersionId = crypto.randomUUID();
+        const campaignId = crypto.randomUUID();
+        const outboundBookingId = crypto.randomUUID();
+        const unknownBookingId = crypto.randomUUID();
+        await transaction.insert(icps).values({ id: icpId, workspaceId, name: "Call sources fixture", currentVersion: 1 });
+        await transaction.insert(icpVersions).values({ id: icpVersionId, workspaceId, icpId, version: 1, name: "Call sources fixture", confidence: "1.0000", criteria: {}, buyingCommittee: [], problems: [], signals: [], exclusions: [], unknowns: [], unresolvedContradictions: [], blockedFindings: [], publishedBy: userId, publishedAt: now });
+        await transaction.insert(campaigns).values({ id: campaignId, workspaceId, name: "Outbound source fixture", icpVersionId, channel: "linkedin", sequenceId: crypto.randomUUID(), createdBy: userId });
+        await transaction.update(calendarBookings).set({ campaignId }).where(and(eq(calendarBookings.workspaceId, workspaceId), eq(calendarBookings.id, bookingId)));
+        await transaction.insert(calendarBookings).values([
+          { id: outboundBookingId, workspaceId, connectionId, providerBookingId: `outbound-${outboundBookingId}`, contactId: secondContactId, campaignId, status: "accepted", startAt: new Date(now.getTime() + 72 * 60 * 60_000) },
+          { id: unknownBookingId, workspaceId, connectionId, providerBookingId: `unknown-${unknownBookingId}`, contactId: secondContactId, status: "accepted", startAt: new Date(now.getTime() + 96 * 60 * 60_000) },
+        ]);
+
+        const bookings = await new PostgresCalendarIntegration(transaction as never, "attribution-test-signing-key-with-32-characters").listBookings({ workspaceId, limit: 20 });
+        expect(bookings.find((booking) => booking.id === bookingId)).toMatchObject({ source: "mixed", campaignId, attribution: { certainty: "inference" } });
+        expect(bookings.find((booking) => booking.id === outboundBookingId)).toMatchObject({ source: "outbound", campaignId, attribution: { certainty: "none", touches: [] } });
+        expect(bookings.find((booking) => booking.id === unknownBookingId)).toMatchObject({ source: "unknown", campaignId: null, attribution: { certainty: "none", touches: [] } });
+        throw rollback;
+      });
+    } catch (error) {
+      if (error !== rollback) throw error;
+    }
   });
 
   test("projects only exact proved interactions onto the CRM score and isolates workspaces", async () => {
