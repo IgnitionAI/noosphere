@@ -369,6 +369,8 @@ reprenables ; budget atteint restitue un résultat partiel sans perte.
 
 ### AUT-102 — Apprendre des réponses sans modifier la policy seul
 
+**État.** Livré et validé en simulation provider le 21 août 2026.
+
 **Build.** Produire des recommandations de piliers, angles et ciblage à partir
 des réponses et appels attribués.
 
@@ -377,6 +379,9 @@ au prochain run dans les bornes déjà autorisées.
 
 **Acceptation.** Aucune hausse de quota, nouveau claim, nouveau canal ou
 élargissement d'ICP sans configuration explicite ; recommandations versionnées.
+
+**Spécification.**
+[`AUT-102-BOUNDED-EDITORIAL-LEARNING.md`](features/AUT-102-BOUNDED-EDITORIAL-LEARNING.md).
 
 ### OPS-102 — Réconcilier les effets provider inconnus
 

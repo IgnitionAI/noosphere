@@ -1,6 +1,6 @@
-import { AlertTriangle, ArrowLeft, Bot, CheckCircle2, PauseCircle, ShieldCheck, Sparkles } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Bot, BrainCircuit, CheckCircle2, PauseCircle, ShieldCheck, Sparkles } from "lucide-react";
 import Link from "next/link";
-import { getContentAutopilot, getEditorialStrategy } from "@/lib/api";
+import { getContentAutopilot, getEditorialLearning, getEditorialStrategy } from "@/lib/api";
 import { StrategyActions } from "./strategy-actions";
 import { AutopilotControls } from "./autopilot-controls";
 
@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 
 export default async function EditorialStrategyPage({ params }: { params: Promise<{ workspaceSlug: string }> }) {
   const { workspaceSlug } = await params;
-  const [strategy, autopilot] = await Promise.all([getEditorialStrategy(workspaceSlug), getContentAutopilot(workspaceSlug)]);
+  const [strategy, autopilot, learning] = await Promise.all([getEditorialStrategy(workspaceSlug), getContentAutopilot(workspaceSlug), getEditorialLearning(workspaceSlug)]);
   return (
     <>
       <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
@@ -43,6 +43,18 @@ export default async function EditorialStrategyPage({ params }: { params: Promis
               </div>
               <div className="w-full shrink-0 lg:w-[360px]"><AutopilotControls enabled={autopilot.enabled} localTime={autopilot.localTime} timezone={autopilot.timezone} workspaceSlug={workspaceSlug} /></div>
             </div>
+          </section>
+
+          <section className="panel mt-4 p-5">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div className="max-w-2xl">
+                <div className="badge badge-signal w-fit"><BrainCircuit size={13} /> Apprentissage borné</div>
+                <h2 className="mt-3 text-lg font-semibold text-navy">Les réponses orientent les prochains sujets, jamais la policy</h2>
+                <p className="mt-2 text-sm leading-6 text-muted">Noosphere sépare les réponses observées des appels seulement attribués. Il peut prioriser un pilier et un angle existants, sans inventer de claim, ajouter un canal, augmenter la cadence ou élargir l’ICP.</p>
+              </div>
+              {learning ? <div className="flex shrink-0 flex-wrap gap-2"><span className="badge badge-success">v{learning.version}</span><span className="badge">{learning.facts.length} fait{learning.facts.length === 1 ? "" : "s"}</span><span className="badge">{learning.inferences.length} inférence{learning.inferences.length === 1 ? "" : "s"}</span></div> : <span className="badge">En attente de réponses</span>}
+            </div>
+            {learning?.recommendations.length ? <div className="mt-4 grid gap-3 lg:grid-cols-2">{learning.recommendations.slice(0, 4).map((item) => <article className="rounded-xl border border-line bg-surface-subtle p-4" key={`${item.pillar}:${item.angle}`}><div className="flex items-center justify-between gap-3"><h3 className="font-semibold text-navy">{item.pillar}</h3><span className="badge badge-signal">Score {item.score}</span></div><p className="mt-2 text-sm leading-6 text-muted">{item.angle}</p><div className="mt-3 flex flex-wrap items-center gap-2"><span className="badge">{item.audience}</span><span className="text-xs font-semibold text-navy">{item.rationale}</span></div></article>)}</div> : <p className="mt-4 text-sm text-muted">Une recommandation apparaîtra après une réponse à un contenu ou un appel attribué. Un simple like ne suffit pas.</p>}
           </section>
 
           <section className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(280px,0.65fr)]">

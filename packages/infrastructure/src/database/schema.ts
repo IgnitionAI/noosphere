@@ -1423,6 +1423,35 @@ export const editorialStrategyVersions = pgTable(
   ],
 );
 
+export const editorialLearningVersions = pgTable(
+  "editorial_learning_versions",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    strategyId: uuid("strategy_id").notNull(),
+    strategyVersionId: uuid("strategy_version_id").notNull(),
+    version: integer("version").notNull(),
+    inputHash: varchar("input_hash", { length: 64 }).notNull(),
+    facts: jsonb("facts").notNull(),
+    inferences: jsonb("inferences").notNull(),
+    recommendations: jsonb("recommendations").notNull(),
+    bounds: jsonb("bounds").notNull(),
+    modelVersion: varchar("model_version", { length: 120 }).notNull(),
+    windowStartedAt: timestamp("window_started_at", { withTimezone: true }).notNull(),
+    windowEndedAt: timestamp("window_ended_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({ columns: [table.workspaceId, table.strategyId], foreignColumns: [editorialStrategies.workspaceId, editorialStrategies.id], name: "editorial_learning_versions_workspace_strategy_fk" }).onDelete("cascade"),
+    foreignKey({ columns: [table.workspaceId, table.strategyVersionId], foreignColumns: [editorialStrategyVersions.workspaceId, editorialStrategyVersions.id], name: "editorial_learning_versions_workspace_strategy_version_fk" }).onDelete("restrict"),
+    unique("editorial_learning_versions_workspace_id_uq").on(table.workspaceId, table.id),
+    uniqueIndex("editorial_learning_versions_strategy_version_uq").on(table.workspaceId, table.strategyId, table.version),
+    uniqueIndex("editorial_learning_versions_input_uq").on(table.workspaceId, table.strategyVersionId, table.inputHash),
+    index("editorial_learning_versions_latest_idx").on(table.workspaceId, table.strategyId, table.version),
+    check("editorial_learning_versions_window_ck", sql`${table.windowEndedAt} >= ${table.windowStartedAt}`),
+  ],
+);
+
 export const contentOperationRequests = pgTable(
   "content_operation_requests",
   {

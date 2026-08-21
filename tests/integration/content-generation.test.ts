@@ -14,6 +14,7 @@ import {
   contentIdeas,
   editorialStrategies,
   editorialStrategyVersions,
+  editorialLearningVersions,
   icps,
   icpVersions,
   offerClaims,
@@ -35,6 +36,9 @@ import { PostgresSocialEngagementSyncRepository } from "@outbound/infrastructure
 import { PostgresContentAutopilotRepository } from "@outbound/infrastructure/content/postgres-content-autopilot-repository";
 import { ContentAutopilotReconciler } from "@outbound/application/content/content-autopilot";
 import { ContentPublicationApplication } from "@outbound/application/content/content-publications";
+import { EditorialLearningReconciler } from "@outbound/application/content/editorial-learning";
+import { PostgresEditorialLearningRepository } from "@outbound/infrastructure/content/postgres-editorial-learning-repository";
+import { PostgresContentIdeaRepository } from "@outbound/infrastructure/content/postgres-content-idea-repository";
 
 const databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
 const databaseDescribe = databaseUrl ? describe : describe.skip;
@@ -105,6 +109,9 @@ databaseDescribe("CNT-101 durable content generation", () => {
     await database.client`delete from content_idea_sources where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`delete from content_ideas where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`delete from content_idea_discovery_runs where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
+    await database.client`alter table editorial_learning_versions disable trigger editorial_learning_versions_immutable_trg`;
+    await database.db.delete(editorialLearningVersions).where(inArray(editorialLearningVersions.workspaceId, [workspaceId, otherWorkspaceId]));
+    await database.client`alter table editorial_learning_versions enable trigger editorial_learning_versions_immutable_trg`;
     await database.client`alter table editorial_strategy_versions disable trigger editorial_strategy_versions_immutable_trg`;
     await database.client`delete from editorial_strategy_versions where workspace_id = ${workspaceId}`;
     await database.client`alter table editorial_strategy_versions enable trigger editorial_strategy_versions_immutable_trg`;
@@ -307,6 +314,21 @@ databaseDescribe("CNT-101 durable content generation", () => {
     expect(outreachJobsAfter[0]?.count).toBe(outreachJobsBefore[0]?.count);
     expect(await engagementRepository.status({ workspaceId })).toMatchObject({ status: "idle", observed: 1, incoming: 1 });
 
+    await autopilotRepository.configure({ workspaceId, userId, requestKey: "autopilot:integration:learning-enable", enabled: true, localTime: "06:00", timezone: "Europe/Paris", now: modifiedAt });
+    const learningRepository = new PostgresEditorialLearningRepository(database.db);
+    const learning = new EditorialLearningReconciler(learningRepository, () => modifiedAt);
+    expect(await learning.reconcile()).toBe(1);
+    const learningView = await learningRepository.latest(workspaceId);
+    expect(learningView).toMatchObject({ version: 1, modelVersion: "bounded-editorial-learning-v1", bounds: { icpVersionId, allowedClaimIds: [claimId], postsPerWeek: 3 } });
+    expect(learningView?.facts).toContainEqual(expect.objectContaining({ kind: "response", certainty: "fact", pillar: "Recherche documentaire", sourceRef: expect.stringContaining("social-interaction:") }));
+    expect(learningView?.inferences).toEqual([]);
+    expect(learningView?.recommendations).toContainEqual(expect.objectContaining({ action: "prioritize", pillar: "Recherche documentaire", angle: "Pourquoi une preuve documentaire change une décision juridique" }));
+    expect(await learning.reconcile()).toBe(0);
+    expect(await learningRepository.latest(otherWorkspaceId)).toBeNull();
+    const learnedDiscovery = await new PostgresContentIdeaRepository(database.db).createDiscovery({ workspaceId, userId, requestKey: "ideas:integration:learned", trigger: "daily", now: modifiedAt });
+    const learnedPlan = (await database.client<{ query_plan: string[] }[]>`select query_plan from content_idea_discovery_runs where workspace_id = ${workspaceId} and id = ${learnedDiscovery.id}`)[0]!.query_plan;
+    expect(learnedPlan[0]).toContain("Pourquoi une preuve documentaire change une décision juridique");
+
     const publicationIds: string[] = [];
     let publicationCursor: string | undefined;
     do {
@@ -339,6 +361,7 @@ databaseDescribe("CNT-101 durable content generation", () => {
 
     await expectRejected(() => database.client`update content_asset_versions set body = 'mutated' where workspace_id = ${workspaceId}`, "CONTENT_SNAPSHOT_IMMUTABLE");
     await expectRejected(() => database.client`update content_publications set content_snapshot = '{"body":"mutated"}'::jsonb where workspace_id = ${workspaceId}`, "CONTENT_PUBLICATION_SNAPSHOT_IMMUTABLE");
+    await expectRejected(() => database.client`update editorial_learning_versions set model_version = 'mutated' where workspace_id = ${workspaceId}`, "EDITORIAL_LEARNING_VERSION_IMMUTABLE");
   });
 });
 

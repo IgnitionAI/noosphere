@@ -125,4 +125,7 @@ déterministes avant chaque envoi et exceptions explicites dans « À traiter »
 La boucle Content LinkedIn AUT-101 est également branchée : radar quotidien,
 génération sourcée, critique, planification par cadence et pause/reprise
 auditée. Son envoi réseau réel reste volontairement fermé jusqu'au canary
-PTC-101 explicitement autorisé.
+PTC-101 explicitement autorisé. AUT-102 versionne désormais les apprentissages
+tirés des réponses et appels attribués, en séparant faits et inférences ; le
+radar suivant peut prioriser un angle existant sans modifier claims, canaux,
+cadence ou ICP.

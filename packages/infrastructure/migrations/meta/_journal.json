@@ -547,6 +547,13 @@
       "when": 1797775800000,
       "tag": "0077_noosphere_social_prospect_signal_index",
       "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1797840000000,
+      "tag": "0078_bounded_editorial_learning",
+      "breakpoints": true
     }
   ]
 }

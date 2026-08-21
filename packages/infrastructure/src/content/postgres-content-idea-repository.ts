@@ -18,6 +18,7 @@ import {
   contentIdeas,
   contentOperationRequests,
   conversations,
+  editorialLearningVersions,
   editorialStrategies,
   editorialStrategyVersions,
   jobs,
@@ -93,7 +94,12 @@ export class PostgresContentIdeaRepository implements ContentIdeaRepository {
       const version = versions[0];
       if (!version) throw new Error("CONTENT_IDEA_ACTIVE_STRATEGY_REQUIRED");
       const snapshot = editorialStrategySnapshotSchema.parse(version.snapshot);
-      const queryPlan = buildQueryPlan(snapshot).slice(0, DEFAULT_QUERY_LIMIT);
+      const learningRows = await tx.select({ recommendations: editorialLearningVersions.recommendations }).from(editorialLearningVersions).where(and(
+        eq(editorialLearningVersions.workspaceId, input.workspaceId),
+        eq(editorialLearningVersions.strategyId, strategy.id),
+        eq(editorialLearningVersions.strategyVersionId, version.id),
+      )).orderBy(desc(editorialLearningVersions.version)).limit(1);
+      const queryPlan = buildQueryPlan(snapshot, parseLearningFocus(learningRows[0]?.recommendations)).slice(0, DEFAULT_QUERY_LIMIT);
       if (queryPlan.length === 0) throw new Error("CONTENT_IDEA_QUERY_PLAN_EMPTY");
       const runId = crypto.randomUUID();
       const run = (await tx.insert(contentIdeaDiscoveryRuns).values({
@@ -271,8 +277,22 @@ export class PostgresContentIdeaRepository implements ContentIdeaRepository {
   }
 }
 
-function buildQueryPlan(snapshot: ReturnType<typeof editorialStrategySnapshotSchema.parse>): readonly string[] {
-  return [...new Set(snapshot.pillars.map((pillar) => `${snapshot.audience.name} ${pillar.name} ${pillar.promise}`.replace(/\s+/g, " ").trim()))];
+function buildQueryPlan(snapshot: ReturnType<typeof editorialStrategySnapshotSchema.parse>, learning: readonly { pillar: string; angle: string }[] = []): readonly string[] {
+  const allowed = new Set(snapshot.pillars.map((pillar) => pillar.name));
+  const learned = learning.filter((item) => allowed.has(item.pillar)).map((item) => `${snapshot.audience.name} ${item.pillar} ${item.angle}`.replace(/\s+/g, " ").trim());
+  const baseline = snapshot.pillars.map((pillar) => `${snapshot.audience.name} ${pillar.name} ${pillar.promise}`.replace(/\s+/g, " ").trim());
+  return [...new Set([...learned, ...baseline])];
+}
+
+function parseLearningFocus(value: unknown): readonly { pillar: string; angle: string }[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const row = item as Record<string, unknown>;
+    return typeof row.pillar === "string" && typeof row.angle === "string" && row.action === "prioritize"
+      ? [{ pillar: row.pillar, angle: row.angle }]
+      : [];
+  }).slice(0, 2);
 }
 
 function zodStringArray(value: unknown): readonly string[] {
