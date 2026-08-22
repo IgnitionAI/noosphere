@@ -1,6 +1,11 @@
 import { CheckCircle2, MessageCircle, Radio, ShieldCheck, Smartphone } from "lucide-react";
 import { notFound } from "next/navigation";
-import { getWhatsAppChannelConnection, listWorkspaces } from "@/lib/api";
+import {
+  getWhatsAppChannelConnection,
+  listWorkspaces,
+  OutboundApiError,
+  type WhatsAppChannelConnection,
+} from "@/lib/api";
 import { saveWhatsAppAccount } from "./actions";
 
 export const metadata = { title: "Canaux" };
@@ -14,7 +19,7 @@ export default async function ChannelSettingsPage({
   const { workspaceSlug } = await params;
   const workspace = (await listWorkspaces()).find((item) => item.slug === workspaceSlug);
   if (!workspace || !["admin", "owner"].includes(workspace.role)) notFound();
-  const connection = await getWhatsAppChannelConnection(workspaceSlug);
+  const { connection, providerConfigured } = await loadWhatsAppConnection(workspaceSlug);
   const save = saveWhatsAppAccount.bind(null, workspaceSlug);
 
   return (
@@ -28,9 +33,16 @@ export default async function ChannelSettingsPage({
           </p>
         </div>
         <span className={connection.selectedAccountId ? "badge badge-success" : "badge badge-warning"}>
-          {connection.selectedAccountId ? "Prêt à prospecter" : connection.connected ? "Compte à sélectionner" : "À reconnecter"}
+          {connection.selectedAccountId ? "Prêt à prospecter" : !providerConfigured ? "À configurer" : connection.connected ? "Compte à sélectionner" : "À reconnecter"}
         </span>
       </header>
+
+      {!providerConfigured ? (
+        <section className="mt-6 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950" role="status">
+          <strong>Unipile n’est pas configuré sur ce serveur.</strong>
+          <p className="mt-1 text-xs leading-5">Ajoutez la connexion serveur depuis l’administration pour rendre les comptes LinkedIn et WhatsApp disponibles ici.</p>
+        </section>
+      ) : null}
 
       <form action={save} className="mt-6 rounded-xl border border-line bg-white p-5 shadow-sm">
         <div className="flex items-start gap-3">
@@ -89,4 +101,28 @@ export default async function ChannelSettingsPage({
       ) : null}
     </div>
   );
+}
+
+async function loadWhatsAppConnection(workspaceSlug: string): Promise<{
+  connection: WhatsAppChannelConnection;
+  providerConfigured: boolean;
+}> {
+  try {
+    return {
+      connection: await getWhatsAppChannelConnection(workspaceSlug),
+      providerConfigured: true,
+    };
+  } catch (error) {
+    if (!(error instanceof OutboundApiError) || error.code !== "UNIPILE_NOT_CONFIGURED") throw error;
+    return {
+      connection: {
+        channel: "whatsapp",
+        connected: false,
+        selectedAccountId: null,
+        selectedDisplayName: null,
+        accounts: [],
+      },
+      providerConfigured: false,
+    };
+  }
 }

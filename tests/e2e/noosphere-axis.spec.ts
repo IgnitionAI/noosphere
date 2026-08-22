@@ -111,6 +111,17 @@ test("workspace surfaces keep one clear heading and never overflow the viewport"
   expect(mutations).toEqual([]);
 });
 
+test("channel settings stay usable before Unipile is configured", async ({ page }) => {
+  const frameworkErrors: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/__nextjs_original-stack-frames")) frameworkErrors.push(request.url());
+  });
+  await page.goto(`/w/${workspaceSlug}/settings/channels`);
+  await expect(page.getByRole("heading", { name: "Compte d’envoi WhatsApp" })).toBeVisible();
+  await expect(page.getByText("Unipile n’est pas configuré sur ce serveur.")).toBeVisible();
+  expect(frameworkErrors).toEqual([]);
+});
+
 test("the Inbound idea radar is explicit, durable and never presented as a publisher", async ({ page }) => {
   await page.goto(`/w/${workspaceSlug}/content/ideas`);
   await expect(page.getByRole("heading", { name: "Idées sourcées" })).toBeVisible();
