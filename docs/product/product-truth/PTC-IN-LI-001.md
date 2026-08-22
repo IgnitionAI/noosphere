@@ -51,10 +51,11 @@
 |---|---:|---|---|
 | Contrat et gate fail-closed | L1 | tests `linkedin-product-truth-canary.test.ts` | Pass |
 | Chaîne simulée et projections | L2 | tests intégration Content/Symbiose | Pass |
-| Publication LinkedIn réelle autorisée | L4 | rapport `canary:linkedin` | Bloqué : compte et contenu exacts non autorisés dans cette exécution |
+| Préflight compte, capacité et contenu exacts | L3 | rapport expurgé `/tmp/noosphere-ptc-ca4ec98d-b2ff-4ec2-afa4-84add9c88cd8.json` du 22 août 2026 | Pass : compte `connected`, capacité texte disponible, chaîne sourcée et hash exacts |
+| Publication LinkedIn réelle autorisée | L4 | rapport `canary:linkedin` | Non exécutée : aucune mutation provider autorisée dans cette exécution |
 | Interaction → conversation → booking | L4 | rapport `canary:linkedin` | Bloqué tant que le post réel n’existe pas |
 
-État courant : `blocked_unverified`.
+État courant : `implemented_unverified`.
 
 Cet état interdit de déclarer l’Inbound LinkedIn « prêt » avant le rapport réel
 `product_verified`.
