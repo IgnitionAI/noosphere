@@ -52,7 +52,7 @@ function CandidateCard({ candidate, workspaceSlug }: { candidate: MergeCandidate
         <div className="flex min-w-0 items-center gap-2"><span className={`badge ${candidate.matchType === "certain" ? "badge-danger" : "badge"}`}>{candidate.matchType === "certain" ? "MATCH CERTAIN" : "MATCH PROBABLE"}</span><span className="text-xs text-muted">{candidate.status === "pending" ? "À décider" : candidate.status}</span></div>
         <span className="text-xs font-semibold text-brand-blue">Comparer →</span>
       </div>
-      <h3 className="mt-3 text-base font-semibold text-navy">{names.join(" · ") || "Contacts introuvables"}</h3>
+      <h3 className="mt-3 text-base font-semibold text-ink">{names.join(" · ") || "Contacts introuvables"}</h3>
       <p className="mt-1 text-xs text-muted">Signal : {signalLabel(candidate)}</p>
     </Link>
   );

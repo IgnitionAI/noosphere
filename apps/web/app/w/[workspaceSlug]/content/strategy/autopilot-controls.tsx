@@ -57,7 +57,7 @@ export function AutopilotControls({ workspaceSlug, enabled, localTime, timezone,
   return (
     <div className="mt-4 space-y-5">
       <fieldset>
-        <legend className="text-sm font-semibold text-navy">Publications LinkedIn</legend>
+        <legend className="text-sm font-semibold text-ink">Publications LinkedIn</legend>
         <p className="mt-1 text-xs leading-5 text-muted">Choisissez le rythme. Noosphere répartit les contenus prêts sur ces créneaux.</p>
         <div className="mt-3 grid grid-cols-2 gap-2" role="group" aria-label="Nombre de publications par jour">
           {[1, 2].map((frequency) => <button aria-pressed={postTimes.length === frequency} className={`button min-h-11 ${postTimes.length === frequency ? "button-primary" : ""}`} disabled={pending} key={frequency} onClick={() => setFrequency(frequency as 1 | 2)} type="button">{frequency} / jour</button>)}
@@ -71,11 +71,11 @@ export function AutopilotControls({ workspaceSlug, enabled, localTime, timezone,
             {days.map((day) => <button aria-label={dayName(day.value)} aria-pressed={postDays.includes(day.value)} className={`min-h-11 rounded-lg border text-xs font-bold transition-colors ${postDays.includes(day.value) ? "border-navy bg-navy text-white" : "border-line bg-white text-muted hover:border-navy/30"}`} disabled={pending} key={day.value} onClick={() => toggleDay(day.value)} type="button">{day.label}</button>)}
           </div>
         </div>
-        <p className="mt-3 text-xs font-semibold text-navy">{postTimes.length * postDays.length} publication{postTimes.length * postDays.length === 1 ? "" : "s"} maximum par semaine</p>
+        <p className="mt-3 text-xs font-semibold text-ink">{postTimes.length * postDays.length} publication{postTimes.length * postDays.length === 1 ? "" : "s"} maximum par semaine</p>
       </fieldset>
 
       <div className="border-t border-line pt-4">
-        <p className="text-sm font-semibold text-navy">Recherche de sujets</p>
+        <p className="text-sm font-semibold text-ink">Recherche de sujets</p>
         <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
           <label className="text-xs font-semibold text-muted">Radar quotidien<input className="input mt-1 w-full" disabled={pending} onChange={(event) => setTime(event.target.value)} type="time" value={time} /></label>
           <label className="text-xs font-semibold text-muted">Fuseau<input autoComplete="off" className="input mt-1 w-full" disabled={pending} onChange={(event) => setZone(event.target.value)} value={zone} /></label>

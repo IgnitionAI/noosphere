@@ -46,7 +46,7 @@ export default async function SequenceDetailPage({
           Retour aux séquences
         </Link>
         <div className="flex flex-wrap items-center gap-3">
-          <span className="grid h-11 w-11 place-items-center rounded-xl bg-slate-100 text-navy">
+          <span className="grid h-11 w-11 place-items-center rounded-xl bg-slate-100 text-ink">
             <Send size={20} />
           </span>
           <div>

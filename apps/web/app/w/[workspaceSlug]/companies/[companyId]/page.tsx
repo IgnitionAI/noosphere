@@ -57,7 +57,7 @@ export default async function CompanyDetailPage({
           Retour aux entreprises
         </Link>
         <div className="flex flex-wrap items-center gap-3">
-          <span className="grid h-11 w-11 place-items-center rounded-xl bg-slate-100 text-navy">
+          <span className="grid h-11 w-11 place-items-center rounded-xl bg-slate-100 text-ink">
             <Building2 size={20} />
           </span>
           <div>

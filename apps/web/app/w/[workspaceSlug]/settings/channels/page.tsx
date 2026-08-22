@@ -27,7 +27,7 @@ export default async function ChannelSettingsPage({
       <header className="flex flex-col gap-4 border-b border-line pb-6 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <div className="badge badge-success w-fit"><MessageCircle size={13} /> Unipile WhatsApp</div>
-          <h1 className="mt-3 text-2xl font-semibold tracking-tight text-navy">Compte d’envoi WhatsApp</h1>
+          <h1 className="mt-3 text-2xl font-semibold tracking-tight text-ink">Compte d’envoi WhatsApp</h1>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-muted">
             Choisissez le numéro utilisé par ce workspace pour vérifier les prospects, envoyer les campagnes et poursuivre les conversations.
           </p>
@@ -48,7 +48,7 @@ export default async function ChannelSettingsPage({
         <div className="flex items-start gap-3">
           <span className="grid h-10 w-10 place-items-center rounded-lg bg-emerald-600 text-white"><Smartphone size={18} /></span>
           <div>
-            <h2 className="font-semibold text-navy">Numéros WhatsApp disponibles</h2>
+            <h2 className="font-semibold text-ink">Numéros WhatsApp disponibles</h2>
             <p className="mt-1 text-xs leading-5 text-muted">Seuls les comptes Unipile actuellement connectés peuvent être utilisés.</p>
           </div>
         </div>
@@ -69,7 +69,7 @@ export default async function ChannelSettingsPage({
               />
               <span className="grid h-10 w-10 place-items-center rounded-full bg-emerald-100 text-emerald-700"><MessageCircle size={18} /></span>
               <span className="min-w-0 flex-1">
-                <strong className="block text-sm text-navy">{account.name}</strong>
+                <strong className="block text-sm text-ink">{account.name}</strong>
                 <span className="mt-1 flex items-center gap-1.5 text-xs text-muted">
                   <Radio size={12} /> {account.healthy ? "Connecté via Unipile" : "Connexion à renouveler"}
                 </span>
@@ -95,7 +95,7 @@ export default async function ChannelSettingsPage({
         <section className="mt-6 rounded-xl border border-emerald-200 bg-emerald-50/60 p-5">
           <div className="flex items-center gap-3">
             <CheckCircle2 className="text-emerald-700" size={20} />
-            <div><h2 className="font-semibold text-navy">Canal WhatsApp opérationnel</h2><p className="mt-1 text-sm text-emerald-900">Les prochaines campagnes utiliseront {connection.selectedDisplayName}.</p></div>
+            <div><h2 className="font-semibold text-ink">Canal WhatsApp opérationnel</h2><p className="mt-1 text-sm text-emerald-900">Les prochaines campagnes utiliseront {connection.selectedDisplayName}.</p></div>
           </div>
         </section>
       ) : null}

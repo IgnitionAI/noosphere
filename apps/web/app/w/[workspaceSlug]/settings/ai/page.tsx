@@ -30,7 +30,7 @@ export default async function WorkspaceAiSettingsPage({
             <Sparkles size={13} />
             Orchestration IA
           </div>
-          <h1 className="mt-3 text-2xl font-semibold tracking-tight text-navy">
+          <h1 className="mt-3 text-2xl font-semibold tracking-tight text-ink">
             Modèles IA
           </h1>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-muted">

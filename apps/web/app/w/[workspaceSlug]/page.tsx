@@ -42,7 +42,7 @@ export default async function TodayPage({
 
     return (
       <>
-        <header className="overflow-hidden rounded-2xl bg-navy text-white">
+        <header className="noosphere-hero signal-grid overflow-hidden rounded-xl text-white">
           <div className="grid gap-8 p-6 sm:p-8 lg:grid-cols-[minmax(0,1fr)_300px] lg:items-end">
             <div>
               <span className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-semibold text-signal">
@@ -93,7 +93,7 @@ export default async function TodayPage({
 }
 
 function Metric({ icon: Icon, label, value, description, tone }: { icon: typeof Users; label: string; value: number; description: string; tone?: "signal" }) {
-  return <article className={`panel p-4 ${tone === "signal" ? "border-lime-300" : ""}`}><div className="flex items-center justify-between text-muted"><span className="text-xs font-semibold">{label}</span><Icon size={15} /></div><strong className="metric-value mt-3 block text-navy">{value}</strong><p className="mt-1 text-xs text-muted">{description}</p></article>;
+  return <article className={`panel p-4 ${tone === "signal" ? "border-lime-300" : ""}`}><div className="flex items-center justify-between text-muted"><span className="text-xs font-semibold">{label}</span><Icon size={15} /></div><strong className="metric-value mt-3 block text-ink">{value}</strong><p className="mt-1 text-xs text-muted">{description}</p></article>;
 }
 
 function AttentionPanel({ attention, nextCursor, workspaceSlug }: { attention: readonly AttentionItem[]; nextCursor: string | null; workspaceSlug: string }) {
@@ -133,7 +133,7 @@ function OutcomesPanel({ outcomes, workspaceSlug }: { outcomes: readonly NextOut
 }
 
 function TodayError({ workspaceSlug }: { workspaceSlug: string }) {
-  return <section className="panel border-red-200 bg-red-50"><div className="panel-body py-12 text-center"><AlertTriangle className="mx-auto text-danger" size={30} /><h1 className="mt-4 text-lg font-semibold text-navy">Les résultats ne sont pas disponibles</h1><p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-muted">Noosphere continue en arrière-plan. Rechargez cette page sans perdre les opérations en cours.</p><Link className="button mt-5" href={`/w/${workspaceSlug}`}>Réessayer <ArrowRight size={14} /></Link></div></section>;
+  return <section className="panel border-red-200 bg-red-50"><div className="panel-body py-12 text-center"><AlertTriangle className="mx-auto text-danger" size={30} /><h1 className="mt-4 text-lg font-semibold text-ink">Les résultats ne sont pas disponibles</h1><p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-muted">Noosphere continue en arrière-plan. Rechargez cette page sans perdre les opérations en cours.</p><Link className="button mt-5" href={`/w/${workspaceSlug}`}>Réessayer <ArrowRight size={14} /></Link></div></section>;
 }
 
 function statusCopy({ hasStarted, working, attention }: { hasStarted: boolean; working: boolean; attention: number }): string {

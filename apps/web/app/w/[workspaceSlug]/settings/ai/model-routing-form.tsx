@@ -83,7 +83,7 @@ export function ModelRoutingForm({
       <section className="panel">
         <div className="panel-header items-start">
           <div>
-            <h2 className="font-semibold text-navy">Modèle utilisé partout</h2>
+            <h2 className="font-semibold text-ink">Modèle utilisé partout</h2>
             <p className="mt-1 text-xs leading-5 text-muted">
               Ce choix s’applique à toute l’IA. Vous pouvez personnaliser certains usages plus bas.
             </p>
@@ -99,7 +99,7 @@ export function ModelRoutingForm({
         {catalog.providers.map((provider) => (
           <div className="rounded-xl border border-line bg-white p-4" key={provider.provider}>
             <div className="flex items-center justify-between gap-3">
-              <strong className="text-sm text-navy">{providerLabels[provider.provider]}</strong>
+              <strong className="text-sm text-ink">{providerLabels[provider.provider]}</strong>
               <ProviderStatus status={provider.status} />
             </div>
             <p className="mt-2 text-xs text-muted">
@@ -110,7 +110,7 @@ export function ModelRoutingForm({
       </section>
 
       <details className="panel mt-6" open={Object.keys(overrides).length > 0 || defaultRoutes.length > 1}>
-        <summary className="flex min-h-12 list-none items-center justify-between gap-4 px-4 py-3 font-semibold text-navy">
+        <summary className="flex min-h-12 list-none items-center justify-between gap-4 px-4 py-3 font-semibold text-ink">
           Réglages avancés
           <span className="text-xs font-normal text-muted">Fallbacks et modèles par usage</span>
         </summary>
@@ -118,7 +118,7 @@ export function ModelRoutingForm({
           <section>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <h3 className="text-sm font-semibold text-navy">Bascule automatique</h3>
+                <h3 className="text-sm font-semibold text-ink">Bascule automatique</h3>
                 <p className="mt-1 text-xs text-muted">Si le fournisseur principal est indisponible ou hors quota.</p>
               </div>
               <button className="button" disabled={defaultRoutes.length >= 3} onClick={addFallback} type="button">
@@ -130,7 +130,7 @@ export function ModelRoutingForm({
                 {defaultRoutes.slice(1).map((route, index) => (
                   <div className="rounded-lg border border-line bg-slate-50 p-3" key={`fallback-${index}`}>
                     <div className="mb-3 flex items-center justify-between gap-3">
-                      <strong className="text-xs text-navy">Fallback {index + 1}</strong>
+                      <strong className="text-xs text-ink">Fallback {index + 1}</strong>
                       <button
                         aria-label={`Supprimer le fallback ${index + 1}`}
                         className="button min-h-9 px-2.5"
@@ -156,7 +156,7 @@ export function ModelRoutingForm({
 
           <section className="mt-6 border-t border-line pt-6">
             <div>
-              <h3 className="text-sm font-semibold text-navy">Modèles par usage</h3>
+              <h3 className="text-sm font-semibold text-ink">Modèles par usage</h3>
               <p className="mt-1 text-xs text-muted">Laissez vide pour conserver le choix global.</p>
             </div>
 
@@ -168,7 +168,7 @@ export function ModelRoutingForm({
                   <div className="rounded-lg border border-line bg-white p-4" key={capability.id}>
                     <div className="mb-3 flex items-start justify-between gap-3">
                       <div>
-                        <strong className="block text-sm text-navy">{capability.label}</strong>
+                        <strong className="block text-sm text-ink">{capability.label}</strong>
                         <span className="mt-0.5 block text-[11px] text-muted">{capability.detail}</span>
                       </div>
                       <button

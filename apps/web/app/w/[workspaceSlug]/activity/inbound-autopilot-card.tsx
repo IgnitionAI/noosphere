@@ -63,14 +63,14 @@ export function InboundAutopilotCard({
             {enabled ? <CheckCircle2 size={18} /> : <Play size={17} />}
           </span>
           <div>
-            <h2 className="font-semibold text-navy">{enabled ? "Inbound actif" : "Inbound en pause"}</h2>
+            <h2 className="font-semibold text-ink">{enabled ? "Inbound actif" : "Inbound en pause"}</h2>
             <p className="mt-1 text-sm leading-6 text-muted">
               {enabled
                 ? `Noosphere cherche de nouvelles idées chaque matin à ${localTime}, puis publie ${cadence}.`
                 : "Aucune nouvelle recherche et aucune publication automatique ne seront lancées."}
             </p>
             {enabled ? (
-              <p className="mt-1 text-xs font-semibold text-navy">
+              <p className="mt-1 text-xs font-semibold text-ink">
                 {nextPublicationAt
                   ? `Prochain post ${formatDate(nextPublicationAt, timezone)}`
                   : scheduledPublications > 0

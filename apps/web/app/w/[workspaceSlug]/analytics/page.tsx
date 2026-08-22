@@ -153,13 +153,13 @@ function AnalyticsView({
       <section className="panel">
         <div className="panel-header"><div><h2 className="font-semibold">Filtres</h2><p className="mt-1 text-xs text-muted">La période est interprétée comme [from, to).</p></div></div>
         <form className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4" method="get">
-          <label className="text-xs font-medium text-navy">Du<input className="control mt-1 w-full" name="from" type="date" defaultValue={dateFrom} /></label>
-          <label className="text-xs font-medium text-navy">Au (exclu)<input className="control mt-1 w-full" name="to" type="date" defaultValue={dateTo} /></label>
-          <label className="text-xs font-medium text-navy">Campagne<select className="control mt-1 w-full" defaultValue={query.campaignId ?? ""} name="campaignId"><option value="">Toutes</option>{campaigns.map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.name}</option>)}</select></label>
-          <label className="text-xs font-medium text-navy">ICP<select className="control mt-1 w-full" defaultValue={query.icpVersionId ?? ""} name="icpVersionId"><option value="">Tous</option>{icpVersions.map((icp) => <option key={icp.id} value={icp.id}>{icp.name} · v{icp.version}</option>)}</select></label>
-          <label className="text-xs font-medium text-navy">Canal<select className="control mt-1 w-full" defaultValue={query.channel ?? ""} name="channel"><option value="">Tous</option><option value="email">Email</option><option value="linkedin">LinkedIn</option><option value="whatsapp">WhatsApp</option></select></label>
-          <label className="text-xs font-medium text-navy">Rôle / fonction<input className="control mt-1 w-full" name="role" placeholder="Ex. VP Sales" defaultValue={query.role ?? ""} /></label>
-          <label className="text-xs font-medium text-navy">Signal<select className="control mt-1 w-full" defaultValue={query.signalType ?? ""} name="signalType"><option value="">Tous</option>{signalTypes.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+          <label className="text-xs font-medium text-ink">Du<input className="control mt-1 w-full" name="from" type="date" defaultValue={dateFrom} /></label>
+          <label className="text-xs font-medium text-ink">Au (exclu)<input className="control mt-1 w-full" name="to" type="date" defaultValue={dateTo} /></label>
+          <label className="text-xs font-medium text-ink">Campagne<select className="control mt-1 w-full" defaultValue={query.campaignId ?? ""} name="campaignId"><option value="">Toutes</option>{campaigns.map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.name}</option>)}</select></label>
+          <label className="text-xs font-medium text-ink">ICP<select className="control mt-1 w-full" defaultValue={query.icpVersionId ?? ""} name="icpVersionId"><option value="">Tous</option>{icpVersions.map((icp) => <option key={icp.id} value={icp.id}>{icp.name} · v{icp.version}</option>)}</select></label>
+          <label className="text-xs font-medium text-ink">Canal<select className="control mt-1 w-full" defaultValue={query.channel ?? ""} name="channel"><option value="">Tous</option><option value="email">Email</option><option value="linkedin">LinkedIn</option><option value="whatsapp">WhatsApp</option></select></label>
+          <label className="text-xs font-medium text-ink">Rôle / fonction<input className="control mt-1 w-full" name="role" placeholder="Ex. VP Sales" defaultValue={query.role ?? ""} /></label>
+          <label className="text-xs font-medium text-ink">Signal<select className="control mt-1 w-full" defaultValue={query.signalType ?? ""} name="signalType"><option value="">Tous</option>{signalTypes.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
           <div className="flex items-end gap-2"><button className="button button-primary" type="submit">Appliquer</button><Link className="button" href={`/w/${workspaceSlug}/analytics`}>Réinitialiser</Link></div>
         </form>
       </section>
@@ -168,27 +168,27 @@ function AnalyticsView({
         <div className="panel-header"><div><h2 className="font-semibold">Entonnoir</h2><p className="mt-1 text-xs text-muted">{formatPeriod(funnel.period.from, funnel.period.to)}</p></div>{!hasData ? <span className="badge">Aucune donnée</span> : null}</div>
         {!hasData ? <p className="px-5 pb-5 text-sm text-muted">Aucun fait analytique ne correspond aux filtres choisis.</p> : null}
         <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {funnelLabels.filter(({ key }) => isPrivileged || key !== "revenue").map(({ key, label, description }) => <div className="rounded-lg border border-line bg-slate-50/60 p-4" key={key}><p className="text-xs font-medium text-muted">{label}</p><p className="mt-2 text-2xl font-semibold tracking-tight text-navy">{formatNumber(metrics[key])}</p><p className="mt-1 text-[11px] leading-4 text-muted">{description}</p></div>)}
+          {funnelLabels.filter(({ key }) => isPrivileged || key !== "revenue").map(({ key, label, description }) => <div className="rounded-lg border border-line bg-slate-50/60 p-4" key={key}><p className="text-xs font-medium text-muted">{label}</p><p className="mt-2 text-2xl font-semibold tracking-tight text-ink">{formatNumber(metrics[key])}</p><p className="mt-1 text-[11px] leading-4 text-muted">{description}</p></div>)}
         </div>
         {!isPrivileged ? <p className="px-5 pb-5 text-xs text-muted">Le revenu et les coûts sont réservés aux rôles owner/admin.</p> : null}
       </section>
 
       {isPrivileged && costs ? <section className="panel"><div className="panel-header"><div><h2 className="font-semibold">Coûts IA</h2><p className="mt-1 text-xs text-muted">Calculés sur la même période et les mêmes filtres.</p></div></div><div className="grid gap-3 p-4 sm:grid-cols-3"><CostCard label="Coût total IA" value={formatCurrency(costs.totalAiCost)} /><CostCard label="Coût par prospect" value={formatCurrency(costs.costPerProspect)} /><CostCard label="Coût par rendez-vous" value={formatCurrency(costs.costPerMeeting)} /></div></section> : null}
 
-      <section className="space-y-4"><div><h2 className="text-lg font-semibold text-navy">Breakdown</h2><p className="mt-1 text-sm text-muted">Performance par dimension exposée par le contrat Analytics.</p></div>{breakdowns.map((breakdown) => <BreakdownTable breakdown={breakdown} isPrivileged={isPrivileged} key={breakdown.dimension} />)}</section>
+      <section className="space-y-4"><div><h2 className="text-lg font-semibold text-ink">Breakdown</h2><p className="mt-1 text-sm text-muted">Performance par dimension exposée par le contrat Analytics.</p></div>{breakdowns.map((breakdown) => <BreakdownTable breakdown={breakdown} isPrivileged={isPrivileged} key={breakdown.dimension} />)}</section>
       <p className="text-xs text-muted">Les endpoints Analytics exposent des agrégats. Aucun drill-down vers des faits individuels n’est disponible dans le contrat actuel.</p>
     </div>
   );
 }
 
-function CostCard({ label, value }: { label: string; value: string }) { return <div className="rounded-lg border border-line bg-slate-50/60 p-4"><p className="text-xs text-muted">{label}</p><p className="mt-2 text-xl font-semibold text-navy">{value}</p></div>; }
+function CostCard({ label, value }: { label: string; value: string }) { return <div className="rounded-lg border border-line bg-slate-50/60 p-4"><p className="text-xs text-muted">{label}</p><p className="mt-2 text-xl font-semibold text-ink">{value}</p></div>; }
 
 function BreakdownTable({ breakdown, isPrivileged }: { breakdown: AnalyticsBreakdown; isPrivileged: boolean }) {
   return <div className="panel overflow-hidden"><div className="panel-header"><h3 className="font-semibold">{breakdownLabels[breakdown.dimension]}</h3><span className="badge">{breakdown.data.length} lignes</span></div>{breakdown.data.length === 0 ? <p className="px-5 pb-5 text-sm text-muted">Aucune donnée pour cette dimension.</p> : <div className="overflow-x-auto"><table className="data-table min-w-[760px]"><thead><tr><th>Élément</th><th>Trouvés</th><th>Enrichis</th><th>Envoyés</th><th>Répondus</th><th>RDV</th><th>Opportunités</th>{isPrivileged ? <th>Revenu</th> : null}</tr></thead><tbody>{breakdown.data.map((row) => <BreakdownRow isPrivileged={isPrivileged} key={row.key} row={row} />)}</tbody></table></div>}</div>;
 }
 
 function BreakdownRow({ row, isPrivileged }: { row: AnalyticsBreakdownRow; isPrivileged: boolean }) {
-  return <tr><td className="font-medium text-navy">{row.label || row.key}</td><td>{formatNumber(row.prospectsFound)}</td><td>{formatNumber(row.profilesEnriched)}</td><td>{formatNumber(row.actionsSent)}</td><td>{formatNumber(row.responded)}</td><td>{formatNumber(row.meetingsBooked)}</td><td>{formatNumber(row.opportunities)}</td>{isPrivileged ? <td>{formatCurrency(row.revenue)}</td> : null}</tr>;
+  return <tr><td className="font-medium text-ink">{row.label || row.key}</td><td>{formatNumber(row.prospectsFound)}</td><td>{formatNumber(row.profilesEnriched)}</td><td>{formatNumber(row.actionsSent)}</td><td>{formatNumber(row.responded)}</td><td>{formatNumber(row.meetingsBooked)}</td><td>{formatNumber(row.opportunities)}</td>{isPrivileged ? <td>{formatCurrency(row.revenue)}</td> : null}</tr>;
 }
 
 function isForbidden(error: unknown): boolean { return Boolean(error && typeof error === "object" && "status" in error && (error as OutboundApiError).status === 403); }

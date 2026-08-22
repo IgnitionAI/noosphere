@@ -113,7 +113,7 @@ export default async function CampaignDetailPage({
                         )}
                         <span className="block text-xs text-muted">{[prospect.headline, prospect.companyName].filter(Boolean).join(" · ") || "Fonction à confirmer"}</span>
                         {prospect.providerData.candidateKind === "company_endpoint" ? (
-                          <span className="mt-1 inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">Point de contact entreprise</span>
+                          <span className="mt-1 inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-muted">Point de contact entreprise</span>
                         ) : null}
                       </div>
                       <span className={prospect.eligible ? "badge badge-success" : "badge"}>{prospect.eligible ? `Score ICP ${prospect.score ?? 0}/100` : prospect.state === "excluded" ? "exclu" : "contact sourcé"}</span>
@@ -251,7 +251,7 @@ function WhatsappSourcingPoolPanel({ pool }: { pool: NonNullable<Awaited<ReturnT
           <span className="inline-flex items-center gap-1"><Clock3 size={12} /> Prochain passage : {formatPassDate(pool.nextPassAt)} · heure de Paris</span>
           <span>Diagnostic : {pool.pageAttempts}/{pool.pageLimit} pages · {pool.verificationAttempts}/{pool.verificationLimit} contrôles</span>
         </div>
-        <p className="mt-4 rounded-lg bg-slate-50 px-3 py-2 text-[11px] leading-4 text-slate-600">
+        <p className="mt-4 rounded-lg bg-slate-50 px-3 py-2 text-[11px] leading-4 text-muted">
           Cette étape recherche et importe uniquement. Elle n’envoie aucun message ; les séquences de campagne sont gérées séparément.
         </p>
       </div>

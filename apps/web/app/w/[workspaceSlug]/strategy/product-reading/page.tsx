@@ -19,7 +19,7 @@ export default async function ProductReadingPage({
   return (
     <>
       <div className="mb-5 flex flex-wrap items-center gap-2 text-xs font-semibold text-muted">
-        <span className="inline-flex items-center gap-2 text-navy">
+        <span className="inline-flex items-center gap-2 text-ink">
           <span className="grid h-5 w-5 place-items-center rounded-full bg-navy text-[10px] text-white">
             1
           </span>

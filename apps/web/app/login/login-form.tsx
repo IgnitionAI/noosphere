@@ -34,7 +34,7 @@ export function LoginForm({ next = "/" }: { next?: string }) {
   return (
     <form className="mt-7 space-y-4" onSubmit={submit}>
       <label className="block">
-        <span className="mb-2 block text-xs font-semibold text-slate-700">
+        <span className="mb-2 block text-xs font-semibold text-ink">
           Email professionnel
         </span>
         <input
@@ -46,7 +46,7 @@ export function LoginForm({ next = "/" }: { next?: string }) {
         />
       </label>
       <label className="block">
-        <span className="mb-2 block text-xs font-semibold text-slate-700">
+        <span className="mb-2 block text-xs font-semibold text-ink">
           Mot de passe
         </span>
         <div className="relative">

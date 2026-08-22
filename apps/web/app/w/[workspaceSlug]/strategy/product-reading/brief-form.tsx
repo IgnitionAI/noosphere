@@ -118,7 +118,7 @@ export function BriefForm({
             <div className="panel-body">
               <div className="grid gap-4 md:grid-cols-2">
                 <label>
-                  <span className="mb-2 block text-xs font-semibold text-slate-700">
+                  <span className="mb-2 block text-xs font-semibold text-ink">
                     Site du produit
                   </span>
                   <div className="relative">
@@ -134,7 +134,7 @@ export function BriefForm({
                   </div>
                 </label>
                 <label>
-                  <span className="mb-2 block text-xs font-semibold text-slate-700">
+                  <span className="mb-2 block text-xs font-semibold text-ink">
                     Nom du produit
                   </span>
                   <input
@@ -148,7 +148,7 @@ export function BriefForm({
                 </label>
               </div>
               <label className="mt-4 block">
-                <span className="mb-2 block text-xs font-semibold text-slate-700">
+                <span className="mb-2 block text-xs font-semibold text-ink">
                   Ce que fait le produit
                 </span>
                 <textarea
@@ -206,7 +206,7 @@ export function BriefForm({
             </div>
             <div className="panel-body grid gap-4 md:grid-cols-3">
               <label>
-                <span className="mb-2 block text-xs font-semibold text-slate-700">Géographie</span>
+                <span className="mb-2 block text-xs font-semibold text-ink">Géographie</span>
                 <select
                   className="control"
                   name="geography"
@@ -220,7 +220,7 @@ export function BriefForm({
                 </select>
               </label>
               <label>
-                <span className="mb-2 block text-xs font-semibold text-slate-700">
+                <span className="mb-2 block text-xs font-semibold text-ink">
                   Langue des sources
                 </span>
                 <select
@@ -235,7 +235,7 @@ export function BriefForm({
                 </select>
               </label>
               <label>
-                <span className="mb-2 block text-xs font-semibold text-slate-700">Type de vente</span>
+                <span className="mb-2 block text-xs font-semibold text-ink">Type de vente</span>
                 <select
                   className="control"
                   defaultValue={initialBrief?.salesMotion ?? "hybrid"}
@@ -248,7 +248,7 @@ export function BriefForm({
                 </select>
               </label>
               <label>
-                <span className="mb-2 block text-xs font-semibold text-slate-700">
+                <span className="mb-2 block text-xs font-semibold text-ink">
                   Objectif de l’étude
                 </span>
                 <select
@@ -262,7 +262,7 @@ export function BriefForm({
                 </select>
               </label>
               <label>
-                <span className="mb-2 block text-xs font-semibold text-slate-700">
+                <span className="mb-2 block text-xs font-semibold text-ink">
                   Acheteurs recherchés
                 </span>
                 <select
@@ -281,7 +281,7 @@ export function BriefForm({
                 </select>
               </label>
               <label className="md:col-span-3">
-                <span className="mb-2 block text-xs font-semibold text-slate-700">
+                <span className="mb-2 block text-xs font-semibold text-ink">
                   Contraintes d’achat
                 </span>
                 <textarea

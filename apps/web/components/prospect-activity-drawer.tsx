@@ -117,7 +117,7 @@ export function ProspectActivityDrawer({
                   />
                 </div>
               ) : (
-                <div className="border-t border-line bg-blue-50 p-4 text-xs text-navy">Premier contact envoyé. Les relances restent automatiques et le Setter IA prendra la main dès la première réponse.</div>
+                <div className="border-t border-line bg-blue-50 p-4 text-xs text-ink">Premier contact envoyé. Les relances restent automatiques et le Setter IA prendra la main dès la première réponse.</div>
               )}
             </>
           ) : (

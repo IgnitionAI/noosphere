@@ -108,7 +108,7 @@ export default async function ContactDetailPage({
           {returnLink.label}
         </Link>
         <div className="flex flex-wrap items-center gap-3">
-          <span className="grid h-11 w-11 place-items-center rounded-xl bg-slate-100 text-navy">
+          <span className="grid h-11 w-11 place-items-center rounded-xl bg-slate-100 text-ink">
             <UserRound size={20} />
           </span>
           <div>
@@ -147,7 +147,7 @@ export default async function ContactDetailPage({
                       <strong className="text-sm">Prochaine action : {prospectDecisionLabel(prospectView.nextDecision.proposedAction)}</strong>
                       <span className={prospectView.nextDecision.status === "awaiting_approval" ? "badge badge-warning" : "badge badge-success"}>{prospectView.nextDecision.status}</span>
                     </div>
-                    <p className="mt-2 text-xs leading-5 text-slate-700">{prospectView.nextDecision.reason}</p>
+                    <p className="mt-2 text-xs leading-5 text-ink">{prospectView.nextDecision.reason}</p>
                     <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-[11px] text-muted">
                       <span>Prévue {formatDecisionDate(prospectView.nextDecision.dueAt)}</span>
                       <span>Tentative {prospectView.nextDecision.attempts}/{prospectView.nextDecision.maxAttempts}</span>
@@ -203,7 +203,7 @@ export default async function ContactDetailPage({
                           <strong className="text-xs">{socialSignalLabel(signal.type)} prouvé · +{signal.contribution}</strong>
                           <span className="badge badge-success">identité {Math.round(signal.identityConfidence * 100)}%</span>
                         </div>
-                        <p className="mt-2 text-xs leading-5 text-slate-700">{signal.summary}</p>
+                        <p className="mt-2 text-xs leading-5 text-ink">{signal.summary}</p>
                         <Link className="mt-2 inline-flex text-[11px] font-semibold text-brand-blue" href={`/w/${workspaceSlug}${signal.proofHref}`}>Voir la preuve et la règle</Link>
                       </div>
                     ))}

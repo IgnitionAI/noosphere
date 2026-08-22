@@ -68,7 +68,7 @@ export default async function InboxPage({
           <p><strong>Synchronisation interrompue sur {result.sync.errorAccounts} compte{result.sync.errorAccounts > 1 ? "s" : ""}.</strong> Reconnectez le compte concerné dans Configuration.</p>
         </div>
       ) : result.sync.backfillingAccounts > 0 ? (
-        <div className="mb-5 flex items-start gap-3 rounded-lg border border-brand-blue/25 bg-blue-50 px-4 py-3 text-sm text-navy" role="status">
+        <div className="mb-5 flex items-start gap-3 rounded-lg border border-brand-blue/25 bg-blue-50 px-4 py-3 text-sm text-ink" role="status">
           <LoaderCircle className="mt-0.5 shrink-0 animate-spin text-brand-blue" size={16} />
           <p><strong>Historique en cours de synchronisation.</strong> Les conversations déjà importées sont utilisables ; le reste apparaît progressivement, même si vous quittez cette page.</p>
         </div>

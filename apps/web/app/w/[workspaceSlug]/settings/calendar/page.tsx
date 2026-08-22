@@ -25,7 +25,7 @@ export default async function CalendarSettingsPage({
       <header className="flex flex-col gap-4 border-b border-line pb-6 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <div className="badge badge-signal w-fit"><CalendarCheck size={13} /> Rendez-vous automatiques</div>
-          <h1 className="mt-3 text-2xl font-semibold tracking-tight text-navy">Agenda du Setter IA</h1>
+          <h1 className="mt-3 text-2xl font-semibold tracking-tight text-ink">Agenda du Setter IA</h1>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-muted">
             K3 lit les disponibilités réelles, propose des créneaux et réserve celui choisi par le prospect. Le lien Cal.com reste disponible en secours.
           </p>
@@ -39,7 +39,7 @@ export default async function CalendarSettingsPage({
         <div className="flex items-start gap-3">
           <span className="grid h-10 w-10 place-items-center rounded-lg bg-navy text-signal"><Link2 size={18} /></span>
           <div>
-            <h2 className="font-semibold text-navy">Lien de réservation Cal.com</h2>
+            <h2 className="font-semibold text-ink">Lien de réservation Cal.com</h2>
             <p className="mt-1 text-xs leading-5 text-muted">Le lien est personnalisé et signé séparément pour chaque prospect.</p>
           </div>
         </div>
@@ -77,7 +77,7 @@ export default async function CalendarSettingsPage({
           <div className="flex items-start gap-3">
             <Webhook className="mt-0.5 text-emerald-700" size={19} />
             <div className="min-w-0 flex-1">
-              <h2 className="font-semibold text-navy">Automatisation Cal.com</h2>
+              <h2 className="font-semibold text-ink">Automatisation Cal.com</h2>
               {connection.automationReady ? (
                 <div className="mt-3 grid gap-3 sm:grid-cols-2">
                   <StatusValue icon={<CalendarCheck size={15} />} label="Type de rendez-vous" value={connection.eventType?.title ?? "Configuré"} />
@@ -100,7 +100,7 @@ export default async function CalendarSettingsPage({
           </form>
         </section>
       ) : null}
-      {connection.connected && meetingTypes.length ? <section className="mt-6 rounded-xl border border-line bg-white p-5 shadow-sm"><div className="flex items-start gap-3"><span className="grid h-10 w-10 place-items-center rounded-lg bg-navy text-signal"><CalendarCheck size={18} /></span><div><h2 className="font-semibold text-navy">Types de rendez-vous</h2><p className="mt-1 text-xs leading-5 text-muted">Activez plusieurs formats et choisissez celui utilisé par défaut par le Setter.</p></div></div><form action={saveMeetingTypes} className="mt-5 space-y-3">{meetingTypes.map((type) => <div className="grid gap-3 rounded-lg border border-line p-3 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center" key={type.id}><input aria-label={`Activer ${type.title}`} defaultChecked={type.active} name="providerEventTypeIds" type="checkbox" value={type.providerEventTypeId} /><div><strong className="block text-sm">{type.title}</strong><span className="text-xs text-muted">{type.lengthMinutes} min · {type.timeZone}</span></div><label className="flex items-center gap-2 text-xs font-semibold"><input defaultChecked={type.isDefault} name="defaultProviderEventTypeId" required type="radio" value={type.providerEventTypeId} /> Par défaut</label></div>)}<button className="button button-primary" type="submit">Enregistrer les types</button></form></section> : null}
+      {connection.connected && meetingTypes.length ? <section className="mt-6 rounded-xl border border-line bg-white p-5 shadow-sm"><div className="flex items-start gap-3"><span className="grid h-10 w-10 place-items-center rounded-lg bg-navy text-signal"><CalendarCheck size={18} /></span><div><h2 className="font-semibold text-ink">Types de rendez-vous</h2><p className="mt-1 text-xs leading-5 text-muted">Activez plusieurs formats et choisissez celui utilisé par défaut par le Setter.</p></div></div><form action={saveMeetingTypes} className="mt-5 space-y-3">{meetingTypes.map((type) => <div className="grid gap-3 rounded-lg border border-line p-3 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center" key={type.id}><input aria-label={`Activer ${type.title}`} defaultChecked={type.active} name="providerEventTypeIds" type="checkbox" value={type.providerEventTypeId} /><div><strong className="block text-sm">{type.title}</strong><span className="text-xs text-muted">{type.lengthMinutes} min · {type.timeZone}</span></div><label className="flex items-center gap-2 text-xs font-semibold"><input defaultChecked={type.isDefault} name="defaultProviderEventTypeId" required type="radio" value={type.providerEventTypeId} /> Par défaut</label></div>)}<button className="button button-primary" type="submit">Enregistrer les types</button></form></section> : null}
     </div>
   );
 }
@@ -120,7 +120,7 @@ function StatusValue({ icon, label, value }: { icon: React.ReactNode; label: str
   return (
     <div className="rounded-lg border border-emerald-200 bg-white/80 p-3">
       <div className="flex items-center gap-2 text-emerald-700">{icon}<span className="text-[11px] font-semibold uppercase tracking-wide">{label}</span></div>
-      <p className="mt-1.5 text-sm font-medium text-navy">{value}</p>
+      <p className="mt-1.5 text-sm font-medium text-ink">{value}</p>
     </div>
   );
 }

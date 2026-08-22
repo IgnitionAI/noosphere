@@ -50,7 +50,7 @@ export default async function IcpsPage({
           </div>
         ) : (
           <div className="panel-body py-12 text-center">
-            <span className="mx-auto grid h-11 w-11 place-items-center rounded-xl bg-slate-100 text-navy"><FileSearch size={20} /></span>
+            <span className="mx-auto grid h-11 w-11 place-items-center rounded-xl bg-slate-100 text-ink"><FileSearch size={20} /></span>
             <h2 className="mt-4 font-semibold">Aucun ICP canonique</h2>
             <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted">Les ICP apparaîtront ici après leur première publication depuis un rapport.</p>
             <Link className="button button-primary mt-5" href={`/w/${workspaceSlug}/strategy/product-reading`}>Trouver mon ICP</Link>

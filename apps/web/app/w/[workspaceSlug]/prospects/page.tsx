@@ -129,7 +129,7 @@ export default async function ProspectsPage({
                     scroll={false}
                   >
                     <div className="flex items-start gap-3">
-                      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-slate-100 text-navy"><UserRound size={17} /></span>
+                      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-slate-100 text-ink"><UserRound size={17} /></span>
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
                           <strong className="text-sm">{prospect.firstName} {prospect.lastName}</strong>

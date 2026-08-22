@@ -33,13 +33,13 @@ export function ApprovalQueue({
         <MutationForm action={bulkAction} confirmation={`Confirmer cette décision pour ${selected.length} item(s) ?`} successMessage="Décisions enregistrées. La file est actualisée.">
           <input name="itemIds" type="hidden" value={JSON.stringify(selected)} readOnly />
           <div className="flex flex-col gap-3 rounded-lg border border-line bg-slate-50 p-3 sm:flex-row sm:items-end">
-            <label className="text-xs font-semibold text-navy">Décision en lot
+            <label className="text-xs font-semibold text-ink">Décision en lot
               <select className="control mt-1 block min-w-40" name="decision" onChange={(event) => setDecision(event.target.value as "approve" | "reject")} value={decision}>
                 <option value="approve">Approuver</option>
                 <option value="reject">Rejeter</option>
               </select>
             </label>
-            {decision === "reject" ? <label className="min-w-0 flex-1 text-xs font-semibold text-navy">Justification obligatoire
+            {decision === "reject" ? <label className="min-w-0 flex-1 text-xs font-semibold text-ink">Justification obligatoire
               <input className="control mt-1 w-full" name="justification" placeholder="Pourquoi ces items sont-ils rejetés ?" required />
             </label> : null}
             <button className="button button-signal" disabled={selected.length === 0} type="submit">Décider {selected.length ? `(${selected.length})` : ""}</button>
@@ -82,7 +82,7 @@ function ApprovalRow({ item, workspaceSlug, checked = false, invalidated = false
           <StatusBadge status={item.status} />
           {item.stepPosition !== null ? <span className="text-xs text-muted">Étape {item.stepPosition}</span> : null}
         </div>
-        <p className="mt-2 truncate text-sm font-semibold text-navy">{contextLabel(item)}</p>
+        <p className="mt-2 truncate text-sm font-semibold text-ink">{contextLabel(item)}</p>
         <p className="mt-1 line-clamp-2 whitespace-pre-wrap text-xs text-muted">{contentPreview(item.contentEdited ?? item.contentOriginal)}</p>
         {item.invalidationReason ? <p className="mt-2 text-xs font-medium text-warning">Non actionnable · {invalidationLabel(item.invalidationReason)}</p> : null}
       </Link>

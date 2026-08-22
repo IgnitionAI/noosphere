@@ -39,7 +39,7 @@ export default async function ImportReportPage({ params }: { params: Promise<{ w
       </header>
 
       <section className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        {Object.entries(batch.totals).map(([key, value]) => <div className="panel p-4" key={key}><p className="text-xs text-muted">{totalLabel(key)}</p><p className="mt-1 text-2xl font-bold text-navy">{value}</p></div>)}
+        {Object.entries(batch.totals).map(([key, value]) => <div className="panel p-4" key={key}><p className="text-xs text-muted">{totalLabel(key)}</p><p className="mt-1 text-2xl font-bold text-ink">{value}</p></div>)}
       </section>
 
       {canConfirm ? (

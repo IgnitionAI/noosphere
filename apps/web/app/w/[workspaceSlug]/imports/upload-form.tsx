@@ -83,7 +83,7 @@ export function ImportUploadForm({ workspaceSlug, action }: { workspaceSlug: str
         <span className="mt-1 block text-xs text-muted">10 Mo maximum · aucune ligne n’est créée avant confirmation</span>
         <input ref={inputRef} className="sr-only" name="file" onChange={(event) => selectFile(event.target.files?.[0])} required type="file" accept=".csv,text/csv" />
       </label>
-      {filename ? <p className="text-sm font-semibold text-navy">{filename}</p> : null}
+      {filename ? <p className="text-sm font-semibold text-ink">{filename}</p> : null}
       {headers.length ? (
         <fieldset className="space-y-3 rounded-lg border border-line p-3">
           <legend className="px-1 text-xs font-semibold text-muted">Mapping des colonnes</legend>

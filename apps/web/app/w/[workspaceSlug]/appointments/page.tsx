@@ -54,7 +54,7 @@ export default async function AppointmentsPage({
 
       {!connection.connected ? (
         <section className="mb-5 flex flex-col gap-4 rounded-xl border border-amber-200 bg-amber-50 p-5 sm:flex-row sm:items-center sm:justify-between">
-          <div><h2 className="font-semibold text-navy">Connectez votre agenda</h2><p className="mt-1 text-sm text-amber-900">Le Setter pourra alors proposer des créneaux réels et réserver les appels sans intervention.</p></div>
+          <div><h2 className="font-semibold text-ink">Connectez votre agenda</h2><p className="mt-1 text-sm text-amber-900">Le Setter pourra alors proposer des créneaux réels et réserver les appels sans intervention.</p></div>
           <Link className="button button-primary shrink-0" href={`/w/${workspaceSlug}/settings/calendar`}>Configurer</Link>
         </section>
       ) : null}
@@ -71,7 +71,7 @@ export default async function AppointmentsPage({
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-start gap-3">
               <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-navy text-signal"><CalendarClock size={18} /></span>
-              <div><p className="text-[11px] font-semibold uppercase tracking-wide text-muted">Prochain appel</p><h2 className="mt-1 font-semibold text-navy">{displayName(next)}</h2><p className="mt-1 text-sm text-muted">{formatDate(next.startAt)} · {duration(next)}</p><BookingSourceAttribution booking={next} workspaceSlug={workspaceSlug} /></div>
+              <div><p className="text-[11px] font-semibold uppercase tracking-wide text-muted">Prochain appel</p><h2 className="mt-1 font-semibold text-ink">{displayName(next)}</h2><p className="mt-1 text-sm text-muted">{formatDate(next.startAt)} · {duration(next)}</p><BookingSourceAttribution booking={next} workspaceSlug={workspaceSlug} /></div>
             </div>
             {next.meetingUrl ? <a className="button button-signal shrink-0" href={next.meetingUrl} rel="noreferrer" target="_blank"><Video size={15} /> Rejoindre l’appel</a> : null}
           </div>
@@ -104,8 +104,8 @@ export default async function AppointmentsPage({
           <div className="divide-y divide-line">
             {visible.map((booking) => (
               <article className="grid gap-4 p-5 md:grid-cols-[160px_minmax(0,1fr)_170px_auto] md:items-center" key={booking.id}>
-                <div><p className="text-sm font-semibold text-navy">{formatDay(booking.startAt)}</p><p className="mt-1 text-xs text-muted">{formatTime(booking.startAt)} · {duration(booking)}</p></div>
-                <div className="flex min-w-0 items-center gap-3"><span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-slate-100 text-navy"><UserRound size={15} /></span><div className="min-w-0"><h2 className="truncate text-sm font-semibold">{booking.contactId ? <Link className="hover:text-brand-blue" href={`/w/${workspaceSlug}/prospects/${booking.contactId}`}>{displayName(booking)}</Link> : displayName(booking)}</h2><p className="mt-1 truncate text-xs text-muted">{booking.attendeeEmail ?? booking.attendeePhone ?? booking.meetingType?.title ?? "Prospect qualifié"}</p><BookingSourceAttribution booking={booking} compact workspaceSlug={workspaceSlug} /></div></div>
+                <div><p className="text-sm font-semibold text-ink">{formatDay(booking.startAt)}</p><p className="mt-1 text-xs text-muted">{formatTime(booking.startAt)} · {duration(booking)}</p></div>
+                <div className="flex min-w-0 items-center gap-3"><span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-slate-100 text-ink"><UserRound size={15} /></span><div className="min-w-0"><h2 className="truncate text-sm font-semibold">{booking.contactId ? <Link className="hover:text-brand-blue" href={`/w/${workspaceSlug}/prospects/${booking.contactId}`}>{displayName(booking)}</Link> : displayName(booking)}</h2><p className="mt-1 truncate text-xs text-muted">{booking.attendeeEmail ?? booking.attendeePhone ?? booking.meetingType?.title ?? "Prospect qualifié"}</p><BookingSourceAttribution booking={booking} compact workspaceSlug={workspaceSlug} /></div></div>
                 <div><span className={statusBadge(booking.status)}>{statusLabel(booking.status)}</span>{booking.opportunityStage ? <p className="mt-1 text-[11px] text-muted">Pipeline · {opportunityLabel(booking.opportunityStage)}</p> : null}{booking.rescheduleCount ? <p className="mt-1 text-[11px] text-muted">Replanifié {booking.rescheduleCount} fois</p> : null}<p className="mt-1 text-[11px] text-muted">{booking.attendeeTimeZone} → {booking.organizerTimeZone}</p></div>
                 <div className="flex justify-end gap-2">
                   {booking.opportunityId ? <Link className="button h-9 px-3" href={`/w/${workspaceSlug}/pipeline?opportunity=${booking.opportunityId}`}>Suivi</Link> : null}
@@ -128,7 +128,7 @@ export default async function AppointmentsPage({
 }
 
 function Metric({ label, value, tone }: { label: string; value: number; tone?: "signal" }) {
-  return <div className={`panel p-4 ${tone === "signal" ? "border-lime-300" : ""}`}><p className="text-xs text-muted">{label}</p><strong className="mt-2 block text-2xl text-navy">{value}</strong></div>;
+  return <div className={`panel p-4 ${tone === "signal" ? "border-lime-300" : ""}`}><p className="text-xs text-muted">{label}</p><strong className="mt-2 block text-2xl text-ink">{value}</strong></div>;
 }
 
 function ViewLink({ active, href, label }: { active: boolean; href: string; label: string }) {

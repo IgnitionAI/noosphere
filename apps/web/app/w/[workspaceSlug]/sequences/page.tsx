@@ -62,7 +62,7 @@ export default async function SequencesPage({
                         className="flex flex-wrap items-center gap-3 rounded-lg border border-line p-4 hover:border-brand-blue"
                         href={`/w/${workspaceSlug}/sequences/${sequence.id}`}
                       >
-                        <span className="grid h-9 w-9 place-items-center rounded-lg bg-slate-100 text-navy">
+                        <span className="grid h-9 w-9 place-items-center rounded-lg bg-slate-100 text-ink">
                           <Send size={16} />
                         </span>
                         <span className="min-w-0 flex-1">

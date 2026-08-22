@@ -66,7 +66,7 @@ export default async function CampaignsPage({
       </header>
 
       {assessingCount > 0 ? (
-        <div className="mb-5 flex items-center gap-3 rounded-lg border border-brand-blue/25 bg-blue-50 px-4 py-3 text-xs text-navy">
+        <div className="mb-5 flex items-center gap-3 rounded-lg border border-brand-blue/25 bg-blue-50 px-4 py-3 text-xs text-ink">
           <LoaderCircle className="shrink-0 animate-spin text-brand-blue" size={16} />
           L’autopilote évalue encore les canaux de {assessingCount} ICP. Les campagnes retenues apparaîtront ici automatiquement.
         </div>
@@ -118,7 +118,7 @@ export default async function CampaignsPage({
                   key={plan.id}
                 >
                   <div className="flex min-w-0 items-center gap-3">
-                    <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-slate-100 text-navy">
+                    <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-slate-100 text-ink">
                       <Target size={17} />
                     </span>
                     <div className="min-w-0">

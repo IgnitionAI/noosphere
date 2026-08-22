@@ -68,7 +68,7 @@ export default async function WorkspaceSettingsPage({ params, searchParams }: { 
     </section>
 
     <details className="mt-8 rounded-xl border border-line bg-white p-4">
-      <summary className="cursor-pointer list-none font-semibold text-navy">Administration avancée <span className="ml-2 text-xs font-normal text-muted">équipe, jobs, quotas et données</span></summary>
+      <summary className="cursor-pointer list-none font-semibold text-ink">Administration avancée <span className="ml-2 text-xs font-normal text-muted">équipe, jobs, quotas et données</span></summary>
       <section className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <SettingLink href={`/w/${workspaceSlug}/settings/members`} icon={<UsersRound size={17} />} label="Équipe" detail={`${members.length} membre${members.length > 1 ? "s" : ""}`} />
         {canOperate ? <SettingLink href={`/w/${workspaceSlug}/settings/console`} icon={<Activity size={17} />} label="Console opérateur" detail="Jobs et corrélations" /> : null}

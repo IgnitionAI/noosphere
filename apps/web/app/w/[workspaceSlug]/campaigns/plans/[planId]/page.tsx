@@ -168,7 +168,7 @@ export default async function CampaignPage({
                               {activity.lastMessage.direction === "inbound" ? "Dernière réponse" : "Dernier message"}
                               <span className="ml-auto normal-case tracking-normal">{formatDate(activity.lastMessage.occurredAt)}</span>
                             </span>
-                            <span className="mt-1 block truncate text-xs text-navy">{activity.lastMessage.body}</span>
+                            <span className="mt-1 block truncate text-xs text-ink">{activity.lastMessage.body}</span>
                           </>
                         ) : (
                           <span className="flex items-center gap-2 text-xs text-muted"><Clock size={12} />Aucun message envoyé</span>
@@ -387,7 +387,7 @@ function EmailAutopilotSummary({ campaign }: { campaign: CampaignDetail }) {
 function AutopilotSetting({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-lg border border-line bg-white px-3 py-2">
-      <span className="font-semibold text-navy">{label}</span>
+      <span className="font-semibold text-ink">{label}</span>
       <span className="mt-0.5 block text-muted">{value}</span>
     </div>
   );

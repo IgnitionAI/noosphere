@@ -53,9 +53,9 @@ function Touch({ touch, title, workspaceSlug }: { touch: CalendarBookingAttribut
   if (!touch) return null;
   return (
     <div className="rounded-md border border-violet-200 bg-white/80 p-2">
-      <p className="font-semibold text-navy">{title} · {interactionLabel(touch.type)}</p>
+      <p className="font-semibold text-ink">{title} · {interactionLabel(touch.type)}</p>
       <p className="mt-1 text-muted">{touch.actorName ?? "Contact masqué"} · {formatDate(touch.occurredAt)}</p>
-      {touch.body ? <p className="mt-1 line-clamp-2 leading-5 text-navy">« {touch.body} »</p> : null}
+      {touch.body ? <p className="mt-1 line-clamp-2 leading-5 text-ink">« {touch.body} »</p> : null}
       <p className="mt-1 line-clamp-2 leading-5 text-muted">Post : {touch.postText}</p>
       <div className="mt-2 flex flex-wrap gap-3">
         <Link className="font-semibold text-brand-blue hover:underline" href={`/w/${workspaceSlug}${touch.proofHref}`}>

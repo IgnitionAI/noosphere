@@ -1,5 +1,7 @@
 import { redirect } from "next/navigation";
 import { LoginForm } from "./login-form";
+import { NoosphereMark } from "@/components/noosphere-mark";
+import { ThemeSwitcher } from "@/components/theme-switcher";
 import { getSession } from "@/lib/api";
 
 export const metadata = { title: "Connexion" };
@@ -10,12 +12,11 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
   const { next } = await searchParams;
   const destination = next?.startsWith("/") && !next.startsWith("//") && !next.includes("\\") ? next : "/";
   return (
-    <main className="grid min-h-screen place-items-center bg-canvas p-5">
+    <main className="signal-grid relative grid min-h-screen place-items-center bg-canvas p-5">
+      <div className="absolute right-4 top-4"><ThemeSwitcher /></div>
       <section className="w-full max-w-[430px]">
         <div className="mb-8 flex justify-center">
-          <div className="grid h-12 w-12 place-items-center rounded-xl bg-navy font-black text-signal">
-            N
-          </div>
+          <NoosphereMark className="h-12 w-12" title="Noosphere" />
         </div>
         <div className="panel p-7 sm:p-8">
           <div className="badge badge-signal mx-auto w-fit">Espace privé IgnitionAI</div>
