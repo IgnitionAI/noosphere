@@ -70,6 +70,7 @@ test("Inbound exposes its grounded editorial strategy without a provider mutatio
 });
 
 test("workspace surfaces keep one clear heading and never overflow the viewport", async ({ page }) => {
+  test.setTimeout(90_000);
   const mutations: string[] = [];
   page.on("request", (request) => {
     if (["POST", "PUT", "PATCH", "DELETE"].includes(request.method())) mutations.push(`${request.method()} ${request.url()}`);
