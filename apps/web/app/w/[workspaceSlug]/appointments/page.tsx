@@ -119,8 +119,8 @@ export default async function AppointmentsPage({
         <section className="panel py-16 text-center">
           <CalendarCheck2 className="mx-auto text-muted" size={30} />
           <h2 className="mt-4 font-semibold">{view === "upcoming" ? "Aucun appel à venir pour le moment" : "Aucun rendez-vous dans cet historique"}</h2>
-          <p className="mx-auto mt-2 max-w-lg text-sm leading-6 text-muted">Lancez un ICP : les campagnes cherchent, contactent et qualifient les prospects jusqu’à la réservation.</p>
-          <Link className="button button-primary mt-5" href={`/w/${workspaceSlug}/campaigns`}>Voir la prospection</Link>
+          <p className="mx-auto mt-2 max-w-lg text-sm leading-6 text-muted">Noosphere continue à créer et qualifier des conversations jusqu’à la réservation.</p>
+          <Link className="button button-primary mt-5" href={`/w/${workspaceSlug}/inbox`}>Voir les messages</Link>
         </section>
       )}
     </>

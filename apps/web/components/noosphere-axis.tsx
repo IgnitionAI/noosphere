@@ -32,7 +32,7 @@ export function NoosphereAxis({
         return (
           <Link
             aria-selected={selected}
-            className={`min-w-0 rounded-full px-2 py-2.5 text-center text-xs font-bold transition sm:text-sm ${selected ? "bg-signal text-signal-ink shadow-sm" : "text-muted hover:bg-white hover:text-navy"}`}
+            className={`flex min-h-11 min-w-0 items-center justify-center rounded-full px-2 py-2.5 text-center text-xs font-bold transition sm:text-sm ${selected ? "bg-signal text-signal-ink shadow-sm" : "text-muted hover:bg-white hover:text-navy"}`}
             href={`/w/${workspaceSlug}/activity?${query}`}
             key={candidate.value}
             prefetch

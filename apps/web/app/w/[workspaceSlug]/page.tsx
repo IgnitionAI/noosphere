@@ -5,15 +5,14 @@ import {
   CheckCircle2,
   Clock3,
   MessageSquareText,
-  Settings2,
-  Target,
+  Radio,
+  Sparkles,
   Users,
 } from "lucide-react";
 import Link from "next/link";
-import { NoosphereAxis } from "@/components/noosphere-axis";
-import { getOperationalSummary, type AttentionItem, type EngineOperationalState, type NextOutcome } from "@/lib/api";
+import { getOperationalSummary, type AttentionItem, type NextOutcome } from "@/lib/api";
 
-export const metadata = { title: "Aujourd’hui — Noosphere" };
+export const metadata = { title: "Accueil — Noosphere" };
 export const dynamic = "force-dynamic";
 
 export default async function TodayPage({
@@ -28,41 +27,64 @@ export default async function TodayPage({
   try {
     const summary = await getOperationalSummary(workspaceSlug, {
       ...(query.attentionCursor ? { attentionCursor: query.attentionCursor } : {}),
-      attentionLimit: 8,
+      attentionLimit: 6,
     });
     const stale = Date.now() - Date.parse(summary.asOf) > 5 * 60_000;
+    const hasStarted = summary.counts.activeCampaigns > 0
+      || summary.counts.prospects > 0
+      || summary.counts.publishedContents > 0
+      || summary.counts.openConversations > 0
+      || summary.counts.bookedCalls > 0
+      || summary.engines.inbound.status !== "not_configured";
+    const working = summary.jobs.active > 0
+      || summary.engines.inbound.status === "running"
+      || summary.engines.outbound.status === "running";
+
     return (
       <>
-        <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <h1 className="page-title">Aujourd’hui</h1>
-            <p className="mt-2 max-w-2xl text-sm text-muted">Le système travaille. Voici ce qui mérite réellement votre attention.</p>
+        <header className="overflow-hidden rounded-2xl bg-navy text-white">
+          <div className="grid gap-8 p-6 sm:p-8 lg:grid-cols-[minmax(0,1fr)_300px] lg:items-end">
+            <div>
+              <span className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-semibold text-signal">
+                <Sparkles size={14} /> Mode équilibré
+              </span>
+              <h1 className="mt-5 max-w-3xl text-3xl font-semibold leading-tight tracking-[-0.04em] sm:text-4xl">Votre acquisition, en pilote automatique.</h1>
+              <p className="mt-4 max-w-2xl text-sm leading-6 text-slate-300">Noosphere crée votre visibilité, trouve les bons prospects, lance les échanges et remplit votre agenda.</p>
+              <Link className="button button-signal mt-6" href={hasStarted ? `/w/${workspaceSlug}/inbox` : `/w/${workspaceSlug}/strategy/product-reading`}>
+                {hasStarted ? "Voir les messages" : "Lancer Noosphere"}<ArrowRight size={15} />
+              </Link>
+            </div>
+            <div className="rounded-xl border border-white/10 bg-white/5 p-5">
+              <div className="flex items-center gap-2 text-sm font-semibold"><span className={`h-2.5 w-2.5 rounded-full ${summary.counts.attention ? "bg-amber-400" : "bg-signal"}`} />{hasStarted ? (working ? "Noosphere travaille" : "Noosphere est prêt") : "Prêt à démarrer"}</div>
+              <p className="mt-2 text-xs leading-5 text-slate-300">{statusCopy({ hasStarted, working, attention: summary.counts.attention })}</p>
+            </div>
           </div>
-          <Link className="button" href={`/w/${workspaceSlug}/settings`}><Settings2 size={14} /> Configuration</Link>
         </header>
 
-        <NoosphereAxis lens="symbiosis" workspaceSlug={workspaceSlug} />
-
         {stale ? (
-          <div className="mb-4 flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900" role="status">
+          <div className="mt-4 flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900" role="status">
             <Clock3 className="mt-0.5 shrink-0" size={16} />
-            <p><strong>Dernier état connu.</strong> Les données n’ont pas été actualisées depuis plus de cinq minutes ; les jobs continuent en arrière-plan.</p>
+            <p><strong>Dernier état connu.</strong> Noosphere continue en arrière-plan et actualisera ces résultats automatiquement.</p>
           </div>
         ) : null}
 
-        <EngineBar inbound={summary.engines.inbound} outbound={summary.engines.outbound} workspaceSlug={workspaceSlug} />
-
-        <section aria-label="Indicateurs opérationnels" className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <Metric icon={Users} label="Prospects actifs" value={summary.counts.prospects} />
-          <Metric icon={MessageSquareText} label="Conversations ouvertes" value={summary.counts.openConversations} />
-          <Metric icon={CalendarCheck2} label="Appels réservés" value={summary.counts.bookedCalls} tone="signal" />
-          <Metric icon={Target} label="Jobs en cours" value={summary.jobs.active} />
+        <section aria-label="Résultats de Noosphere" className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <Metric description="créés par Noosphere" icon={Radio} label="Contenus publiés" value={summary.counts.publishedContents} />
+          <Metric description={`${summary.counts.contactedProspects} déjà contactés`} icon={Users} label="Prospects trouvés" value={summary.counts.prospects} />
+          <Metric description="à poursuivre maintenant" icon={MessageSquareText} label="Conversations" value={summary.counts.openConversations} />
+          <Metric description="confirmés dans l’agenda" icon={CalendarCheck2} label="Appels" tone="signal" value={summary.counts.bookedCalls} />
         </section>
 
-        <div className="mt-4 grid gap-4 xl:grid-cols-[1.15fr_.85fr]">
+        {summary.attention.length ? (
           <AttentionPanel attention={summary.attention} nextCursor={summary.attentionPagination.nextCursor} workspaceSlug={workspaceSlug} />
-          <OutcomesPanel outcomes={summary.nextOutcomes} workspaceSlug={workspaceSlug} />
-        </div>
+        ) : (
+          <div className="mt-4 flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+            <CheckCircle2 className="mt-0.5 shrink-0" size={16} />
+            <p><strong>Rien à faire.</strong> Noosphere peut continuer seul.</p>
+          </div>
+        )}
+
+        <OutcomesPanel outcomes={summary.nextOutcomes} workspaceSlug={workspaceSlug} />
       </>
     );
   } catch {
@@ -70,37 +92,15 @@ export default async function TodayPage({
   }
 }
 
-function EngineBar({ inbound, outbound, workspaceSlug }: { inbound: EngineOperationalState; outbound: EngineOperationalState; workspaceSlug: string }) {
-  return (
-    <section aria-label="Santé des moteurs" className="grid gap-4 rounded-xl bg-navy p-4 text-white md:grid-cols-[1fr_auto_1fr] md:items-center">
-      <Engine engine={inbound} href={engineHref(workspaceSlug, "inbound", inbound)} />
-      <div className="text-center font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-signal">Symbiose en attente d’Inbound</div>
-      <Engine align="right" engine={outbound} href={engineHref(workspaceSlug, "outbound", outbound)} />
-    </section>
-  );
-}
-
-function Engine({ engine, href, align = "left" }: { engine: EngineOperationalState; href: string; align?: "left" | "right" }) {
-  const dotClass = engine.status === "degraded" ? "bg-amber-400" : engine.status === "not_configured" ? "bg-slate-500" : "bg-signal";
-  return (
-    <Link className={`group flex min-w-0 items-start gap-3 ${align === "right" ? "md:flex-row-reverse md:text-right" : ""}`} href={href}>
-      <span aria-hidden className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ${dotClass}`} />
-      <span className="min-w-0"><strong className="block text-sm">{engine.label}</strong><span className="mt-1 block text-xs leading-5 text-slate-300 group-hover:text-white">{engine.summary}</span></span>
-    </Link>
-  );
-}
-
-function Metric({ icon: Icon, label, value, tone }: { icon: typeof Users; label: string; value: number; tone?: "signal" }) {
-  return <article className={`panel p-4 ${tone === "signal" ? "border-lime-300" : ""}`}><div className="flex items-center justify-between text-muted"><span className="text-xs">{label}</span><Icon size={15} /></div><strong className="metric-value mt-2 block text-navy">{value}</strong></article>;
+function Metric({ icon: Icon, label, value, description, tone }: { icon: typeof Users; label: string; value: number; description: string; tone?: "signal" }) {
+  return <article className={`panel p-4 ${tone === "signal" ? "border-lime-300" : ""}`}><div className="flex items-center justify-between text-muted"><span className="text-xs font-semibold">{label}</span><Icon size={15} /></div><strong className="metric-value mt-3 block text-navy">{value}</strong><p className="mt-1 text-xs text-muted">{description}</p></article>;
 }
 
 function AttentionPanel({ attention, nextCursor, workspaceSlug }: { attention: readonly AttentionItem[]; nextCursor: string | null; workspaceSlug: string }) {
   return (
-    <section className="panel overflow-hidden">
-      <div className="panel-header"><div><h2 className="font-semibold">À traiter</h2><p className="mt-1 text-xs text-muted">Uniquement les exceptions qui bloquent ou changent le résultat.</p></div><span className={attention.length ? "badge badge-warning" : "badge badge-success"}>{attention.length ? `${attention.length} action${attention.length > 1 ? "s" : ""}` : "Rien à traiter"}</span></div>
-      {attention.length ? <div className="divide-y divide-line">{attention.map((item) => <AttentionRow item={item} key={item.id} workspaceSlug={workspaceSlug} />)}</div> : (
-        <div className="panel-body py-12 text-center"><CheckCircle2 className="mx-auto text-success" size={28} /><h3 className="mt-3 font-semibold">L’automatisation peut continuer seule</h3><p className="mx-auto mt-2 max-w-md text-sm text-muted">Aucun compte, job ou échange ne demande d’intervention.</p></div>
-      )}
+    <section className="panel mt-4 overflow-hidden">
+      <div className="panel-header"><div><h2 className="font-semibold">Votre attention est nécessaire</h2><p className="mt-1 text-xs text-muted">Seulement ce qui empêche Noosphere de continuer seul.</p></div><span className="badge badge-warning">{attention.length} action{attention.length > 1 ? "s" : ""}</span></div>
+      <div className="divide-y divide-line">{attention.map((item) => <AttentionRow item={item} key={item.id} workspaceSlug={workspaceSlug} />)}</div>
       {nextCursor ? <div className="border-t border-line p-3 text-right"><Link className="button" href={`/w/${workspaceSlug}?attentionCursor=${encodeURIComponent(nextCursor)}`}>Voir les suivantes</Link></div> : null}
     </section>
   );
@@ -109,36 +109,44 @@ function AttentionPanel({ attention, nextCursor, workspaceSlug }: { attention: r
 function AttentionRow({ item, workspaceSlug }: { item: AttentionItem; workspaceSlug: string }) {
   const href = workspaceHref(workspaceSlug, item.action?.href ?? item.resourceHref ?? "/");
   return (
-    <article className="grid gap-3 p-4 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-start">
-      <AlertTriangle className={item.severity === "critical" ? "mt-0.5 text-danger" : "mt-0.5 text-warning"} size={16} />
-      <div className="min-w-0"><h3 className="text-sm font-semibold">{item.message}</h3><p className="mt-1 text-xs text-muted">{ageLabel(item.ageSeconds)}{item.correlationId ? ` · Réf. ${item.correlationId.slice(0, 12)}` : ""}</p></div>
-      <Link className="button h-9 justify-self-start px-3" href={href}>{item.action?.label ?? "Ouvrir"}</Link>
+    <article className="grid gap-3 p-4 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center">
+      <AlertTriangle className={item.severity === "critical" ? "text-danger" : "text-warning"} size={16} />
+      <div className="min-w-0"><h3 className="text-sm font-semibold">{attentionCopy(item)}</h3><p className="mt-1 text-xs text-muted">{ageLabel(item.ageSeconds)}</p></div>
+      <Link className="button h-9 justify-self-start px-3" href={href}>{item.action?.label ?? "Corriger"}</Link>
     </article>
   );
 }
 
 function OutcomesPanel({ outcomes, workspaceSlug }: { outcomes: readonly NextOutcome[]; workspaceSlug: string }) {
   return (
-    <section className="panel overflow-hidden">
-      <div className="panel-header"><div><h2 className="font-semibold">Prochains résultats</h2><p className="mt-1 text-xs text-muted">Des événements durables, pas des promesses décoratives.</p></div><span className="badge badge-success">Système observé</span></div>
-      {outcomes.length ? <div className="divide-y divide-line">{outcomes.slice(0, 5).map((outcome) => (
-        <Link className="group flex items-start gap-3 p-4 transition hover:bg-slate-50" href={workspaceHref(workspaceSlug, outcome.href)} key={outcome.id}>
-          <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-signal" />
-          <span className="min-w-0 flex-1"><strong className="block text-sm">{outcome.label}</strong><span className="mt-1 block text-xs leading-5 text-muted">{outcome.detail}</span></span>
-          <span className="shrink-0 text-xs font-semibold text-muted">{outcome.expectedAt ? formatRelative(outcome.expectedAt) : "À définir"}</span>
+    <section className="panel mt-4 overflow-hidden">
+      <div className="panel-header"><div><h2 className="font-semibold">Ensuite</h2><p className="mt-1 text-xs text-muted">Noosphere enchaîne ces actions automatiquement.</p></div></div>
+      {outcomes.length ? <div className="divide-y divide-line">{outcomes.slice(0, 4).map((outcome) => (
+        <Link className="group flex items-center gap-3 p-4 transition hover:bg-slate-50" href={workspaceHref(workspaceSlug, outcome.href)} key={outcome.id}>
+          <span className="h-2 w-2 shrink-0 rounded-full bg-signal" />
+          <strong className="min-w-0 flex-1 truncate text-sm">{outcome.label}</strong>
+          <span className="shrink-0 text-xs font-semibold text-muted">{outcome.expectedAt ? formatRelative(outcome.expectedAt) : "Automatique"}</span>
         </Link>
-      ))}</div> : <div className="panel-body py-12 text-center"><Clock3 className="mx-auto text-muted" size={28} /><h3 className="mt-3 font-semibold">Prochain résultat en préparation</h3><p className="mt-2 text-sm text-muted">Configurez un compte ou activez une campagne pour obtenir une prochaine échéance réelle.</p></div>}
+      ))}</div> : <div className="panel-body py-10 text-center"><Clock3 className="mx-auto text-muted" size={24} /><h3 className="mt-3 font-semibold">La prochaine action se prépare</h3><p className="mt-2 text-sm text-muted">Elle apparaîtra ici dès qu’elle sera planifiée.</p></div>}
     </section>
   );
 }
 
 function TodayError({ workspaceSlug }: { workspaceSlug: string }) {
-  return <section className="panel border-red-200 bg-red-50"><div className="panel-body py-12 text-center"><AlertTriangle className="mx-auto text-danger" size={30} /><h1 className="mt-4 text-lg font-semibold text-navy">Le cockpit n’a pas pu être actualisé</h1><p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-muted">Les moteurs continuent en arrière-plan. Réessayez sans perdre les opérations en cours.</p><Link className="button mt-5" href={`/w/${workspaceSlug}`}>Réessayer <ArrowRight size={14} /></Link></div></section>;
+  return <section className="panel border-red-200 bg-red-50"><div className="panel-body py-12 text-center"><AlertTriangle className="mx-auto text-danger" size={30} /><h1 className="mt-4 text-lg font-semibold text-navy">Les résultats ne sont pas disponibles</h1><p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-muted">Noosphere continue en arrière-plan. Rechargez cette page sans perdre les opérations en cours.</p><Link className="button mt-5" href={`/w/${workspaceSlug}`}>Réessayer <ArrowRight size={14} /></Link></div></section>;
 }
 
-function engineHref(workspaceSlug: string, lens: "inbound" | "outbound", engine: EngineOperationalState): string {
-  if (engine.status === "not_configured") return `/w/${workspaceSlug}/settings`;
-  return `/w/${workspaceSlug}/activity?lens=${lens}`;
+function statusCopy({ hasStarted, working, attention }: { hasStarted: boolean; working: boolean; attention: number }): string {
+  if (!hasStarted) return "Ajoutez votre offre : Noosphere s’occupe ensuite de la stratégie, des campagnes et des contenus.";
+  if (attention) return `${attention} blocage${attention > 1 ? "s" : ""} isolé${attention > 1 ? "s" : ""}. Le reste continue normalement.`;
+  if (working) return "Recherche, contenu, prospection ou échanges en cours. Vous n’avez rien à piloter.";
+  return "La prochaine action automatique sera lancée au bon moment.";
+}
+
+function attentionCopy(item: AttentionItem): string {
+  if (item.type === "job") return item.message;
+  if (item.type === "decision") return "Une conversation demande votre réponse.";
+  return item.message;
 }
 
 function workspaceHref(workspaceSlug: string, href: string): string {

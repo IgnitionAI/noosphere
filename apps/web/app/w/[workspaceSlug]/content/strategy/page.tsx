@@ -19,8 +19,8 @@ export default async function EditorialStrategyPage({ params }: { params: Promis
           <h1 className="page-title mt-3">Stratégie LinkedIn</h1>
           <p className="mt-2 max-w-2xl text-sm text-muted">Noosphere relie l’offre publiée, l’ICP actif et les claims autorisés avant de produire une seule idée.</p>
         </div>
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          {strategy?.currentVersion ? <Link className="button button-primary" href={`/w/${workspaceSlug}/content/ideas`}>Ouvrir le radar d’idées</Link> : null}
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
+          {strategy?.currentVersion ? <Link className="button button-primary w-full sm:w-auto" href={`/w/${workspaceSlug}/content/ideas`}>Ouvrir le radar d’idées</Link> : null}
           <StrategyActions currentVersion={strategy?.currentVersion ?? 0} hasStrategy={Boolean(strategy)} workspaceSlug={workspaceSlug} />
         </div>
       </header>
@@ -29,7 +29,7 @@ export default async function EditorialStrategyPage({ params }: { params: Promis
         <>
           <section className="mt-5 grid gap-3 sm:grid-cols-3">
             <Metric label="Audience" value={strategy.draft.audience.name} />
-            <Metric label="Cadence" value={`${strategy.draft.cadence.postsPerWeek} posts / semaine`} />
+            <Metric label="Cadence" value={`${autopilot.postsPerWeek} posts / semaine`} />
             <Metric label="Version active" value={strategy.currentVersion ? `v${strategy.currentVersion}` : "Brouillon"} />
           </section>
 
@@ -41,7 +41,7 @@ export default async function EditorialStrategyPage({ params }: { params: Promis
                 <p className="mt-2 text-sm leading-6 text-muted">Chaque jour, Noosphere recherche des sujets sourcés, sélectionne les meilleurs, rédige, audite les preuves, critique le texte puis planifie LinkedIn selon la cadence. Un contenu bloqué n’arrête pas les autres.</p>
                 <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted"><span className="badge">{autopilot.queuedIdeas} idées</span><span className="badge">{autopilot.generatingAssets} en rédaction</span><span className="badge">{autopilot.scheduledPublications} planifiées</span>{autopilot.exceptions ? <span className="badge badge-warning">{autopilot.exceptions} exception{autopilot.exceptions === 1 ? "" : "s"}</span> : null}</div>
               </div>
-              <div className="w-full shrink-0 lg:w-[360px]"><AutopilotControls enabled={autopilot.enabled} localTime={autopilot.localTime} timezone={autopilot.timezone} workspaceSlug={workspaceSlug} /></div>
+              <div className="w-full shrink-0 lg:w-[420px]"><AutopilotControls enabled={autopilot.enabled} localTime={autopilot.localTime} publicationDays={autopilot.publicationDays} publicationTimes={autopilot.publicationTimes} timezone={autopilot.timezone} workspaceSlug={workspaceSlug} /></div>
             </div>
           </section>
 
@@ -58,14 +58,14 @@ export default async function EditorialStrategyPage({ params }: { params: Promis
           </section>
 
           <section className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(280px,0.65fr)]">
-            <div className="panel overflow-hidden">
+              <div className="panel min-w-0 overflow-hidden">
               <div className="panel-header"><div><h2 className="font-semibold">Piliers éditoriaux</h2><p className="mt-1 text-xs text-muted">Chaque promesse indique le type de preuve requis avant rédaction.</p></div><span className="badge">{strategy.draft.pillars.length}</span></div>
               <div className="divide-y divide-line">{strategy.draft.pillars.map((pillar, index) => <article className="p-5" key={pillar.name}><div className="flex gap-3"><span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-navy text-xs font-bold text-white">{index + 1}</span><div><h3 className="font-semibold">{pillar.name}</h3><p className="mt-2 text-sm leading-6 text-muted">{pillar.promise}</p><div className="mt-3 flex flex-wrap gap-2">{pillar.proofTypes.map((proof) => <span className="badge" key={proof}>{proof}</span>)}</div></div></div></article>)}</div>
             </div>
 
             <div className="space-y-4">
               <section className="panel p-5"><h2 className="flex items-center gap-2 font-semibold"><ShieldCheck className="text-success" size={17} /> Contrat de vérité</h2><p className="mt-3 text-sm leading-6 text-muted">{strategy.draft.allowedClaimIds.length} claim{strategy.draft.allowedClaimIds.length === 1 ? "" : "s"} sourcé{strategy.draft.allowedClaimIds.length === 1 ? "" : "s"} ou validé{strategy.draft.allowedClaimIds.length === 1 ? "" : "s"} peuvent être utilisés. Les autres faits restent des opinions explicites.</p><div className="mt-3 flex items-center gap-2 text-xs font-semibold text-success"><CheckCircle2 size={14} /> Claims vérifiés côté serveur</div></section>
-              <section className="panel p-5"><h2 className="font-semibold">Voix</h2><div className="mt-3 flex flex-wrap gap-2">{strategy.draft.voice.traits.map((trait) => <span className="badge badge-signal" key={trait}>{trait}</span>)}</div><h3 className="mt-5 text-xs font-bold uppercase tracking-wide text-muted">À éviter</h3><ul className="mt-2 space-y-2 text-sm text-muted">{strategy.draft.voice.avoid.map((item) => <li key={item}>— {item}</li>)}</ul></section>
+              <section className="panel min-w-0 p-5"><h2 className="font-semibold">Voix</h2><div className="mt-3 flex flex-wrap gap-2">{strategy.draft.voice.traits.map((trait) => <span className="badge badge-signal" key={trait}>{trait}</span>)}</div><h3 className="mt-5 text-xs font-bold uppercase tracking-wide text-muted">À éviter</h3><ul className="mt-2 space-y-2 text-sm text-muted">{strategy.draft.voice.avoid.map((item) => <li key={item}>— {item}</li>)}</ul></section>
               <section className="panel p-5"><h2 className="font-semibold">Traçabilité IA</h2><dl className="mt-3 space-y-2 text-xs text-muted"><div className="flex justify-between gap-4"><dt>Provider</dt><dd className="font-semibold text-navy">{strategy.derivation.provider}</dd></div><div className="flex justify-between gap-4"><dt>Modèle</dt><dd className="font-semibold text-navy">{strategy.derivation.model}</dd></div><div className="flex justify-between gap-4"><dt>Prompt</dt><dd className="font-semibold text-navy">{strategy.derivation.promptVersion}</dd></div></dl></section>
             </div>
           </section>

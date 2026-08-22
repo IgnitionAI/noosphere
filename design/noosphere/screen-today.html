@@ -1,9 +1,9 @@
 <!--
 Route: /w/:workspace
-Purpose: Montrer en moins de dix secondes la santé des deux moteurs et les rares actions requises.
-Components: AppShell, NoosphereAxis, EngineStatusBar, KpiStrip, AttentionList, NextOutcomes.
+Purpose: Dire en moins de dix secondes si Noosphere travaille et montrer uniquement les résultats utiles.
+Components: AppShell, AutopilotHero, KpiStrip, AttentionList, NextOutcomes.
 States: success, empty, loading, error, stale.
-Data: statuts Inbound/Outbound, prochaine publication, campagnes, conversations, appels, exceptions.
+Data: contenus, prospects, conversations, appels, exceptions et prochains résultats.
 Viewport: mobile-first 390px, adaptation desktop 1440px.
 -->
 <!doctype html>
@@ -11,7 +11,7 @@ Viewport: mobile-first 390px, adaptation desktop 1440px.
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Aujourd'hui — Noosphere</title>
+  <title>Accueil — Noosphere</title>
   <style>
     :root {
       --surface-1: #f5f5f1;
@@ -107,7 +107,7 @@ Viewport: mobile-first 390px, adaptation desktop 1440px.
       .engine-bar { grid-template-columns: 1fr; } .bridge { text-align: center; } .engine:last-child { text-align: left; }
       .kpis, .split { grid-template-columns: 1fr; } .kpis { display: flex; overflow-x: auto; } .metric { min-width: 170px; }
       .row { grid-template-columns: 10px 1fr; } .row .button { grid-column: 2; justify-self: start; }
-      .mobile-nav { display: grid; position: fixed; z-index: 8; right: 10px; bottom: 10px; left: 10px; grid-template-columns: repeat(5, 1fr); padding: var(--space-1); background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-md); }
+      .mobile-nav { display: grid; position: fixed; z-index: 8; right: 10px; bottom: 10px; left: 10px; grid-template-columns: repeat(3, 1fr); padding: var(--space-1); background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-md); }
       .mobile-nav a { padding: 9px 2px; text-align: center; color: var(--text-muted); font-size: 10px; font-weight: 800; border-radius: var(--radius-sm); }
       .mobile-nav a[aria-current=page] { color: white; background: var(--nav); }
     }
@@ -115,29 +115,28 @@ Viewport: mobile-first 390px, adaptation desktop 1440px.
 </head>
 <body>
   <div class="shell">
-    <aside class="side"><div class="brand"><span class="mark">N</span> Noosphere</div><div class="workspace">IgnitionAI<br><small>Owner · Europe/Paris</small></div><nav class="nav"><a aria-current="page" href="screen-today.html">Aujourd'hui</a><a href="screen-activity-symbiosis.html">Activité</a><a href="screen-prospects.html">Prospects</a><a href="screen-conversations.html">Conversations</a><a href="screen-calls.html">Appels</a></nav><small>Deux moteurs actifs<br>Dernière synchro il y a 2 min</small></aside>
+    <aside class="side"><div class="brand"><span class="mark">N</span> Noosphere</div><div class="workspace">IgnitionAI<br><small>Owner · Europe/Paris</small></div><nav class="nav"><a aria-current="page" href="screen-today.html">Accueil</a><a href="screen-conversations.html">Messages</a><a href="screen-calls.html">Appels</a></nav><small>Noosphere trouve, échange<br>et remplit ton agenda.</small></aside>
     <div class="main">
-      <header class="top"><span class="crumb">IgnitionAI / Aujourd'hui</span><span class="avatar">SL</span></header>
+      <header class="top"><span class="crumb">IgnitionAI / Accueil</span><span class="avatar">SL</span></header>
       <main class="content">
-        <div class="heading"><div><h1>Aujourd'hui</h1><p>Le système travaille. Voici ce qui mérite réellement ton attention.</p></div><a class="button" href="screen-configuration.html">Configuration</a></div>
-        <nav class="axis" aria-label="Noosphere Axis" role="tablist"><a href="screen-activity-inbound.html" role="tab" aria-selected="false">Inbound</a><a href="screen-activity-symbiosis.html" role="tab" aria-selected="true">Symbiose</a><a href="screen-activity-outbound.html" role="tab" aria-selected="false">Outbound</a></nav>
+        <div class="heading"><div><h1>Votre acquisition, en pilote automatique.</h1><p>Noosphere crée de la visibilité, trouve les bons prospects, lance les échanges et remplit votre agenda.</p></div><span class="badge">Mode équilibré</span></div>
 
         <section class="state-view" data-state="success">
-          <div class="engine-bar"><div class="engine"><div><strong>Inbound actif</strong><p>Post LinkedIn demain à 08:40</p></div><span class="pulse"></span></div><span class="bridge">12 SIGNAUX PARTAGÉS</span><div class="engine"><span class="pulse"></span><div><strong>Outbound actif</strong><p>5 campagnes · prochaine passe 06:00</p></div></div></div>
-          <div class="grid kpis"><div class="panel metric"><span>Contenus cette semaine</span><strong>4</strong></div><div class="panel metric"><span>Prospects activés</span><strong>61</strong></div><div class="panel metric"><span>Conversations chaudes</span><strong>8</strong></div><div class="panel metric"><span>Appels réservés</span><strong>3</strong></div></div>
-          <div class="grid split"><section class="panel"><div class="panel-head"><h2>À traiter</h2><span class="badge warn">2 actions</span></div><div class="row"><span class="dot"></span><div><strong>Réponse avec demande de prix</strong><p>Claire Martin · LinkedIn · issue du post “RAG juridique sécurisé”</p></div><button class="button">Ouvrir</button></div><div class="row"><span class="dot"></span><div><strong>Compte email à reconnecter</strong><p>2 campagnes isolées ; LinkedIn et Inbound continuent normalement.</p></div><button class="button">Reconnecter</button></div></section><section class="panel"><div class="panel-head"><h2>Prochains résultats</h2><span class="badge">Système sain</span></div><div class="row"><span class="pulse"></span><div><strong>Publication LinkedIn</strong><p>Demain, 08:40 · “Pourquoi les copilotes RAG échouent en production”</p></div><span>18 h</span></div><div class="row"><span class="pulse"></span><div><strong>Appel MGPP Avocats</strong><p>Demain, 14:30 · attribué Inbound + Outbound</p></div><span>32 h</span></div></section></div>
+          <div class="panel" style="margin-top:24px;padding:16px;background:var(--nav);color:white"><strong><span class="pulse" style="display:inline-block;margin-right:8px"></span>Noosphere travaille</strong><p style="color:#cbd3e7;margin-top:4px">La prochaine recherche et la prochaine publication sont déjà planifiées.</p></div>
+          <div class="grid kpis"><div class="panel metric"><span>Contenus publiés</span><strong>4</strong></div><div class="panel metric"><span>Prospects trouvés</span><strong>61</strong></div><div class="panel metric"><span>Messages</span><strong>8</strong></div><div class="panel metric"><span>Appels</span><strong>3</strong></div></div>
+          <div class="grid split"><section class="panel"><div class="panel-head"><h2>Rien à faire</h2><span class="badge">Tout va bien</span></div><div class="row"><span class="pulse"></span><div><strong>Noosphere peut continuer seul</strong><p>Tu peux ouvrir Messages à tout moment pour reprendre une conversation.</p></div><a class="button" href="screen-conversations.html">Voir les messages</a></div></section><section class="panel"><div class="panel-head"><h2>Ensuite</h2></div><div class="row"><span class="pulse"></span><div><strong>Nouvelle publication</strong><p>Demain à 08:40</p></div><span>18 h</span></div><div class="row"><span class="pulse"></span><div><strong>Appel planifié</strong><p>Demain à 14:30</p></div><span>32 h</span></div></section></div>
         </section>
 
-        <section class="state-view blank" data-state="empty" hidden><h2>Tout est calme</h2><p>Aucune exception. Les deux moteurs continuent et le prochain contenu sera publié demain à 08:40.</p><a class="button primary" href="screen-activity-symbiosis.html">Voir l'activité</a></section>
-        <section class="state-view panel" data-state="loading" hidden><div class="panel-head"><h2>Chargement du cockpit</h2></div><div style="padding:24px"><div class="skeleton short"></div><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton short"></div></div></section>
-        <section class="state-view alert" data-state="error" hidden><strong>Le cockpit n'a pas pu être actualisé.</strong><p>Les moteurs continuent en arrière-plan. Réessaie sans perdre les opérations en cours.</p><button class="button">Réessayer</button></section>
-        <section class="state-view" data-state="stale" hidden><div class="stale"><strong>Données visibles mais non actualisées depuis 18 minutes.</strong> Les jobs continuent ; la reconnexion est automatique.</div><div class="blank"><h2>Dernier état connu conservé</h2><p>Inbound actif · Outbound actif · 3 appels réservés.</p></div></section>
+        <section class="state-view blank" data-state="empty" hidden><h2>Prêt à démarrer</h2><p>Décris ton offre une seule fois. Noosphere s'occupe ensuite du reste.</p><a class="button primary" href="screen-configuration.html">Lancer Noosphere</a></section>
+        <section class="state-view panel" data-state="loading" hidden><div class="panel-head"><h2>Chargement</h2></div><div style="padding:24px"><div class="skeleton short"></div><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton short"></div></div></section>
+        <section class="state-view alert" data-state="error" hidden><strong>Les résultats n'ont pas pu être actualisés.</strong><p>Noosphere continue en arrière-plan. Réessaie sans perdre les opérations en cours.</p><button class="button">Réessayer</button></section>
+        <section class="state-view" data-state="stale" hidden><div class="stale"><strong>Résultats non actualisés depuis 18 minutes.</strong> Noosphere continue ; la reconnexion est automatique.</div><div class="blank"><h2>Derniers résultats conservés</h2><p>4 contenus · 61 prospects · 3 appels.</p></div></section>
 
         <div class="state-tools" aria-label="États de revue"><strong>État :</strong><button class="active" data-target="success">Succès</button><button data-target="empty">Vide</button><button data-target="loading">Loading</button><button data-target="error">Erreur</button><button data-target="stale">Stale</button></div>
       </main>
     </div>
   </div>
-  <nav class="mobile-nav"><a aria-current="page" href="screen-today.html">Aujourd'hui</a><a href="screen-activity-symbiosis.html">Activité</a><a href="screen-prospects.html">Prospects</a><a href="screen-conversations.html">Messages</a><a href="screen-calls.html">Appels</a></nav>
+  <nav class="mobile-nav"><a aria-current="page" href="screen-today.html">Accueil</a><a href="screen-conversations.html">Messages</a><a href="screen-calls.html">Appels</a></nav>
   <script>document.querySelectorAll('[data-target]').forEach((button)=>button.addEventListener('click',()=>{document.querySelectorAll('.state-view').forEach((view)=>view.hidden=view.dataset.state!==button.dataset.target);document.querySelectorAll('[data-target]').forEach((item)=>item.classList.toggle('active',item===button));}));</script>
 </body>
 </html>

@@ -61,6 +61,7 @@ export type AttentionItem = {
 };
 
 export type NoosphereLens = "inbound" | "symbiosis" | "outbound";
+export type ActivityInteractionType = "reply" | "comment" | "reaction" | "mention";
 export type EngineOperationalStatus = "not_configured" | "idle" | "running" | "degraded" | "paused";
 export interface EngineOperationalState {
   readonly status: EngineOperationalStatus;
@@ -82,7 +83,7 @@ export interface NextOutcome {
 
 export interface WorkspaceOperationalSummary {
   readonly asOf: string;
-  readonly counts: { readonly activeCampaigns: number; readonly prospects: number; readonly openConversations: number; readonly openOpportunities: number; readonly bookedCalls: number; readonly attention: number };
+  readonly counts: { readonly activeCampaigns: number; readonly prospects: number; readonly contactedProspects: number; readonly publishedContents: number; readonly openConversations: number; readonly openOpportunities: number; readonly bookedCalls: number; readonly attention: number };
   readonly attention: readonly AttentionItem[];
   readonly jobs: { readonly active: number; readonly failed: number; readonly running: readonly { readonly id: string; readonly type: string; readonly status: string; readonly updatedAt: string }[] };
   readonly nextAutomaticResearch: string | null;
@@ -275,6 +276,9 @@ export interface ContentAutopilot {
   readonly enabled: boolean;
   readonly localTime: string;
   readonly timezone: string;
+  readonly publicationTimes: readonly string[];
+  readonly publicationDays: readonly number[];
+  readonly postsPerWeek: number;
   readonly lastRunAt: string | null;
   readonly nextRunAt: string | null;
   readonly nextPublicationAt: string | null;
@@ -510,7 +514,7 @@ export async function getContentAutopilot(workspaceSlug: string): Promise<Conten
   return crmFetch(workspaceSlug, "/api/v1/content/autopilot");
 }
 
-export async function configureContentAutopilot(workspaceSlug: string, input: { requestKey: string; enabled: boolean; localTime: string; timezone: string }): Promise<ContentAutopilot> {
+export async function configureContentAutopilot(workspaceSlug: string, input: { requestKey: string; enabled: boolean; localTime: string; timezone: string; publicationTimes?: readonly string[]; publicationDays?: readonly number[] }): Promise<ContentAutopilot> {
   return crmFetch(workspaceSlug, "/api/v1/content/autopilot", { method: "PUT", body: input });
 }
 
@@ -540,7 +544,7 @@ export async function getContentIdeaDiscoveryRun(workspaceSlug: string, runId: s
   catch (error) { if (error instanceof OutboundApiError && error.status === 404) return null; throw error; }
 }
 
-export async function getContentIdeaDetail(workspaceSlug: string, ideaId: string): Promise<{ readonly idea: ContentIdea; readonly asset: ContentAsset | null }> {
+export async function getContentIdeaDetail(workspaceSlug: string, ideaId: string): Promise<{ readonly idea: ContentIdea; readonly asset: ContentAsset | null; readonly publication: ContentPublication | null }> {
   return crmFetch(workspaceSlug, `/api/v1/content/ideas/${ideaId}`);
 }
 
@@ -604,9 +608,10 @@ export async function cancelContentPublication(workspaceSlug: string, publicatio
   return crmFetch(workspaceSlug, `/api/v1/content/publications/${publicationId}/cancel`, { method: "POST", body: { requestKey } });
 }
 
-export async function getActivity(workspaceSlug: string, lens: NoosphereLens, cursor?: string): Promise<ActivityWorkspacePage> {
+export async function getActivity(workspaceSlug: string, lens: NoosphereLens, cursor?: string, interactionType?: ActivityInteractionType): Promise<ActivityWorkspacePage> {
   const params = new URLSearchParams({ lens });
   if (cursor) params.set("cursor", cursor);
+  if (interactionType) params.set("interactionType", interactionType);
   return crmFetch(workspaceSlug, `/api/v1/activity?${params}`);
 }
 

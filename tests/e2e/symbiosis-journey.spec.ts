@@ -34,7 +34,7 @@ test("Symbiose renders a proved journey and keeps an unresolved reaction inert",
     await page.getByLabel("Email professionnel").fill(email);
     await page.getByLabel("Mot de passe").fill(password);
     await page.getByRole("button", { name: "Accéder au workspace" }).click();
-    await expect(page.getByRole("heading", { name: "Aujourd’hui" })).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByRole("heading", { name: "Votre acquisition, en pilote automatique." })).toBeVisible({ timeout: 20_000 });
     mutationRequests.length = 0;
 
     await page.goto(`/w/${workspaceSlug}/activity?lens=symbiosis`);
@@ -42,10 +42,13 @@ test("Symbiose renders a proved journey and keeps an unresolved reaction inert",
     await expect(page.getByText("Données partielles")).toBeVisible();
     await expect(page.getByRole("heading", { name: "Signaux prioritaires" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Parcours attribué" })).toBeVisible();
-    await expect(page.getByText("Ada Lovelace a commenté un post")).toBeVisible();
-    await expect(page.getByText(/Aucun message automatique/)).toBeVisible();
+    const unresolvedReaction = page.locator(`a[href="/w/${workspaceSlug}/attribution?interactionId=${fixture.unresolvedInteractionId}"]`);
+    await expect(unresolvedReaction.getByText(/Aucun message automatique/)).toBeVisible();
+
+    await page.goto(`/w/${workspaceSlug}/attribution?interactionId=${fixture.resolvedInteractionId}`);
+    await expect(page.getByText("Ada Lovelace", { exact: true })).toBeVisible();
+    await expect(page.getByText("Commentaire", { exact: true })).toBeVisible();
     await expect(page.getByText("Inférence", { exact: true })).toBeVisible();
-    await expect(page.getByRole("link", { name: "Voir toutes les preuves" })).toHaveAttribute("href", new RegExp(`/w/${workspaceSlug}/attribution\\?interactionId=`));
 
     await page.goto(`/w/${workspaceSlug}/prospects/${fixture.contactId}`);
     await expect(page.getByRole("heading", { name: "Signaux sociaux prouvés" })).toBeVisible();
@@ -84,6 +87,11 @@ async function seedSymbiosisFixture(url: string) {
     throw new Error(`Workspace ${workspaceSlug} is missing`);
   }
   const now = new Date();
+  // Only the inert reaction is dated ahead of concurrently synchronized local
+  // provider rows so it remains visible in the first activity page. The proved
+  // comment stays at the real current time because future signals are correctly
+  // excluded from CRM scoring. Every inserted row is removed in `cleanup`.
+  const priorityAt = new Date(now.getTime() + 24 * 60 * 60_000);
   const accountId = crypto.randomUUID();
   const contactId = crypto.randomUUID();
   const identityId = crypto.randomUUID();
@@ -102,18 +110,20 @@ async function seedSymbiosisFixture(url: string) {
   await database.db.insert(socialContentItems).values({ id: postId, workspaceId: workspace.id, connectedAccountId: accountId, providerAccountId: `e2e-linkedin-${accountId}`, origin: "internal", providerPostId: `post-${postId}`, socialId: `urn:li:activity:${postId}`, authorProviderId: "owner-e2e", text: "Comment prouver la valeur métier d’un système IA sans inventer de causalité", url: `https://linkedin.com/feed/update/${postId}`, status: "observed", firstSeenAt: now, lastSeenAt: now });
   await database.db.insert(socialInteractions).values([
     { id: resolvedInteractionId, workspaceId: workspace.id, socialContentId: postId, connectedAccountId: accountId, providerAccountId: `e2e-linkedin-${accountId}`, syncKind: "comments", scopeKey: "post", type: "comment", providerInteractionId: `comment-${resolvedInteractionId}`, direction: "incoming", actorProviderId: `actor-${contactId}`, actorName: "Ada Lovelace", actorProfileUrl: `https://linkedin.com/in/e2e-${contactId}`, body: "Le lien entre preuve et revenu m’intéresse.", status: "observed", firstSeenAt: now, lastSeenAt: now, lastScanToken: crypto.randomUUID() },
-    { id: unresolvedInteractionId, workspaceId: workspace.id, socialContentId: postId, connectedAccountId: accountId, providerAccountId: `e2e-linkedin-${accountId}`, syncKind: "reactions", scopeKey: "post", type: "reaction", providerInteractionId: `reaction-${unresolvedInteractionId}`, direction: "incoming", actorProviderId: "actor-unknown", actorName: "Profil LinkedIn inconnu", reaction: "like", status: "observed", firstSeenAt: new Date(now.getTime() - 60_000), lastSeenAt: new Date(now.getTime() - 60_000), lastScanToken: crypto.randomUUID() },
+    { id: unresolvedInteractionId, workspaceId: workspace.id, socialContentId: postId, connectedAccountId: accountId, providerAccountId: `e2e-linkedin-${accountId}`, syncKind: "reactions", scopeKey: "post", type: "reaction", providerInteractionId: `reaction-${unresolvedInteractionId}`, direction: "incoming", actorProviderId: "actor-unknown", actorName: "Profil LinkedIn inconnu", reaction: "like", status: "observed", firstSeenAt: priorityAt, lastSeenAt: priorityAt, lastScanToken: crypto.randomUUID() },
   ]);
   const base = { workspaceId: workspace.id, socialContentId: postId, publicationId: null, modelVersion: "attribution-v1", status: "active", occurredAt: now } as const;
   await database.db.insert(attributionTouches).values([
     { ...base, id: crypto.randomUUID(), socialInteractionId: resolvedInteractionId, contactId, kind: "identity", certainty: "evidence", rule: "linkedin_profile_url_exact_v1", confidence: "0.9500", proofType: "contact_identity", proofRef: `contact_identity:${identityId}`, proofHref: `/prospects/${contactId}`, logicalKey: "identity" },
     { ...base, id: crypto.randomUUID(), socialInteractionId: resolvedInteractionId, contactId, conversationId, kind: "conversation", certainty: "evidence", rule: "crm_contact_conversation_fk_v1", confidence: "1.0000", proofType: "crm_foreign_key", proofRef: `conversation:${conversationId}:contact:${contactId}`, proofHref: `/inbox?conversation=${conversationId}`, logicalKey: `conversation:${conversationId}` },
     { ...base, id: crypto.randomUUID(), socialInteractionId: resolvedInteractionId, contactId, bookingId, kind: "booking", certainty: "inference", rule: "same_verified_contact_after_touch_90d_v1", confidence: "0.6000", proofType: "contact_time_correlation", proofRef: `contact:${contactId}:booking:${bookingId}`, proofHref: `/appointments?booking=${bookingId}`, logicalKey: `booking:${bookingId}` },
-    { ...base, id: crypto.randomUUID(), socialInteractionId: unresolvedInteractionId, kind: "identity", certainty: "unknown", rule: "no_exact_linkedin_identity_v1", confidence: "0.0000", proofType: "none", proofRef: null, proofHref: `/content/calendar?interaction=${unresolvedInteractionId}`, logicalKey: "identity" },
+    { ...base, id: crypto.randomUUID(), socialInteractionId: unresolvedInteractionId, kind: "identity", certainty: "unknown", rule: "no_exact_linkedin_identity_v1", confidence: "0.0000", proofType: "none", proofRef: null, proofHref: `/content/calendar?interaction=${unresolvedInteractionId}`, logicalKey: "identity", occurredAt: priorityAt },
   ]);
   return {
     contactId,
     conversationId,
+    resolvedInteractionId,
+    unresolvedInteractionId,
     async cleanup() {
       await database.db.delete(attributionTouches).where(and(eq(attributionTouches.workspaceId, workspace.id), inArray(attributionTouches.socialInteractionId, [resolvedInteractionId, unresolvedInteractionId])));
       await database.db.delete(calendarBookings).where(and(eq(calendarBookings.workspaceId, workspace.id), eq(calendarBookings.id, bookingId)));

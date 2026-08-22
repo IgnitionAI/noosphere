@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  Activity,
   ArrowRight,
   CalendarCheck2,
   ChevronDown,
@@ -11,7 +10,6 @@ import {
   Plus,
   Settings,
   ShieldAlert,
-  Users,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -39,35 +37,24 @@ export function AppShell({
   const [open, setOpen] = useState(false);
   const baseHref = `/w/${workspace.slug}`;
   const todayHref = baseHref;
-  const activityHref = `${baseHref}/activity?lens=symbiosis`;
-  const prospectsHref = `${baseHref}/prospects`;
   const conversationsHref = `${baseHref}/inbox`;
   const callsHref = `${baseHref}/appointments`;
   const settingsHref = `${baseHref}/settings`;
   const todayActive = pathname === baseHref || pathname === `${baseHref}/`;
-  const activityActive = [
-    `${baseHref}/activity`,
-    `${baseHref}/campaigns`,
-    `${baseHref}/strategy`,
-    `${baseHref}/research`,
-  ].some((href) => pathname.startsWith(href));
-  const prospectsActive = pathname.startsWith(prospectsHref) || pathname.startsWith(`${baseHref}/icps`);
   const callsActive = pathname.startsWith(callsHref) || pathname.startsWith(`${baseHref}/pipeline`);
   const settingsActive = pathname.startsWith(settingsHref)
     || pathname.startsWith(`${baseHref}/offers`)
     || pathname.startsWith(`${baseHref}/knowledge`)
     || pathname.startsWith(`${baseHref}/ai-studio`);
   const currentSection = pathname.startsWith(conversationsHref)
-    ? "Conversations"
+    ? "Messages"
     : callsActive
       ? "Appels"
       : settingsActive
         ? "Configuration"
-        : prospectsActive
-          ? "Prospects"
-          : activityActive
-            ? "Activité"
-            : "Aujourd’hui";
+        : todayActive
+          ? "Accueil"
+          : "Détails";
   const initials = session.user.name
     .split(/\s+/)
     .map((part) => part[0])
@@ -77,6 +64,7 @@ export function AppShell({
 
   return (
     <div className="min-h-screen lg:grid lg:grid-cols-[236px_minmax(0,1fr)]">
+      <a className="skip-link" href="#main-content">Aller au contenu</a>
       {open ? (
         <button aria-label="Fermer la navigation" className="fixed inset-0 z-40 bg-navy/35 lg:hidden" onClick={() => setOpen(false)} type="button" />
       ) : null}
@@ -88,7 +76,7 @@ export function AppShell({
             <div className="truncate font-semibold tracking-tight">Noosphere</div>
             <div className="text-[11px] text-slate-400">Créer et capter la demande</div>
           </div>
-          <button aria-label="Fermer" className="lg:hidden" onClick={() => setOpen(false)} type="button"><X size={18} /></button>
+          <button aria-label="Fermer" className="grid h-11 w-11 place-items-center rounded-lg hover:bg-white/10 lg:hidden" onClick={() => setOpen(false)} type="button"><X size={18} /></button>
         </div>
 
         <details className="group relative mt-5">
@@ -102,39 +90,37 @@ export function AppShell({
           </summary>
           <div className="mt-2 space-y-1 rounded-lg border border-white/10 bg-navy-soft p-1.5">
             {workspaces.length > 1 ? workspaces.map((candidate) => (
-              <Link className="block rounded-md px-3 py-2 text-xs hover:bg-white/10" href={`/w/${candidate.slug}`} key={candidate.id}>{candidate.name}</Link>
+            <Link className="flex min-h-11 items-center rounded-md px-3 py-2 text-xs hover:bg-white/10" href={`/w/${candidate.slug}`} key={candidate.id}>{candidate.name}</Link>
             )) : null}
-            <Link className="flex items-center gap-2 rounded-md border-t border-white/10 px-3 py-2 pt-2.5 text-xs text-signal hover:bg-white/10" href="/workspaces/new"><Plus size={13} /> Nouveau workspace</Link>
+            <Link className="flex min-h-11 items-center gap-2 rounded-md border-t border-white/10 px-3 py-2 pt-2.5 text-xs text-signal hover:bg-white/10" href="/workspaces/new"><Plus size={13} /> Nouveau workspace</Link>
           </div>
         </details>
 
         <nav aria-label="Navigation principale" className="mt-7 space-y-1">
-          <NavItem active={todayActive} href={todayHref} icon={Home} label="Aujourd’hui" onClick={() => setOpen(false)} />
-          <NavItem active={activityActive} href={activityHref} icon={Activity} label="Activité" onClick={() => setOpen(false)} />
-          <NavItem active={prospectsActive} href={prospectsHref} icon={Users} label="Prospects" onClick={() => setOpen(false)} />
-          <NavItem active={pathname.startsWith(conversationsHref)} href={conversationsHref} icon={Inbox} label="Conversations" onClick={() => setOpen(false)} />
+          <NavItem active={todayActive} href={todayHref} icon={Home} label="Accueil" onClick={() => setOpen(false)} />
+          <NavItem active={pathname.startsWith(conversationsHref)} href={conversationsHref} icon={Inbox} label="Messages" onClick={() => setOpen(false)} />
           <NavItem active={callsActive} href={callsHref} icon={CalendarCheck2} label="Appels" onClick={() => setOpen(false)} />
         </nav>
 
         <div className="mt-auto border-t border-white/10 pt-4">
-          <p className="px-3 pt-3 text-[10px] leading-4 text-slate-500">Deux moteurs autonomes, un seul cockpit. Les exceptions restent localisées.</p>
+          <p className="px-3 pt-3 text-[10px] leading-4 text-slate-500">Noosphere trouve, échange et remplit votre agenda.</p>
         </div>
       </aside>
 
       <div className="min-w-0 pb-20 lg:pb-0">
         <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-line bg-white/95 px-4 backdrop-blur sm:px-6 lg:px-8">
           <div className="flex items-center gap-3">
-            <button aria-label="Ouvrir la navigation" className="button h-9 w-9 p-0 lg:hidden" onClick={() => setOpen(true)} type="button"><Menu size={17} /></button>
+            <button aria-label="Ouvrir la navigation" className="button h-11 w-11 p-0 lg:hidden" onClick={() => setOpen(true)} type="button"><Menu size={17} /></button>
             <div><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">{workspace.name}</p><p className="text-sm font-semibold text-navy">{currentSection}</p></div>
           </div>
-          <Link className="flex items-center gap-2 rounded-lg p-1.5 transition hover:bg-slate-50" href={settingsHref}>
+          <Link aria-label="Ouvrir la configuration du workspace" className="flex min-h-11 items-center gap-2 rounded-lg p-1.5 transition hover:bg-slate-50" href={settingsHref}>
             <span className="grid h-8 w-8 place-items-center rounded-full bg-navy text-[11px] font-bold text-white">{initials}</span>
             <span className="hidden text-left md:block"><span className="block max-w-36 truncate text-xs font-semibold">{session.user.name}</span><span className="block text-[10px] capitalize text-muted">{workspace.role}</span></span>
             <Settings className="hidden text-muted md:block" size={14} />
           </Link>
         </header>
 
-        <main className="mx-auto w-full max-w-[1520px] px-4 py-6 sm:px-6 md:px-8 md:py-8">
+        <main className="mx-auto w-full max-w-[1440px] px-4 py-6 sm:px-6 md:px-8 md:py-8" id="main-content" tabIndex={-1}>
           {onboardingProgress && !onboardingProgress.completed ? (
             <Link className="mb-5 flex items-center justify-between gap-4 rounded-lg border border-brand-blue/25 bg-blue-50 px-4 py-3 text-sm text-navy" href={`/onboarding?workspace=${workspace.slug}#${onboardingProgress.currentStep ?? "workspace"}`}>
               <span><strong>Terminer la configuration</strong><span className="ml-2 text-muted">Étape {Math.min(onboardingProgress.completedCount + 1, 7)}/7</span></span><ArrowRight size={16} />
@@ -153,11 +139,9 @@ export function AppShell({
           {children}
         </main>
 
-        <nav aria-label="Navigation mobile" className="fixed inset-x-3 bottom-3 z-40 grid grid-cols-5 rounded-2xl border border-line bg-white/95 p-1 shadow-xl backdrop-blur lg:hidden">
-          <MobileNavItem active={todayActive} href={todayHref} icon={Home} label="Aujourd’hui" />
-          <MobileNavItem active={activityActive} href={activityHref} icon={Activity} label="Activité" />
-          <MobileNavItem active={prospectsActive} href={prospectsHref} icon={Users} label="Prospects" />
-          <MobileNavItem active={pathname.startsWith(conversationsHref)} href={conversationsHref} icon={Inbox} label="Conversations" />
+        <nav aria-label="Navigation mobile" className="fixed inset-x-3 bottom-3 z-40 grid grid-cols-3 rounded-2xl border border-line bg-white/95 p-1 shadow-xl backdrop-blur lg:hidden">
+          <MobileNavItem active={todayActive} href={todayHref} icon={Home} label="Accueil" />
+          <MobileNavItem active={pathname.startsWith(conversationsHref)} href={conversationsHref} icon={Inbox} label="Messages" />
           <MobileNavItem active={callsActive} href={callsHref} icon={CalendarCheck2} label="Appels" />
         </nav>
       </div>
@@ -166,9 +150,9 @@ export function AppShell({
 }
 
 function NavItem({ icon: Icon, label, href, active, onClick }: { icon: LucideIcon; label: string; href: string; active: boolean; onClick: () => void }) {
-  return <Link aria-current={active ? "page" : undefined} className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium ${active ? "bg-white/10 text-white" : "text-slate-300 hover:bg-white/5 hover:text-white"}`} href={href} onClick={onClick}><Icon size={17} />{label}</Link>;
+  return <Link aria-current={active ? "page" : undefined} className={`flex min-h-11 items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium ${active ? "bg-white/10 text-white" : "text-slate-300 hover:bg-white/5 hover:text-white"}`} href={href} onClick={onClick}><Icon size={17} />{label}</Link>;
 }
 
 function MobileNavItem({ icon: Icon, label, href, active }: { icon: LucideIcon; label: string; href: string; active: boolean }) {
-  return <Link aria-current={active ? "page" : undefined} className={`flex min-w-0 flex-col items-center gap-0.5 rounded-xl px-1 py-2 text-[9px] font-semibold ${active ? "bg-navy text-white" : "text-muted"}`} href={href}><Icon size={15} /><span className="max-w-full truncate">{label}</span></Link>;
+  return <Link aria-current={active ? "page" : undefined} className={`flex min-h-12 min-w-0 flex-col items-center justify-center gap-0.5 rounded-xl px-1 py-2 text-[10px] font-semibold ${active ? "bg-navy text-white" : "text-muted"}`} href={href}><Icon size={16} /><span className="max-w-full truncate">{label}</span></Link>;
 }

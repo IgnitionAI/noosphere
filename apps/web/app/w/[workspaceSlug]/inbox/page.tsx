@@ -7,7 +7,7 @@ import {
   type WorkspaceConversationView,
 } from "@/lib/api";
 
-export const metadata = { title: "Conversations" };
+export const metadata = { title: "Messages" };
 export const dynamic = "force-dynamic";
 
 type Query = {
@@ -58,8 +58,8 @@ export default async function InboxPage({
   return (
     <>
       <header className="mb-6">
-        <h1 className="page-title">Conversations</h1>
-        <p className="mt-2 text-sm text-muted">Toutes les conversations des comptes LinkedIn, email et WhatsApp associés.</p>
+        <h1 className="page-title">Messages</h1>
+        <p className="mt-2 text-sm text-muted">Tous les échanges LinkedIn, email et WhatsApp, dans une seule boîte de réception.</p>
       </header>
 
       {result.sync.errorAccounts > 0 ? (
@@ -75,7 +75,7 @@ export default async function InboxPage({
       ) : null}
 
       <section className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <Metric icon={Inbox} label="Conversations" value={result.pagination.total} />
+        <Metric icon={Inbox} label="Échanges" value={result.pagination.total} />
         <Metric icon={MessageCircle} label="Non lus" value={unread} tone="signal" />
         <Metric icon={AtSign} label="En campagne · page" value={campaign} />
         <Metric icon={UserRound} label="Hors campagne · page" value={outside} />
@@ -132,7 +132,7 @@ export default async function InboxPage({
 
       <section className="panel overflow-hidden">
         <div className="panel-header">
-          <div><h2 className="font-semibold">Conversations</h2><p className="mt-1 text-xs text-muted">Un thread hors campagne reste manuel tant que vous ne l’ajoutez pas à une campagne.</p></div>
+          <div><h2 className="font-semibold">Conversations</h2><p className="mt-1 text-xs text-muted">Ouvrez un échange pour répondre vous-même ou laisser Noosphere poursuivre.</p></div>
           <span className="badge">{result.pagination.total}</span>
         </div>
         {result.data.length ? (
@@ -195,7 +195,7 @@ function Metric({ icon: Icon, label, value, tone }: { icon: typeof Inbox; label:
 }
 
 function ChannelTab({ active, href, icon: Icon, label }: { active: boolean; href: string; icon: typeof Inbox; label: string }) {
-  return <Link aria-current={active ? "page" : undefined} className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold ${active ? "bg-navy text-white" : "text-muted hover:bg-slate-100 hover:text-ink"}`} href={href}><Icon size={14} />{label}</Link>;
+  return <Link aria-current={active ? "page" : undefined} className={`inline-flex min-h-11 items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold ${active ? "bg-navy text-white" : "text-muted hover:bg-slate-100 hover:text-ink"}`} href={href}><Icon size={14} />{label}</Link>;
 }
 
 function inboxHref(workspaceSlug: string, query: Query, patch: Record<string, string | null>): string {
