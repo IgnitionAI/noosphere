@@ -1,9 +1,13 @@
 "use server";
 
-import { configureContentAutopilot, deriveEditorialStrategy, publishEditorialStrategy } from "@/lib/api";
+import { configureContentAutopilot, deriveEditorialStrategy, publishEditorialStrategy, updateContentBrandKit, type ContentBrandKit } from "@/lib/api";
 
 export async function deriveStrategyAction(workspaceSlug: string) {
   return deriveEditorialStrategy(workspaceSlug, `strategy:derive:${crypto.randomUUID()}`);
+}
+
+export async function updateBrandKitAction(workspaceSlug: string, brandKit: ContentBrandKit["snapshot"]) {
+  return updateContentBrandKit(workspaceSlug, { requestKey: `brand-kit:update:${crypto.randomUUID()}`, brandKit });
 }
 
 export async function publishStrategyAction(workspaceSlug: string) {

@@ -18,8 +18,35 @@ describe("UnipileSocialPublisher", () => {
       accountId: "account_fixture",
       accountHealthy: true,
       textPublishing: "available",
+      mediaPublishing: { image: "available", document: "available", video: "available" },
       observedAt: new Date("2026-08-20T08:00:00.000Z"),
     });
+  });
+
+  test("publishes one native document attachment as Unipile multipart data", async () => {
+    let body: FormData | null = null;
+    let headers: HeadersInit | undefined;
+    const publisher = buildPublisher((_url, init) => {
+      body = init?.body as FormData;
+      headers = init?.headers;
+      return Response.json({ id: "post_document_fixture" }, { status: 201 });
+    });
+
+    await publisher.publish({
+      accountId: "account_fixture",
+      text: "Le texte qui accompagne le carrousel.",
+      requestKey: "publication:fixture:document",
+      attachments: [{ kind: "document", filename: "carousel.pdf", mimeType: "application/pdf", content: new Uint8Array([37, 80, 68, 70]) }],
+    });
+
+    expect(body).toBeInstanceOf(FormData);
+    expect(body!.get("account_id")).toBe("account_fixture");
+    expect(body!.get("text")).toBe("Le texte qui accompagne le carrousel.");
+    const attachment = body!.get("attachments");
+    expect(attachment).toBeInstanceOf(File);
+    expect((attachment as File).name).toBe("carousel.pdf");
+    expect((attachment as File).type).toBe("application/pdf");
+    expect(new Headers(headers).has("content-type")).toBe(false);
   });
 
   test("publishes a text post through Unipile v1 and retains the provider identity", async () => {

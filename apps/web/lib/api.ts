@@ -206,6 +206,7 @@ export interface ContentAssetVersion {
     readonly callToAction: string | null;
     readonly factualClaims: readonly { readonly statement: string; readonly sourceKeys: readonly string[] }[];
     readonly opinionStatements: readonly string[];
+    readonly mediaPlan?: ContentMediaPlan;
   };
   readonly audit: {
     readonly reviewedClaims: readonly { readonly statement: string; readonly sourceKeys: readonly string[]; readonly verdict: "supported" | "unsupported"; readonly reason: string }[];
@@ -221,13 +222,14 @@ export interface ContentAssetVersion {
     readonly summary: string;
   };
   readonly readiness: { readonly ready: boolean; readonly blockers: readonly string[] };
+  readonly media: ContentMedia | null;
   readonly createdAt: string;
 }
 
 export interface ContentAsset {
   readonly id: string;
   readonly ideaId: string;
-  readonly type: "linkedin_text";
+  readonly type: LinkedinContentFormat;
   readonly status: "draft" | "ready" | "blocked";
   readonly latestVersion: number;
   readonly latest: ContentAssetVersion | null;
@@ -243,7 +245,7 @@ export interface ContentPublication {
   readonly provider: "unipile";
   readonly status: "scheduled" | "retry" | "publishing" | "published" | "unknown" | "failed" | "cancelled";
   readonly scheduledFor: string;
-  readonly contentSnapshot: { readonly assetVersionId: string; readonly body: string; readonly contentHash: string };
+  readonly contentSnapshot: { readonly assetVersionId: string; readonly body: string; readonly contentHash: string; readonly format: LinkedinContentFormat; readonly media: readonly ContentMedia[] };
   readonly policySnapshot: { readonly schemaVersion: 1; readonly policyVersion: "linkedin-publishing-v1"; readonly network: "linkedin"; readonly assetReady: true; readonly strategyVersionId: string; readonly claimsGate: "passed" };
   readonly accountSnapshot: { readonly provider: "unipile"; readonly providerAccountId: string; readonly displayName: string; readonly selectionVersion: string; readonly observedAt: string };
   readonly attempts: number;
@@ -269,6 +271,78 @@ export interface ContentPublication {
   } | null;
   readonly createdAt: string;
   readonly updatedAt: string;
+}
+
+export type LinkedinContentFormat = "linkedin_text" | "linkedin_image" | "linkedin_document" | "linkedin_video";
+export interface ContentMediaPlan {
+  readonly format: LinkedinContentFormat;
+  readonly visualTone: "editorial" | "technical" | "bold" | "minimal";
+  readonly title: string | null;
+  readonly subtitle: string | null;
+  readonly altText: string | null;
+  readonly slides: readonly {
+    readonly title: string;
+    readonly body: string;
+    readonly layout?: "auto" | "cover" | "insight" | "checklist" | "framework" | "comparison" | "process" | "closing";
+    readonly kicker?: string | null;
+    readonly callout?: string | null;
+    readonly items?: readonly { readonly label: string; readonly text: string }[];
+  }[];
+  readonly scenes: readonly { readonly title: string; readonly body: string; readonly durationSeconds: number }[];
+}
+export interface ContentMedia {
+  readonly id: string;
+  readonly kind: "image" | "document" | "video";
+  readonly objectKey: string;
+  readonly mimeType: "image/png" | "application/pdf" | "video/mp4";
+  readonly filename: string;
+  readonly checksumSha256: string;
+  readonly sizeBytes: number;
+  readonly width: number | null;
+  readonly height: number | null;
+  readonly pageCount: number | null;
+  readonly durationSeconds: number | null;
+  readonly altText: string;
+}
+export interface ContentBrandKit {
+  readonly workspaceId: string;
+  readonly version: number;
+  readonly snapshot: {
+    readonly brandName: string;
+    readonly tagline: string | null;
+    readonly websiteUrl: string | null;
+    readonly brandDescription: string | null;
+    readonly logo: {
+      readonly objectKey: string;
+      readonly mimeType: "image/png";
+      readonly checksumSha256: string;
+      readonly width: number;
+      readonly height: number;
+      readonly previewDataUrl: string;
+      readonly sourceFileName: string;
+    } | null;
+    readonly colors: { readonly primary: string; readonly accent: string; readonly background: string; readonly text: string };
+    readonly paletteMetadata: {
+      readonly generatedBy: "manual" | "detected" | "ai";
+      readonly sources: readonly ("landing_page" | "logo" | "description" | "manual")[];
+      readonly rationale: string | null;
+    };
+    readonly typography: "inter" | "space_grotesk" | "system";
+    readonly enabledFormats: readonly LinkedinContentFormat[];
+    readonly weeklyMix: Record<LinkedinContentFormat, number>;
+    readonly imageStyle: "editorial" | "technical" | "bold" | "minimal";
+    readonly videoMode: "motion_graphics";
+    readonly voice: {
+      readonly traits: readonly string[];
+      readonly avoid: readonly string[];
+      readonly preferredVocabulary: readonly string[];
+    };
+  };
+  readonly updatedAt: string | null;
+}
+export interface ContentPerformance {
+  readonly formats: readonly { readonly format: LinkedinContentFormat; readonly publications: number; readonly impressions: number; readonly reactions: number; readonly comments: number; readonly reposts: number; readonly engagementRate: number | null }[];
+  readonly observedAt: string;
 }
 
 export interface ContentAutopilot {
@@ -516,6 +590,46 @@ export async function getContentAutopilot(workspaceSlug: string): Promise<Conten
 
 export async function configureContentAutopilot(workspaceSlug: string, input: { requestKey: string; enabled: boolean; localTime: string; timezone: string; publicationTimes?: readonly string[]; publicationDays?: readonly number[] }): Promise<ContentAutopilot> {
   return crmFetch(workspaceSlug, "/api/v1/content/autopilot", { method: "PUT", body: input });
+}
+
+export async function getContentBrandKit(workspaceSlug: string): Promise<ContentBrandKit> {
+  return crmFetch(workspaceSlug, "/api/v1/content/brand-kit");
+}
+
+export async function updateContentBrandKit(workspaceSlug: string, input: { requestKey: string; brandKit: ContentBrandKit["snapshot"] }): Promise<ContentBrandKit> {
+  return crmFetch(workspaceSlug, "/api/v1/content/brand-kit", { method: "PUT", body: input });
+}
+
+export async function importContentBrandLogo(workspaceSlug: string, input: { requestKey: string; fileName: string; mimeType: "image/png" | "image/jpeg" | "image/webp"; dataBase64: string }): Promise<ContentBrandKit> {
+  return crmFetch(workspaceSlug, "/api/v1/content/brand-kit/logo-import", { method: "POST", body: input });
+}
+
+export interface ContentBrandDirection {
+  readonly brandKit: ContentBrandKit;
+  readonly contrast: {
+    readonly textOnBackground: number;
+    readonly backgroundOnPrimary: number;
+    readonly accentOnPrimary: number;
+  };
+  readonly metadata: {
+    readonly provider: string;
+    readonly model: string;
+    readonly promptVersion: string;
+    readonly aiRunId: string | null;
+  } | null;
+}
+
+export async function generateContentBrandDirection(workspaceSlug: string, input: {
+  requestKey: string;
+  landingPageUrl?: string | null;
+  description?: string | null;
+  useLogo?: boolean;
+}): Promise<ContentBrandDirection> {
+  return crmFetch(workspaceSlug, "/api/v1/content/brand-kit/generate-direction", { method: "POST", body: input });
+}
+
+export async function getContentPerformance(workspaceSlug: string): Promise<ContentPerformance> {
+  return crmFetch(workspaceSlug, "/api/v1/content/performance");
 }
 
 export async function getEditorialLearning(workspaceSlug: string): Promise<EditorialLearningVersion | null> {
@@ -777,10 +891,9 @@ export interface KnowledgeClaim {
   readonly updatedAt: string;
 }
 
-export type AiCapability = "icp_research" | "message_generation" | "setter";
 export interface EvaluationDataset {
   readonly id: string;
-  readonly capability: AiCapability;
+  readonly capability: EvaluationAiCapability;
   readonly name: string;
   readonly description: string | null;
   readonly rubricVersion: string;
@@ -790,7 +903,7 @@ export interface EvaluationDataset {
 }
 export interface AiPromptVersion {
   readonly id: string;
-  readonly capability: AiCapability;
+  readonly capability: EvaluationAiCapability;
   readonly version: number;
   readonly content: string;
   readonly previousVersionId: string | null;
@@ -799,8 +912,8 @@ export interface AiPromptVersion {
 export interface AiConfiguration {
   readonly configuration: {
     readonly id: string;
-    readonly capability: AiCapability;
-    readonly provider: "kimi-code";
+    readonly capability: EvaluationAiCapability;
+    readonly provider: AiProviderId;
     readonly model: string;
     readonly promptVersionId: string;
     readonly status: "candidate" | "shadow" | "active" | "retired";
@@ -839,8 +952,49 @@ export interface EvaluationRunDetail extends EvaluationRun {
 export interface WorkspaceAiSettings {
   readonly researchModels: readonly string[];
   readonly synthesisModels: readonly string[];
+  readonly defaultRoutes: readonly AiModelRoute[];
+  readonly capabilityRoutes: Readonly<Partial<Record<AiCapability, readonly AiModelRoute[]>>>;
   readonly source: "workspace" | "environment";
   readonly updatedAt: string | null;
+}
+
+export type AiProviderId = "kimi-code" | "codex-cli" | "openai-api";
+export type AiReasoningEffort = "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
+export type AiCapability =
+  | "icp_research"
+  | "content_strategy"
+  | "content_idea"
+  | "content_brief"
+  | "content_writer"
+  | "content_audit"
+  | "content_critic"
+  | "brand_direction"
+  | "channel_strategy"
+  | "prospect_decision"
+  | "message_generation"
+  | "setter"
+  | "evaluation";
+export type EvaluationAiCapability = Extract<AiCapability, "icp_research" | "message_generation" | "setter">;
+
+export interface AiModelRoute {
+  readonly provider: AiProviderId;
+  readonly model: string;
+  readonly reasoningEffort: AiReasoningEffort;
+}
+
+export interface AiModelCatalog {
+  readonly providers: readonly {
+    readonly provider: AiProviderId;
+    readonly status: "healthy" | "degraded" | "quota_exhausted" | "authentication_required" | "unavailable";
+    readonly models: readonly {
+      readonly id: string;
+      readonly displayName: string;
+      readonly reasoningEfforts: readonly AiReasoningEffort[];
+      readonly structuredOutput: "supported" | "unsupported" | "unknown";
+    }[];
+    readonly observedAt: string;
+    readonly errorCode: string | null;
+  }[];
 }
 
 export interface ProductResearchBrief {
@@ -1190,11 +1344,11 @@ export async function listEvaluationDatasets(workspaceSlug: string): Promise<rea
   return (await crmFetch<{ data: EvaluationDataset[] }>(workspaceSlug, "/api/v1/evaluation-datasets")).data;
 }
 
-export async function createEvaluationDataset(workspaceSlug: string, input: { capability: AiCapability; name: string; description?: string | null; rubricVersion: string; cases: readonly { name: string; input: unknown; expected: Record<string, unknown>; criteria?: Record<string, unknown>; authorizedKnowledgeClaimIds?: readonly string[] }[] }): Promise<EvaluationDataset> {
+export async function createEvaluationDataset(workspaceSlug: string, input: { capability: EvaluationAiCapability; name: string; description?: string | null; rubricVersion: string; cases: readonly { name: string; input: unknown; expected: Record<string, unknown>; criteria?: Record<string, unknown>; authorizedKnowledgeClaimIds?: readonly string[] }[] }): Promise<EvaluationDataset> {
   return crmFetch(workspaceSlug, "/api/v1/evaluation-datasets", { method: "POST", body: input });
 }
 
-export async function createAiPromptVersion(workspaceSlug: string, input: { capability: AiCapability; content: string }): Promise<AiPromptVersion> {
+export async function createAiPromptVersion(workspaceSlug: string, input: { capability: EvaluationAiCapability; content: string }): Promise<AiPromptVersion> {
   return crmFetch(workspaceSlug, "/api/v1/ai-prompt-versions", { method: "POST", body: input });
 }
 
@@ -1202,7 +1356,7 @@ export async function listAiConfigurations(workspaceSlug: string): Promise<reado
   return (await crmFetch<{ data: AiConfiguration[] }>(workspaceSlug, "/api/v1/ai-configurations")).data;
 }
 
-export async function createAiConfiguration(workspaceSlug: string, input: { capability: AiCapability; provider: "kimi-code"; model: string; promptVersionId: string; status?: "candidate" | "shadow" }): Promise<AiConfiguration["configuration"]> {
+export async function createAiConfiguration(workspaceSlug: string, input: { capability: EvaluationAiCapability; provider: AiProviderId; model: string; promptVersionId: string; status?: "candidate" | "shadow" }): Promise<AiConfiguration["configuration"]> {
   return crmFetch(workspaceSlug, "/api/v1/ai-configurations", { method: "POST", body: input });
 }
 
@@ -1241,7 +1395,7 @@ export async function getWorkspaceAiSettings(
 
 export async function updateWorkspaceAiSettings(
   workspaceSlug: string,
-  settings: Pick<WorkspaceAiSettings, "researchModels" | "synthesisModels">,
+  settings: Pick<WorkspaceAiSettings, "defaultRoutes" | "capabilityRoutes">,
 ): Promise<WorkspaceAiSettings> {
   const response = await apiFetch("/api/v1/workspace-ai-settings", {
     method: "PUT",
@@ -1250,6 +1404,12 @@ export async function updateWorkspaceAiSettings(
   });
   if (!response.ok) await throwApiError(response);
   return (await response.json()) as WorkspaceAiSettings;
+}
+
+export async function getAiModelCatalog(workspaceSlug: string): Promise<AiModelCatalog> {
+  const response = await apiFetch("/api/v1/ai/models", { workspaceSlug });
+  if (!response.ok) await throwApiError(response);
+  return (await response.json()) as AiModelCatalog;
 }
 
 export type CalendarConnection =

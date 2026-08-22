@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { LangChainCampaignContentGenerator } from "@outbound/infrastructure/campaigns/langchain-campaign-content-generator";
+import { DEFAULT_CONTENT_BRAND_KIT } from "@outbound/domain/content/content-brand-kit";
 
 describe("LangChainCampaignContentGenerator", () => {
   test("writes from complete context then returns the anti-generic editorial revision", async () => {
@@ -43,6 +44,20 @@ describe("LangChainCampaignContentGenerator", () => {
           },
         };
       },
+      {
+        async find(workspaceId) {
+          return {
+            workspaceId,
+            version: 1,
+            updatedAt: new Date(),
+            snapshot: {
+              ...DEFAULT_CONTENT_BRAND_KIT,
+              brandName: "IgnitionRAG",
+              voice: { traits: ["direct", "expert"], avoid: ["jargon"], preferredVocabulary: ["preuve résoluble"] },
+            },
+          };
+        },
+      },
     );
 
     const result = await generator.generate(campaignInput());
@@ -55,6 +70,7 @@ describe("LangChainCampaignContentGenerator", () => {
       prospect: { evidence: { publicData: { signals: ["Recrutement RSSI", "Certification ISO 27001"] } } },
       previousMessages: [{ body: "Bonjour Marie, votre équipe juridique grandit. Comment gérez-vous la recherche interne ?" }],
       stepObjective: { stage: "follow_up" },
+      brandVoice: { brandName: "IgnitionRAG", traits: ["direct", "expert"], preferredVocabulary: ["preuve résoluble"] },
     });
     expect(result.steps[0]?.body).toContain("recrutement d’un RSSI");
     expect(result.metadata.editorialReview).toMatchObject({ verdict: "revised", genericityScore: 0.1 });

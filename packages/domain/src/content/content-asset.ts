@@ -1,3 +1,5 @@
+import type { LinkedinContentFormat } from "@outbound/domain/content/content-brand-kit";
+
 export const contentGenerationStages = ["brief", "writer", "audit", "critic", "completed"] as const;
 export type ContentGenerationStage = (typeof contentGenerationStages)[number];
 
@@ -10,11 +12,36 @@ export interface ContentBriefSnapshot {
   readonly audience: string;
   readonly problem: string;
   readonly angle: string;
-  readonly format: "linkedin_text";
+  readonly format: LinkedinContentFormat;
   readonly evidenceKeys: readonly string[];
   readonly allowedClaimIds: readonly string[];
   readonly callToAction: string | null;
   readonly constraints: readonly string[];
+}
+
+export interface ContentMediaPlan {
+  readonly format: LinkedinContentFormat;
+  readonly visualTone: "editorial" | "technical" | "bold" | "minimal";
+  readonly title: string | null;
+  readonly subtitle: string | null;
+  readonly altText: string | null;
+  readonly slides: readonly {
+    readonly title: string;
+    readonly body: string;
+    /** Optional for backward compatibility with the first rich-media snapshots. */
+    readonly layout?: "auto" | "cover" | "insight" | "checklist" | "framework" | "comparison" | "process" | "closing";
+    readonly kicker?: string | null;
+    readonly callout?: string | null;
+    readonly items?: readonly {
+      readonly label: string;
+      readonly text: string;
+    }[];
+  }[];
+  readonly scenes: readonly {
+    readonly title: string;
+    readonly body: string;
+    readonly durationSeconds: number;
+  }[];
 }
 
 export interface ContentDraftSnapshot {
@@ -26,6 +53,8 @@ export interface ContentDraftSnapshot {
     readonly sourceKeys: readonly string[];
   }[];
   readonly opinionStatements: readonly string[];
+  /** Optional only for backward-compatible stored V1 text drafts. New drafts always provide it. */
+  readonly mediaPlan?: ContentMediaPlan;
 }
 
 export interface ContentEvidenceAudit {
@@ -81,7 +110,8 @@ export function assertGroundedContentDraft(
   availableEvidenceKeys: readonly string[],
 ): void {
   const available = new Set(availableEvidenceKeys);
-  const normalizedBody = normalize(draft.body);
+  const publicText = contentPublicText(draft);
+  const normalizedBody = normalize(publicText);
   for (const claim of draft.factualClaims) {
     if (!claim.statement.trim() || claim.sourceKeys.length === 0 || claim.sourceKeys.some((key) => !available.has(key))) {
       throw new Error("CONTENT_DRAFT_UNRESOLVED_CLAIM");
@@ -91,11 +121,62 @@ export function assertGroundedContentDraft(
     }
   }
 
-  const bodyNumbers = numberTokens(draft.body);
+  const bodyNumbers = numberTokens(publicText);
   const groundedNumbers = new Set(draft.factualClaims.flatMap((claim) => numberTokens(claim.statement)));
   if (bodyNumbers.some((token) => !groundedNumbers.has(token))) {
     throw new Error("CONTENT_DRAFT_UNSOURCED_NUMBER");
   }
+}
+
+export function normalizedMediaPlan(draft: ContentDraftSnapshot): ContentMediaPlan {
+  return draft.mediaPlan ?? {
+    format: "linkedin_text",
+    visualTone: "editorial",
+    title: null,
+    subtitle: null,
+    altText: null,
+    slides: [],
+    scenes: [],
+  };
+}
+
+export function assertMediaPlanMatchesBrief(brief: ContentBriefSnapshot, draft: ContentDraftSnapshot): void {
+  const plan = normalizedMediaPlan(draft);
+  if (plan.format !== brief.format) throw new Error("CONTENT_MEDIA_FORMAT_MISMATCH");
+  if (plan.format === "linkedin_text") {
+    if (plan.title || plan.subtitle || plan.altText || plan.slides.length || plan.scenes.length) throw new Error("CONTENT_MEDIA_PLAN_INVALID");
+    return;
+  }
+  if (!plan.title || !plan.altText) throw new Error("CONTENT_MEDIA_PLAN_INVALID");
+  if (plan.format === "linkedin_image") {
+    if (plan.slides.length || plan.scenes.length) throw new Error("CONTENT_MEDIA_PLAN_INVALID");
+    return;
+  }
+  if (plan.format === "linkedin_document") {
+    if (plan.slides.length < 3 || plan.slides.length > 9 || plan.scenes.length) throw new Error("CONTENT_MEDIA_PLAN_INVALID");
+    return;
+  }
+  const duration = plan.scenes.reduce((sum, scene) => sum + scene.durationSeconds, 0);
+  if (plan.slides.length || plan.scenes.length < 3 || plan.scenes.length > 8 || duration < 12 || duration > 60) {
+    throw new Error("CONTENT_MEDIA_PLAN_INVALID");
+  }
+}
+
+function contentPublicText(draft: ContentDraftSnapshot): string {
+  const plan = normalizedMediaPlan(draft);
+  return [
+    draft.body,
+    plan.title,
+    plan.subtitle,
+    ...plan.slides.flatMap((slide) => [
+      slide.kicker,
+      slide.title,
+      slide.body,
+      slide.callout,
+      ...(slide.items ?? []).flatMap((item) => [item.label, item.text]),
+    ]),
+    ...plan.scenes.flatMap((scene) => [scene.title, scene.body]),
+  ].filter((value): value is string => Boolean(value)).join("\n");
 }
 
 export function evaluateContentReadiness(input: {

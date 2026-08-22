@@ -15,6 +15,7 @@ import {
 } from "@outbound/infrastructure/documents/research-document-service";
 import { PostgresResearchToolRunRecorder } from "@outbound/infrastructure/ai/postgres-tool-run-recorder";
 import { PostgresWorkspaceAiSettingsRepository } from "@outbound/infrastructure/workspaces/postgres-workspace-ai-settings-repository";
+import { createWorkspaceStructuredModelFromEnvironment } from "@outbound/infrastructure/ai/model-runtime-from-environment";
 import { UnipileProspectSource } from "@outbound/infrastructure/crm/unipile-prospect-source";
 import { V3SourcingValidator } from "@outbound/infrastructure/ai/v3-sourcing-validator";
 import { PostgresResearchToolRequestRegistry } from "@outbound/infrastructure/ai/postgres-research-tool-request-registry";
@@ -85,6 +86,10 @@ import { DailyContentIdeaScheduler } from "@outbound/infrastructure/content/dail
 import { ContentGenerationJobProcessor } from "@outbound/application/content/content-generation";
 import { PostgresContentGenerationRepository } from "@outbound/infrastructure/content/postgres-content-generation-repository";
 import { LangChainContentPipelineAgent } from "@outbound/infrastructure/content/langchain-content-pipeline-agent";
+import { ContentMediaProducer } from "@outbound/application/content/content-media";
+import { S3ContentMediaStorage } from "@outbound/infrastructure/content/s3-content-media-storage";
+import { DeterministicContentMediaRenderer } from "@outbound/infrastructure/content/deterministic-content-media-renderer";
+import { PostgresContentBrandKitRepository } from "@outbound/infrastructure/content/postgres-content-brand-kit-repository";
 import { ContentPublicationApplication, ContentPublicationJobProcessor, type SocialPublishingAccountResolver } from "@outbound/application/content/content-publications";
 import { SocialProviderError, type SocialPublisher } from "@outbound/application/content/social-ports";
 import { PostgresContentPublicationRepository, PostgresSocialPublishingAccountResolver } from "@outbound/infrastructure/content/postgres-content-publication-repository";
@@ -137,13 +142,6 @@ const knowledgeExpirationProcessor = new KnowledgeSourceExpirationProcessor(
 const knowledgeRetriever = new PostgresKnowledgeRetriever(database.db, clock);
 const activeAiConfigurations = new PostgresActiveAiConfigurationReader(database.db);
 const aiRunRecorder = new PostgresAiRunRecorder(database.db, clock, ids);
-const evaluationRunProcessor = new EvaluationRunProcessor(
-  database.db,
-  queue,
-  new LangChainEvaluationExecutor(process.env),
-  clock,
-  ids,
-);
 const documentOptions = documentServiceOptionsFromEnvironment();
 const documentService = new ResearchDocumentService(
   database.db,
@@ -174,6 +172,14 @@ const workspaceExportProcessor = new WorkspaceDataExportProcessor(
 const retentionPurgeProcessor = new WorkspaceRetentionPurgeProcessor(database.db, queue, clock);
 const toolRunRecorder = new PostgresResearchToolRunRecorder(database.db);
 const workspaceAiSettings = new PostgresWorkspaceAiSettingsRepository(database.db);
+const workspaceStructuredModel = createWorkspaceStructuredModelFromEnvironment(process.env, workspaceAiSettings);
+const evaluationRunProcessor = new EvaluationRunProcessor(
+  database.db,
+  queue,
+  new LangChainEvaluationExecutor(process.env, workspaceStructuredModel),
+  clock,
+  ids,
+);
 const sourcingValidator = new V3SourcingValidator(
   process.env.UNIPILE_DSN && process.env.UNIPILE_API_KEY
     ? new UnipileProspectSource({
@@ -232,12 +238,13 @@ const discoveryProcessor = new ProspectDiscoveryJobProcessor(
 const channelAssessmentProcessor = new ChannelAssessmentJobProcessor(
   database.db,
   queue,
-  new LangChainChannelStrategyPlanner(process.env),
+  new LangChainChannelStrategyPlanner(process.env, workspaceStructuredModel),
   new RoutedChannelObservationSource(discoveryCrawler, createProspectSource),
   clock,
 );
 const campaignAutomationProcessor = new CampaignAutomationJobProcessor(database.db, queue, clock);
-const campaignContentGenerator = new LangChainCampaignContentGenerator(process.env, workspaceAiSettings, knowledgeRetriever, activeAiConfigurations, aiRunRecorder);
+const contentBrandKitRepository = new PostgresContentBrandKitRepository(database.db);
+const campaignContentGenerator = new LangChainCampaignContentGenerator(process.env, workspaceAiSettings, knowledgeRetriever, activeAiConfigurations, aiRunRecorder, undefined, contentBrandKitRepository, workspaceStructuredModel);
 const calendarIntegration = new PostgresCalendarIntegration(
   database.db,
   process.env.CALENDAR_WEBHOOK_SIGNING_KEY ?? requiredEnvironment("BETTER_AUTH_SECRET"),
@@ -252,7 +259,7 @@ const campaignCompositionProcessor = new CampaignCompositionJobProcessor(
 const prospectDecisionProcessor = new ProspectDecisionJobProcessor(
   database.db,
   queue,
-  new LangChainProspectDecisionAgent(process.env, workspaceAiSettings),
+  new LangChainProspectDecisionAgent(process.env, workspaceAiSettings, workspaceStructuredModel),
   clock,
 );
 const outreachDispatchProcessor = new OutreachDispatchJobProcessor(
@@ -270,7 +277,7 @@ const outreachDispatchProcessor = new OutreachDispatchJobProcessor(
   workspaceDataLifecycle,
   campaignChannelReadiness ?? unavailableChannelReadiness(),
 );
-const inboundReplyAgent = new LangChainInboundReplyAgent(process.env, workspaceAiSettings, knowledgeRetriever, activeAiConfigurations, aiRunRecorder);
+const inboundReplyAgent = new LangChainInboundReplyAgent(process.env, workspaceAiSettings, knowledgeRetriever, activeAiConfigurations, aiRunRecorder, contentBrandKitRepository, workspaceStructuredModel);
 const inboundReplyProcessor = new InboundReplyJobProcessor(
   database.db,
   queue,
@@ -302,7 +309,7 @@ const contentIdeaRepository = new PostgresContentIdeaRepository(database.db);
 const contentIdeaDiscoveryProcessor = new ContentIdeaDiscoveryJobProcessor(
   contentIdeaRepository,
   new CrawlerContentIdeaSource(discoveryCrawler),
-  new LangChainContentIdeaGenerator(process.env, workspaceAiSettings, aiRunRecorder),
+  new LangChainContentIdeaGenerator(process.env, workspaceAiSettings, aiRunRecorder, undefined, workspaceStructuredModel),
   queue,
   () => clock.now(),
 );
@@ -311,11 +318,24 @@ const dailyContentIdeaScheduler = new DailyContentIdeaScheduler(database.db, con
   timezone: process.env.DAILY_CONTENT_IDEA_TIMEZONE ?? "Europe/Paris",
 });
 const contentGenerationRepository = new PostgresContentGenerationRepository(database.db);
+const contentMediaStorage = new S3ContentMediaStorage({
+  endpoint: requiredEnvironment("S3_ENDPOINT"),
+  region: process.env.S3_REGION ?? "us-east-1",
+  bucket: requiredEnvironment("S3_BUCKET"),
+  accessKeyId: requiredEnvironment("S3_ACCESS_KEY_ID"),
+  secretAccessKey: requiredEnvironment("S3_SECRET_ACCESS_KEY"),
+});
 const contentGenerationProcessor = new ContentGenerationJobProcessor(
   contentGenerationRepository,
-  new LangChainContentPipelineAgent(process.env, workspaceAiSettings, aiRunRecorder),
+  new LangChainContentPipelineAgent(process.env, workspaceAiSettings, aiRunRecorder, undefined, workspaceStructuredModel),
   queue,
   () => clock.now(),
+  new ContentMediaProducer(
+    contentMediaStorage,
+    new DeterministicContentMediaRenderer(process.env.FFMPEG_BINARY?.trim() || "ffmpeg"),
+    undefined,
+    process.env.CONTENT_MEDIA_TEMP_ROOT?.trim() || "/tmp",
+  ),
 );
 const socialPublisher: SocialPublisher = unipileDsn && unipileApiKey
   ? new UnipileSocialPublisher({ dsn: unipileDsn, apiKey: unipileApiKey, timeoutMs: positiveIntegerEnvironment("UNIPILE_TIMEOUT_MS", 10_000) })
@@ -335,6 +355,7 @@ const contentPublicationProcessor = new ContentPublicationJobProcessor(
   socialPublisher,
   queue,
   () => clock.now(),
+  contentMediaStorage,
 );
 const contentAutopilotReconciler = new ContentAutopilotReconciler(
   new PostgresContentAutopilotRepository(database.db),
@@ -463,6 +484,7 @@ const orchestrator = new ResearchOrchestrator(
     sourcingValidator,
     toolRequestRegistry,
     activeAiConfigurations,
+    workspaceStructuredModel,
   ),
   ids,
   clock,
@@ -609,7 +631,7 @@ function createOutboundGateway(): OutboundChannelGateway {
 
 function unavailableSocialPublisher(): SocialPublisher {
   const unavailable = () => Promise.reject(new SocialProviderError("SOCIAL_PROVIDER_UNAVAILABLE", "Unipile is not configured", "not_sent", true));
-  return { observeCapabilities: unavailable, publishText: unavailable };
+  return { observeCapabilities: unavailable, publish: unavailable, publishText: unavailable };
 }
 
 function unavailableSocialPublishingAccounts(): SocialPublishingAccountResolver {

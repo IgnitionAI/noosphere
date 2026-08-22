@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { LangChainContentPipelineAgent } from "@outbound/infrastructure/content/langchain-content-pipeline-agent";
 import type { ContentGenerationContext } from "@outbound/application/content/content-generation";
+import { DEFAULT_CONTENT_BRAND_KIT } from "@outbound/domain/content/content-brand-kit";
 
 describe("LangChainContentPipelineAgent", () => {
   test("reserves K3 max reasoning for writing and critique and records every bounded stage", async () => {
@@ -30,9 +31,9 @@ describe("LangChainContentPipelineAgent", () => {
     ]);
     expect(recorded.map(({ purpose, model, promptVersion, contentGenerationRunId }) => ({ purpose, model, promptVersion, contentGenerationRunId }))).toEqual([
       { purpose: "content_brief", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-brief-v2", contentGenerationRunId: context.run.id },
-      { purpose: "content_writer", model: "k3", promptVersion: "noosphere-content-writer-v3", contentGenerationRunId: context.run.id },
+      { purpose: "content_writer", model: "k3", promptVersion: "noosphere-content-writer-v4", contentGenerationRunId: context.run.id },
       { purpose: "content_audit", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-audit-v2", contentGenerationRunId: context.run.id },
-      { purpose: "content_critic", model: "k3", promptVersion: "noosphere-content-critic-v2", contentGenerationRunId: context.run.id },
+      { purpose: "content_critic", model: "k3", promptVersion: "noosphere-content-critic-v3", contentGenerationRunId: context.run.id },
     ]);
   });
 });
@@ -44,7 +45,8 @@ function pipelineContext(): ContentGenerationContext {
     run: { id: crypto.randomUUID(), workspaceId, ideaId: crypto.randomUUID(), assetId: crypto.randomUUID(), assetVersionId: null, status: "running", stage: "brief", instruction: null, lastErrorCode: null, lastErrorMessage: null, createdAt: now, completedAt: null },
     idea: { id: crypto.randomUUID(), workspaceId, strategyVersionId: crypto.randomUUID(), status: "discovered", angle: "Pourquoi une preuve documentaire change une décision juridique", rationale: "Un problème observable relié à une preuve résoluble.", audience: "Équipes juridiques", pillar: "Recherche", priority: 90, freshnessUntil: now, firstSeenAt: now, lastSeenAt: now, sources: [evidence(now)] },
     strategy: { audience: { name: "Équipes juridiques", summary: "Juristes avec des preuves dispersées", awareness: "problem_aware" }, pillars: [{ name: "Recherche", promise: "Retrouver les preuves", proofTypes: ["claim"] }, { name: "Sécurité", promise: "Contrôler", proofTypes: ["audit"] }, { name: "Adoption", promise: "Déployer", proofTypes: ["chronologie"] }], voice: { traits: ["direct", "précis"], avoid: ["générique"] }, formats: ["linkedin_text"], cadence: { postsPerWeek: 3, preferredDays: [1, 3, 5], timezone: "Europe/Paris" }, callsToAction: ["Comment vérifiez-vous vos preuves ?"], allowedClaimIds: [], forbiddenTopics: [] },
-    evidence: [evidence(now)], recentBodies: [], brief: null, draft: null, audit: null, critique: null,
+    brandKit: DEFAULT_CONTENT_BRAND_KIT,
+    evidence: [evidence(now)], recentBodies: [], recentFormats: [], brief: null, draft: null, audit: null, critique: null,
   };
 }
 

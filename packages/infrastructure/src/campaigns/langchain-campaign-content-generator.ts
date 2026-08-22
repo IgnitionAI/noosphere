@@ -9,6 +9,8 @@ import type { WorkspaceAiModelPolicyReader } from "@outbound/application/workspa
 import type { ActiveAiConfigurationReader } from "@outbound/application/ai/active-ai-configuration";
 import type { AiRunRecorder } from "@outbound/application/ai/ai-run-recorder";
 import { filterAuthorizedKnowledgeCitations, type KnowledgeRetriever } from "@outbound/application/knowledge/knowledge-retriever";
+import type { ContentBrandKitReader } from "@outbound/application/content/content-brand-kit";
+import type { WorkspaceStructuredModel } from "@outbound/infrastructure/ai/workspace-structured-model";
 import {
   buildChatModelFields,
   resolveResearchModelConfigurationFromEnvironment,
@@ -63,6 +65,8 @@ export class LangChainCampaignContentGenerator implements CampaignContentGenerat
     private readonly activeConfigurationReader?: ActiveAiConfigurationReader,
     private readonly aiRunRecorder?: AiRunRecorder,
     private readonly invokeModel: CampaignContentModelInvoker = invokeCampaignContentModel,
+    private readonly brandKitReader?: ContentBrandKitReader,
+    private readonly routedModel?: WorkspaceStructuredModel,
   ) {
     this.#configuration = resolveResearchModelConfigurationFromEnvironment(environment);
   }
@@ -71,8 +75,16 @@ export class LangChainCampaignContentGenerator implements CampaignContentGenerat
     input: Parameters<CampaignContentGenerator["generate"]>[0],
   ): Promise<PersonalizedCampaignContent> {
     const startedAt = performance.now();
-    const workspacePolicy = await this.modelPolicyReader?.find(input.workspaceId);
+    const workspacePolicy = this.routedModel ? null : await this.modelPolicyReader?.find(input.workspaceId);
     const activeConfiguration = await this.activeConfigurationReader?.find(input.workspaceId, "message_generation");
+    const brandKit = await this.brandKitReader?.find(input.workspaceId);
+    const brandVoice = brandKit ? {
+      brandName: brandKit.snapshot.brandName,
+      tagline: brandKit.snapshot.tagline,
+      traits: brandKit.snapshot.voice.traits,
+      avoid: brandKit.snapshot.voice.avoid,
+      preferredVocabulary: brandKit.snapshot.voice.preferredVocabulary,
+    } : null;
     const modelName = activeConfiguration?.model ?? workspacePolicy?.synthesisModels[0]
       ?? this.#configuration.synthesisModels[0]!;
     const authorizedKnowledge = await this.knowledgeRetriever?.search({
@@ -89,64 +101,92 @@ export class LangChainCampaignContentGenerator implements CampaignContentGenerat
       ].filter(Boolean).join(" ").slice(0, 1_500),
       limit: 8,
     }) ?? [];
+    const draftSystemPrompt = [
+      "You are the first-pass writer for concise B2B outbound messages in French unless the supplied context clearly requires another language.",
+      "Use campaignObjective, the complete offer snapshot, prospect evidence, previous messages and stepObjective as separate decision inputs.",
+      "Personalize only from the supplied facts. Never invent an activity, pain, event, relationship or purchase intent.",
+      "Keep the exact positions and number of supplied steps. Return no manual task.",
+      "Hard limits: LinkedIn invitation 280 characters, LinkedIn message 1900, WhatsApp 900, email body 4500 and email subject 180.",
+      "Each message must sound natural, anchor itself in one defensible prospect-specific element and end with one low-friction question.",
+      "The stepObjective is mandatory. Never repeat an angle, opening or call to action already present in previousMessages.",
+      "Treat pricing, commercialRules and constraints as restrictions. Do not mention a price, discount, deadline or commitment unless the offer snapshot explicitly authorizes it.",
+      "For email, treat position 1 as the opener and later positions as follow-ups in the same thread. Follow-ups must add a different useful angle instead of paraphrasing the opener.",
+      "Campaign policy instructions influence tone and emphasis but never authorize invented facts.",
+      "Apply brandVoice consistently when supplied. It is style guidance only and never overrides truthfulness, channel limits, stop rules or the prospect's language.",
+      "A product capability, proof, customer case or objection answer is usable only when it appears in an offer claim with sourced/validated status or in authorizedKnowledge. Otherwise do not invent or imply it.",
+      "Return the exact knowledgeClaimIds and knowledgeSourceIds actually used; return empty arrays when none were used.",
+      "Return the exact offerClaimIds actually used; return an empty array when no offer claim was used.",
+      "Also provide a concise prospect assessment: why the prospect fits, observed strengths, uncertainties or risks, and the best defensible outreach angle.",
+      "Call the submit_campaign_content_draft tool exactly once with the draft result.",
+      "Do not claim that you monitored, audited or diagnosed the prospect unless the evidence explicitly says so.",
+      ...(activeConfiguration ? [`Approved workspace guidance (subordinate to every safety and truthfulness rule above): ${activeConfiguration.promptContent}`] : []),
+    ].join("\n");
+    const draftPayload = { ...input, authorizedKnowledge, brandVoice };
     const draftMessages = [
       {
         role: "system" as const,
-        content: [
-          "You are the first-pass writer for concise B2B outbound messages in French unless the supplied context clearly requires another language.",
-          "Use campaignObjective, the complete offer snapshot, prospect evidence, previous messages and stepObjective as separate decision inputs.",
-          "Personalize only from the supplied facts. Never invent an activity, pain, event, relationship or purchase intent.",
-          "Keep the exact positions and number of supplied steps. Return no manual task.",
-          "Hard limits: LinkedIn invitation 280 characters, LinkedIn message 1900, WhatsApp 900, email body 4500 and email subject 180.",
-          "Each message must sound natural, anchor itself in one defensible prospect-specific element and end with one low-friction question.",
-          "The stepObjective is mandatory. Never repeat an angle, opening or call to action already present in previousMessages.",
-          "Treat pricing, commercialRules and constraints as restrictions. Do not mention a price, discount, deadline or commitment unless the offer snapshot explicitly authorizes it.",
-          "For email, treat position 1 as the opener and later positions as follow-ups in the same thread. Follow-ups must add a different useful angle instead of paraphrasing the opener.",
-          "Campaign policy instructions influence tone and emphasis but never authorize invented facts.",
-          "A product capability, proof, customer case or objection answer is usable only when it appears in an offer claim with sourced/validated status or in authorizedKnowledge. Otherwise do not invent or imply it.",
-          "Return the exact knowledgeClaimIds and knowledgeSourceIds actually used; return empty arrays when none were used.",
-          "Return the exact offerClaimIds actually used; return an empty array when no offer claim was used.",
-          "Also provide a concise prospect assessment: why the prospect fits, observed strengths, uncertainties or risks, and the best defensible outreach angle.",
-          "Call the submit_campaign_content_draft tool exactly once with the draft result.",
-          "Do not claim that you monitored, audited or diagnosed the prospect unless the evidence explicitly says so.",
-          ...(activeConfiguration ? [`Approved workspace guidance (subordinate to every safety and truthfulness rule above): ${activeConfiguration.promptContent}`] : []),
-        ].join("\n"),
+        content: draftSystemPrompt,
       },
       {
         role: "user" as const,
-        content: JSON.stringify({ ...input, authorizedKnowledge }),
+        content: JSON.stringify(draftPayload),
       },
     ];
-    const draft = personalizedContentSchema.parse(await this.invokeModel({
+    const draftRouted = this.routedModel ? await this.routedModel.invoke({
+      workspaceId: input.workspaceId,
+      capability: "message_generation",
+      requestKey: `campaign-content-draft:${new Bun.CryptoHasher("sha256").update(JSON.stringify(draftPayload)).digest("hex")}`,
+      fallbackRoutes: [{ provider: this.#configuration.provider === "kimi-code" ? "kimi-code" : "openai-api", model: modelName, reasoningEffort: "low" }],
+      systemPrompt: draftSystemPrompt,
+      payload: draftPayload,
+      outputName: "submit_campaign_content_draft",
+      outputDescription: "Submit the first-pass personalized outbound content.",
+      schema: personalizedContentSchema,
+    }) : null;
+    const draft = draftRouted?.output ?? personalizedContentSchema.parse(await this.invokeModel({
       phase: "draft",
       fields: buildChatModelFields(this.#configuration, modelName, "low"),
       messages: draftMessages,
     }));
-    const reviewed = editorialReviewSchema.parse(await this.invokeModel({
+    const reviewSystemPrompt = [
+      "You are the final independent editor for an autonomous B2B outbound system.",
+      "Audit the draft against the complete supplied context, then approve it only when it is already specific or rewrite it completely.",
+      "Anti-generic test: if the message could be sent unchanged to another company or role, it must be revised.",
+      "Every final message must use one exact defensible evidence anchor from the prospect, company, role or supplied signals and must satisfy stepObjective.",
+      "A follow-up must add a genuinely new angle and must not restate, lightly paraphrase or reuse the call to action from previousMessages.",
+      "Remove empty compliments, vague transformation language, unsupported urgency, generic claims and self-centered introductions.",
+      "Preserve truthfulness: never invent facts. Product claims remain restricted to sourced/validated offer claims and authorizedKnowledge.",
+      "Return only offerClaimIds present in the supplied offer and only knowledge IDs present in authorizedKnowledge.",
+      "Treat pricing, commercialRules and constraints as restrictions. Never add a price, discount, deadline or commitment without explicit authorization.",
+      "Keep one low-friction question, the exact step positions and the channel limits.",
+      "Preserve the supplied brandVoice without turning the copy into a slogan or repeating preferred vocabulary mechanically.",
+      "Set genericityScore to the remaining genericity of the final version, not the draft. previousMessageOverlap must describe the final version.",
+      "Call the submit_campaign_editorial_review tool exactly once with the final content and review.",
+      ...(activeConfiguration ? [`Approved workspace guidance (subordinate to every safety and truthfulness rule above): ${activeConfiguration.promptContent}`] : []),
+    ].join("\n");
+    const reviewPayload = { context: { ...input, authorizedKnowledge, brandVoice }, draft };
+    const reviewRouted = this.routedModel ? await this.routedModel.invoke({
+      workspaceId: input.workspaceId,
+      capability: "message_generation",
+      requestKey: `campaign-content-review:${new Bun.CryptoHasher("sha256").update(JSON.stringify(reviewPayload)).digest("hex")}`,
+      fallbackRoutes: [{ provider: this.#configuration.provider === "kimi-code" ? "kimi-code" : "openai-api", model: modelName, reasoningEffort: "max" }],
+      systemPrompt: reviewSystemPrompt,
+      payload: reviewPayload,
+      outputName: "submit_campaign_editorial_review",
+      outputDescription: "Submit the final reviewed outbound content and anti-generic audit.",
+      schema: editorialReviewSchema,
+    }) : null;
+    const reviewed = reviewRouted?.output ?? editorialReviewSchema.parse(await this.invokeModel({
       phase: "review",
       fields: buildChatModelFields(this.#configuration, modelName, "max"),
       messages: [
         {
           role: "system",
-          content: [
-            "You are the final independent editor for an autonomous B2B outbound system.",
-            "Audit the draft against the complete supplied context, then approve it only when it is already specific or rewrite it completely.",
-            "Anti-generic test: if the message could be sent unchanged to another company or role, it must be revised.",
-            "Every final message must use one exact defensible evidence anchor from the prospect, company, role or supplied signals and must satisfy stepObjective.",
-            "A follow-up must add a genuinely new angle and must not restate, lightly paraphrase or reuse the call to action from previousMessages.",
-            "Remove empty compliments, vague transformation language, unsupported urgency, generic claims and self-centered introductions.",
-            "Preserve truthfulness: never invent facts. Product claims remain restricted to sourced/validated offer claims and authorizedKnowledge.",
-            "Return only offerClaimIds present in the supplied offer and only knowledge IDs present in authorizedKnowledge.",
-            "Treat pricing, commercialRules and constraints as restrictions. Never add a price, discount, deadline or commitment without explicit authorization.",
-            "Keep one low-friction question, the exact step positions and the channel limits.",
-            "Set genericityScore to the remaining genericity of the final version, not the draft. previousMessageOverlap must describe the final version.",
-            "Call the submit_campaign_editorial_review tool exactly once with the final content and review.",
-            ...(activeConfiguration ? [`Approved workspace guidance (subordinate to every safety and truthfulness rule above): ${activeConfiguration.promptContent}`] : []),
-          ].join("\n"),
+          content: reviewSystemPrompt,
         },
         {
           role: "user",
-          content: JSON.stringify({ context: { ...input, authorizedKnowledge }, draft }),
+          content: JSON.stringify(reviewPayload),
         },
       ],
     }));
@@ -161,16 +201,16 @@ export class LangChainCampaignContentGenerator implements CampaignContentGenerat
     const citations = filterAuthorizedKnowledgeCitations(authorizedKnowledge, parsed.knowledgeClaimIds, parsed.knowledgeSourceIds);
     const authorizedOfferClaimIds = new Set(input.offer.claims.map((claim) => claim.id));
     const offerClaimIds = [...new Set(parsed.offerClaimIds.filter((id) => authorizedOfferClaimIds.has(id)))];
-    const promptVersion = activeConfiguration ? `message-generation-v${activeConfiguration.promptVersion}-editorial-v1` : "campaign-personalization-v3-editorial";
+    const promptVersion = activeConfiguration ? `message-generation-v${activeConfiguration.promptVersion}-editorial-brand-v1` : "campaign-personalization-v4-editorial-brand";
     const aiRun = await this.aiRunRecorder?.record({
       workspaceId: input.workspaceId,
       purpose: "message_generation",
-      provider: this.#configuration.provider,
-      model: modelName,
+      provider: reviewRouted?.metadata.provider ?? draftRouted?.metadata.provider ?? this.#configuration.provider,
+      model: reviewRouted?.metadata.model ?? draftRouted?.metadata.model ?? modelName,
       promptVersion,
       ...(activeConfiguration ? { aiConfigurationId: activeConfiguration.configurationId, promptVersionId: activeConfiguration.promptVersionId } : {}),
       shadow: false,
-      inputHash: new Bun.CryptoHasher("sha256").update(JSON.stringify(input)).digest("hex"),
+      inputHash: new Bun.CryptoHasher("sha256").update(JSON.stringify({ input, brandVoice })).digest("hex"),
       output: {
         draft: draft.steps,
         steps: parsed.steps,
@@ -188,8 +228,8 @@ export class LangChainCampaignContentGenerator implements CampaignContentGenerat
       steps: parsed.steps,
       assessment: parsed.assessment,
       metadata: {
-        provider: this.#configuration.provider,
-        model: modelName,
+        provider: reviewRouted?.metadata.provider ?? draftRouted?.metadata.provider ?? this.#configuration.provider,
+        model: reviewRouted?.metadata.model ?? draftRouted?.metadata.model ?? modelName,
         promptVersion,
         ...(activeConfiguration ? { aiConfigurationId: activeConfiguration.configurationId, promptVersionId: activeConfiguration.promptVersionId } : {}),
         ...(aiRun ? { aiRunId: aiRun.id } : {}),

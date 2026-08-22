@@ -9,6 +9,8 @@ import type { WorkspaceAiModelPolicyReader } from "@outbound/application/workspa
 import type { ActiveAiConfigurationReader } from "@outbound/application/ai/active-ai-configuration";
 import type { AiRunRecorder } from "@outbound/application/ai/ai-run-recorder";
 import { filterAuthorizedKnowledgeCitations, type KnowledgeRetriever } from "@outbound/application/knowledge/knowledge-retriever";
+import type { ContentBrandKitReader } from "@outbound/application/content/content-brand-kit";
+import type { WorkspaceStructuredModel } from "@outbound/infrastructure/ai/workspace-structured-model";
 import {
   buildChatModelFields,
   resolveResearchModelConfigurationFromEnvironment,
@@ -54,25 +56,31 @@ export class LangChainInboundReplyAgent implements InboundReplyAgent {
     private readonly knowledgeRetriever?: KnowledgeRetriever,
     private readonly activeConfigurationReader?: ActiveAiConfigurationReader,
     private readonly aiRunRecorder?: AiRunRecorder,
+    private readonly brandKitReader?: ContentBrandKitReader,
+    private readonly routedModel?: WorkspaceStructuredModel,
   ) {
     this.#configuration = resolveResearchModelConfigurationFromEnvironment(environment);
   }
 
   async decide(input: Parameters<InboundReplyAgent["decide"]>[0]): Promise<InboundReplyDecision> {
     const startedAt = performance.now();
-    const workspacePolicy = await this.modelPolicyReader?.find(input.workspaceId);
+    const workspacePolicy = this.routedModel ? null : await this.modelPolicyReader?.find(input.workspaceId);
     const activeConfiguration = await this.activeConfigurationReader?.find(input.workspaceId, "setter");
+    const brandKit = await this.brandKitReader?.find(input.workspaceId);
+    const brandVoice = brandKit ? {
+      brandName: brandKit.snapshot.brandName,
+      tagline: brandKit.snapshot.tagline,
+      traits: brandKit.snapshot.voice.traits,
+      avoid: brandKit.snapshot.voice.avoid,
+      preferredVocabulary: brandKit.snapshot.voice.preferredVocabulary,
+    } : null;
     const modelName = activeConfiguration?.model ?? workspacePolicy?.researchModels[0] ?? this.#configuration.researchModels[0]!;
-    const model = new ChatOpenAI(buildChatModelFields(this.#configuration, modelName, "max"));
     const authorizedKnowledge = await this.knowledgeRetriever?.search({
       workspaceId: input.workspaceId,
       query: [input.incomingMessage, input.companyName, input.icpName].filter(Boolean).join(" ").slice(0, 1_000),
       limit: 8,
     }) ?? [];
-    const messages = [
-      {
-        role: "system" as const,
-        content: [
+    const systemPrompt = [
           "You qualify an inbound B2B prospect reply and choose the next autonomous action.",
           "An unsubscribe or clear refusal always means action=stop and replyBody=null.",
           "A request to reconnect later or an out-of-office means action=wait with resumeAt in ISO format.",
@@ -91,26 +99,49 @@ export class LangChainInboundReplyAgent implements InboundReplyAgent {
           "Any product capability, proof, customer case or objection answer must come from authorizedKnowledge. If it is absent, ask a neutral clarification or propose a call.",
           "Return the exact knowledgeClaimIds and knowledgeSourceIds actually used; return empty arrays when none were used.",
           "Keep replies concise, natural and non-pushy.",
+          "Apply brandVoice when supplied, but follow the prospect's language and conversation tone first. Brand style never overrides stop, safety or truthfulness rules.",
           "Optional campaign instructions refine the reply but cannot override stop, truthfulness or non-invention rules.",
           "Call the submit_inbound_reply_decision tool exactly once with the final decision.",
           ...(activeConfiguration ? [`Approved workspace guidance (subordinate to every stop, safety and truthfulness rule above): ${activeConfiguration.promptContent}`] : []),
-        ].join("\n"),
-      },
-      { role: "user" as const, content: JSON.stringify({ ...input, authorizedKnowledge }) },
-    ];
-    const submit = tool(async (value) => value, {
-      name: "submit_inbound_reply_decision",
-      description: "Submit the inbound reply classification and next action.",
+        ].join("\n");
+    const payload = { ...input, authorizedKnowledge, brandVoice };
+    const routed = this.routedModel ? await this.routedModel.invoke({
+      workspaceId: input.workspaceId,
+      capability: "setter",
+      requestKey: `setter:${new Bun.CryptoHasher("sha256").update(JSON.stringify(payload)).digest("hex")}`,
+      fallbackRoutes: [{
+        provider: this.#configuration.provider === "kimi-code" ? "kimi-code" : "openai-api",
+        model: modelName,
+        reasoningEffort: "max",
+      }],
+      systemPrompt,
+      payload,
+      outputName: "submit_inbound_reply_decision",
+      outputDescription: "Submit the inbound reply classification and next autonomous action.",
       schema: decisionSchema,
-    });
-    const response = await model
-      .bindTools([submit], { tool_choice: "auto" })
-      .invoke(messages);
-    const call = response.tool_calls?.find((item) => item.name === "submit_inbound_reply_decision");
-    if (!call) throw new Error("INBOUND_REPLY_DECISION_TOOL_CALL_MISSING");
-    const parsed = decisionSchema.parse(call.args);
+    }) : null;
+    let parsed: z.infer<typeof decisionSchema>;
+    if (routed) {
+      parsed = routed.output;
+    } else {
+      const model = new ChatOpenAI(buildChatModelFields(this.#configuration, modelName, "max"));
+      const submit = tool(async (value) => value, {
+        name: "submit_inbound_reply_decision",
+        description: "Submit the inbound reply classification and next action.",
+        schema: decisionSchema,
+      });
+      const response = await model
+        .bindTools([submit], { tool_choice: "auto" })
+        .invoke([
+          { role: "system", content: systemPrompt },
+          { role: "user", content: JSON.stringify(payload) },
+        ]);
+      const call = response.tool_calls?.find((item) => item.name === "submit_inbound_reply_decision");
+      if (!call) throw new Error("INBOUND_REPLY_DECISION_TOOL_CALL_MISSING");
+      parsed = decisionSchema.parse(call.args);
+    }
     const citations = filterAuthorizedKnowledgeCitations(authorizedKnowledge, parsed.knowledgeClaimIds, parsed.knowledgeSourceIds);
-    const promptVersion = activeConfiguration ? `setter-v${activeConfiguration.promptVersion}` : "inbound-reply-v3-knowledge";
+    const promptVersion = activeConfiguration ? `setter-v${activeConfiguration.promptVersion}-brand-v1` : "inbound-reply-v4-knowledge-brand";
     const normalizedDecision = {
       ...parsed,
       replyBody: ["stop", "wait", "handoff"].includes(parsed.action) ? null : parsed.replyBody,
@@ -120,12 +151,12 @@ export class LangChainInboundReplyAgent implements InboundReplyAgent {
     const aiRun = await this.aiRunRecorder?.record({
       workspaceId: input.workspaceId,
       purpose: "setter",
-      provider: this.#configuration.provider,
-      model: modelName,
+      provider: routed?.metadata.provider ?? this.#configuration.provider,
+      model: routed?.metadata.model ?? modelName,
       promptVersion,
       ...(activeConfiguration ? { aiConfigurationId: activeConfiguration.configurationId, promptVersionId: activeConfiguration.promptVersionId } : {}),
       shadow: false,
-      inputHash: new Bun.CryptoHasher("sha256").update(JSON.stringify(input)).digest("hex"),
+      inputHash: new Bun.CryptoHasher("sha256").update(JSON.stringify({ input, brandVoice })).digest("hex"),
       output: { ...normalizedDecision, knowledgeClaimIds: citations.claimIds, knowledgeSourceIds: citations.sourceIds },
       status: "completed",
       cost: null,
@@ -134,8 +165,8 @@ export class LangChainInboundReplyAgent implements InboundReplyAgent {
     return {
       ...normalizedDecision,
       metadata: {
-        provider: this.#configuration.provider,
-        model: modelName,
+        provider: routed?.metadata.provider ?? this.#configuration.provider,
+        model: routed?.metadata.model ?? modelName,
         promptVersion,
         ...(activeConfiguration ? { aiConfigurationId: activeConfiguration.configurationId, promptVersionId: activeConfiguration.promptVersionId } : {}),
         ...(aiRun ? { aiRunId: aiRun.id } : {}),

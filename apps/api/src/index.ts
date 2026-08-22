@@ -88,6 +88,21 @@ import { createContentAutopilotHttpHandler, isContentAutopilotRoute } from "@out
 import { EditorialLearningApplication } from "@outbound/application/content/editorial-learning";
 import { PostgresEditorialLearningRepository } from "@outbound/infrastructure/content/postgres-editorial-learning-repository";
 import { createEditorialLearningHttpHandler, isEditorialLearningRoute } from "@outbound/interface/http/editorial-learning-handler";
+import { ContentBrandKitApplication } from "@outbound/application/content/content-brand-kit";
+import { PostgresContentBrandKitRepository } from "@outbound/infrastructure/content/postgres-content-brand-kit-repository";
+import { createContentBrandKitHttpHandler } from "@outbound/interface/http/content-brand-kit-handler";
+import { SharpContentBrandLogoProcessor } from "@outbound/infrastructure/content/sharp-content-brand-logo-processor";
+import { S3ContentMediaStorage } from "@outbound/infrastructure/content/s3-content-media-storage";
+import { LangChainContentBrandDirectionDesigner } from "@outbound/infrastructure/content/langchain-content-brand-direction-designer";
+import { CrawlerContentBrandLandingPageReader } from "@outbound/infrastructure/content/crawler-content-brand-landing-page-reader";
+import { ContentPerformanceApplication } from "@outbound/application/content/content-performance";
+import { PostgresContentPerformanceRepository } from "@outbound/infrastructure/content/postgres-content-performance-repository";
+import { createContentPerformanceHttpHandler } from "@outbound/interface/http/content-performance-handler";
+import { ModelCatalogApplication } from "@outbound/application/ai/model-catalog-application";
+import { KimiModelCatalog } from "@outbound/infrastructure/ai/kimi-model-gateway";
+import { CodexModelCatalog } from "@outbound/infrastructure/ai/codex-cli-model-gateway";
+import { createModelCatalogHttpHandler } from "@outbound/interface/http/model-catalog-handler";
+import { createWorkspaceStructuredModelFromEnvironment } from "@outbound/infrastructure/ai/model-runtime-from-environment";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
@@ -104,6 +119,7 @@ const repository = new PostgresProductResearchRepository(database.db);
 const queue = new PostgresJobQueue(database.client);
 const clock = new SystemClock();
 const ids = new CryptoIdGenerator();
+const contentBrandKitRepository = new PostgresContentBrandKitRepository(database.db);
 const documentService = new ResearchDocumentService(
   database.db,
   queue,
@@ -129,6 +145,7 @@ const workspace = createWorkspaceHttpHandler({
 });
 const workspaceDataLifecycle = new PostgresWorkspaceDataLifecycle(database.db, clock, ids);
 const workspaceAiSettingsRepository = new PostgresWorkspaceAiSettingsRepository(database.db);
+const workspaceStructuredModel = createWorkspaceStructuredModelFromEnvironment(process.env, workspaceAiSettingsRepository);
 const workspaceArchiveStorage = new S3WorkspaceArchiveStorage(workspaceArchiveOptionsFromEnvironment());
 const workspaceData = createWorkspaceDataHttpHandler({
   contextResolver: auth.contextResolver,
@@ -157,6 +174,23 @@ const workspaceAiSettings = createWorkspaceAiSettingsHttpHandler({
     workspaceAiSettingsRepository,
     resolveResearchModelPolicyFromEnvironment(process.env),
   ),
+  contextResolver: auth.contextResolver,
+});
+const modelCatalog = createModelCatalogHttpHandler({
+  application: new ModelCatalogApplication([
+    ...(process.env.KIMI_CODE_API_KEY
+      ? [new KimiModelCatalog({
+          apiKey: process.env.KIMI_CODE_API_KEY,
+          ...(process.env.KIMI_CODE_BASE_URL ? { baseUrl: process.env.KIMI_CODE_BASE_URL } : {}),
+        })]
+      : []),
+    ...(process.env.CODEX_SERVICE_HOME
+      ? [new CodexModelCatalog({
+          codexHome: process.env.CODEX_SERVICE_HOME,
+          ...(process.env.CODEX_BINARY_PATH ? { binaryPath: process.env.CODEX_BINARY_PATH } : {}),
+        })]
+      : []),
+  ]),
   contextResolver: auth.contextResolver,
 });
 const documents = createResearchDocumentHttpHandler({
@@ -246,6 +280,9 @@ const campaignHandler = createCampaignHttpHandler({
     database.db,
     process.env,
     workspaceAiSettingsRepository,
+    undefined,
+    contentBrandKitRepository,
+    workspaceStructuredModel,
   ),
 });
 const messagingStrategyHandler = createMessagingStrategyHttpHandler({
@@ -295,6 +332,8 @@ const contentStrategy = createContentStrategyHttpHandler({
       process.env,
       workspaceAiSettingsRepository,
       new PostgresAiRunRecorder(database.db, clock, ids),
+      undefined,
+      workspaceStructuredModel,
     ),
   ),
 });
@@ -304,6 +343,32 @@ const contentAutopilot = createContentAutopilotHttpHandler({
     new PostgresContentAutopilotRepository(database.db),
     clock,
   ),
+});
+const contentBrandKit = createContentBrandKitHttpHandler({
+  contextResolver: auth.contextResolver,
+  application: new ContentBrandKitApplication(
+    contentBrandKitRepository,
+    new SharpContentBrandLogoProcessor(),
+    new S3ContentMediaStorage({
+      endpoint: requiredEnvironment("S3_ENDPOINT"),
+      region: process.env.S3_REGION ?? "us-east-1",
+      bucket: requiredEnvironment("S3_BUCKET"),
+      accessKeyId: requiredEnvironment("S3_ACCESS_KEY_ID"),
+      secretAccessKey: requiredEnvironment("S3_SECRET_ACCESS_KEY"),
+    }),
+    new LangChainContentBrandDirectionDesigner(
+      process.env,
+      workspaceAiSettingsRepository,
+      new PostgresAiRunRecorder(database.db, clock, ids),
+      undefined,
+      workspaceStructuredModel,
+    ),
+    discoveryCrawler ? new CrawlerContentBrandLandingPageReader(discoveryCrawler) : undefined,
+  ),
+});
+const contentPerformance = createContentPerformanceHttpHandler({
+  contextResolver: auth.contextResolver,
+  application: new ContentPerformanceApplication(new PostgresContentPerformanceRepository(database.db)),
 });
 const editorialLearning = createEditorialLearningHttpHandler({
   contextResolver: auth.contextResolver,
@@ -375,6 +440,8 @@ const server = Bun.serve({
     if (isWorkspaceDataRoute(pathname, request.method)) return workspaceData(request);
     if (isContentStrategyRoute(pathname)) return contentStrategy(request);
     if (isContentAutopilotRoute(pathname)) return contentAutopilot(request);
+    if (pathname.startsWith("/api/v1/content/brand-kit")) return contentBrandKit(request);
+    if (pathname === "/api/v1/content/performance") return contentPerformance(request);
     if (isEditorialLearningRoute(pathname)) return editorialLearning(request);
     if (isAttributionRoute(pathname)) return attribution(request);
     if (isSocialEngagementRoute(pathname)) return socialEngagements(request);
@@ -395,6 +462,7 @@ const server = Bun.serve({
     if (pathname.includes("/actions/enrich") || pathname.startsWith("/api/v1/enrichment-jobs/") || pathname.endsWith("/enrichment")) return enrichment(request);
     if (pathname === "/api/v1/workspaces" || pathname.startsWith("/api/v1/workspaces/") || pathname.startsWith("/api/v1/invitations/")) return workspace(request);
     if (pathname === "/api/v1/workspace-ai-settings") return workspaceAiSettings(request);
+    if (pathname === "/api/v1/ai/models") return modelCatalog(request);
     if (pathname.startsWith("/api/v1/messaging-strategies") || pathname.startsWith("/api/v1/ai-policies")) {
       return messagingStrategyHandler(request);
     }

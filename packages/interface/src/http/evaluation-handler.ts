@@ -17,7 +17,7 @@ const datasetSchema = z.object({
   }).strict()).min(1).max(500),
 }).strict();
 const promptSchema = z.object({ capability, content: z.string().trim().min(1).max(100_000) }).strict();
-const configurationSchema = z.object({ capability, provider: z.literal("kimi-code"), model: z.string().trim().min(1).max(200), promptVersionId: z.string().uuid(), status: z.enum(["candidate", "shadow"]).optional() }).strict();
+const configurationSchema = z.object({ capability, provider: z.enum(["kimi-code", "codex-cli", "openai-api"]), model: z.string().trim().min(1).max(200).regex(/^[a-zA-Z0-9._:-]+$/), promptVersionId: z.string().uuid(), status: z.enum(["candidate", "shadow"]).optional() }).strict();
 const runSchema = z.object({ datasetId: z.string().uuid(), configurationId: z.string().uuid(), requestKey: z.string().trim().min(1).max(300) }).strict();
 const retrySchema = z.object({ requestKey: z.string().trim().min(1).max(300) }).strict();
 const feedbackSchema = z.object({ rating: z.union([z.literal(-1), z.literal(1)]), reason: z.string().trim().max(1_000).nullable().optional() }).strict();

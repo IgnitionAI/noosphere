@@ -1,5 +1,10 @@
 import { ZodError, z } from "zod";
 import type { WorkspaceAiSettingsApplication } from "@outbound/application/workspaces/workspace-ai-settings";
+import {
+  aiCapabilities,
+  aiProviderIds,
+  aiReasoningEfforts,
+} from "@outbound/application/ai/model-gateway";
 import type { RequestContextResolver } from "@outbound/interface/http/request-context";
 import {
   RequestAuthenticationError,
@@ -8,17 +13,18 @@ import {
 } from "@outbound/interface/http/request-context";
 
 const route = "/api/v1/workspace-ai-settings";
-const modelId = z.enum(["k3", "k3-256k"]);
+const modelRoute = z.object({
+  provider: z.enum(aiProviderIds),
+  model: z.string().trim().min(1).max(200).regex(/^[a-zA-Z0-9._:-]+$/),
+  reasoningEffort: z.enum(aiReasoningEfforts),
+}).strict();
+const routeList = z.array(modelRoute).min(1).max(3).transform(deduplicateRoutes);
 const settingsInput = z
   .object({
-    researchModels: z.array(modelId).min(1).max(8),
-    synthesisModels: z.array(modelId).min(1).max(8),
+    defaultRoutes: routeList,
+    capabilityRoutes: z.partialRecord(z.enum(aiCapabilities), routeList).default({}),
   })
-  .strict()
-  .transform((value) => ({
-    researchModels: [...new Set(value.researchModels)],
-    synthesisModels: [...new Set(value.synthesisModels)],
-  }));
+  .strict();
 
 export function createWorkspaceAiSettingsHttpHandler(input: {
   application: WorkspaceAiSettingsApplication;
@@ -79,9 +85,21 @@ function serialize(settings: Awaited<ReturnType<WorkspaceAiSettingsApplication["
   return {
     researchModels: settings.researchModels,
     synthesisModels: settings.synthesisModels,
+    defaultRoutes: settings.defaultRoutes,
+    capabilityRoutes: settings.capabilityRoutes,
     source: settings.source,
     updatedAt: settings.updatedAt?.toISOString() ?? null,
   };
+}
+
+function deduplicateRoutes<T extends { provider: string; model: string; reasoningEffort: string }>(routes: readonly T[]): T[] {
+  const seen = new Set<string>();
+  return routes.filter((route) => {
+    const key = `${route.provider}:${route.model}:${route.reasoningEffort}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function problem(status: number, code: string, detail: string): Response {

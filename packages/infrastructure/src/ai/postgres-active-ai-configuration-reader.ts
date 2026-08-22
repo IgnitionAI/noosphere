@@ -11,7 +11,7 @@ export class PostgresActiveAiConfigurationReader implements ActiveAiConfiguratio
     return row ? {
       configurationId: row.configuration.id,
       capability: row.configuration.capability,
-      provider: row.configuration.provider as "kimi-code",
+      provider: row.configuration.provider as "kimi-code" | "codex-cli" | "openai-api",
       model: row.configuration.model,
       promptVersionId: row.prompt.id,
       promptVersion: row.prompt.version,

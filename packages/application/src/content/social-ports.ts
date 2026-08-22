@@ -5,6 +5,11 @@ export interface SocialPublisherCapabilities {
   readonly accountId: string;
   readonly accountHealthy: boolean;
   readonly textPublishing: "available" | "unavailable";
+  readonly mediaPublishing?: {
+    readonly image: "available" | "unavailable";
+    readonly document: "available" | "unavailable";
+    readonly video: "available" | "unavailable";
+  };
   readonly observedAt: Date;
 }
 
@@ -12,6 +17,17 @@ export interface SocialPublishTextRequest {
   readonly accountId: string;
   readonly text: string;
   readonly requestKey: string;
+}
+
+export interface SocialPublishAttachment {
+  readonly kind: "image" | "document" | "video";
+  readonly filename: string;
+  readonly mimeType: "image/png" | "application/pdf" | "video/mp4";
+  readonly content: Uint8Array;
+}
+
+export interface SocialPublishRequest extends SocialPublishTextRequest {
+  readonly attachments: readonly SocialPublishAttachment[];
 }
 
 export interface SocialPublishResult {
@@ -26,6 +42,7 @@ export interface SocialPublisher {
     readonly accountId: string;
     readonly now?: Date;
   }): Promise<SocialPublisherCapabilities>;
+  publish?(input: SocialPublishRequest): Promise<SocialPublishResult>;
   publishText(input: SocialPublishTextRequest): Promise<SocialPublishResult>;
 }
 

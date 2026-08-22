@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildChatModelFields,
+  LangChainResearchAgentExecutor,
   downgradeUnsupportedObservedClaims,
   dropUnevidencedCompetitorAnalyses,
   findUnresolvedEvidenceReferences,
@@ -20,6 +21,9 @@ import {
   selectModelCandidates,
   selectToolsForStage,
 } from "@outbound/infrastructure/ai/langchain-research-agent-executor";
+import type { ModelGateway } from "@outbound/application/ai/model-gateway";
+import { ModelRouter } from "@outbound/application/ai/model-router";
+import { WorkspaceStructuredModel } from "@outbound/infrastructure/ai/workspace-structured-model";
 import { validOutputFor } from "../fixtures/research-agent-fixtures";
 
 describe("competitor discovery hand-off", () => {
@@ -337,6 +341,74 @@ describe("structured-output recovery context", () => {
 });
 
 describe("research agent model provider", () => {
+  test("runs a V3 synthesis stage through the workspace-selected Codex model", async () => {
+    const provider: ModelGateway = {
+      provider: "codex-cli",
+      transport: "codex-process",
+      invokeStructured: async (request) => ({
+        output: request.parse(validOutputFor("problem_mapping")),
+        metadata: {
+          provider: "codex-cli",
+          transport: "codex-process",
+          model: request.model,
+          reasoningEffort: request.reasoningEffort,
+          usage: { inputTokens: 10, cachedInputTokens: 0, outputTokens: 20, source: "reported" },
+          latencyMs: 3,
+        },
+      }),
+    };
+    const policy = {
+      find: async () => ({
+        researchModels: ["gpt-5.6-luna"],
+        synthesisModels: ["gpt-5.6-luna"],
+        defaultRoutes: [{ provider: "codex-cli" as const, model: "gpt-5.6-luna", reasoningEffort: "xhigh" as const }],
+        capabilityRoutes: {},
+      }),
+    };
+    const routedModel = new WorkspaceStructuredModel(new ModelRouter([provider]), policy);
+    const executor = new LangChainResearchAgentExecutor({
+      provider: "kimi-code",
+      apiKey: "legacy-unused",
+      baseUrl: "https://api.kimi.test/v1",
+      researchModels: ["k3"],
+      synthesisModels: ["k3-256k"],
+      crawlerServiceUrl: "http://crawler.test",
+      crawlerApiKey: "crawler-test-key",
+      modelPolicyReader: policy,
+      routedModel,
+    });
+    const output = await executor.execute("problem_mapping", {
+      stage: "problem_mapping",
+      workspaceId: crypto.randomUUID(),
+      runId: crypto.randomUUID(),
+      researchStageRunId: crypto.randomUUID(),
+      correlationId: "codex-routing-test",
+      deadlineAt: new Date(Date.now() + 60_000).toISOString(),
+      workItemKey: "main",
+      externalDlpTerms: [],
+      brief: {
+        productUrl: "https://example.com",
+        productName: "Noosphere",
+        description: "Autonomous B2B growth platform",
+        geography: "France",
+        languages: ["fr"],
+        salesMotion: "hybrid",
+        knownCompetitors: [],
+        internalDocumentIds: [],
+        depth: "quick",
+        audienceGoal: "end_customers",
+        buyerConstraints: "",
+        researchVersion: 3,
+      },
+      previousOutputs: { product_truth: validOutputFor("product_truth") },
+    });
+
+    expect(output.output).toEqual(validOutputFor("problem_mapping"));
+    expect(output.metadata.provider).toBe("codex-cli");
+    expect(output.metadata.model).toBe("gpt-5.6-luna");
+    expect(output.metadata.parameters.engine).toBe("bounded-tool-plan");
+  });
+
   test("defaults to Kimi Code with its OpenAI-compatible endpoint and models", () => {
     const configuration = resolveResearchModelConfigurationFromEnvironment({
       KIMI_CODE_API_KEY: "test-kimi-key",

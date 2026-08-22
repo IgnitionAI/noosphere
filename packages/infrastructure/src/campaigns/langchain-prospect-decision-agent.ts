@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { ProspectDecisionAgent } from "@outbound/application/campaigns/prospect-decision";
 import type { ProspectDecisionProposal } from "@outbound/domain/campaigns/prospect-decision";
 import type { WorkspaceAiModelPolicyReader } from "@outbound/application/workspaces/workspace-ai-settings";
+import type { WorkspaceStructuredModel } from "@outbound/infrastructure/ai/workspace-structured-model";
 import {
   buildChatModelFields,
   resolveResearchModelConfigurationFromEnvironment,
@@ -24,6 +25,7 @@ export class LangChainProspectDecisionAgent implements ProspectDecisionAgent {
   constructor(
     environment: Readonly<Record<string, string | undefined>> = process.env,
     private readonly modelPolicyReader?: WorkspaceAiModelPolicyReader,
+    private readonly routedModel?: WorkspaceStructuredModel,
   ) {
     this.#configuration = resolveResearchModelConfigurationFromEnvironment(environment);
     this.#modelName = environment.PROSPECT_DECISION_MODEL?.trim()
@@ -32,26 +34,45 @@ export class LangChainProspectDecisionAgent implements ProspectDecisionAgent {
   }
 
   async decide(input: Parameters<ProspectDecisionAgent["decide"]>[0]): Promise<ProspectDecisionProposal> {
-    const workspacePolicy = await this.modelPolicyReader?.find(input.workspaceId);
+    const workspacePolicy = this.routedModel ? null : await this.modelPolicyReader?.find(input.workspaceId);
     const modelName = workspacePolicy?.researchModels[0] ?? this.#modelName;
+    const systemPrompt = [
+      "You decide exactly one next action for an existing B2B outbound prospect.",
+      "The campaign is a policy boundary, not a rigid sequence. The deterministic runtime will authorize or block your proposal.",
+      "Never claim that a message was sent or that research was performed. You only propose the next action.",
+      "Choose send only when the scheduled outreach action is due and no inbound answer appears in the state.",
+      "Treat eligible social signals as proved intent context, never as permission to bypass campaign, suppression, or channel policy.",
+      "A reaction is inert. If openLinkedinConversation is true, never propose a new cold send; prefer wait, stop, or handoff according to the thread context.",
+      "Choose wait with a future ISO date when more time is appropriate.",
+      "Choose research when the available evidence is insufficient; include a future recheck date.",
+      "Choose stop after a clear refusal, suppression or exhausted strategy; choose handoff for an interested or ambiguous high-value reply.",
+      "Keep observation and reason factual and concise. Do not invent evidence.",
+    ].join("\n");
+    if (this.routedModel) {
+      const result = await this.routedModel.invoke({
+        workspaceId: input.workspaceId,
+        capability: "prospect_decision",
+        requestKey: `prospect-decision:${input.decisionId}`,
+        fallbackRoutes: [{
+          provider: this.#configuration.provider === "kimi-code" ? "kimi-code" : "openai-api",
+          model: modelName,
+          reasoningEffort: "max",
+        }],
+        systemPrompt,
+        payload: input,
+        outputName: "submit_prospect_decision",
+        outputDescription: "Submit the single proposed next action for this prospect.",
+        schema: proposalSchema,
+      });
+      return result.output;
+    }
     const model = new ChatOpenAI(buildChatModelFields(this.#configuration, modelName, "max"));
     const agent = createAgent({
       name: "outbound-prospect-next-action",
       model,
       tools: [],
       responseFormat: toolStrategy(proposalSchema),
-      systemPrompt: [
-        "You decide exactly one next action for an existing B2B outbound prospect.",
-        "The campaign is a policy boundary, not a rigid sequence. The deterministic runtime will authorize or block your proposal.",
-        "Never claim that a message was sent or that research was performed. You only propose the next action.",
-        "Choose send only when the scheduled outreach action is due and no inbound answer appears in the state.",
-        "Treat eligible social signals as proved intent context, never as permission to bypass campaign, suppression, or channel policy.",
-        "A reaction is inert. If openLinkedinConversation is true, never propose a new cold send; prefer wait, stop, or handoff according to the thread context.",
-        "Choose wait with a future ISO date when more time is appropriate.",
-        "Choose research when the available evidence is insufficient; include a future recheck date.",
-        "Choose stop after a clear refusal, suppression or exhausted strategy; choose handoff for an interested or ambiguous high-value reply.",
-        "Keep observation and reason factual and concise. Do not invent evidence.",
-      ].join("\n"),
+      systemPrompt,
     });
     const result = await agent.invoke({ messages: [{ role: "user", content: JSON.stringify(input) }] }, { recursionLimit: 8 });
     const structured = (result as { structuredResponse?: unknown }).structuredResponse;

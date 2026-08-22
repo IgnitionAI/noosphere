@@ -32,6 +32,7 @@ export interface ChannelObservation {
 
 export interface ChannelStrategyPlanner {
   plan(input: {
+    readonly workspaceId: string;
     readonly channel: ProspectingChannel;
     readonly icpName: string;
     readonly criteria: unknown;

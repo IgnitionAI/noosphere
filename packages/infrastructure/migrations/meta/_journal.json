@@ -582,6 +582,20 @@
       "when": 1797854400000,
       "tag": "0082_configurable_content_publication_cadence",
       "breakpoints": true
+    },
+    {
+      "idx": 83,
+      "version": "7",
+      "when": 1797858000000,
+      "tag": "0083_linkedin_rich_media",
+      "breakpoints": true
+    },
+    {
+      "idx": 84,
+      "version": "7",
+      "when": 1797861600000,
+      "tag": "0084_provider_neutral_ai_routing",
+      "breakpoints": true
     }
   ]
 }

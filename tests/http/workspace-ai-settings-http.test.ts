@@ -23,24 +23,37 @@ describe("workspace AI settings HTTP route", () => {
     expect(await response.json()).toEqual({
       researchModels: ["k3", "k3-256k"],
       synthesisModels: ["k3-256k", "k3"],
+      defaultRoutes: [{ provider: "kimi-code", model: "k3", reasoningEffort: "max" }],
+      capabilityRoutes: {},
       source: "environment",
       updatedAt: null,
     });
   });
 
-  test("lets an owner persist an ordered, deduplicated model policy", async () => {
+  test("lets an owner persist global and per-use-case provider routes", async () => {
     const { handle } = fixture("owner");
     const response = await handle(
       request("PUT", {
-        researchModels: ["k3", "k3-256k", "k3"],
-        synthesisModels: ["k3-256k", "k3"],
+        defaultRoutes: [
+          { provider: "codex-cli", model: "gpt-5.6-luna", reasoningEffort: "xhigh" },
+          { provider: "codex-cli", model: "gpt-5.6-luna", reasoningEffort: "xhigh" },
+          { provider: "kimi-code", model: "future-kimi", reasoningEffort: "max" },
+        ],
+        capabilityRoutes: {
+          content_writer: [{ provider: "kimi-code", model: "k3-256k", reasoningEffort: "low" }],
+        },
       }),
     );
 
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({
-      researchModels: ["k3", "k3-256k"],
-      synthesisModels: ["k3-256k", "k3"],
+      defaultRoutes: [
+        { provider: "codex-cli", model: "gpt-5.6-luna", reasoningEffort: "xhigh" },
+        { provider: "kimi-code", model: "future-kimi", reasoningEffort: "max" },
+      ],
+      capabilityRoutes: {
+        content_writer: [{ provider: "kimi-code", model: "k3-256k", reasoningEffort: "low" }],
+      },
       source: "workspace",
     });
   });
@@ -51,20 +64,20 @@ describe("workspace AI settings HTTP route", () => {
     expect((await handle(request("GET"))).status).toBe(200);
     const response = await handle(
       request("PUT", {
-        researchModels: ["k3"],
-        synthesisModels: ["k3"],
+        defaultRoutes: [{ provider: "kimi-code", model: "k3", reasoningEffort: "max" }],
+        capabilityRoutes: {},
       }),
     );
     expect(response.status).toBe(403);
     expect(await response.json()).toMatchObject({ code: "WORKSPACE_FORBIDDEN" });
   });
 
-  test("rejects the removed Kimi coding models", async () => {
+  test("rejects an invalid provider instead of hardcoding model IDs", async () => {
     const { handle } = fixture("owner");
     const response = await handle(
       request("PUT", {
-        researchModels: ["kimi-for-coding"],
-        synthesisModels: ["kimi-for-coding-highspeed"],
+        defaultRoutes: [{ provider: "unknown", model: "future-model", reasoningEffort: "max" }],
+        capabilityRoutes: {},
       }),
     );
     expect(response.status).toBe(400);
@@ -110,11 +123,15 @@ class InMemoryWorkspaceAiSettingsRepository
     workspaceId: string;
     researchModels: readonly string[];
     synthesisModels: readonly string[];
+    defaultRoutes: NonNullable<WorkspaceAiModelPolicy["defaultRoutes"]>;
+    capabilityRoutes: NonNullable<WorkspaceAiModelPolicy["capabilityRoutes"]>;
     now: Date;
   }) {
     const settings = {
       researchModels: [...input.researchModels],
       synthesisModels: [...input.synthesisModels],
+      defaultRoutes: input.defaultRoutes,
+      capabilityRoutes: input.capabilityRoutes,
       updatedAt: input.now,
     };
     this.settings.set(input.workspaceId, settings);

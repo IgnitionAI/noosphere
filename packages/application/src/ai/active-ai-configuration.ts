@@ -1,7 +1,9 @@
+import type { AiProviderId } from "./model-gateway";
+
 export interface ActiveAiConfiguration {
   readonly configurationId: string;
   readonly capability: "icp_research" | "message_generation" | "setter";
-  readonly provider: "kimi-code";
+  readonly provider: AiProviderId;
   readonly model: string;
   readonly promptVersionId: string;
   readonly promptVersion: number;

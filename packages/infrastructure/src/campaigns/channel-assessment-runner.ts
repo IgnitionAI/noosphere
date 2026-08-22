@@ -33,6 +33,7 @@ export class ChannelAssessmentJobProcessor {
     await this.#repository.startAssessment({ ...payload, startedAt: this.clock.now() });
     try {
       const strategy = await this.planner.plan({
+        workspaceId: payload.workspaceId,
         channel: assessment.channel,
         icpName: assessment.icpName,
         criteria: assessment.criteria,

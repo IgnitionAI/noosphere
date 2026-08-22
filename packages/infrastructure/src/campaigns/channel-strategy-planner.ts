@@ -9,6 +9,7 @@ import {
   readJsonFromFinalMessage,
   resolveResearchModelConfigurationFromEnvironment,
 } from "@outbound/infrastructure/ai/langchain-research-agent-executor";
+import type { WorkspaceStructuredModel } from "@outbound/infrastructure/ai/workspace-structured-model";
 
 const strategySchema = z.object({
   query: z.string().trim().min(3).max(500),
@@ -43,10 +44,17 @@ const allowedSourceKinds = new Set([
 export class LangChainChannelStrategyPlanner implements ChannelStrategyPlanner {
   readonly #model: ChatOpenAI;
   readonly #provider: "kimi-code" | "openai";
+  readonly #modelName: string;
+  readonly #configuration: ReturnType<typeof resolveResearchModelConfigurationFromEnvironment>;
 
-  constructor(environment: Readonly<Record<string, string | undefined>> = process.env) {
+  constructor(
+    environment: Readonly<Record<string, string | undefined>> = process.env,
+    private readonly routedModel?: WorkspaceStructuredModel,
+  ) {
     const configuration = resolveResearchModelConfigurationFromEnvironment(environment);
     const modelName = configuration.synthesisModels[0]!;
+    this.#configuration = configuration;
+    this.#modelName = modelName;
     this.#provider = configuration.provider;
     this.#model = new ChatOpenAI(buildChatModelFields(configuration, modelName, "low"));
   }
@@ -76,6 +84,25 @@ export class LangChainChannelStrategyPlanner implements ChannelStrategyPlanner {
         content: JSON.stringify({ ...input, channelRule }),
       },
     ];
+
+    if (this.routedModel) {
+      const result = await this.routedModel.invoke({
+        workspaceId: input.workspaceId,
+        capability: "channel_strategy",
+        requestKey: `channel-strategy:${new Bun.CryptoHasher("sha256").update(JSON.stringify(input)).digest("hex")}`,
+        fallbackRoutes: [{
+          provider: this.#configuration.provider === "kimi-code" ? "kimi-code" : "openai-api",
+          model: this.#modelName,
+          reasoningEffort: "low",
+        }],
+        systemPrompt: messages[0]!.content,
+        payload: { ...input, channelRule },
+        outputName: "submit_channel_strategy",
+        outputDescription: "Submit a bounded read-only sourcing strategy for this channel.",
+        schema: strategySchema,
+      });
+      return result.output;
+    }
 
     // Kimi K3 rejects a forced tool_choice while thinking is enabled. Keep its
     // low-reasoning mode and validate prompt-JSON locally; OpenAI can use the

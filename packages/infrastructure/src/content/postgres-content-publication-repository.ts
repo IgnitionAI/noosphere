@@ -22,6 +22,7 @@ import {
   contentAssetVersions,
   contentIdeas,
   contentIdeaSchedules,
+  contentMediaAssets,
   contentOperationRequests,
   contentPublicationAttempts,
   contentPublicationReconciliations,
@@ -90,6 +91,11 @@ export class PostgresContentPublicationRepository implements ContentPublicationR
       if (!version || !version.ready) throw new Error("CONTENT_ASSET_NOT_READY");
       const readiness = version.readiness as { policyVersion?: unknown };
       if (readiness.policyVersion !== CONTENT_EDITORIAL_POLICY_VERSION) throw new Error("CONTENT_ASSET_EDITORIAL_POLICY_OUTDATED");
+      const mediaRows = await tx.select().from(contentMediaAssets).where(and(
+        eq(contentMediaAssets.workspaceId, input.workspaceId),
+        eq(contentMediaAssets.assetVersionId, version.id),
+      ));
+      if (asset.type !== "linkedin_text" && mediaRows.length !== 1) throw new Error("CONTENT_ASSET_MEDIA_NOT_READY");
       const grounding = (await tx.select({
         strategyVersionId: contentIdeas.strategyVersionId,
         strategyStatus: editorialStrategies.status,
@@ -111,6 +117,21 @@ export class PostgresContentPublicationRepository implements ContentPublicationR
         assetVersionId: version.id,
         body: version.body,
         contentHash: sha256(version.body),
+        format: asset.type as ContentPublicationContentSnapshot["format"],
+        media: mediaRows.map((media) => ({
+          id: media.id,
+          kind: media.kind as "image" | "document" | "video",
+          objectKey: media.objectKey,
+          mimeType: media.mimeType as "image/png" | "application/pdf" | "video/mp4",
+          filename: media.filename,
+          checksumSha256: media.checksumSha256,
+          sizeBytes: media.sizeBytes,
+          width: media.width,
+          height: media.height,
+          pageCount: media.pageCount,
+          durationSeconds: media.durationSeconds,
+          altText: media.altText,
+        })),
       };
       const policySnapshot: ContentPublicationPolicySnapshot = {
         schemaVersion: 1,
@@ -279,7 +300,7 @@ export class PostgresContentPublicationRepository implements ContentPublicationR
       if (account.providerAccountId !== input.currentAccountId) throw new Error("CONTENT_PUBLICATION_ACCOUNT_CHANGED");
       if (policy.policyVersion !== "linkedin-publishing-v1" || policy.network !== "linkedin" || policy.claimsGate !== "passed") throw new Error("CONTENT_PUBLICATION_POLICY_INVALID");
 
-      const version = (await tx.select({ ready: contentAssetVersions.ready, body: contentAssetVersions.body, assetStatus: contentAssets.status, strategyVersionId: contentIdeas.strategyVersionId, strategyStatus: editorialStrategies.status, deletedAt: editorialStrategies.deletedAt, strategySnapshot: editorialStrategyVersions.snapshot })
+      const version = (await tx.select({ ready: contentAssetVersions.ready, body: contentAssetVersions.body, assetType: contentAssets.type, assetStatus: contentAssets.status, strategyVersionId: contentIdeas.strategyVersionId, strategyStatus: editorialStrategies.status, deletedAt: editorialStrategies.deletedAt, strategySnapshot: editorialStrategyVersions.snapshot })
         .from(contentAssetVersions)
         .innerJoin(contentAssets, and(eq(contentAssets.workspaceId, contentAssetVersions.workspaceId), eq(contentAssets.id, contentAssetVersions.assetId)))
         .innerJoin(contentIdeas, and(eq(contentIdeas.workspaceId, contentAssets.workspaceId), eq(contentIdeas.id, contentAssets.ideaId)))
@@ -289,6 +310,12 @@ export class PostgresContentPublicationRepository implements ContentPublicationR
       if (!version || !version.ready || version.assetStatus !== "ready") throw new Error("CONTENT_PUBLICATION_ASSET_NO_LONGER_READY");
       if (version.strategyStatus !== "active" || version.deletedAt || version.strategyVersionId !== policy.strategyVersionId) throw new Error("CONTENT_PUBLICATION_STRATEGY_INACTIVE");
       if (version.body !== content.body || sha256(version.body) !== content.contentHash || content.assetVersionId !== row.assetVersionId) throw new Error("CONTENT_PUBLICATION_SNAPSHOT_MISMATCH");
+      if (version.assetType !== content.format) throw new Error("CONTENT_PUBLICATION_SNAPSHOT_MISMATCH");
+      const currentMedia = await tx.select().from(contentMediaAssets).where(and(
+        eq(contentMediaAssets.workspaceId, input.workspaceId),
+        eq(contentMediaAssets.assetVersionId, row.assetVersionId),
+      ));
+      if (!sameMediaSnapshot(content.media, currentMedia)) throw new Error("CONTENT_PUBLICATION_MEDIA_SNAPSHOT_MISMATCH");
       const strategy = editorialStrategySnapshotSchema.parse(version.strategySnapshot);
       if (strategy.allowedClaimIds.length) {
         const validClaims = (await tx.select({ value: count() }).from(offerClaims).where(and(
@@ -332,7 +359,7 @@ export class PostgresContentPublicationRepository implements ContentPublicationR
         status: "started", requestSnapshot: { network: "linkedin", accountId: account.providerAccountId, contentHash: content.contentHash, requestKey: row.requestKey }, startedAt: input.now,
       });
       await appendEvent(tx, { workspaceId: input.workspaceId, userId: null, publicationId: row.id, eventType: "ContentPublicationStarted", changes: { attempt, executionToken: input.executionToken } });
-      return { publicationId: row.id, executionToken: input.executionToken, accountId: account.providerAccountId, text: content.body, requestKey: row.requestKey, attempt };
+      return { publicationId: row.id, executionToken: input.executionToken, accountId: account.providerAccountId, text: content.body, requestKey: row.requestKey, attempt, attachments: content.media };
     });
   }
 
@@ -441,7 +468,51 @@ function toReconciliation(row: typeof contentPublicationReconciliations.$inferSe
 function contentSnapshot(value: unknown): ContentPublicationContentSnapshot {
   const record = objectValue(value);
   if (typeof record.assetVersionId !== "string" || typeof record.body !== "string" || typeof record.contentHash !== "string") throw new Error("CONTENT_PUBLICATION_SNAPSHOT_INVALID");
-  return { assetVersionId: record.assetVersionId, body: record.body, contentHash: record.contentHash };
+  const format = ["linkedin_text", "linkedin_image", "linkedin_document", "linkedin_video"].includes(String(record.format))
+    ? record.format as ContentPublicationContentSnapshot["format"]
+    : "linkedin_text";
+  const media = Array.isArray(record.media) ? record.media.map(mediaSnapshot) : [];
+  return { assetVersionId: record.assetVersionId, body: record.body, contentHash: record.contentHash, format, media };
+}
+
+function mediaSnapshot(value: unknown): ContentPublicationContentSnapshot["media"][number] {
+  const record = objectValue(value);
+  if (
+    typeof record.id !== "string"
+    || !["image", "document", "video"].includes(String(record.kind))
+    || typeof record.objectKey !== "string"
+    || !["image/png", "application/pdf", "video/mp4"].includes(String(record.mimeType))
+    || typeof record.filename !== "string"
+    || typeof record.checksumSha256 !== "string"
+    || typeof record.sizeBytes !== "number"
+    || typeof record.altText !== "string"
+  ) throw new Error("CONTENT_PUBLICATION_MEDIA_SNAPSHOT_INVALID");
+  return {
+    id: record.id,
+    kind: record.kind as "image" | "document" | "video",
+    objectKey: record.objectKey,
+    mimeType: record.mimeType as "image/png" | "application/pdf" | "video/mp4",
+    filename: record.filename,
+    checksumSha256: record.checksumSha256,
+    sizeBytes: record.sizeBytes,
+    width: typeof record.width === "number" ? record.width : null,
+    height: typeof record.height === "number" ? record.height : null,
+    pageCount: typeof record.pageCount === "number" ? record.pageCount : null,
+    durationSeconds: typeof record.durationSeconds === "number" ? record.durationSeconds : null,
+    altText: record.altText,
+  };
+}
+
+function sameMediaSnapshot(snapshot: ContentPublicationContentSnapshot["media"], rows: readonly (typeof contentMediaAssets.$inferSelect)[]): boolean {
+  if (snapshot.length !== rows.length) return false;
+  return snapshot.every((item) => rows.some((row) => (
+    row.id === item.id
+    && row.objectKey === item.objectKey
+    && row.checksumSha256 === item.checksumSha256
+    && row.sizeBytes === item.sizeBytes
+    && row.mimeType === item.mimeType
+    && row.filename === item.filename
+  )));
 }
 
 function policySnapshot(value: unknown): ContentPublicationPolicySnapshot {

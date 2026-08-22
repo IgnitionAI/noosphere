@@ -10,7 +10,8 @@ import {
   promoteAiConfiguration,
   recordAiFeedback,
   requestEvaluationRun,
-  type AiCapability,
+  type AiProviderId,
+  type EvaluationAiCapability,
 } from "@/lib/api";
 
 const path = (workspaceSlug: string) => `/w/${workspaceSlug}/ai-studio`;
@@ -25,7 +26,7 @@ export async function createDatasetAction(workspaceSlug: string, formData: FormD
     if (cta === "true" || cta === "false") expected.ctaPresent = cta === "true";
     if (!Object.keys(expected).length) throw new Error("EVALUATION_CASE_EXPECTATION_REQUIRED");
     await createEvaluationDataset(workspaceSlug, {
-      capability: String(formData.get("capability")) as AiCapability,
+      capability: String(formData.get("capability")) as EvaluationAiCapability,
       name: String(formData.get("name") ?? ""),
       description: String(formData.get("description") ?? "").trim() || null,
       rubricVersion: String(formData.get("rubricVersion") ?? "v1"),
@@ -36,9 +37,11 @@ export async function createDatasetAction(workspaceSlug: string, formData: FormD
 
 export async function createConfigurationAction(workspaceSlug: string, formData: FormData) {
   await run(workspaceSlug, "Configuration shadow créée.", async () => {
-    const capability = String(formData.get("capability")) as AiCapability;
+    const capability = String(formData.get("capability")) as EvaluationAiCapability;
+    const [provider, model] = String(formData.get("modelRoute") ?? "").split("::", 2);
+    if (!provider || !model) throw new Error("AI_CONFIGURATION_MODEL_NOT_ALLOWED");
     const prompt = await createAiPromptVersion(workspaceSlug, { capability, content: String(formData.get("prompt") ?? "") });
-    await createAiConfiguration(workspaceSlug, { capability, provider: "kimi-code", model: String(formData.get("model") ?? ""), promptVersionId: prompt.id, status: "shadow" });
+    await createAiConfiguration(workspaceSlug, { capability, provider: provider as AiProviderId, model, promptVersionId: prompt.id, status: "shadow" });
   });
 }
 

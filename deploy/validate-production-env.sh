@@ -28,7 +28,6 @@ required = [
     "SEARXNG_SECRET",
     "CRAWLER_API_KEY",
     "BETTER_AUTH_SECRET",
-    "KIMI_CODE_API_KEY",
     "OPENAI_API_KEY",
     "UNIPILE_DSN",
     "UNIPILE_API_KEY",
@@ -49,6 +48,14 @@ if missing or placeholders:
     if placeholders:
         print("Placeholder production variables: " + ", ".join(placeholders), file=sys.stderr)
     raise SystemExit(1)
+
+provider = os.environ.get("AI_PROVIDER", "kimi-code")
+if provider not in ("kimi-code", "codex-cli", "openai"):
+    raise SystemExit("AI_PROVIDER must be kimi-code, codex-cli or openai")
+if provider == "kimi-code" and not os.environ.get("KIMI_CODE_API_KEY"):
+    raise SystemExit("KIMI_CODE_API_KEY is required when AI_PROVIDER=kimi-code")
+if provider == "openai" and not os.environ.get("OPENAI_API_KEY"):
+    raise SystemExit("OPENAI_API_KEY is required when AI_PROVIDER=openai")
 
 if os.environ.get("DOCUMENT_EXTRACTOR", "lightweight") == "docling" and not os.environ.get("DOCLING_SERVICE_URL"):
     raise SystemExit("DOCLING_SERVICE_URL is required when DOCUMENT_EXTRACTOR=docling")

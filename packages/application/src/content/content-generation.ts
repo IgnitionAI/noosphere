@@ -1,5 +1,9 @@
 import type { JobQueue, LeasedJob } from "@outbound/application/jobs/job-queue";
 import type { EditorialStrategySnapshot } from "@outbound/domain/content/editorial-strategy";
+import type { ContentBrandKitSnapshot, LinkedinContentFormat } from "@outbound/domain/content/content-brand-kit";
+import { selectNextContentFormat } from "@outbound/domain/content/content-brand-kit";
+import type { StoredContentMedia } from "@outbound/application/content/content-media";
+import { ContentMediaProducer } from "@outbound/application/content/content-media";
 import type { ContentIdeaEvidence, ContentIdeaView } from "@outbound/application/content/content-ideas";
 import type {
   ContentBriefSnapshot,
@@ -9,7 +13,7 @@ import type {
   ContentGenerationStage,
   ContentGenerationStatus,
 } from "@outbound/domain/content/content-asset";
-import { assertGroundedContentDraft, evaluateContentReadiness } from "@outbound/domain/content/content-asset";
+import { assertGroundedContentDraft, assertMediaPlanMatchesBrief, evaluateContentReadiness } from "@outbound/domain/content/content-asset";
 
 export const CONTENT_GENERATION_JOB_TYPE = "content.asset.generate";
 export const CONTENT_GENERATION_JOB_PRIORITY = 60;
@@ -39,6 +43,7 @@ export interface ContentAssetVersionView {
   readonly audit: ContentEvidenceAudit;
   readonly critique: ContentEditorialCritique;
   readonly readiness: { readonly ready: boolean; readonly blockers: readonly string[] };
+  readonly media: StoredContentMedia | null;
   readonly createdAt: Date;
 }
 
@@ -46,7 +51,7 @@ export interface ContentAssetView {
   readonly id: string;
   readonly workspaceId: string;
   readonly ideaId: string;
-  readonly type: "linkedin_text";
+  readonly type: LinkedinContentFormat;
   readonly status: "draft" | "ready" | "blocked";
   readonly latestVersion: number;
   readonly latest: ContentAssetVersionView | null;
@@ -58,8 +63,10 @@ export interface ContentGenerationContext {
   readonly run: ContentGenerationRunView;
   readonly idea: ContentIdeaView;
   readonly strategy: EditorialStrategySnapshot;
+  readonly brandKit: ContentBrandKitSnapshot;
   readonly evidence: readonly ContentIdeaEvidence[];
   readonly recentBodies: readonly string[];
+  readonly recentFormats: readonly LinkedinContentFormat[];
   readonly brief: ContentBriefSnapshot | null;
   readonly draft: ContentDraftSnapshot | null;
   readonly audit: ContentEvidenceAudit | null;
@@ -79,13 +86,13 @@ export interface ContentGenerationRepository {
   reviseDraftAfterAudit(input: { workspaceId: string; runId: string; draft: ContentDraftSnapshot; now: Date }): Promise<void>;
   reviseDraftAfterCritique(input: { workspaceId: string; runId: string; draft: ContentDraftSnapshot; now: Date }): Promise<void>;
   saveAudit(input: { workspaceId: string; runId: string; audit: ContentEvidenceAudit; now: Date }): Promise<void>;
-  completeRun(input: { workspaceId: string; runId: string; critique: ContentEditorialCritique; readiness: { ready: boolean; blockers: readonly string[] }; now: Date }): Promise<void>;
+  completeRun(input: { workspaceId: string; runId: string; critique: ContentEditorialCritique; readiness: { ready: boolean; blockers: readonly string[] }; media?: StoredContentMedia | null; now: Date }): Promise<void>;
   failRun(input: { workspaceId: string; runId: string; code: string; message: string; now: Date }): Promise<void>;
 }
 
 export interface ContentPipelineAgent {
-  buildBrief(input: Pick<ContentGenerationContext, "run" | "idea" | "strategy" | "evidence">): Promise<ContentBriefSnapshot>;
-  write(input: Pick<ContentGenerationContext, "run" | "idea" | "strategy" | "evidence" | "recentBodies"> & {
+  buildBrief(input: Pick<ContentGenerationContext, "run" | "idea" | "strategy" | "brandKit" | "evidence" | "recentFormats">): Promise<ContentBriefSnapshot>;
+  write(input: Pick<ContentGenerationContext, "run" | "idea" | "strategy" | "brandKit" | "evidence" | "recentBodies"> & {
     readonly brief: ContentBriefSnapshot;
     readonly draft?: ContentDraftSnapshot | null;
     readonly validationFeedback?: readonly string[];
@@ -120,6 +127,7 @@ export class ContentGenerationJobProcessor {
     private readonly agent: ContentPipelineAgent,
     private readonly queue: JobQueue,
     private readonly now: () => Date = () => new Date(),
+    private readonly mediaProducer?: ContentMediaProducer,
   ) {}
 
   async process(job: LeasedJob): Promise<void> {
@@ -130,7 +138,8 @@ export class ContentGenerationJobProcessor {
       await this.repository.startRun({ workspaceId: job.workspaceId, runId: payload.runId, now: this.now() });
 
       if (stageAtOrBefore(context.run.stage, "brief")) {
-        const brief = await this.agent.buildBrief(context);
+        const proposedBrief = await this.agent.buildBrief(context);
+        const brief = { ...proposedBrief, format: selectNextContentFormat(context.brandKit, context.recentFormats) };
         assertBriefGrounded(brief, context);
         await this.repository.saveBrief({ workspaceId: job.workspaceId, runId: payload.runId, brief, now: this.now() });
         context = { ...context, brief, run: { ...context.run, stage: "writer" } };
@@ -160,6 +169,7 @@ export class ContentGenerationJobProcessor {
         let draft = context.draft;
         let audit = context.audit;
         let critique = await this.agent.critique({ ...context, brief: context.brief, draft, audit });
+        assertMediaPlanMatchesBrief(context.brief, draft);
         let readiness = evaluateContentReadiness({
           draft,
           audit,
@@ -182,6 +192,7 @@ export class ContentGenerationJobProcessor {
           }
           await this.repository.saveAudit({ workspaceId: job.workspaceId, runId: payload.runId, audit, now: this.now() });
           critique = await this.agent.critique({ ...context, brief: context.brief, draft, audit });
+          assertMediaPlanMatchesBrief(context.brief, draft);
           readiness = evaluateContentReadiness({
             draft,
             audit,
@@ -190,7 +201,10 @@ export class ContentGenerationJobProcessor {
             recentBodies: context.recentBodies,
           });
         }
-        await this.repository.completeRun({ workspaceId: job.workspaceId, runId: payload.runId, critique, readiness, now: this.now() });
+        const media = readiness.ready && context.brief.format !== "linkedin_text"
+          ? await this.#produceMedia({ ...context, draft, brief: context.brief })
+          : null;
+        await this.repository.completeRun({ workspaceId: job.workspaceId, runId: payload.runId, critique, readiness, media, now: this.now() });
       }
       await this.queue.acknowledge(job.id, job.lockedBy, this.now());
     } catch (error) {
@@ -199,6 +213,19 @@ export class ContentGenerationJobProcessor {
       }
       throw error;
     }
+  }
+
+  async #produceMedia(context: ContentGenerationContext & { readonly brief: ContentBriefSnapshot; readonly draft: ContentDraftSnapshot }): Promise<StoredContentMedia> {
+    if (!this.mediaProducer) throw new Error("CONTENT_MEDIA_RENDERER_UNAVAILABLE");
+    const media = await this.mediaProducer.produce({
+      workspaceId: context.run.workspaceId,
+      runId: context.run.id,
+      format: context.brief.format,
+      draft: context.draft,
+      brandKit: context.brandKit,
+    });
+    if (!media) throw new Error("CONTENT_MEDIA_RENDER_MISSING");
+    return media;
   }
 }
 
@@ -213,6 +240,7 @@ async function writeGroundedDraft(
     const draft = await agent.write({ ...input, ...(validationFeedback.length ? { validationFeedback } : {}) });
     try {
       assertGroundedContentDraft(draft, evidenceKeys);
+      assertMediaPlanMatchesBrief(input.brief, draft);
       return draft;
     } catch (error) {
       if (!isRepairableDraftError(error) || attempt === 2) throw error;
@@ -256,14 +284,18 @@ function isRepairableDraftError(error: unknown): error is Error {
     "CONTENT_DRAFT_UNRESOLVED_CLAIM",
     "CONTENT_DRAFT_CLAIM_NOT_IN_BODY",
     "CONTENT_DRAFT_UNSOURCED_NUMBER",
+    "CONTENT_MEDIA_FORMAT_MISMATCH",
+    "CONTENT_MEDIA_PLAN_INVALID",
   ].includes(error.message);
 }
 
 function assertBriefGrounded(brief: ContentBriefSnapshot, context: ContentGenerationContext): void {
   const evidence = new Set(context.evidence.map((item) => item.key));
   const claims = new Set(context.strategy.allowedClaimIds);
+  const formats = new Set(context.brandKit.enabledFormats);
   if (brief.evidenceKeys.some((key) => !evidence.has(key))) throw new Error("CONTENT_BRIEF_UNRESOLVED_SOURCE");
   if (brief.allowedClaimIds.some((id) => !claims.has(id))) throw new Error("CONTENT_BRIEF_UNAUTHORIZED_CLAIM");
+  if (!formats.has(brief.format)) throw new Error("CONTENT_BRIEF_FORMAT_DISABLED");
 }
 
 function stageAtOrBefore(current: ContentGenerationStage, expected: Exclude<ContentGenerationStage, "completed">): boolean {

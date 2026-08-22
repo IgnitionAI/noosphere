@@ -1,9 +1,18 @@
 import { describe, expect, test } from "bun:test";
 import { assertGroundedContentDraft, evaluateContentReadiness } from "@outbound/domain/content/content-asset";
 import { ContentGenerationJobProcessor, type ContentGenerationRepository } from "@outbound/application/content/content-generation";
+import { DEFAULT_CONTENT_BRAND_KIT, selectNextContentFormat } from "@outbound/domain/content/content-brand-kit";
 import type { JobQueue, LeasedJob } from "@outbound/application/jobs/job-queue";
 
 describe("CNT-101 grounded content pipeline", () => {
+  test("keeps synthetic videos out of the default automatic mix", () => {
+    expect(DEFAULT_CONTENT_BRAND_KIT.enabledFormats).toEqual(["linkedin_text", "linkedin_image", "linkedin_document"]);
+    expect(DEFAULT_CONTENT_BRAND_KIT.weeklyMix.linkedin_video).toBe(0);
+  });
+  test("rebalances the next format deterministically against the configured weekly mix", () => {
+    expect(selectNextContentFormat(DEFAULT_CONTENT_BRAND_KIT, ["linkedin_text", "linkedin_text", "linkedin_image"])).toBe("linkedin_document");
+    expect(selectNextContentFormat({ ...DEFAULT_CONTENT_BRAND_KIT, enabledFormats: ["linkedin_image"], weeklyMix: { linkedin_text: 0, linkedin_image: 7, linkedin_document: 0, linkedin_video: 0 } }, [])).toBe("linkedin_image");
+  });
   test("rejects a number that is absent from the sourced claim ledger", () => {
     expect(() => assertGroundedContentDraft({ ...draft(), body: `${draft().body} 42% des équipes y arrivent.` }, ["proof:1"])).toThrow("CONTENT_DRAFT_UNSOURCED_NUMBER");
   });

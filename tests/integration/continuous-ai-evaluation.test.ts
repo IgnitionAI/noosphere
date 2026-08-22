@@ -162,9 +162,14 @@ databaseDescribe("AI-140 continuous AI evaluation", () => {
     expect(await database.db.select().from(evaluationDatasets).where(and(eq(evaluationDatasets.workspaceId, workspaceId), eq(evaluationDatasets.name, "Forbidden real contact")))).toHaveLength(0);
   });
 
-  test("rejects a Kimi model that is not configured for the workspace", async () => {
+  test("accepts opaque Kimi and Codex model ids while rejecting malformed ids", async () => {
     const prompt = await service.createPromptVersion({ workspaceId, actorUserId: ownerId, capability: "setter", content: "Prompt de contrôle" });
-    await expect(service.createConfiguration({ workspaceId, actorUserId: ownerId, capability: "setter", provider: "kimi-code", model: "kimi-for-coding", promptVersionId: prompt.id, status: "shadow" })).rejects.toThrow("AI_CONFIGURATION_MODEL_NOT_ALLOWED");
+    const kimi = await service.createConfiguration({ workspaceId, actorUserId: ownerId, capability: "setter", provider: "kimi-code", model: "kimi-for-coding", promptVersionId: prompt.id, status: "shadow" });
+    const codex = await service.createConfiguration({ workspaceId, actorUserId: ownerId, capability: "setter", provider: "codex-cli", model: "gpt-5.6-luna", promptVersionId: prompt.id, status: "shadow" });
+
+    expect({ provider: kimi.provider, model: kimi.model }).toEqual({ provider: "kimi-code", model: "kimi-for-coding" });
+    expect({ provider: codex.provider, model: codex.model }).toEqual({ provider: "codex-cli", model: "gpt-5.6-luna" });
+    await expect(service.createConfiguration({ workspaceId, actorUserId: ownerId, capability: "setter", provider: "codex-cli", model: "../../personal-auth", promptVersionId: prompt.id, status: "shadow" })).rejects.toThrow("AI_CONFIGURATION_MODEL_NOT_ALLOWED");
   });
 
   test("retries only failed cases and deduplicates the retry request", async () => {

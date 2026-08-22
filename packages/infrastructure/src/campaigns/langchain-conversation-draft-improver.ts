@@ -8,6 +8,8 @@ import {
   type ConversationDraftImprover,
 } from "@outbound/application/campaigns/conversation-draft-improver";
 import type { WorkspaceAiModelPolicyReader } from "@outbound/application/workspaces/workspace-ai-settings";
+import type { ContentBrandKitReader } from "@outbound/application/content/content-brand-kit";
+import type { WorkspaceStructuredModel } from "@outbound/infrastructure/ai/workspace-structured-model";
 import type { Database } from "@outbound/infrastructure/database/client";
 import {
   buildChatModelFields,
@@ -45,6 +47,8 @@ export class LangChainConversationDraftImprover implements ConversationDraftImpr
     environment: Readonly<Record<string, string | undefined>> = process.env,
     private readonly modelPolicyReader?: WorkspaceAiModelPolicyReader,
     private readonly invokeModel: DraftImprovementModelInvoker = invokeStructuredModel,
+    private readonly brandKitReader?: ContentBrandKitReader,
+    private readonly routedModel?: WorkspaceStructuredModel,
   ) {
     this.#configuration = resolveResearchModelConfigurationFromEnvironment(environment);
   }
@@ -110,7 +114,7 @@ export class LangChainConversationDraftImprover implements ConversationDraftImpr
       .limit(1);
     if (!context) throw new ConversationDraftNotFoundError();
 
-    const [historyDescending, currentEmployment, workspacePolicy] = await Promise.all([
+    const [historyDescending, currentEmployment, workspacePolicy, brandKit] = await Promise.all([
       this.database
         .select({ direction: messages.direction, body: messages.body })
         .from(messages)
@@ -141,47 +145,67 @@ export class LangChainConversationDraftImprover implements ConversationDraftImpr
         )
         .orderBy(asc(contactEmployments.createdAt))
         .limit(1),
-      this.modelPolicyReader?.find(input.workspaceId) ?? Promise.resolve(null),
+      this.routedModel ? Promise.resolve(null) : this.modelPolicyReader?.find(input.workspaceId) ?? Promise.resolve(null),
+      this.brandKitReader?.find(input.workspaceId) ?? Promise.resolve(null),
     ]);
     const modelName = workspacePolicy?.synthesisModels[0]
       ?? this.#configuration.synthesisModels[0]!;
-    const result = await this.invokeModel({
-      fields: buildChatModelFields(this.#configuration, modelName, "low"),
-      messages: [
-        {
-          role: "system",
-          content: [
+    const systemPrompt = [
             "You improve a user-written B2B conversation message without changing its intent.",
             "Preserve every factual claim, commitment, date, price, proper noun and URL exactly unless fixing an obvious typo.",
             "Never invent personalization, product capabilities, customer references, urgency, discounts, meetings or facts absent from the draft and context.",
             "Use the draft's language. Make it natural, clear, concise and appropriate for the supplied channel.",
             "For LinkedIn and WhatsApp, avoid email-like formality and unnecessary signatures. For email, preserve a useful subject only if present in the draft.",
             "Do not answer a question the user did not attempt to answer. Do not add a call to action unless the draft already contains one.",
+            "Apply the supplied brandVoice naturally. It is style guidance only: preserve the user's intent and never inject slogans or vocabulary that changes the meaning.",
             "Call the submit_improved_conversation_draft tool exactly once with the final improved message. The user will review it before any send action.",
-          ].join("\n"),
-        },
-        {
-          role: "user",
-          content: JSON.stringify({
-            channel: context.channel,
-            contact: {
-              name: `${context.firstName} ${context.lastName}`.trim(),
-              companyName: context.candidateCompanyName ?? currentEmployment[0]?.companyName ?? null,
-              title: currentEmployment[0]?.title ?? null,
-            },
-            icpName: context.icpName,
-            conversationHistory: [...historyDescending].reverse(),
-            draft,
-          }),
-        },
+          ].join("\n");
+    const payload = {
+      channel: context.channel,
+      contact: {
+        name: `${context.firstName} ${context.lastName}`.trim(),
+        companyName: context.candidateCompanyName ?? currentEmployment[0]?.companyName ?? null,
+        title: currentEmployment[0]?.title ?? null,
+      },
+      icpName: context.icpName,
+      conversationHistory: [...historyDescending].reverse(),
+      brandVoice: brandKit ? {
+        brandName: brandKit.snapshot.brandName,
+        tagline: brandKit.snapshot.tagline,
+        traits: brandKit.snapshot.voice.traits,
+        avoid: brandKit.snapshot.voice.avoid,
+        preferredVocabulary: brandKit.snapshot.voice.preferredVocabulary,
+      } : null,
+      draft,
+    };
+    const routed = this.routedModel ? await this.routedModel.invoke({
+      workspaceId: input.workspaceId,
+      capability: "message_generation",
+      requestKey: `conversation-draft-improvement:${input.conversationId}:${new Bun.CryptoHasher("sha256").update(draft).digest("hex")}`,
+      fallbackRoutes: [{
+        provider: this.#configuration.provider === "kimi-code" ? "kimi-code" : "openai-api",
+        model: modelName,
+        reasoningEffort: "low",
+      }],
+      systemPrompt,
+      payload,
+      outputName: "submit_improved_conversation_draft",
+      outputDescription: "Submit the improved editable message draft.",
+      schema: draftImprovementSchema,
+    }) : null;
+    const result = routed?.output ?? await this.invokeModel({
+      fields: buildChatModelFields(this.#configuration, modelName, "low"),
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: JSON.stringify(payload) },
       ],
     });
     return {
       body: result.body,
       metadata: {
-        provider: this.#configuration.provider,
-        model: modelName,
-        promptVersion: "conversation-draft-improvement-v1",
+        provider: routed?.metadata.provider ?? this.#configuration.provider,
+        model: routed?.metadata.model ?? modelName,
+        promptVersion: "conversation-draft-improvement-v2-brand",
       },
     };
   }

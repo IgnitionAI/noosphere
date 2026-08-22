@@ -1,6 +1,9 @@
 import type { JobQueue, LeasedJob } from "@outbound/application/jobs/job-queue";
 import type { SocialPublishResult, SocialPublisher } from "@outbound/application/content/social-ports";
 import { SocialProviderError } from "@outbound/application/content/social-ports";
+import type { SocialPublishAttachment } from "@outbound/application/content/social-ports";
+import type { ContentMediaObjectStorage, StoredContentMedia } from "@outbound/application/content/content-media";
+import type { LinkedinContentFormat } from "@outbound/domain/content/content-brand-kit";
 import type { ContentPublicationReconciliationView } from "@outbound/application/content/content-publication-reconciliation";
 
 export const CONTENT_PUBLICATION_JOB_TYPE = "content.publication.publish";
@@ -36,6 +39,8 @@ export interface ContentPublicationContentSnapshot {
   readonly assetVersionId: string;
   readonly body: string;
   readonly contentHash: string;
+  readonly format: LinkedinContentFormat;
+  readonly media: readonly Omit<StoredContentMedia, "renderManifest" | "provenance">[];
 }
 
 export interface ContentPublicationView {
@@ -72,6 +77,7 @@ export interface ContentPublicationExecution {
   readonly text: string;
   readonly requestKey: string;
   readonly attempt: number;
+  readonly attachments: ContentPublicationContentSnapshot["media"];
 }
 
 export interface SocialPublishingAccountResolver {
@@ -160,6 +166,7 @@ export class ContentPublicationJobProcessor {
     private readonly publisher: SocialPublisher,
     private readonly queue: JobQueue,
     private readonly now: () => Date = () => new Date(),
+    private readonly mediaStorage?: ContentMediaObjectStorage,
   ) {}
 
   async process(job: LeasedJob): Promise<void> {
@@ -173,9 +180,10 @@ export class ContentPublicationJobProcessor {
     }
 
     let selected: Awaited<ReturnType<SocialPublishingAccountResolver["resolveLinkedin"]>>;
+    let capability: Awaited<ReturnType<SocialPublisher["observeCapabilities"]>>;
     try {
       selected = await this.accounts.resolveLinkedin({ workspaceId: job.workspaceId });
-      const capability = await this.publisher.observeCapabilities({ accountId: selected.accountId, now: this.now() });
+      capability = await this.publisher.observeCapabilities({ accountId: selected.accountId, now: this.now() });
       if (!capability.accountHealthy || capability.textPublishing !== "available") throw new Error("CONTENT_PUBLICATION_ACCOUNT_UNAVAILABLE");
     } catch (error) {
       await this.#handleBeforeSend(job, publicationId, error);
@@ -198,12 +206,61 @@ export class ContentPublicationJobProcessor {
       return;
     }
 
+    let attachments: readonly SocialPublishAttachment[];
     try {
-      const result = await this.publisher.publishText({ accountId: execution.accountId, text: execution.text, requestKey: execution.requestKey });
+      attachments = await this.#loadAttachments(execution.attachments ?? []);
+      this.#assertMediaCapabilities(attachments, capability);
+      if (attachments.length > 0 && !this.publisher.publish) throw new Error("CONTENT_MEDIA_PUBLISHING_UNAVAILABLE");
+    } catch (error) {
+      await this.repository.markFailed({
+        workspaceId: job.workspaceId,
+        publicationId,
+        executionToken,
+        code: errorCode(error),
+        message: messageOf(error),
+        now: this.now(),
+      });
+      await this.queue.acknowledge(job.id, job.lockedBy, this.now());
+      return;
+    }
+
+    try {
+      const result = attachments.length === 0
+        ? await this.publisher.publishText({ accountId: execution.accountId, text: execution.text, requestKey: execution.requestKey })
+        : await this.#publishMedia(execution, attachments);
       await this.repository.markPublished({ workspaceId: job.workspaceId, publicationId, executionToken, result, now: this.now() });
       await this.queue.acknowledge(job.id, job.lockedBy, this.now());
     } catch (error) {
       await this.#handleAfterSend(job, publicationId, executionToken, error);
+    }
+  }
+
+  async #loadAttachments(media: ContentPublicationExecution["attachments"]): Promise<readonly SocialPublishAttachment[]> {
+    if (media.length === 0) return [];
+    if (!this.mediaStorage) throw new Error("CONTENT_MEDIA_STORAGE_UNAVAILABLE");
+    const attachments: SocialPublishAttachment[] = [];
+    for (const item of media) {
+      const content = await this.mediaStorage.get({ objectKey: item.objectKey, maxBytes: 100 * 1024 * 1024 });
+      const checksum = new Bun.CryptoHasher("sha256").update(content).digest("hex");
+      if (checksum !== item.checksumSha256 || content.byteLength !== item.sizeBytes) throw new Error("CONTENT_MEDIA_INTEGRITY_MISMATCH");
+      attachments.push({ kind: item.kind, filename: item.filename, mimeType: item.mimeType, content });
+    }
+    return attachments;
+  }
+
+  async #publishMedia(execution: ContentPublicationExecution, attachments: readonly SocialPublishAttachment[]) {
+    if (!this.publisher.publish) throw new Error("CONTENT_MEDIA_PUBLISHING_UNAVAILABLE");
+    return this.publisher.publish({ accountId: execution.accountId, text: execution.text, requestKey: execution.requestKey, attachments });
+  }
+
+  #assertMediaCapabilities(
+    attachments: readonly SocialPublishAttachment[],
+    capability: Awaited<ReturnType<SocialPublisher["observeCapabilities"]>>,
+  ): void {
+    for (const attachment of attachments) {
+      if (capability.mediaPublishing?.[attachment.kind] !== "available") {
+        throw new Error(`CONTENT_${attachment.kind.toUpperCase()}_PUBLISHING_UNAVAILABLE`);
+      }
     }
   }
 

@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Clock, IdGenerator } from "@outbound/application/shared/ports";
 import type { WorkspaceAiModelPolicyReader } from "@outbound/application/workspaces/workspace-ai-settings";
+import { aiProviderIds } from "@outbound/application/ai/model-gateway";
 import { assertSyntheticEvaluationCase } from "@outbound/domain/ai/evaluation";
 import type { Database } from "@outbound/infrastructure/database/client";
 import {
@@ -119,10 +120,12 @@ export class PostgresEvaluationService {
   async createConfiguration(input: { workspaceId: string; actorUserId: string; capability: Capability; provider: string; model: string; promptVersionId: string; status?: Exclude<ConfigurationStatus, "active" | "retired"> }) {
     const provider = input.provider.trim();
     const model = input.model.trim();
-    if (!provider || !model || provider !== "kimi-code") throw new EvaluationServiceError("AI_CONFIGURATION_PROVIDER_INVALID", 422);
-    const policy = await this.modelPolicyReader?.find(input.workspaceId);
-    const configuredModels = new Set(policy ? [...policy.researchModels, ...policy.synthesisModels] : ["k3", "k3-256k"]);
-    if (!configuredModels.has(model)) throw new EvaluationServiceError("AI_CONFIGURATION_MODEL_NOT_ALLOWED", 422);
+    if (!aiProviderIds.includes(provider as (typeof aiProviderIds)[number])) {
+      throw new EvaluationServiceError("AI_CONFIGURATION_PROVIDER_INVALID", 422);
+    }
+    if (!model || model.length > 200 || !/^[a-zA-Z0-9._:-]+$/.test(model)) {
+      throw new EvaluationServiceError("AI_CONFIGURATION_MODEL_NOT_ALLOWED", 422);
+    }
     return this.database.transaction(async (tx) => {
       const [prompt] = await tx.select().from(aiPromptVersions).where(and(eq(aiPromptVersions.workspaceId, input.workspaceId), eq(aiPromptVersions.id, input.promptVersionId), eq(aiPromptVersions.capability, input.capability))).limit(1);
       if (!prompt) throw new EvaluationServiceError("AI_PROMPT_VERSION_NOT_FOUND", 422);

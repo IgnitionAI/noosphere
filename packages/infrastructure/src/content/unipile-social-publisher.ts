@@ -1,5 +1,6 @@
 import type {
   SocialPublishResult,
+  SocialPublishRequest,
   SocialPublishTextRequest,
   SocialPublisher,
   SocialPublisherCapabilities,
@@ -50,11 +51,20 @@ export class UnipileSocialPublisher implements SocialPublisher {
       accountId: input.accountId,
       accountHealthy: healthy,
       textPublishing: healthy ? "available" : "unavailable",
+      mediaPublishing: {
+        image: healthy ? "available" : "unavailable",
+        document: healthy ? "available" : "unavailable",
+        video: healthy ? "available" : "unavailable",
+      },
       observedAt: input.now ?? new Date(),
     };
   }
 
   async publishText(input: SocialPublishTextRequest): Promise<SocialPublishResult> {
+    return this.publish({ ...input, attachments: [] });
+  }
+
+  async publish(input: SocialPublishRequest): Promise<SocialPublishResult> {
     requireIdentifier(input.accountId, "accountId");
     requireIdentifier(input.requestKey, "requestKey");
     if (!input.text.trim()) {
@@ -65,12 +75,20 @@ export class UnipileSocialPublisher implements SocialPublisher {
         false,
       );
     }
+    if (input.attachments.length > 1 && input.attachments.some((attachment) => attachment.kind !== "image")) {
+      throw new SocialProviderError("SOCIAL_REQUEST_INVALID", "LinkedIn accepts multiple images or one document/video", "not_sent", false);
+    }
+    const request = input.attachments.length === 0
+      ? {
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ account_id: input.accountId, text: input.text }),
+        }
+      : multipartPost(input);
     const response = await this.#request(
       "/api/v1/posts",
       {
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ account_id: input.accountId, text: input.text }),
+        ...request,
       },
       "publish",
     );
@@ -172,6 +190,17 @@ export class UnipileSocialPublisher implements SocialPublisher {
       false,
     );
   }
+}
+
+function multipartPost(input: SocialPublishRequest): Pick<RequestInit, "body"> {
+  const form = new FormData();
+  form.append("account_id", input.accountId);
+  form.append("text", input.text);
+  for (const attachment of input.attachments) {
+    const bytes = Uint8Array.from(attachment.content);
+    form.append("attachments", new Blob([bytes.buffer], { type: attachment.mimeType }), attachment.filename);
+  }
+  return { body: form };
 }
 
 function requireIdentifier(value: string, field: string): void {

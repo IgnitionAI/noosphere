@@ -1,15 +1,16 @@
 import { AlertTriangle, ArrowLeft, Bot, BrainCircuit, CheckCircle2, PauseCircle, ShieldCheck, Sparkles } from "lucide-react";
 import Link from "next/link";
-import { getContentAutopilot, getEditorialLearning, getEditorialStrategy } from "@/lib/api";
+import { getContentAutopilot, getContentBrandKit, getContentPerformance, getEditorialLearning, getEditorialStrategy, type LinkedinContentFormat } from "@/lib/api";
 import { StrategyActions } from "./strategy-actions";
 import { AutopilotControls } from "./autopilot-controls";
+import { FormatControls } from "./format-controls";
 
 export const metadata = { title: "Stratégie Inbound — Noosphere" };
 export const dynamic = "force-dynamic";
 
 export default async function EditorialStrategyPage({ params }: { params: Promise<{ workspaceSlug: string }> }) {
   const { workspaceSlug } = await params;
-  const [strategy, autopilot, learning] = await Promise.all([getEditorialStrategy(workspaceSlug), getContentAutopilot(workspaceSlug), getEditorialLearning(workspaceSlug)]);
+  const [strategy, autopilot, learning, brandKit, performance] = await Promise.all([getEditorialStrategy(workspaceSlug), getContentAutopilot(workspaceSlug), getEditorialLearning(workspaceSlug), getContentBrandKit(workspaceSlug), getContentPerformance(workspaceSlug)]);
   return (
     <>
       <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
@@ -46,6 +47,12 @@ export default async function EditorialStrategyPage({ params }: { params: Promis
           </section>
 
           <section className="panel mt-4 p-5">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><div className="badge badge-signal w-fit"><Sparkles size={13} /> Formats vivants</div><h2 className="mt-3 text-lg font-semibold text-navy">Noosphere choisit le bon support pour chaque idée</h2><p className="mt-2 max-w-3xl text-sm leading-6 text-muted">Texte, image ou carrousel PDF : le même pipeline vérifie les preuves et la qualité avant de rendre puis publier le média.</p></div><Link className="badge hover:border-slate-300" href={`/w/${workspaceSlug}/settings/brand`}>Identité v{brandKit.version} · Modifier</Link></div>
+            <FormatControls initial={brandKit.snapshot} workspaceSlug={workspaceSlug} />
+            <div className="mt-5 border-t border-line pt-5"><h3 className="text-sm font-semibold text-navy">Performance par format</h3><div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">{performance.formats.map((item) => <article className="rounded-xl border border-line bg-white p-4" key={item.format}><p className="text-xs font-semibold text-muted">{formatLabel(item.format)}</p><div className="mt-2 flex items-baseline justify-between gap-3"><strong className="text-xl text-navy">{item.publications}</strong><span className="text-xs text-muted">publication{item.publications === 1 ? "" : "s"}</span></div><p className="mt-2 text-xs text-muted">{item.impressions.toLocaleString("fr-FR")} impressions · {item.engagementRate === null ? "—" : `${item.engagementRate}%`} engagement</p></article>)}</div></div>
+          </section>
+
+          <section className="panel mt-4 p-5">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div className="max-w-2xl">
                 <div className="badge badge-signal w-fit"><BrainCircuit size={13} /> Apprentissage borné</div>
@@ -76,3 +83,4 @@ export default async function EditorialStrategyPage({ params }: { params: Promis
 }
 
 function Metric({ label, value }: { label: string; value: string }) { return <article className="panel p-4"><p className="text-xs text-muted">{label}</p><strong className="mt-2 block truncate text-lg text-navy">{value}</strong></article>; }
+function formatLabel(format: LinkedinContentFormat): string { return { linkedin_text: "Texte", linkedin_image: "Image", linkedin_document: "Carrousel PDF", linkedin_video: "Vidéo" }[format]; }

@@ -333,6 +333,7 @@ export const workspaceAiSettings = pgTable("workspace_ai_settings", {
     .references(() => workspaces.id, { onDelete: "cascade" }),
   researchModels: jsonb("research_models").notNull(),
   synthesisModels: jsonb("synthesis_models").notNull(),
+  modelRouting: jsonb("model_routing"),
   updatedBy: uuid("updated_by")
     .notNull()
     .references(() => authUsers.id),
@@ -1575,6 +1576,21 @@ export const contentIdeaSchedules = pgTable(
   ],
 );
 
+export const contentBrandKits = pgTable(
+  "content_brand_kits",
+  {
+    workspaceId: uuid("workspace_id").primaryKey().references(() => workspaces.id, { onDelete: "cascade" }),
+    version: integer("version").notNull().default(1),
+    snapshot: jsonb("snapshot").notNull(),
+    updatedBy: uuid("updated_by").references(() => authUsers.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check("content_brand_kits_version_ck", sql`${table.version} > 0`),
+  ],
+);
+
 export const contentAssets = pgTable(
   "content_assets",
   {
@@ -1591,7 +1607,7 @@ export const contentAssets = pgTable(
     foreignKey({ columns: [table.workspaceId, table.ideaId], foreignColumns: [contentIdeas.workspaceId, contentIdeas.id], name: "content_assets_workspace_idea_fk" }).onDelete("restrict"),
     unique("content_assets_workspace_id_uq").on(table.workspaceId, table.id),
     uniqueIndex("content_assets_workspace_idea_type_uq").on(table.workspaceId, table.ideaId, table.type),
-    check("content_assets_type_ck", sql`${table.type} in ('linkedin_text')`),
+    check("content_assets_type_ck", sql`${table.type} in ('linkedin_text', 'linkedin_image', 'linkedin_document', 'linkedin_video')`),
     check("content_assets_status_ck", sql`${table.status} in ('draft', 'ready', 'blocked')`),
   ],
 );
@@ -1676,6 +1692,39 @@ export const contentAssetVersions = pgTable(
     uniqueIndex("content_asset_versions_workspace_asset_version_uq").on(table.workspaceId, table.assetId, table.version),
     uniqueIndex("content_asset_versions_workspace_run_uq").on(table.workspaceId, table.generationRunId),
     check("content_asset_versions_version_ck", sql`${table.version} > 0`),
+  ],
+);
+
+export const contentMediaAssets = pgTable(
+  "content_media_assets",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    assetVersionId: uuid("asset_version_id").notNull(),
+    kind: varchar("kind", { length: 40 }).notNull(),
+    objectKey: text("object_key").notNull(),
+    mimeType: varchar("mime_type", { length: 120 }).notNull(),
+    filename: varchar("filename", { length: 300 }).notNull(),
+    checksumSha256: varchar("checksum_sha256", { length: 64 }).notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    width: integer("width"),
+    height: integer("height"),
+    pageCount: integer("page_count"),
+    durationSeconds: integer("duration_seconds"),
+    altText: varchar("alt_text", { length: 500 }).notNull(),
+    renderManifest: jsonb("render_manifest").notNull(),
+    provenance: jsonb("provenance").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({ columns: [table.workspaceId, table.assetVersionId], foreignColumns: [contentAssetVersions.workspaceId, contentAssetVersions.id], name: "content_media_assets_workspace_version_fk" }).onDelete("cascade"),
+    unique("content_media_assets_workspace_id_uq").on(table.workspaceId, table.id),
+    uniqueIndex("content_media_assets_workspace_version_uq").on(table.workspaceId, table.assetVersionId),
+    uniqueIndex("content_media_assets_workspace_checksum_uq").on(table.workspaceId, table.assetVersionId, table.checksumSha256),
+    check("content_media_assets_kind_ck", sql`${table.kind} in ('image', 'document', 'video')`),
+    check("content_media_assets_mime_ck", sql`${table.mimeType} in ('image/png', 'application/pdf', 'video/mp4')`),
+    check("content_media_assets_size_ck", sql`${table.sizeBytes} > 0 and ${table.sizeBytes} <= 104857600`),
+    check("content_media_assets_dimensions_ck", sql`(${table.width} is null or ${table.width} > 0) and (${table.height} is null or ${table.height} > 0) and (${table.pageCount} is null or ${table.pageCount} > 0) and (${table.durationSeconds} is null or ${table.durationSeconds} > 0)`),
   ],
 );
 

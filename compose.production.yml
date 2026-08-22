@@ -26,7 +26,10 @@ services:
       S3_ENDPOINT: http://minio:9000
       CRAWLER_SERVICE_URL: http://crawler:8000
       DOCUMENT_EXTRACTOR: ${DOCUMENT_EXTRACTOR:-lightweight}
+      CODEX_SERVICE_HOME: /var/lib/noosphere-codex
       PORT: "3001"
+    volumes:
+      - codex-service-home:/var/lib/noosphere-codex
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -75,7 +78,10 @@ services:
       S3_ENDPOINT: http://minio:9000
       CRAWLER_SERVICE_URL: http://crawler:8000
       DOCUMENT_EXTRACTOR: ${DOCUMENT_EXTRACTOR:-lightweight}
+      CODEX_SERVICE_HOME: /var/lib/noosphere-codex
       WORKER_EXCLUDED_JOB_TYPES: prospect.decision.execute
+    volumes:
+      - codex-service-home:/var/lib/noosphere-codex
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -97,11 +103,14 @@ services:
       S3_ENDPOINT: http://minio:9000
       CRAWLER_SERVICE_URL: http://crawler:8000
       DOCUMENT_EXTRACTOR: ${DOCUMENT_EXTRACTOR:-lightweight}
+      CODEX_SERVICE_HOME: /var/lib/noosphere-codex
       WORKER_ID: prospect-decision-worker
       WORKER_JOB_TYPES: prospect.decision.execute
       WORKER_DISABLE_MAINTENANCE: "true"
       WORKER_DISABLE_OUTBOX: "true"
       WORKER_DISABLE_OUTREACH_SCHEDULER: "true"
+    volumes:
+      - codex-service-home:/var/lib/noosphere-codex
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -166,9 +175,25 @@ services:
         condition: service_healthy
     networks: [outbound-private]
 
+  codex-auth:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    profiles: [codex-auth]
+    command: ["codex", "login", "--device-auth"]
+    environment:
+      CODEX_HOME: /var/lib/noosphere-codex
+      HOME: /var/lib/noosphere-codex
+    stdin_open: true
+    tty: true
+    volumes:
+      - codex-service-home:/var/lib/noosphere-codex
+    networks: [outbound-private]
+
 volumes:
   caddy-data:
   caddy-config:
+  codex-service-home:
 
 networks:
   outbound-private:

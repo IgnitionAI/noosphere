@@ -4,13 +4,13 @@ import Link from "next/link";
 import {
   compareEvaluationRuns,
   getSession,
-  getWorkspaceAiSettings,
+  getAiModelCatalog,
   getEvaluationRun,
   listAiConfigurations,
   listEvaluationDatasets,
   listEvaluationRuns,
   listWorkspaces,
-  type AiCapability,
+  type EvaluationAiCapability,
   type EvaluationRun,
 } from "@/lib/api";
 import { createConfigurationAction, createDatasetAction, promoteConfigurationAction, recordAiFeedbackAction, requestRunAction } from "./actions";
@@ -23,8 +23,13 @@ export default async function AiStudioPage({ params, searchParams }: { params: P
   const workspace = workspaces.find((candidate) => candidate.slug === workspaceSlug);
   if (!session || !workspace || workspace.role === "viewer" || workspace.role === "reviewer") notFound();
   const canManage = workspace.role === "owner" || workspace.role === "admin";
-  const [datasets, configurations, runs, aiSettings] = await Promise.all([listEvaluationDatasets(workspaceSlug), listAiConfigurations(workspaceSlug), listEvaluationRuns(workspaceSlug), getWorkspaceAiSettings(workspaceSlug)]);
-  const availableModels = [...new Set([...aiSettings.researchModels, ...aiSettings.synthesisModels])];
+  const [datasets, configurations, runs, modelCatalog] = await Promise.all([listEvaluationDatasets(workspaceSlug), listAiConfigurations(workspaceSlug), listEvaluationRuns(workspaceSlug), getAiModelCatalog(workspaceSlug)]);
+  const availableModels = modelCatalog.providers.flatMap((provider) => provider.models.map((model) => ({
+    provider: provider.provider,
+    model: model.id,
+    label: `${provider.provider === "kimi-code" ? "Kimi" : provider.provider === "codex-cli" ? "Codex" : "OpenAI"} · ${model.displayName}`,
+    status: provider.status,
+  })));
   const comparable = runs.filter((run) => run.status === "completed" || run.status === "partial");
   const comparison = query.left && query.right ? await compareEvaluationRuns(workspaceSlug, query.left, query.right).catch(() => null) : null;
   const selectedRun = query.run ? await getEvaluationRun(workspaceSlug, query.run).catch(() => null) : null;
@@ -33,7 +38,7 @@ export default async function AiStudioPage({ params, searchParams }: { params: P
   const requestRun = requestRunAction.bind(null, workspaceSlug);
 
   return <div className="mx-auto max-w-7xl space-y-6">
-    <header className="border-b border-line pb-6"><div className="badge badge-signal w-fit"><FlaskConical size={13} /> Évaluation continue</div><h1 className="page-title mt-3">AI Studio</h1><p className="mt-2 max-w-3xl text-sm leading-6 text-muted">Comparez les modèles et prompts Kimi sur des cas synthétiques. Toutes les exécutions sont shadow : elles produisent des mesures, jamais un message. Une promotion reste une décision owner/admin auditée.</p></header>
+    <header className="border-b border-line pb-6"><div className="badge badge-signal w-fit"><FlaskConical size={13} /> Évaluation continue</div><h1 className="page-title mt-3">AI Studio</h1><p className="mt-2 max-w-3xl text-sm leading-6 text-muted">Comparez les modèles Kimi et Codex avec différents prompts sur des cas synthétiques. Toutes les exécutions sont shadow : elles produisent des mesures, jamais un message.</p></header>
     {query.notice ? <p className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800" role="status">{query.notice}</p> : null}
     {query.error ? <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-danger" role="alert">{errorLabel(query.error)}</p> : null}
 
@@ -49,14 +54,14 @@ export default async function AiStudioPage({ params, searchParams }: { params: P
 
     {canManage ? <aside className="space-y-6"><section className="panel"><div className="panel-header"><h2 className="font-semibold">1. Jeu synthétique</h2></div><form action={createDataset} className="space-y-3 p-4"><CapabilitySelect /><input className="control" name="name" placeholder="Nom du jeu" required /><input className="control" name="description" placeholder="Objectif (optionnel)" /><input className="control" name="rubricVersion" defaultValue="rubric-v1" required /><input className="control" name="caseName" placeholder="Nom du cas" required /><textarea className="control min-h-28 font-mono text-xs" name="caseInput" defaultValue={'{"message":"SYNTHETIC_MESSAGE","company":"ENTREPRISE_EXEMPLE"}'} required /><input className="control" name="classification" placeholder="Classification attendue" /><select className="control" name="ctaPresent" defaultValue=""><option value="">CTA non noté</option><option value="true">CTA attendu</option><option value="false">Pas de CTA attendu</option></select><p className="text-[11px] text-muted">Emails, téléphones et profils LinkedIn réels sont refusés avant persistance.</p><button className="button button-signal w-full" type="submit">Créer le jeu</button></form></section>
 
-      <section className="panel"><div className="panel-header"><h2 className="font-semibold">2. Configuration shadow</h2></div><form action={createConfiguration} className="space-y-3 p-4"><CapabilitySelect /><select className="control" name="model" defaultValue={availableModels[0]} required>{availableModels.map((model) => <option key={model} value={model}>{model}</option>)}</select><p className="text-[11px] text-muted">Seuls les modèles autorisés dans les réglages IA du workspace sont proposés.</p><textarea className="control min-h-32" name="prompt" placeholder="Instructions immuables de cette version" required /><button className="button button-signal w-full" type="submit">Créer en shadow</button></form></section>
+      <section className="panel"><div className="panel-header"><h2 className="font-semibold">2. Configuration shadow</h2></div><form action={createConfiguration} className="space-y-3 p-4"><CapabilitySelect /><select className="control" name="modelRoute" defaultValue={availableModels[0] ? `${availableModels[0].provider}::${availableModels[0].model}` : ""} required><option value="">Choisir un modèle</option>{availableModels.map((item) => <option key={`${item.provider}:${item.model}`} value={`${item.provider}::${item.model}`}>{item.label}{item.status === "healthy" ? "" : ` · ${item.status}`}</option>)}</select><p className="text-[11px] text-muted">Le catalogue est lu directement depuis les comptes Kimi et Codex configurés.</p><textarea className="control min-h-32" name="prompt" placeholder="Instructions immuables de cette version" required /><button className="button button-signal w-full" type="submit" disabled={!availableModels.length}>Créer en shadow</button></form></section>
 
       <section className="panel"><div className="panel-header"><h2 className="font-semibold">3. Lancer</h2></div><form action={requestRun} className="space-y-3 p-4"><select className="control" name="datasetId" required><option value="">Jeu de référence</option>{datasets.map((dataset) => <option key={dataset.id} value={dataset.id}>{dataset.name} · {capabilityLabels[dataset.capability]}</option>)}</select><select className="control" name="configurationId" required><option value="">Configuration</option>{configurations.filter((item) => item.configuration.status !== "retired").map((item) => <option key={item.configuration.id} value={item.configuration.id}>{capabilityLabels[item.configuration.capability]} · {item.configuration.model} · v{item.prompt.version}</option>)}</select><button className="button button-primary w-full" type="submit">Lancer l’évaluation</button></form></section></aside> : <aside className="panel h-fit p-5 text-sm text-muted">Vous pouvez consulter les résultats et noter les sorties depuis les conversations. La création et la promotion sont réservées aux owners/admins.</aside>}
     </div>
   </div>;
 }
 
-const capabilityLabels: Record<AiCapability, string> = { icp_research: "Recherche ICP", message_generation: "Génération de messages", setter: "Setter" };
+const capabilityLabels: Record<EvaluationAiCapability, string> = { icp_research: "Recherche ICP", message_generation: "Génération de messages", setter: "Setter" };
 function CapabilitySelect() { return <select className="control" name="capability" defaultValue="setter"><option value="setter">Setter</option><option value="message_generation">Génération de messages</option><option value="icp_research">Recherche ICP</option></select>; }
 function Metric({ icon, label, value }: { icon: React.ReactNode; label: string; value: number }) { return <div className="panel flex items-center gap-3 p-4"><span className="rounded-lg bg-slate-100 p-2 text-navy">{icon}</span><div><strong className="text-xl">{value}</strong><p className="text-[11px] text-muted">{label}</p></div></div>; }
 function Empty({ text }: { text: string }) { return <div className="p-8 text-center text-sm text-muted">{text}</div>; }

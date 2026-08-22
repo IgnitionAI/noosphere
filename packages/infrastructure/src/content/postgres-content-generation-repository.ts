@@ -12,9 +12,11 @@ import {
 } from "@outbound/application/content/content-generation";
 import type { ContentIdeaEvidence, ContentIdeaView } from "@outbound/application/content/content-ideas";
 import type { ContentIdeaStatus } from "@outbound/domain/content/content-idea";
+import { DEFAULT_CONTENT_BRAND_KIT, type LinkedinContentFormat } from "@outbound/domain/content/content-brand-kit";
 import { CONTENT_EDITORIAL_POLICY_VERSION, type ContentGenerationStage, type ContentGenerationStatus } from "@outbound/domain/content/content-asset";
 import {
   contentBriefSnapshotSchema,
+  contentBrandKitSnapshotSchema,
   contentDraftSnapshotSchema,
   contentEditorialCritiqueSchema,
   contentEvidenceAuditSchema,
@@ -25,10 +27,12 @@ import {
   auditLogs,
   contentAssets,
   contentAssetVersions,
+  contentBrandKits,
   contentBriefs,
   contentGenerationRuns,
   contentIdeaSources,
   contentIdeas,
+  contentMediaAssets,
   contentOperationRequests,
   editorialStrategyVersions,
   jobs,
@@ -190,7 +194,7 @@ export class PostgresContentGenerationRepository implements ContentGenerationRep
   }
 
   async findAssetByIdea(input: { workspaceId: string; ideaId: string }): Promise<ContentAssetView | null> {
-    const assets = await this.database.select().from(contentAssets).where(and(eq(contentAssets.workspaceId, input.workspaceId), eq(contentAssets.ideaId, input.ideaId), eq(contentAssets.type, "linkedin_text"))).limit(1);
+    const assets = await this.database.select().from(contentAssets).where(and(eq(contentAssets.workspaceId, input.workspaceId), eq(contentAssets.ideaId, input.ideaId))).orderBy(desc(contentAssets.updatedAt), desc(contentAssets.id)).limit(1);
     const asset = assets[0];
     if (!asset) return null;
     const versions = asset.latestVersion > 0
@@ -200,7 +204,13 @@ export class PostgresContentGenerationRepository implements ContentGenerationRep
           eq(contentAssetVersions.version, asset.latestVersion),
         )).limit(1)
       : [];
-    return toAsset(asset, versions[0] ? toVersion(versions[0]) : null);
+    const media = versions[0]
+      ? (await this.database.select().from(contentMediaAssets).where(and(
+          eq(contentMediaAssets.workspaceId, input.workspaceId),
+          eq(contentMediaAssets.assetVersionId, versions[0].id),
+        )).limit(1))[0]
+      : null;
+    return toAsset(asset, versions[0] ? toVersion(versions[0], media ?? null) : null);
   }
 
   async loadContext(input: { workspaceId: string; runId: string }): Promise<ContentGenerationContext> {
@@ -212,7 +222,7 @@ export class PostgresContentGenerationRepository implements ContentGenerationRep
     const current = rows[0];
     if (!current) throw new Error("CONTENT_GENERATION_RUN_NOT_FOUND");
     const sourceRows = await this.database.select().from(contentIdeaSources).where(and(eq(contentIdeaSources.workspaceId, input.workspaceId), eq(contentIdeaSources.ideaId, current.idea.id))).orderBy(desc(contentIdeaSources.collectedAt));
-    const recent = await this.database.select({ body: contentAssetVersions.body })
+    const recent = await this.database.select({ body: contentAssetVersions.body, type: contentAssets.type })
       .from(contentAssetVersions)
       .innerJoin(contentAssets, and(
         eq(contentAssets.workspaceId, contentAssetVersions.workspaceId),
@@ -225,15 +235,18 @@ export class PostgresContentGenerationRepository implements ContentGenerationRep
         ne(contentAssets.id, current.run.assetId),
       ))
       .orderBy(desc(contentAssetVersions.createdAt), desc(contentAssetVersions.id))
-      .limit(12);
+      .limit(14);
+    const brandKitRow = (await this.database.select({ snapshot: contentBrandKits.snapshot }).from(contentBrandKits).where(eq(contentBrandKits.workspaceId, input.workspaceId)).limit(1))[0];
     const evidence = sourceRows.map(toEvidence);
     const recentBodies = [...new Set(recent.map((item) => item.body))];
     return {
       run: toRun(current.run),
       idea: toIdea(current.idea, evidence),
       strategy: editorialStrategySnapshotSchema.parse(current.strategy),
+      brandKit: brandKitRow ? contentBrandKitSnapshotSchema.parse(brandKitRow.snapshot) : DEFAULT_CONTENT_BRAND_KIT,
       evidence,
       recentBodies,
+      recentFormats: recent.map((item) => item.type as LinkedinContentFormat),
       brief: current.run.briefSnapshot ? contentBriefSnapshotSchema.parse(current.run.briefSnapshot) : null,
       draft: current.run.draftSnapshot ? contentDraftSnapshotSchema.parse(current.run.draftSnapshot) : null,
       audit: current.run.auditSnapshot ? contentEvidenceAuditSchema.parse(current.run.auditSnapshot) : null,
@@ -258,6 +271,7 @@ export class PostgresContentGenerationRepository implements ContentGenerationRep
         snapshot: input.brief, evidenceSnapshot: evidence.map((item) => ({ key: `${item.type}:${item.key}`, contentHash: item.hash })), createdAt: input.now,
       }).onConflictDoNothing({ target: [contentBriefs.workspaceId, contentBriefs.runId] });
       await tx.update(contentGenerationRuns).set({ briefSnapshot: input.brief, stage: "writer", updatedAt: input.now }).where(and(eq(contentGenerationRuns.workspaceId, input.workspaceId), eq(contentGenerationRuns.id, run.id)));
+      await tx.update(contentAssets).set({ type: input.brief.format, updatedAt: input.now }).where(and(eq(contentAssets.workspaceId, input.workspaceId), eq(contentAssets.id, run.assetId)));
       await tx.update(contentIdeas).set({ status: "briefed", updatedAt: input.now }).where(and(eq(contentIdeas.workspaceId, input.workspaceId), eq(contentIdeas.id, run.ideaId)));
       await appendEvent(tx, { workspaceId: input.workspaceId, userId: null, runId: run.id, eventType: "ContentBriefCreated", changes: { evidenceCount: input.brief.evidenceKeys.length } });
     });
@@ -334,7 +348,28 @@ export class PostgresContentGenerationRepository implements ContentGenerationRep
         readiness: { ...input.readiness, policyVersion: CONTENT_EDITORIAL_POLICY_VERSION },
         ready: input.readiness.ready, createdAt: input.now,
       }).onConflictDoNothing({ target: [contentAssetVersions.workspaceId, contentAssetVersions.generationRunId] });
-      await tx.update(contentAssets).set({ status: input.readiness.ready ? "ready" : "blocked", latestVersion: version, updatedAt: input.now }).where(and(eq(contentAssets.workspaceId, input.workspaceId), eq(contentAssets.id, asset.id)));
+      if (input.media) {
+        await tx.insert(contentMediaAssets).values({
+          id: input.media.id,
+          workspaceId: input.workspaceId,
+          assetVersionId: versionId,
+          kind: input.media.kind,
+          objectKey: input.media.objectKey,
+          mimeType: input.media.mimeType,
+          filename: input.media.filename,
+          checksumSha256: input.media.checksumSha256,
+          sizeBytes: input.media.sizeBytes,
+          width: input.media.width,
+          height: input.media.height,
+          pageCount: input.media.pageCount,
+          durationSeconds: input.media.durationSeconds,
+          altText: input.media.altText,
+          renderManifest: input.media.renderManifest,
+          provenance: input.media.provenance,
+          createdAt: input.now,
+        }).onConflictDoNothing({ target: [contentMediaAssets.workspaceId, contentMediaAssets.assetVersionId] });
+      }
+      await tx.update(contentAssets).set({ type: draft.mediaPlan?.format ?? "linkedin_text", status: input.readiness.ready ? "ready" : "blocked", latestVersion: version, updatedAt: input.now }).where(and(eq(contentAssets.workspaceId, input.workspaceId), eq(contentAssets.id, asset.id)));
       await tx.update(contentGenerationRuns).set({
         status: input.readiness.ready ? "ready" : "blocked", stage: "completed", critiqueSnapshot: input.critique,
         assetVersionId: versionId, completedAt: input.now, updatedAt: input.now,
@@ -377,18 +412,34 @@ function toEvidence(row: typeof contentIdeaSources.$inferSelect): ContentIdeaEvi
   return { key: `${row.type}:${row.sourceRef}`, type: row.type as ContentIdeaEvidence["type"], sourceRef: row.sourceRef, canonicalUrl: row.canonicalUrl, title: row.title, excerpt: row.excerpt, contentHash: row.contentHash, collectedAt: row.collectedAt };
 }
 
-function toVersion(row: typeof contentAssetVersions.$inferSelect): ContentAssetVersionView {
+function toVersion(row: typeof contentAssetVersions.$inferSelect, media: typeof contentMediaAssets.$inferSelect | null): ContentAssetVersionView {
   const readiness = row.readiness as { ready?: unknown; blockers?: unknown };
   return {
     id: row.id, assetId: row.assetId, briefId: row.briefId, version: row.version, body: row.body,
     draft: contentDraftSnapshotSchema.parse(row.draft), audit: contentEvidenceAuditSchema.parse(row.audit), critique: contentEditorialCritiqueSchema.parse(row.critique),
     readiness: { ready: readiness.ready === true, blockers: Array.isArray(readiness.blockers) ? readiness.blockers.filter((item): item is string => typeof item === "string") : [] },
+    media: media ? {
+      id: media.id,
+      kind: media.kind as ContentAssetVersionView["media"] extends infer M ? M extends { kind: infer K } ? K : never : never,
+      objectKey: media.objectKey,
+      mimeType: media.mimeType as "image/png" | "application/pdf" | "video/mp4",
+      filename: media.filename,
+      checksumSha256: media.checksumSha256,
+      sizeBytes: media.sizeBytes,
+      width: media.width,
+      height: media.height,
+      pageCount: media.pageCount,
+      durationSeconds: media.durationSeconds,
+      altText: media.altText,
+      renderManifest: media.renderManifest as Record<string, unknown>,
+      provenance: media.provenance as { provider: "deterministic" | "generative"; model: string | null; promptVersion: string | null },
+    } : null,
     createdAt: row.createdAt,
   };
 }
 
 function toAsset(row: typeof contentAssets.$inferSelect, latest: ContentAssetVersionView | null): ContentAssetView {
-  return { id: row.id, workspaceId: row.workspaceId, ideaId: row.ideaId, type: "linkedin_text", status: row.status as ContentAssetView["status"], latestVersion: row.latestVersion, latest, createdAt: row.createdAt, updatedAt: row.updatedAt };
+  return { id: row.id, workspaceId: row.workspaceId, ideaId: row.ideaId, type: row.type as LinkedinContentFormat, status: row.status as ContentAssetView["status"], latestVersion: row.latestVersion, latest, createdAt: row.createdAt, updatedAt: row.updatedAt };
 }
 
 function stageAfter(current: ContentGenerationStage, expected: ContentGenerationStage): boolean {
