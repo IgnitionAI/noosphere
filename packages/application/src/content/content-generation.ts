@@ -77,6 +77,7 @@ export interface ContentGenerationRepository {
   saveBrief(input: { workspaceId: string; runId: string; brief: ContentBriefSnapshot; now: Date }): Promise<void>;
   saveDraft(input: { workspaceId: string; runId: string; draft: ContentDraftSnapshot; now: Date }): Promise<void>;
   reviseDraftAfterAudit(input: { workspaceId: string; runId: string; draft: ContentDraftSnapshot; now: Date }): Promise<void>;
+  reviseDraftAfterCritique(input: { workspaceId: string; runId: string; draft: ContentDraftSnapshot; now: Date }): Promise<void>;
   saveAudit(input: { workspaceId: string; runId: string; audit: ContentEvidenceAudit; now: Date }): Promise<void>;
   completeRun(input: { workspaceId: string; runId: string; critique: ContentEditorialCritique; readiness: { ready: boolean; blockers: readonly string[] }; now: Date }): Promise<void>;
   failRun(input: { workspaceId: string; runId: string; code: string; message: string; now: Date }): Promise<void>;
@@ -86,6 +87,7 @@ export interface ContentPipelineAgent {
   buildBrief(input: Pick<ContentGenerationContext, "run" | "idea" | "strategy" | "evidence">): Promise<ContentBriefSnapshot>;
   write(input: Pick<ContentGenerationContext, "run" | "idea" | "strategy" | "evidence" | "recentBodies"> & {
     readonly brief: ContentBriefSnapshot;
+    readonly draft?: ContentDraftSnapshot | null;
     readonly validationFeedback?: readonly string[];
   }): Promise<ContentDraftSnapshot>;
   audit(input: Pick<ContentGenerationContext, "run" | "strategy" | "evidence"> & { readonly brief: ContentBriefSnapshot; readonly draft: ContentDraftSnapshot }): Promise<ContentEvidenceAudit>;
@@ -143,9 +145,10 @@ export class ContentGenerationJobProcessor {
         if (!context.brief || !context.draft) throw new Error("CONTENT_DRAFT_CHECKPOINT_MISSING");
         let draft = context.draft;
         let audit = await this.agent.audit({ ...context, brief: context.brief, draft });
-        const auditFeedback = repairableAuditFeedback(audit);
-        if (auditFeedback.length > 0) {
-          draft = await writeGroundedDraft(this.agent, { ...context, brief: context.brief }, auditFeedback);
+        for (let repairAttempt = 1; repairAttempt <= 2; repairAttempt += 1) {
+          const auditFeedback = repairableAuditFeedback(audit);
+          if (auditFeedback.length === 0) break;
+          draft = await writeGroundedDraft(this.agent, { ...context, brief: context.brief, draft }, auditFeedback);
           await this.repository.reviseDraftAfterAudit({ workspaceId: job.workspaceId, runId: payload.runId, draft, now: this.now() });
           audit = await this.agent.audit({ ...context, brief: context.brief, draft });
         }
@@ -154,8 +157,39 @@ export class ContentGenerationJobProcessor {
       }
       if (stageAtOrBefore(context.run.stage, "critic")) {
         if (!context.brief || !context.draft || !context.audit) throw new Error("CONTENT_AUDIT_CHECKPOINT_MISSING");
-        const critique = await this.agent.critique({ ...context, brief: context.brief, draft: context.draft, audit: context.audit });
-        const readiness = evaluateContentReadiness({ draft: context.draft, audit: context.audit, critique, availableEvidenceKeys: context.evidence.map((item) => item.key) });
+        let draft = context.draft;
+        let audit = context.audit;
+        let critique = await this.agent.critique({ ...context, brief: context.brief, draft, audit });
+        let readiness = evaluateContentReadiness({
+          draft,
+          audit,
+          critique,
+          availableEvidenceKeys: context.evidence.map((item) => item.key),
+          recentBodies: context.recentBodies,
+        });
+        for (let repairAttempt = 1; repairAttempt <= 2 && !readiness.ready; repairAttempt += 1) {
+          const critiqueFeedback = repairableCritiqueFeedback(critique, readiness);
+          if (critiqueFeedback.length === 0) break;
+          draft = await writeGroundedDraft(this.agent, { ...context, brief: context.brief, draft }, critiqueFeedback);
+          await this.repository.reviseDraftAfterCritique({ workspaceId: job.workspaceId, runId: payload.runId, draft, now: this.now() });
+          audit = await this.agent.audit({ ...context, brief: context.brief, draft });
+          for (let auditRepairAttempt = 1; auditRepairAttempt <= 2; auditRepairAttempt += 1) {
+            const auditFeedback = repairableAuditFeedback(audit);
+            if (auditFeedback.length === 0) break;
+            draft = await writeGroundedDraft(this.agent, { ...context, brief: context.brief, draft }, auditFeedback);
+            await this.repository.reviseDraftAfterAudit({ workspaceId: job.workspaceId, runId: payload.runId, draft, now: this.now() });
+            audit = await this.agent.audit({ ...context, brief: context.brief, draft });
+          }
+          await this.repository.saveAudit({ workspaceId: job.workspaceId, runId: payload.runId, audit, now: this.now() });
+          critique = await this.agent.critique({ ...context, brief: context.brief, draft, audit });
+          readiness = evaluateContentReadiness({
+            draft,
+            audit,
+            critique,
+            availableEvidenceKeys: context.evidence.map((item) => item.key),
+            recentBodies: context.recentBodies,
+          });
+        }
         await this.repository.completeRun({ workspaceId: job.workspaceId, runId: payload.runId, critique, readiness, now: this.now() });
       }
       await this.queue.acknowledge(job.id, job.lockedBy, this.now());
@@ -189,14 +223,32 @@ async function writeGroundedDraft(
 }
 
 function repairableAuditFeedback(audit: ContentEvidenceAudit): readonly string[] {
-  if (audit.forbiddenTopicMatches.length > 0) return [];
   const feedback = [
+    ...audit.forbiddenTopicMatches.map((topic) => `CONTENT_AUDIT_FORBIDDEN_TOPIC: ${topic}`),
     ...audit.ungroundedStatements.map((statement) => `CONTENT_AUDIT_UNGROUNDED_STATEMENT: ${statement}`),
     ...audit.reviewedClaims
       .filter((claim) => claim.verdict !== "supported")
       .map((claim) => `CONTENT_AUDIT_UNSUPPORTED_CLAIM: ${claim.statement} — ${claim.reason}`),
   ];
   return feedback.slice(0, 8).map((item) => item.slice(0, 1_000));
+}
+
+function repairableCritiqueFeedback(
+  critique: ContentEditorialCritique,
+  readiness: { readonly ready: boolean; readonly blockers: readonly string[] },
+): readonly string[] {
+  if (readiness.ready) return [];
+  const evidenceBlockers = new Set(["unaudited_claim", "unsupported_claim", "ungrounded_statement", "forbidden_topic"]);
+  if (readiness.blockers.some((blocker) => evidenceBlockers.has(blocker))) return [];
+  const feedback = [
+    ...critique.issues
+      .filter((issue) => issue.severity === "blocker")
+      .map((issue) => `CONTENT_CRITIQUE_BLOCKER [${issue.code}]: ${issue.message}`),
+    ...readiness.blockers
+      .filter((blocker) => blocker !== "editorial_blocker")
+      .map((blocker) => `CONTENT_READINESS_BLOCKER: ${blocker}`),
+  ];
+  return [...new Set(feedback)].slice(0, 8).map((item) => item.slice(0, 1_000));
 }
 
 function isRepairableDraftError(error: unknown): error is Error {

@@ -19,7 +19,7 @@ import {
 } from "@outbound/infrastructure/database/schema";
 import { PostgresWorkspaceOnboarding } from "@outbound/infrastructure/workspaces/postgres-workspace-onboarding";
 
-const databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
+const databaseUrl = process.env.TEST_DATABASE_URL;
 const databaseDescribe = databaseUrl ? describe : describe.skip;
 
 databaseDescribe("F-052 workspace onboarding", () => {

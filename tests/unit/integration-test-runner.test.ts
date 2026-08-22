@@ -2,6 +2,15 @@ import { describe, expect, test } from "bun:test";
 import { integrationTestDatabaseUrl, integrationTestEnvironment } from "../../scripts/run-integration-tests";
 
 describe("integration test database isolation", () => {
+  test("integration specs never fall back to the live application database", async () => {
+    const unsafeFiles: string[] = [];
+    for await (const file of new Bun.Glob("tests/integration/*.test.ts").scan({ cwd: import.meta.dir + "/../.." })) {
+      const source = await Bun.file(import.meta.dir + `/../../${file}`).text();
+      if (source.includes("process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL")) unsafeFiles.push(file);
+    }
+    expect(unsafeFiles).toEqual([]);
+  });
+
   test("derives a dedicated database when no explicit test URL exists", () => {
     const result = integrationTestDatabaseUrl({
       DATABASE_URL: "postgresql://user:password@localhost:5432/ignition_outbound",

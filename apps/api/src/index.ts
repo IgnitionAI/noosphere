@@ -313,9 +313,11 @@ const contentIdeas = createContentIdeaHttpHandler({
   contextResolver: auth.contextResolver,
   application: new ContentIdeaApplication(new PostgresContentIdeaRepository(database.db)),
 });
+const contentPublicationRepository = new PostgresContentPublicationRepository(database.db);
 const contentGeneration = createContentGenerationHttpHandler({
   contextResolver: auth.contextResolver,
   application: new ContentGenerationApplication(new PostgresContentGenerationRepository(database.db)),
+  publications: contentPublicationRepository,
 });
 const socialPublisher: SocialPublisher = unipileDsn && unipileApiKey
   ? new UnipileSocialPublisher({ dsn: unipileDsn, apiKey: unipileApiKey, timeoutMs: positiveIntegerEnvironment("UNIPILE_TIMEOUT_MS", 10_000) })
@@ -326,7 +328,7 @@ const socialPublishingAccounts: SocialPublishingAccountResolver = unipileChannel
 const contentPublications = createContentPublicationHttpHandler({
   contextResolver: auth.contextResolver,
   application: new ContentPublicationApplication(
-    new PostgresContentPublicationRepository(database.db),
+    contentPublicationRepository,
     socialPublishingAccounts,
     socialPublisher,
   ),

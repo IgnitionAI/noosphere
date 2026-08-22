@@ -4,7 +4,7 @@ import { createContentAutopilotHttpHandler } from "@outbound/interface/http/cont
 
 const workspaceId = crypto.randomUUID();
 const userId = crypto.randomUUID();
-const view = { configured: true, enabled: true, localTime: "06:00", timezone: "Europe/Paris", lastRunAt: null, nextRunAt: new Date(), nextPublicationAt: null, queuedIdeas: 2, generatingAssets: 1, readyAssets: 0, scheduledPublications: 0, blockedAssets: 0, exceptions: 0 };
+const view = { configured: true, enabled: true, localTime: "06:00", timezone: "Europe/Paris", publicationTimes: ["09:00", "17:00"], publicationDays: [1, 2, 3, 4, 5, 6, 7], postsPerWeek: 14, lastRunAt: null, nextRunAt: new Date(), nextPublicationAt: null, queuedIdeas: 2, generatingAssets: 1, readyAssets: 0, scheduledPublications: 0, blockedAssets: 0, exceptions: 0 };
 
 describe("AUT-101 content autopilot HTTP", () => {
   test("derives workspace and actor exclusively from the request context", async () => {
@@ -20,9 +20,12 @@ describe("AUT-101 content autopilot HTTP", () => {
     const response = await handler(request("PUT", { requestKey: "autopilot-request-1", enabled: false, localTime: "06:30", timezone: "Europe/Paris", workspaceId: crypto.randomUUID() }));
     expect(response.status).toBe(422);
     expect(writes).toHaveLength(0);
-    const accepted = await handler(request("PUT", { requestKey: "autopilot-request-2", enabled: false, localTime: "06:30", timezone: "Europe/Paris" }));
+    const accepted = await handler(request("PUT", { requestKey: "autopilot-request-2", enabled: false, localTime: "06:30", timezone: "Europe/Paris", publicationTimes: ["09:00", "17:00"], publicationDays: [1, 2, 3, 4, 5, 6, 7] }));
     expect(accepted.status).toBe(200);
-    expect(writes).toContainEqual(expect.objectContaining({ workspaceId, userId, enabled: false }));
+    expect(writes).toContainEqual(expect.objectContaining({ workspaceId, userId, enabled: false, publicationTimes: ["09:00", "17:00"], publicationDays: [1, 2, 3, 4, 5, 6, 7] }));
+
+    const duplicateSlots = await handler(request("PUT", { requestKey: "autopilot-request-duplicates", enabled: true, localTime: "06:00", timezone: "Europe/Paris", publicationTimes: ["09:00", "09:00"], publicationDays: [1, 2, 3] }));
+    expect(duplicateSlots.status).toBe(422);
   });
 
   test("allows viewers to inspect but not configure", async () => {

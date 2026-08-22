@@ -1,9 +1,11 @@
-import { and, asc, count, desc, eq, exists, gte, inArray, isNull, like, lte, notExists, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, exists, gte, inArray, isNull, like, lte, notExists, or, sql } from "drizzle-orm";
 import type {
+  ContentAutopilotCadence,
   ContentAutopilotRepository,
   ContentAutopilotView,
   ContentAutopilotWorkspace,
 } from "@outbound/application/content/content-autopilot";
+import { resolveContentAutopilotCadence } from "@outbound/application/content/content-autopilot";
 import { editorialStrategySnapshotSchema } from "@outbound/contracts/content";
 import type { Database } from "@outbound/infrastructure/database/client";
 import {
@@ -24,16 +26,30 @@ import {
 } from "@outbound/infrastructure/database/schema";
 import { CONTENT_PUBLICATION_JOB_TYPE } from "@outbound/application/content/content-publications";
 import { firstDailyOccurrence } from "@outbound/infrastructure/campaigns/daily-prospecting-scheduler";
+import { CONTENT_EDITORIAL_POLICY_VERSION } from "@outbound/domain/content/content-asset";
 
 const DEFAULT_TIME = "06:00";
 const DEFAULT_TIMEZONE = "Europe/Paris";
+const MAX_AUTOMATIC_REPAIR_ATTEMPTS = 2;
 
 export class PostgresContentAutopilotRepository implements ContentAutopilotRepository {
   constructor(private readonly database: Database) {}
 
   async get(input: { readonly workspaceId: string }): Promise<ContentAutopilotView> {
-    const [scheduleRows, queuedIdeas, generatingAssets, failedGenerationRuns, readyAssets, blockedAssets, scheduledPublications, failedPublications, nextPublications] = await Promise.all([
+    const [scheduleRows, strategyRows, queuedIdeas, generatingAssets, failedGenerationRuns, readyAssets, blockedAssets, scheduledPublications, failedPublications, nextPublications] = await Promise.all([
       this.database.select().from(contentIdeaSchedules).where(eq(contentIdeaSchedules.workspaceId, input.workspaceId)).limit(1),
+      this.database.select({ snapshot: editorialStrategyVersions.snapshot }).from(editorialStrategies)
+        .innerJoin(editorialStrategyVersions, and(
+          eq(editorialStrategyVersions.workspaceId, editorialStrategies.workspaceId),
+          eq(editorialStrategyVersions.strategyId, editorialStrategies.id),
+          eq(editorialStrategyVersions.version, editorialStrategies.currentVersion),
+        ))
+        .where(and(
+          eq(editorialStrategies.workspaceId, input.workspaceId),
+          eq(editorialStrategies.status, "active"),
+          isNull(editorialStrategies.deletedAt),
+          sql`${editorialStrategies.currentVersion} > 0`,
+        )).limit(1),
       this.countIdeas(input.workspaceId),
       this.countGenerationRuns(input.workspaceId, ["queued", "running"]),
       this.countGenerationRuns(input.workspaceId, ["failed"]),
@@ -47,11 +63,15 @@ export class PostgresContentAutopilotRepository implements ContentAutopilotRepos
       )).orderBy(asc(contentPublications.scheduledFor)).limit(1),
     ]);
     const schedule = scheduleRows[0];
+    const cadence = effectiveCadence(schedule, strategyRows[0]?.snapshot);
     return {
       configured: Boolean(schedule),
       enabled: schedule?.enabled ?? false,
       localTime: schedule?.localTime ?? DEFAULT_TIME,
       timezone: schedule?.timezone ?? DEFAULT_TIMEZONE,
+      publicationTimes: cadence.publicationTimes,
+      publicationDays: cadence.preferredDays,
+      postsPerWeek: cadence.postsPerWeek,
       lastRunAt: schedule?.lastRunAt ?? null,
       nextRunAt: schedule?.nextRunAt ?? null,
       nextPublicationAt: nextPublications[0]?.scheduledFor ?? null,
@@ -80,21 +100,34 @@ export class PostgresContentAutopilotRepository implements ContentAutopilotRepos
         sql`${editorialStrategies.currentVersion} > 0`,
       )).limit(1);
       if (!strategy[0]) throw new Error("CONTENT_AUTOPILOT_ACTIVE_STRATEGY_REQUIRED");
+      const existingRows = await tx.select({
+        timezone: contentIdeaSchedules.timezone,
+        publicationTimes: contentIdeaSchedules.publicationTimes,
+        publicationDays: contentIdeaSchedules.publicationDays,
+      }).from(contentIdeaSchedules).where(eq(contentIdeaSchedules.workspaceId, input.workspaceId)).for("update").limit(1);
+      const existing = existingRows[0];
+      const publicationTimes = input.publicationTimes ? normalizedTimes(input.publicationTimes) : existing?.publicationTimes ?? null;
+      const publicationDays = input.publicationDays ? normalizedDays(input.publicationDays) : existing?.publicationDays ?? null;
+      const cadenceChanged = input.publicationTimes !== undefined && !sameValues(publicationTimes, existing?.publicationTimes)
+        || input.publicationDays !== undefined && !sameValues(publicationDays, existing?.publicationDays)
+        || existing !== undefined && input.timezone !== existing.timezone;
       const nextRunAt = firstDailyOccurrence(input.now, input.localTime, input.timezone);
       await tx.insert(contentIdeaSchedules).values({
         workspaceId: input.workspaceId,
         enabled: input.enabled,
         localTime: input.localTime,
         timezone: input.timezone,
+        publicationTimes,
+        publicationDays,
         nextRunAt,
         createdAt: input.now,
         updatedAt: input.now,
       }).onConflictDoUpdate({
         target: contentIdeaSchedules.workspaceId,
-        set: { enabled: input.enabled, localTime: input.localTime, timezone: input.timezone, nextRunAt, updatedAt: input.now },
+        set: { enabled: input.enabled, localTime: input.localTime, timezone: input.timezone, publicationTimes, publicationDays, nextRunAt, updatedAt: input.now },
       });
       let cancelled = 0;
-      if (!input.enabled) {
+      if (!input.enabled || cadenceChanged) {
         const pending = await tx.select({ id: contentPublications.id }).from(contentPublications).where(and(
           eq(contentPublications.workspaceId, input.workspaceId),
           sql`${contentPublications.status} in ('scheduled', 'retry')`,
@@ -120,14 +153,14 @@ export class PostgresContentAutopilotRepository implements ContentAutopilotRepos
         requestKey: input.requestKey,
         resourceType: "ContentAutopilot",
         resourceId: input.workspaceId,
-        response: { enabled: input.enabled, localTime: input.localTime, timezone: input.timezone, cancelledPublications: cancelled },
+        response: { enabled: input.enabled, localTime: input.localTime, timezone: input.timezone, publicationTimes, publicationDays, cancelledPublications: cancelled },
       });
       await appendEvent(tx, {
         workspaceId: input.workspaceId,
         actorUserId: input.userId,
         aggregateId: input.workspaceId,
         eventType: input.enabled ? "ContentAutopilotResumed" : "ContentAutopilotPaused",
-        changes: { localTime: input.localTime, timezone: input.timezone, cancelledPublications: cancelled },
+        changes: { localTime: input.localTime, timezone: input.timezone, publicationTimes, publicationDays, cancelledPublications: cancelled },
       });
     });
     return this.get({ workspaceId: input.workspaceId });
@@ -138,6 +171,10 @@ export class PostgresContentAutopilotRepository implements ContentAutopilotRepos
       workspaceId: contentIdeaSchedules.workspaceId,
       strategyVersionId: editorialStrategyVersions.id,
       snapshot: editorialStrategyVersions.snapshot,
+      localTime: contentIdeaSchedules.localTime,
+      timezone: contentIdeaSchedules.timezone,
+      publicationTimes: contentIdeaSchedules.publicationTimes,
+      publicationDays: contentIdeaSchedules.publicationDays,
     }).from(contentIdeaSchedules)
       .innerJoin(editorialStrategies, and(
         eq(editorialStrategies.workspaceId, contentIdeaSchedules.workspaceId),
@@ -156,7 +193,7 @@ export class PostgresContentAutopilotRepository implements ContentAutopilotRepos
     return rows.map((row) => ({
       workspaceId: row.workspaceId,
       strategyVersionId: row.strategyVersionId,
-      cadence: editorialStrategySnapshotSchema.parse(row.snapshot).cadence,
+      cadence: effectiveCadence(row, row.snapshot),
     }));
   }
 
@@ -166,6 +203,10 @@ export class PostgresContentAutopilotRepository implements ContentAutopilotRepos
       eq(contentIdeas.strategyVersionId, input.strategyVersionId),
       sql`${contentIdeas.status} in ('discovered', 'shortlisted')`,
       gte(contentIdeas.freshnessUntil, input.now),
+      notExists(this.database.select({ id: contentGenerationRuns.id }).from(contentGenerationRuns).where(and(
+        eq(contentGenerationRuns.workspaceId, input.workspaceId),
+        sql`${contentGenerationRuns.status} in ('queued', 'running')`,
+      ))),
       notExists(this.database.select({ id: contentAssets.id }).from(contentAssets).where(and(
         eq(contentAssets.workspaceId, contentIdeas.workspaceId),
         eq(contentAssets.ideaId, contentIdeas.id),
@@ -181,6 +222,65 @@ export class PostgresContentAutopilotRepository implements ContentAutopilotRepos
           sql`${contentIdeaDiscoveryRuns.status} in ('completed', 'partial')`,
         ))),
     )).orderBy(desc(contentIdeas.priority), desc(contentIdeas.lastSeenAt), asc(contentIdeas.id)).limit(input.limit);
+  }
+
+  async listRepairCandidates(input: Parameters<ContentAutopilotRepository["listRepairCandidates"]>[0]) {
+    const repairRequestCount = sql<number>`(
+      select count(*)::int
+      from ${contentOperationRequests} repair_requests
+      where repair_requests.workspace_id = ${contentAssets.workspaceId}
+        and repair_requests.operation = 'asset.improve'
+        and repair_requests.request_key like ('autopilot:repair:' || ${contentAssets.id}::text || ':' || ${CONTENT_EDITORIAL_POLICY_VERSION} || ':%')
+    )`;
+    const rows = await this.database.select({
+      assetId: contentAssets.id,
+      assetStatus: contentAssets.status,
+      attempt: sql<number>`1 + ${repairRequestCount}`.mapWith(Number),
+      readiness: contentAssetVersions.readiness,
+    }).from(contentAssets)
+      .innerJoin(contentIdeas, and(
+        eq(contentIdeas.workspaceId, contentAssets.workspaceId),
+        eq(contentIdeas.id, contentAssets.ideaId),
+        eq(contentIdeas.strategyVersionId, input.strategyVersionId),
+      ))
+      .innerJoin(contentAssetVersions, and(
+        eq(contentAssetVersions.workspaceId, contentAssets.workspaceId),
+        eq(contentAssetVersions.assetId, contentAssets.id),
+        eq(contentAssetVersions.version, contentAssets.latestVersion),
+      ))
+      .where(and(
+        eq(contentAssets.workspaceId, input.workspaceId),
+        or(
+          and(eq(contentAssets.status, "blocked"), eq(contentAssetVersions.ready, false)),
+          and(
+            eq(contentAssets.status, "ready"),
+            eq(contentAssetVersions.ready, true),
+            sql`coalesce(${contentAssetVersions.readiness}->>'policyVersion', '') <> ${CONTENT_EDITORIAL_POLICY_VERSION}`,
+          ),
+        ),
+        sql`${repairRequestCount} < ${MAX_AUTOMATIC_REPAIR_ATTEMPTS}`,
+        notExists(this.database.select({ id: contentGenerationRuns.id }).from(contentGenerationRuns).where(and(
+          eq(contentGenerationRuns.workspaceId, input.workspaceId),
+          sql`${contentGenerationRuns.status} in ('queued', 'running')`,
+        ))),
+        notExists(this.database.select({ id: contentGenerationRuns.id }).from(contentGenerationRuns).where(and(
+          eq(contentGenerationRuns.workspaceId, contentAssets.workspaceId),
+          eq(contentGenerationRuns.assetId, contentAssets.id),
+          sql`${contentGenerationRuns.status} in ('queued', 'running')`,
+        ))),
+        notExists(this.database.select({ id: contentPublications.id }).from(contentPublications).where(and(
+          eq(contentPublications.workspaceId, contentAssets.workspaceId),
+          eq(contentPublications.assetId, contentAssets.id),
+          sql`${contentPublications.status} <> 'cancelled'`,
+        ))),
+      ))
+      .orderBy(desc(contentIdeas.priority), asc(contentAssets.updatedAt), asc(contentAssets.id))
+      .limit(input.limit);
+    return rows.map((row) => ({
+      assetId: row.assetId,
+      attempt: row.attempt,
+      blockers: row.assetStatus === "ready" ? ["editorial_policy_outdated"] : readinessBlockers(row.readiness),
+    }));
   }
 
   async listPublicationCandidates(input: Parameters<ContentAutopilotRepository["listPublicationCandidates"]>[0]) {
@@ -200,6 +300,7 @@ export class PostgresContentAutopilotRepository implements ContentAutopilotRepos
         eq(contentAssetVersions.assetId, contentAssets.id),
         eq(contentAssetVersions.version, contentAssets.latestVersion),
         eq(contentAssetVersions.ready, true),
+        sql`${contentAssetVersions.readiness}->>'policyVersion' = ${CONTENT_EDITORIAL_POLICY_VERSION}`,
       ))
       .where(and(
         eq(contentAssets.workspaceId, input.workspaceId),
@@ -272,6 +373,38 @@ export class PostgresContentAutopilotRepository implements ContentAutopilotRepos
     )))[0];
     return row?.value ?? 0;
   }
+}
+
+function effectiveCadence(
+  schedule: { readonly publicationTimes?: readonly string[] | null; readonly publicationDays?: readonly number[] | null; readonly timezone?: string | null } | undefined,
+  snapshot: unknown,
+): ContentAutopilotCadence {
+  const strategy = editorialStrategySnapshotSchema.safeParse(snapshot);
+  const strategyCadence = strategy.success ? strategy.data.cadence : { postsPerWeek: 3, preferredDays: [1, 3, 5], timezone: DEFAULT_TIMEZONE };
+  return resolveContentAutopilotCadence({
+    strategyCadence,
+    publicationTimes: schedule?.publicationTimes,
+    publicationDays: schedule?.publicationDays,
+    timezone: schedule?.timezone,
+  });
+}
+
+function normalizedTimes(values: readonly string[]): string[] {
+  return [...new Set(values)].sort();
+}
+
+function normalizedDays(values: readonly number[]): number[] {
+  return [...new Set(values)].sort((left, right) => left - right);
+}
+
+function sameValues(left: readonly (string | number)[] | null | undefined, right: readonly (string | number)[] | null | undefined): boolean {
+  return JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
+}
+
+function readinessBlockers(value: unknown): readonly string[] {
+  if (!value || typeof value !== "object" || !("blockers" in value) || !Array.isArray(value.blockers)) return ["editorial_blocker"];
+  const blockers = value.blockers.filter((item): item is string => typeof item === "string" && item.length > 0);
+  return blockers.length > 0 ? blockers : ["editorial_blocker"];
 }
 
 async function appendEvent(tx: any, input: { workspaceId: string; actorUserId: string | null; aggregateId: string; eventType: string; changes: unknown }) {

@@ -1,6 +1,7 @@
-import { and, count, desc, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, count, desc, eq, gt, gte, inArray, lte, or, sql } from "drizzle-orm";
 import type {
   ActivityWorkspacePage,
+  ActivityInteractionType,
   CampaignWorkspaceView,
   ConversationWorkspacePage,
   ConversationWorkspaceDetail,
@@ -40,7 +41,7 @@ import {
   messages,
   offerVersions,
   opportunities,
-  prospectDecisions,
+  outreachActions,
   workspaceChannelAccounts,
   workspaceOnboarding,
 } from "@outbound/infrastructure/database/schema";
@@ -67,9 +68,15 @@ export class PostgresOperationalViews {
     const attentionOffset = input.attentionOffset ?? 0;
     const attentionLimit = input.attentionLimit ?? 20;
     const attentionQueryLimit = attentionOffset + attentionLimit + 1;
+    const activeJobCondition = or(
+      and(eq(jobs.status, "running"), gt(jobs.lockedUntil, asOf)),
+      and(inArray(jobs.status, ["pending", "retry"]), lte(jobs.availableAt, asOf)),
+    );
     const [
       campaignCount,
       prospectCount,
+      contactedProspectCount,
+      publishedContentCount,
       conversationCount,
       opportunityCount,
       bookedCallCount,
@@ -77,52 +84,52 @@ export class PostgresOperationalViews {
       activeJobCount,
       jobsRows,
       failedJobs,
-      deadLetterRows,
-      retryJobCount,
-      retryJobRows,
       schedule,
       accountRows,
       alertCount,
       accountAttention,
-      campaignAttentionCount,
-      campaignAttention,
-      pendingDecisionCount,
-      pendingDecisions,
     ] = await Promise.all([
       this.database.select({ value: count() }).from(campaigns).where(and(eq(campaigns.workspaceId, workspaceId), eq(campaigns.status, "active"))),
       this.database.select({ value: count() }).from(contacts).where(and(eq(contacts.workspaceId, workspaceId), eq(contacts.status, "active"))),
+      this.database.select({ value: sql<number>`count(distinct ${outreachActions.contactId})::int`.mapWith(Number) }).from(outreachActions).where(and(eq(outreachActions.workspaceId, workspaceId), sql`${outreachActions.sentAt} is not null`)),
+      this.database.select({ value: count() }).from(contentPublications).where(and(eq(contentPublications.workspaceId, workspaceId), eq(contentPublications.status, "published"))),
       this.database.select({ value: count() }).from(conversations).where(and(eq(conversations.workspaceId, workspaceId), sql`${conversations.status} <> 'closed'`)),
       this.database.select({ value: count() }).from(opportunities).where(and(eq(opportunities.workspaceId, workspaceId), sql`${opportunities.stage} not in ('won', 'lost')`)),
       this.database.select({ value: count() }).from(calendarBookings).where(and(eq(calendarBookings.workspaceId, workspaceId), sql`${calendarBookings.status} in ('requested', 'booked', 'rescheduled')`, gte(calendarBookings.startAt, asOf))),
       this.database.select({ id: calendarBookings.id, attendeeName: calendarBookings.attendeeName, startAt: calendarBookings.startAt }).from(calendarBookings).where(and(eq(calendarBookings.workspaceId, workspaceId), sql`${calendarBookings.status} in ('requested', 'booked', 'rescheduled')`, gte(calendarBookings.startAt, asOf))).orderBy(calendarBookings.startAt).limit(1),
-      this.database.select({ value: count() }).from(jobs).where(and(eq(jobs.workspaceId, workspaceId), sql`${jobs.status} in ('pending', 'running', 'retry')`)),
-      this.database.select({ id: jobs.id, type: jobs.type, status: jobs.status, correlationId: jobs.correlationId, updatedAt: jobs.updatedAt }).from(jobs).where(and(eq(jobs.workspaceId, workspaceId), sql`${jobs.status} in ('pending', 'running', 'retry')`)).orderBy(desc(jobs.updatedAt)).limit(10),
-      this.database.select({ value: count() }).from(jobs).where(and(eq(jobs.workspaceId, workspaceId), eq(jobs.status, "dead_lettered"))),
-      this.database.select({ id: jobs.id, type: jobs.type, correlationId: jobs.correlationId, updatedAt: jobs.updatedAt }).from(jobs).where(and(eq(jobs.workspaceId, workspaceId), eq(jobs.status, "dead_lettered"))).orderBy(desc(jobs.updatedAt)).limit(attentionQueryLimit),
-      this.database.select({ value: count() }).from(jobs).where(and(eq(jobs.workspaceId, workspaceId), eq(jobs.status, "retry"))),
-      this.database.select({ id: jobs.id, type: jobs.type, correlationId: jobs.correlationId, updatedAt: jobs.updatedAt }).from(jobs).where(and(eq(jobs.workspaceId, workspaceId), eq(jobs.status, "retry"))).orderBy(desc(jobs.updatedAt)).limit(attentionQueryLimit),
+      this.database.select({ value: count() }).from(jobs).where(and(eq(jobs.workspaceId, workspaceId), activeJobCondition)),
+      this.database.select({ id: jobs.id, type: jobs.type, status: jobs.status, correlationId: jobs.correlationId, updatedAt: jobs.updatedAt }).from(jobs).where(and(eq(jobs.workspaceId, workspaceId), activeJobCondition)).orderBy(desc(jobs.updatedAt)).limit(10),
+      this.database.select({ value: count(), latestAt: sql<string | Date | null>`max(${jobs.updatedAt})` }).from(jobs).where(and(eq(jobs.workspaceId, workspaceId), eq(jobs.status, "dead_lettered"))),
       this.database.select({ nextRunAt: dailyProspectingSchedules.nextRunAt }).from(dailyProspectingSchedules).where(and(eq(dailyProspectingSchedules.workspaceId, workspaceId), eq(dailyProspectingSchedules.enabled, true))).limit(1),
       this.database.select({ status: connectedAccounts.status }).from(connectedAccounts).where(eq(connectedAccounts.workspaceId, workspaceId)),
       this.database.select({ value: count() }).from(accountHealthAlerts).where(and(eq(accountHealthAlerts.workspaceId, workspaceId), sql`${accountHealthAlerts.status} in ('active', 'acknowledged')`)),
       this.database.select({ id: accountHealthAlerts.id, connectedAccountId: accountHealthAlerts.connectedAccountId, reason: accountHealthAlerts.reasonMessage, createdAt: accountHealthAlerts.createdAt }).from(accountHealthAlerts).where(and(eq(accountHealthAlerts.workspaceId, workspaceId), sql`${accountHealthAlerts.status} in ('active', 'acknowledged')`)).orderBy(desc(accountHealthAlerts.createdAt)).limit(attentionQueryLimit),
-      this.database.select({ value: count() }).from(campaigns).where(and(eq(campaigns.workspaceId, workspaceId), eq(campaigns.automationStage, "attention"))),
-      this.database.select({ id: campaigns.id, name: campaigns.name, updatedAt: campaigns.updatedAt, errorMessage: campaigns.automationErrorMessage }).from(campaigns).where(and(eq(campaigns.workspaceId, workspaceId), eq(campaigns.automationStage, "attention"))).orderBy(desc(campaigns.updatedAt)).limit(attentionQueryLimit),
-      this.database.select({ value: count() }).from(prospectDecisions).where(and(eq(prospectDecisions.workspaceId, workspaceId), eq(prospectDecisions.status, "pending"))),
-      this.database.select({ id: prospectDecisions.id, reason: prospectDecisions.reason, contactId: prospectDecisions.contactId, correlationId: prospectDecisions.correlationId, createdAt: prospectDecisions.createdAt }).from(prospectDecisions).where(and(eq(prospectDecisions.workspaceId, workspaceId), eq(prospectDecisions.status, "pending"))).orderBy(desc(prospectDecisions.priority), desc(prospectDecisions.createdAt)).limit(attentionQueryLimit),
     ]);
 
+    const failed = valueOf(failedJobs);
+    const latestFailedValue = failedJobs[0]?.latestAt;
+    const latestFailedAt = latestFailedValue instanceof Date
+      ? latestFailedValue
+      : latestFailedValue
+        ? new Date(latestFailedValue)
+        : asOf;
     const allAttention = [
-      ...campaignAttention.map((item) => attentionItem("campaign", "critical", item.id, item.errorMessage ?? `La campagne ${item.name} nécessite une attention.`, item.updatedAt, `/campaigns/${item.id}`, null)),
       ...accountAttention.map((item) => attentionItem("account", "critical", item.id, item.reason ?? "Un compte d’envoi nécessite une reconnexion.", item.createdAt, "/settings/channels", null)),
-      ...deadLetterRows.map((job) => attentionItem("job", "critical", job.id, `Le job ${job.type} est en dead letter et nécessite un diagnostic.`, job.updatedAt, "/settings/console", job.correlationId)),
-      ...retryJobRows.map((job) => attentionItem("job", "warning", job.id, `Le job ${job.type} sera retenté automatiquement.`, job.updatedAt, "/settings/console", job.correlationId)),
-      ...pendingDecisions.map((item) => attentionItem("decision", "info", item.id, item.reason, item.createdAt, "/prospects", item.correlationId)),
+      ...(failed > 0 ? [attentionItem(
+        "job",
+        "warning",
+        "dead-lettered",
+        `${failed} opération${failed === 1 ? "" : "s"} ${failed === 1 ? "a" : "ont"} atteint la limite de tentatives. Les autres automatisations continuent.`,
+        latestFailedAt,
+        "/settings/console?status=dead_lettered",
+        null,
+      )] : []),
     ].sort(compareAttention);
     const attentionPage = allAttention.slice(attentionOffset, attentionOffset + attentionLimit + 1);
     const hasMoreAttention = attentionPage.length > attentionLimit;
     const attention = attentionPage.slice(0, attentionLimit);
     const statuses = accountRows.map((row) => row.status);
-    const [editorialRows, generationRows, assetRows, publicationRows, socialRows, socialSyncRows, engagementSyncRows] = await Promise.all([
+    const [editorialRows, generationRows, activeGenerationRows, assetRows, readyAssetRows, publicationRows, socialRows, socialSyncRows, engagementSyncRows] = await Promise.all([
       this.database.select({
         id: editorialStrategies.id,
         status: editorialStrategies.status,
@@ -143,11 +150,30 @@ export class PostgresOperationalViews {
         sql`${contentGenerationRuns.status} in ('queued', 'running', 'blocked', 'failed')`,
       )).orderBy(desc(contentGenerationRuns.updatedAt)).limit(1),
       this.database.select({
+        id: contentGenerationRuns.id,
+        ideaId: contentGenerationRuns.ideaId,
+        status: contentGenerationRuns.status,
+        stage: contentGenerationRuns.stage,
+        updatedAt: contentGenerationRuns.updatedAt,
+      }).from(contentGenerationRuns).where(and(
+        eq(contentGenerationRuns.workspaceId, workspaceId),
+        sql`${contentGenerationRuns.status} in ('queued', 'running')`,
+      )).orderBy(desc(contentGenerationRuns.updatedAt)).limit(1),
+      this.database.select({
         id: contentAssets.id,
         ideaId: contentAssets.ideaId,
         status: contentAssets.status,
         updatedAt: contentAssets.updatedAt,
       }).from(contentAssets).where(eq(contentAssets.workspaceId, workspaceId)).orderBy(desc(contentAssets.updatedAt)).limit(1),
+      this.database.select({
+        id: contentAssets.id,
+        ideaId: contentAssets.ideaId,
+        status: contentAssets.status,
+        updatedAt: contentAssets.updatedAt,
+      }).from(contentAssets).where(and(
+        eq(contentAssets.workspaceId, workspaceId),
+        eq(contentAssets.status, "ready"),
+      )).orderBy(desc(contentAssets.updatedAt)).limit(1),
       this.database.select({
         id: contentPublications.id,
         status: contentPublications.status,
@@ -173,7 +199,9 @@ export class PostgresOperationalViews {
     ]);
     const editorial = editorialRows[0];
     const generation = generationRows[0];
+    const activeGeneration = activeGenerationRows[0];
     const latestAsset = assetRows[0];
+    const readyAsset = readyAssetRows[0];
     const latestPublication = publicationRows[0];
     const latestSocial = socialRows[0];
     const latestSocialSync = socialSyncRows[0];
@@ -183,12 +211,7 @@ export class PostgresOperationalViews {
     const disconnected = statuses.filter((status) => status === "disconnected").length;
     const activeCampaigns = valueOf(campaignCount);
     const activeJobs = valueOf(activeJobCount);
-    const failed = valueOf(failedJobs);
-    const attentionTotal = valueOf(alertCount)
-      + valueOf(failedJobs)
-      + valueOf(retryJobCount)
-      + valueOf(campaignAttentionCount)
-      + valueOf(pendingDecisionCount);
+    const attentionTotal = valueOf(alertCount) + (failed > 0 ? 1 : 0);
     const outboundStatus = degraded + disconnected + valueOf(alertCount) + failed > 0
       ? "degraded"
       : activeJobs > 0 || activeCampaigns > 0
@@ -215,14 +238,14 @@ export class PostgresOperationalViews {
         expectedAt: nextBooking[0].startAt,
         href: "/appointments",
       }] : []),
-      ...(latestAsset?.status === "ready" ? [{
-        id: `content:${latestAsset.id}`,
+      ...(readyAsset ? [{
+        id: `content:${readyAsset.id}`,
         type: "publication" as const,
         source: "inbound" as const,
         label: "Contenu LinkedIn prêt",
         detail: "Le brief, les preuves et la critique éditoriale sont disponibles.",
         expectedAt: null,
-        href: `/content/ideas/${latestAsset.ideaId}`,
+        href: `/content/ideas/${readyAsset.ideaId}`,
       }] : []),
       ...(latestPublication && ["scheduled", "retry"].includes(latestPublication.status) ? [{
         id: `publication:${latestPublication.id}`,
@@ -234,21 +257,35 @@ export class PostgresOperationalViews {
         href: "/content/calendar",
       }] : []),
     ].sort((left, right) => (left.expectedAt?.getTime() ?? Number.MAX_SAFE_INTEGER) - (right.expectedAt?.getTime() ?? Number.MAX_SAFE_INTEGER));
+    const providerDegraded = latestPublication?.status === "unknown"
+      || latestPublication?.status === "failed"
+      || latestSocialSync?.status === "error"
+      || latestEngagementSync?.status === "error";
+    const inboundRunning = Boolean(activeGeneration)
+      || latestPublication?.status === "publishing"
+      || latestSocialSync?.status === "syncing"
+      || latestEngagementSync?.status === "syncing";
+    const contentUnavailable = !readyAsset
+      && (generation?.status === "blocked" || generation?.status === "failed" || latestAsset?.status === "blocked");
     const inboundStatus = !editorial
       ? "not_configured"
-      : generation?.status === "blocked" || generation?.status === "failed" || latestAsset?.status === "blocked" || latestPublication?.status === "unknown" || latestPublication?.status === "failed" || latestSocialSync?.status === "error" || latestEngagementSync?.status === "error"
+      : providerDegraded
         ? "degraded"
-        : generation?.status === "queued" || generation?.status === "running" || latestPublication?.status === "publishing" || latestSocialSync?.status === "syncing" || latestEngagementSync?.status === "syncing"
+        : inboundRunning
           ? "running"
+          : contentUnavailable
+            ? "degraded"
           : editorial.status === "active"
             ? "idle"
             : "paused";
-    const inboundLastActivity = mostRecent(latestSocial?.lastSeenAt, latestSocialSync?.lastSuccessAt, latestEngagementSync?.lastSuccessAt, latestPublication?.updatedAt, generation?.updatedAt, latestAsset?.updatedAt, editorial?.updatedAt);
+    const inboundLastActivity = mostRecent(latestSocial?.lastSeenAt, latestSocialSync?.lastSuccessAt, latestEngagementSync?.lastSuccessAt, latestPublication?.updatedAt, activeGeneration?.updatedAt, generation?.updatedAt, latestAsset?.updatedAt, editorial?.updatedAt);
     return {
       asOf,
       counts: {
         activeCampaigns,
         prospects: valueOf(prospectCount),
+        contactedProspects: valueOf(contactedProspectCount),
+        publishedContents: valueOf(publishedContentCount),
         openConversations: valueOf(conversationCount),
         openOpportunities: valueOf(opportunityCount),
         bookedCalls: valueOf(bookedCallCount),
@@ -274,15 +311,15 @@ export class PostgresOperationalViews {
               ? "Le résultat LinkedIn est incertain : la publication attend une réconciliation et ne sera pas rejouée."
               : latestPublication?.status === "failed"
                 ? `La dernière publication a échoué${latestPublication.lastErrorCode ? ` · ${latestPublication.lastErrorCode}` : ""}.`
-                : latestPublication?.status === "publishing"
+            : latestPublication?.status === "publishing"
                   ? "Publication LinkedIn en cours avec lease durable."
+                  : activeGeneration
+                    ? `Pipeline éditorial à l’étape ${contentStageLabel(activeGeneration.stage)} · reprise durable active.`
                   : latestSocial
                     ? `LinkedIn synchronisé · dernier post ${latestSocial.origin === "internal" ? "Noosphere" : "externe"} observé.`
-                  : generation?.status === "queued" || generation?.status === "running"
-              ? `Pipeline éditorial à l’étape ${contentStageLabel(generation.stage)} · reprise durable active.`
-              : latestAsset?.status === "ready"
+                  : readyAsset
                 ? `Stratégie LinkedIn v${editorial.currentVersion || "brouillon"} · un contenu sourcé est prêt.`
-                : latestAsset?.status === "blocked"
+                : contentUnavailable
                   ? "La critique ou l’audit des preuves a bloqué le dernier contenu."
                   : `Stratégie LinkedIn v${editorial.currentVersion || "brouillon"} · le pipeline éditorial attend sa prochaine étape.`,
           lastActivityAt: inboundLastActivity,
@@ -290,10 +327,14 @@ export class PostgresOperationalViews {
             ? { label: "Voir la synchronisation", href: "/content/calendar" }
             : latestPublication && ["scheduled", "retry", "publishing", "unknown", "failed"].includes(latestPublication.status)
             ? { label: latestPublication.status === "unknown" || latestPublication.status === "failed" ? "Voir l’exception" : "Voir le calendrier", href: "/content/calendar" }
-            : generation
-            ? { label: generation.status === "blocked" || generation.status === "failed" ? "Voir le blocage" : "Suivre la génération", href: `/content/ideas/${generation.ideaId}` }
-            : latestAsset
-              ? { label: "Voir le contenu", href: `/content/ideas/${latestAsset.ideaId}` }
+            : activeGeneration
+            ? { label: "Suivre la génération", href: `/content/ideas/${activeGeneration.ideaId}` }
+            : contentUnavailable && generation
+              ? { label: "Voir le blocage", href: `/content/ideas/${generation.ideaId}` }
+            : readyAsset
+              ? { label: "Voir le contenu", href: `/content/ideas/${readyAsset.ideaId}` }
+              : latestAsset
+                ? { label: "Voir le contenu", href: `/content/ideas/${latestAsset.ideaId}` }
               : editorial
                 ? { label: "Voir les idées", href: "/content/ideas" }
                 : { label: "Vérifier la configuration", href: "/settings" },
@@ -311,12 +352,12 @@ export class PostgresOperationalViews {
     };
   }
 
-  async getActivity(input: { workspaceId: string; lens: NoosphereLens; offset?: number; limit?: number }): Promise<ActivityWorkspacePage> {
+  async getActivity(input: { workspaceId: string; lens: NoosphereLens; interactionType?: ActivityInteractionType; offset?: number; limit?: number }): Promise<ActivityWorkspacePage> {
     const asOf = new Date();
     const offset = input.offset ?? 0;
     const limit = input.limit ?? 25;
     if (input.lens === "inbound") {
-      const [strategies, versions, ideaCount, ideas, ideaRuns, schedule, assetCount, assetRows, generationRows, publicationCount, publicationRows, socialCount, socialRows, socialSyncRows, interactionCount, interactionRows, interactionSyncRows] = await Promise.all([
+      const [strategies, versions, ideaCount, ideas, ideaRuns, schedule, assetCount, readyAssetCount, assetRows, generationRows, publicationCount, publicationRows, socialCount, socialRows, socialSyncRows, interactionCount, interactionRows, interactionSyncRows] = await Promise.all([
         this.database.select({
           id: editorialStrategies.id,
           name: editorialStrategies.name,
@@ -332,8 +373,12 @@ export class PostgresOperationalViews {
         this.database.select({ value: count() }).from(contentIdeas).where(and(eq(contentIdeas.workspaceId, input.workspaceId), sql`${contentIdeas.status} not in ('discarded', 'expired')`)),
         this.database.select({ id: contentIdeas.id, angle: contentIdeas.angle, pillar: contentIdeas.pillar, priority: contentIdeas.priority, updatedAt: contentIdeas.updatedAt }).from(contentIdeas).where(eq(contentIdeas.workspaceId, input.workspaceId)).orderBy(desc(contentIdeas.lastSeenAt)).limit(limit + 1).offset(offset),
         this.database.select({ id: contentIdeaDiscoveryRuns.id, status: contentIdeaDiscoveryRuns.status, cursor: contentIdeaDiscoveryRuns.cursor, queryLimit: contentIdeaDiscoveryRuns.queryLimit, updatedAt: contentIdeaDiscoveryRuns.updatedAt }).from(contentIdeaDiscoveryRuns).where(and(eq(contentIdeaDiscoveryRuns.workspaceId, input.workspaceId), sql`${contentIdeaDiscoveryRuns.status} in ('queued', 'running', 'failed')`)).orderBy(desc(contentIdeaDiscoveryRuns.updatedAt)).limit(5),
-        this.database.select({ nextRunAt: contentIdeaSchedules.nextRunAt }).from(contentIdeaSchedules).where(and(eq(contentIdeaSchedules.workspaceId, input.workspaceId), eq(contentIdeaSchedules.enabled, true))).limit(1),
+        this.database.select({
+          enabled: contentIdeaSchedules.enabled,
+          nextRunAt: contentIdeaSchedules.nextRunAt,
+        }).from(contentIdeaSchedules).where(eq(contentIdeaSchedules.workspaceId, input.workspaceId)).limit(1),
         this.database.select({ value: count() }).from(contentAssets).where(eq(contentAssets.workspaceId, input.workspaceId)),
+        this.database.select({ value: count() }).from(contentAssets).where(and(eq(contentAssets.workspaceId, input.workspaceId), eq(contentAssets.status, "ready"))),
         this.database.select({ id: contentAssets.id, ideaId: contentAssets.ideaId, status: contentAssets.status, latestVersion: contentAssets.latestVersion, angle: contentIdeas.angle, updatedAt: contentAssets.updatedAt }).from(contentAssets).innerJoin(contentIdeas, and(eq(contentIdeas.workspaceId, contentAssets.workspaceId), eq(contentIdeas.id, contentAssets.ideaId))).where(eq(contentAssets.workspaceId, input.workspaceId)).orderBy(desc(contentAssets.updatedAt)).limit(limit),
         this.database.select({ id: contentGenerationRuns.id, ideaId: contentGenerationRuns.ideaId, status: contentGenerationRuns.status, stage: contentGenerationRuns.stage, angle: contentIdeas.angle, updatedAt: contentGenerationRuns.updatedAt }).from(contentGenerationRuns).innerJoin(contentIdeas, and(eq(contentIdeas.workspaceId, contentGenerationRuns.workspaceId), eq(contentIdeas.id, contentGenerationRuns.ideaId))).where(and(eq(contentGenerationRuns.workspaceId, input.workspaceId), sql`${contentGenerationRuns.status} in ('queued', 'running', 'blocked', 'failed')`)).orderBy(desc(contentGenerationRuns.updatedAt)).limit(limit),
         this.database.select({ value: count() }).from(contentPublications).where(eq(contentPublications.workspaceId, input.workspaceId)),
@@ -342,11 +387,26 @@ export class PostgresOperationalViews {
         this.database.select({ id: socialContentItems.id, origin: socialContentItems.origin, text: socialContentItems.text, impressions: socialContentItems.impressions, reactions: socialContentItems.reactions, comments: socialContentItems.comments, metricsObservedAt: socialContentItems.metricsObservedAt, lastSeenAt: socialContentItems.lastSeenAt }).from(socialContentItems).where(eq(socialContentItems.workspaceId, input.workspaceId)).orderBy(desc(socialContentItems.lastSeenAt)).limit(limit),
         this.database.select({ id: socialContentSyncStates.id, status: socialContentSyncStates.status, lastErrorCode: socialContentSyncStates.lastErrorCode, updatedAt: socialContentSyncStates.updatedAt }).from(socialContentSyncStates).where(eq(socialContentSyncStates.workspaceId, input.workspaceId)).orderBy(desc(socialContentSyncStates.updatedAt)).limit(5),
         this.database.select({ value: count() }).from(socialInteractions).where(and(eq(socialInteractions.workspaceId, input.workspaceId), eq(socialInteractions.status, "observed"))),
-        this.database.select({ id: socialInteractions.id, type: socialInteractions.type, direction: socialInteractions.direction, actorName: socialInteractions.actorName, body: socialInteractions.body, reaction: socialInteractions.reaction, occurredAt: socialInteractions.occurredAt, lastSeenAt: socialInteractions.lastSeenAt, postText: socialContentItems.text }).from(socialInteractions).innerJoin(socialContentItems, and(eq(socialContentItems.workspaceId, socialInteractions.workspaceId), eq(socialContentItems.id, socialInteractions.socialContentId))).where(and(eq(socialInteractions.workspaceId, input.workspaceId), eq(socialInteractions.status, "observed"))).orderBy(desc(socialInteractions.lastSeenAt)).limit(limit),
+        this.database.select({ id: socialInteractions.id, type: socialInteractions.type, direction: socialInteractions.direction, actorName: socialInteractions.actorName, body: socialInteractions.body, reaction: socialInteractions.reaction, occurredAt: socialInteractions.occurredAt, lastSeenAt: socialInteractions.lastSeenAt, postText: socialContentItems.text }).from(socialInteractions).innerJoin(socialContentItems, and(eq(socialContentItems.workspaceId, socialInteractions.workspaceId), eq(socialContentItems.id, socialInteractions.socialContentId))).where(and(
+          eq(socialInteractions.workspaceId, input.workspaceId),
+          eq(socialInteractions.status, "observed"),
+          ...(input.interactionType ? [eq(socialInteractions.type, input.interactionType)] : []),
+        )).orderBy(desc(socialInteractions.lastSeenAt), desc(socialInteractions.id)).limit(input.interactionType ? limit + 1 : limit).offset(input.interactionType ? offset : 0),
         this.database.select({ id: socialInteractionSyncStates.id, status: socialInteractionSyncStates.status, lastErrorCode: socialInteractionSyncStates.lastErrorCode, updatedAt: socialInteractionSyncStates.updatedAt }).from(socialInteractionSyncStates).where(eq(socialInteractionSyncStates.workspaceId, input.workspaceId)).orderBy(desc(socialInteractionSyncStates.updatedAt)).limit(5),
       ]);
-      const hasNext = ideas.length > limit;
-      const items = [
+      const hasNext = input.interactionType ? interactionRows.length > limit : ideas.length > limit;
+      const interactionItems = interactionRows.slice(0, limit).map((interaction) => ({
+        id: `social-interaction:${interaction.id}`,
+        kind: "signal" as const,
+        source: "inbound" as const,
+        status: "completed" as const,
+        title: socialInteractionTitle(interaction.type, interaction.direction, interaction.actorName),
+        detail: `${interaction.body ?? interaction.reaction ?? "Interaction observée"} · sur « ${unicodeExcerpt(interaction.postText, 80)} »`,
+        occurredAt: interaction.occurredAt ?? interaction.lastSeenAt,
+        href: "/content/calendar",
+        correlationId: null,
+      }));
+      const items = input.interactionType ? interactionItems : [
         ...interactionSyncRows.filter((state) => state.status === "error" || state.status === "syncing").map((state) => ({
           id: `engagement-sync:${state.id}`,
           kind: "job" as const,
@@ -358,17 +418,7 @@ export class PostgresOperationalViews {
           href: "/content/calendar",
           correlationId: `engagement-sync:${state.id}`,
         })),
-        ...interactionRows.map((interaction) => ({
-          id: `social-interaction:${interaction.id}`,
-          kind: "signal" as const,
-          source: "inbound" as const,
-          status: "completed" as const,
-          title: socialInteractionTitle(interaction.type, interaction.direction, interaction.actorName),
-          detail: `${interaction.body ?? interaction.reaction ?? "Interaction observée"} · sur « ${interaction.postText.slice(0, 80)}${interaction.postText.length > 80 ? "…" : ""} »`,
-          occurredAt: interaction.occurredAt ?? interaction.lastSeenAt,
-          href: "/content/calendar",
-          correlationId: null,
-        })),
+        ...interactionItems,
         ...socialSyncRows.filter((state) => state.status === "error" || state.status === "syncing").map((state) => ({
           id: `social-sync:${state.id}`,
           kind: "job" as const,
@@ -386,7 +436,7 @@ export class PostgresOperationalViews {
           source: "inbound" as const,
           status: "completed" as const,
           title: post.origin === "internal" ? "Post Noosphere observé sur LinkedIn" : "Post externe observé sur LinkedIn",
-          detail: `${post.text.slice(0, 120)}${post.text.length > 120 ? "…" : ""} · ${post.impressions ?? "—"} impressions · ${post.reactions ?? "—"} réactions · ${post.comments ?? "—"} commentaires${post.metricsObservedAt ? " · métriques actualisées" : ""}`,
+          detail: `${unicodeExcerpt(post.text, 120)} · ${post.impressions ?? "—"} impressions · ${post.reactions ?? "—"} réactions · ${post.comments ?? "—"} commentaires${post.metricsObservedAt ? " · métriques actualisées" : ""}`,
           occurredAt: post.lastSeenAt,
           href: "/content/calendar",
           correlationId: null,
@@ -458,14 +508,28 @@ export class PostgresOperationalViews {
         correlationId: null,
         })),
       ].slice(0, limit);
-      const failed = ideaRuns.some((run) => run.status === "failed") || generationRows.some((run) => run.status === "failed" || run.status === "blocked") || publicationRows.some((publication) => publication.status === "failed" || publication.status === "unknown") || socialSyncRows.some((state) => state.status === "error") || interactionSyncRows.some((state) => state.status === "error");
+      const contentUnavailable = valueOf(readyAssetCount) === 0
+        && generationRows.some((run) => run.status === "failed" || run.status === "blocked");
+      const failed = ideaRuns.some((run) => run.status === "failed")
+        || contentUnavailable
+        || publicationRows.some((publication) => publication.status === "failed" || publication.status === "unknown")
+        || socialSyncRows.some((state) => state.status === "error")
+        || interactionSyncRows.some((state) => state.status === "error");
       const running = ideaRuns.some((run) => run.status === "running" || run.status === "queued") || generationRows.some((run) => run.status === "running" || run.status === "queued") || publicationRows.some((publication) => publication.status === "publishing") || socialSyncRows.some((state) => state.status === "syncing") || interactionSyncRows.some((state) => state.status === "syncing");
       return {
         lens: input.lens,
         asOf,
         state: strategies.length ? (failed ? "attention" : running ? "active" : strategies[0]!.status === "active" ? "idle" : "attention") : "not_configured",
         quality: failed ? "partial" : "fresh",
-        headline: strategies.length ? (running ? "Le radar quotidien recherche et déduplique des angles sourcés." : schedule[0] ? `Le radar est prêt pour son prochain passage automatique.` : "La stratégie éditoriale LinkedIn est durable et ancrée dans l’offre et l’ICP publiés.") : "Publiez une offre et un ICP pour dériver la stratégie Inbound.",
+        headline: strategies.length
+          ? schedule[0] && !schedule[0].enabled
+            ? "L’Inbound est en pause : aucune nouvelle recherche ni publication automatique ne sera lancée."
+            : running
+              ? "Noosphere recherche, rédige ou publie actuellement un contenu LinkedIn."
+              : schedule[0]?.enabled
+              ? "L’Inbound est actif : Noosphere prépare les contenus puis les publie selon la cadence définie."
+              : "La stratégie est prête : démarrez l’Inbound pour rechercher, rédiger et publier automatiquement."
+          : "Publiez une offre et un ICP pour dériver la stratégie Inbound.",
         counters: [
           { key: "strategies", label: "Stratégies", value: strategies.length },
           { key: "versions", label: "Versions publiées", value: valueOf(versions) },
@@ -797,10 +861,57 @@ export class PostgresOperationalViews {
       socialConditions.push(sql`lower(concat_ws(' ', ct.first_name, ct.last_name, ac.display_name, i.actor_name, i.body, sc.text)) like ${query}`);
     }
     const socialWhere = sql.join(socialConditions, sql` AND `);
-    const conversationJoins = sql`FROM conversations c JOIN contacts ct ON ct.workspace_id = c.workspace_id AND ct.id = c.contact_id LEFT JOIN campaigns ca ON ca.workspace_id = c.workspace_id AND ca.id = c.campaign_id LEFT JOIN connected_accounts ac ON ac.workspace_id = c.workspace_id AND ac.id = c.connected_account_id LEFT JOIN LATERAL (SELECT m.body, m.direction, coalesce(m.sent_at, m.received_at, m.created_at) AS message_at FROM messages m WHERE m.workspace_id = c.workspace_id AND m.conversation_id = c.id ORDER BY coalesce(m.sent_at, m.received_at, m.created_at) DESC, m.created_at DESC LIMIT 1) lm ON true LEFT JOIN LATERAL (SELECT count(distinct i.id)::int AS event_count, max(coalesce(i.occurred_at, i.first_seen_at)) AS last_event_at, (array_agg(i.body ORDER BY coalesce(i.occurred_at, i.first_seen_at) DESC, i.id DESC))[1] AS last_event_body, (array_agg(sc.text ORDER BY coalesce(i.occurred_at, i.first_seen_at) DESC, i.id DESC))[1] AS post_text FROM attribution_touches touch JOIN social_interactions i ON i.workspace_id = touch.workspace_id AND i.id = touch.social_interaction_id AND i.status = 'observed' AND i.direction = 'incoming' AND i.type in ('comment', 'reply', 'mention') JOIN social_content_items sc ON sc.workspace_id = i.workspace_id AND sc.id = i.social_content_id WHERE touch.workspace_id = c.workspace_id AND touch.conversation_id = c.id AND touch.kind = 'conversation' AND touch.status = 'active' AND touch.certainty = 'evidence') social ON true`;
+    const conversationContext = sql`WITH social_events AS (
+      SELECT DISTINCT ON (touch.conversation_id, i.id)
+        touch.conversation_id,
+        i.id,
+        coalesce(i.occurred_at, i.first_seen_at) AS event_at,
+        i.body,
+        sc.text AS post_text
+      FROM attribution_touches touch
+      JOIN social_interactions i ON i.workspace_id = touch.workspace_id
+        AND i.id = touch.social_interaction_id
+        AND i.status = 'observed'
+        AND i.direction = 'incoming'
+        AND i.type in ('comment', 'reply', 'mention')
+      JOIN social_content_items sc ON sc.workspace_id = i.workspace_id
+        AND sc.id = i.social_content_id
+      WHERE touch.workspace_id = ${input.workspaceId}
+        AND touch.conversation_id is not null
+        AND touch.kind = 'conversation'
+        AND touch.status = 'active'
+        AND touch.certainty = 'evidence'
+      ORDER BY touch.conversation_id, i.id, touch.updated_at DESC
+    ), social AS (
+      SELECT
+        conversation_id,
+        count(*)::int AS event_count,
+        max(event_at) AS last_event_at,
+        (array_agg(body ORDER BY event_at DESC, id DESC))[1] AS last_event_body,
+        (array_agg(post_text ORDER BY event_at DESC, id DESC))[1] AS post_text
+      FROM social_events
+      GROUP BY conversation_id
+    ), latest_messages AS (
+      SELECT DISTINCT ON (m.conversation_id)
+        m.conversation_id,
+        m.body,
+        m.direction,
+        coalesce(m.sent_at, m.received_at, m.created_at) AS message_at
+      FROM messages m
+      WHERE m.workspace_id = ${input.workspaceId}
+      ORDER BY m.conversation_id, coalesce(m.sent_at, m.received_at, m.created_at) DESC, m.created_at DESC
+    )`;
+    const conversationBaseJoins = sql`FROM conversations c
+      JOIN contacts ct ON ct.workspace_id = c.workspace_id AND ct.id = c.contact_id
+      LEFT JOIN campaigns ca ON ca.workspace_id = c.workspace_id AND ca.id = c.campaign_id
+      LEFT JOIN connected_accounts ac ON ac.workspace_id = c.workspace_id AND ac.id = c.connected_account_id
+      LEFT JOIN social ON social.conversation_id = c.id`;
+    const conversationListJoins = sql`${conversationBaseJoins}
+      LEFT JOIN latest_messages lm ON lm.conversation_id = c.id`;
+    const conversationCountJoins = input.search?.trim() ? conversationListJoins : conversationBaseJoins;
     const [conversationRows, conversationTotalRows, socialRows, socialTotalRows, syncRows] = await Promise.all([
-      this.database.execute<ConversationRow>(sql`SELECT c.id, 'message_thread'::text AS conversation_kind, CASE WHEN c.campaign_id is not null AND coalesce(social.event_count, 0) > 0 THEN 'mixed' WHEN c.campaign_id is not null THEN 'outbound' WHEN coalesce(social.event_count, 0) > 0 THEN 'inbound' ELSE 'unknown' END AS source, c.contact_id, ct.first_name, ct.last_name, c.campaign_id, ca.name AS campaign_name, c.connected_account_id, ac.display_name AS account_name, c.channel, c.origin, c.automation_mode, c.subject, c.status, c.unread_count, coalesce(social.event_count, 0)::int AS social_event_count, greatest(c.last_message_at, social.last_event_at) AS last_message_at, CASE WHEN social.last_event_at is not null AND (lm.message_at is null OR social.last_event_at > lm.message_at) THEN social.last_event_body ELSE lm.body END AS last_message_body, CASE WHEN social.last_event_at is not null AND (lm.message_at is null OR social.last_event_at > lm.message_at) THEN 'social' ELSE lm.direction END AS last_message_direction, greatest(lm.message_at, social.last_event_at) AS last_message_at_actual ${conversationJoins} WHERE ${where} ORDER BY greatest(c.last_message_at, social.last_event_at) DESC, c.id DESC LIMIT ${mergedLimit}`),
-      this.database.execute<{ total: number | string }>(sql`SELECT count(*)::int AS total ${conversationJoins} WHERE ${where}`),
+      this.database.execute<ConversationRow>(sql`${conversationContext} SELECT c.id, 'message_thread'::text AS conversation_kind, CASE WHEN c.campaign_id is not null AND coalesce(social.event_count, 0) > 0 THEN 'mixed' WHEN c.campaign_id is not null THEN 'outbound' WHEN coalesce(social.event_count, 0) > 0 THEN 'inbound' ELSE 'unknown' END AS source, c.contact_id, ct.first_name, ct.last_name, c.campaign_id, ca.name AS campaign_name, c.connected_account_id, ac.display_name AS account_name, c.channel, c.origin, c.automation_mode, c.subject, c.status, c.unread_count, coalesce(social.event_count, 0)::int AS social_event_count, greatest(c.last_message_at, social.last_event_at) AS last_message_at, CASE WHEN social.last_event_at is not null AND (lm.message_at is null OR social.last_event_at > lm.message_at) THEN social.last_event_body ELSE lm.body END AS last_message_body, CASE WHEN social.last_event_at is not null AND (lm.message_at is null OR social.last_event_at > lm.message_at) THEN 'social' ELSE lm.direction END AS last_message_direction, greatest(lm.message_at, social.last_event_at) AS last_message_at_actual ${conversationListJoins} WHERE ${where} ORDER BY greatest(c.last_message_at, social.last_event_at) DESC, c.id DESC LIMIT ${mergedLimit}`),
+      this.database.execute<{ total: number | string }>(sql`${conversationContext} SELECT count(*)::int AS total ${conversationCountJoins} WHERE ${where}`),
       this.database.execute<ConversationRow>(sql`SELECT * FROM (SELECT DISTINCT ON (identity.contact_id, i.connected_account_id, i.social_content_id) i.id, 'social_thread'::text AS conversation_kind, 'inbound'::text AS source, identity.contact_id, ct.first_name, ct.last_name, null::uuid AS campaign_id, null::text AS campaign_name, i.connected_account_id, ac.display_name AS account_name, 'linkedin'::text AS channel, 'outside_campaign'::text AS origin, 'human'::text AS automation_mode, null::text AS subject, 'open'::text AS status, 0::int AS unread_count, count(*) OVER (PARTITION BY identity.contact_id, i.connected_account_id, i.social_content_id)::int AS social_event_count, max(coalesce(i.occurred_at, i.first_seen_at)) OVER (PARTITION BY identity.contact_id, i.connected_account_id, i.social_content_id) AS last_message_at, first_value(i.body) OVER (PARTITION BY identity.contact_id, i.connected_account_id, i.social_content_id ORDER BY coalesce(i.occurred_at, i.first_seen_at) DESC, i.id DESC) AS last_message_body, 'social'::text AS last_message_direction, max(coalesce(i.occurred_at, i.first_seen_at)) OVER (PARTITION BY identity.contact_id, i.connected_account_id, i.social_content_id) AS last_message_at_actual FROM social_interactions i JOIN attribution_touches identity ON identity.workspace_id = i.workspace_id AND identity.social_interaction_id = i.id JOIN contacts ct ON ct.workspace_id = identity.workspace_id AND ct.id = identity.contact_id JOIN connected_accounts ac ON ac.workspace_id = i.workspace_id AND ac.id = i.connected_account_id JOIN social_content_items sc ON sc.workspace_id = i.workspace_id AND sc.id = i.social_content_id WHERE ${socialWhere} ORDER BY identity.contact_id, i.connected_account_id, i.social_content_id, coalesce(i.occurred_at, i.first_seen_at) DESC, i.id DESC) social_threads ORDER BY last_message_at DESC, id DESC LIMIT ${mergedLimit}`),
       this.database.execute<{ total: number | string }>(sql`SELECT count(*)::int AS total FROM (SELECT identity.contact_id, i.connected_account_id, i.social_content_id FROM social_interactions i JOIN attribution_touches identity ON identity.workspace_id = i.workspace_id AND identity.social_interaction_id = i.id JOIN contacts ct ON ct.workspace_id = identity.workspace_id AND ct.id = identity.contact_id JOIN connected_accounts ac ON ac.workspace_id = i.workspace_id AND ac.id = i.connected_account_id JOIN social_content_items sc ON sc.workspace_id = i.workspace_id AND sc.id = i.social_content_id WHERE ${socialWhere} GROUP BY identity.contact_id, i.connected_account_id, i.social_content_id) social_threads`),
       this.database.execute<InboxSyncRow>(sql`SELECT count(ac.id)::int AS total_accounts, count(ac.id) FILTER (WHERE s.backfill_complete = true AND s.status = 'idle')::int AS ready_accounts, count(ac.id) FILTER (WHERE s.id IS NULL OR s.backfill_complete = false OR s.status = 'syncing')::int AS backfilling_accounts, count(ac.id) FILTER (WHERE s.status = 'error')::int AS error_accounts, max(s.last_success_at) AS last_success_at FROM connected_accounts ac LEFT JOIN inbox_sync_states s ON s.workspace_id = ac.workspace_id AND s.connected_account_id = ac.id WHERE ac.workspace_id = ${input.workspaceId} AND ac.provider = 'unipile' AND ac.status = 'connected' AND (ac.capabilities ? 'linkedin' OR ac.capabilities ? 'email' OR ac.capabilities ? 'whatsapp')`),
@@ -1113,7 +1224,7 @@ function symbiosisSignalTitle(type: string, contactName: string | null, resolved
 }
 
 function symbiosisSignalDetail(input: { type: string; postText: string; confidence: number; resolved: boolean; ambiguous: boolean; pending: boolean; hasConversation: boolean; hasCall: boolean }): string {
-  const excerpt = `${input.postText.slice(0, 72)}${input.postText.length > 72 ? "…" : ""}`;
+  const excerpt = unicodeExcerpt(input.postText, 72);
   if (input.type === "reaction") {
     const identity = input.resolved ? `identité exacte ${Math.round(input.confidence * 100)} %` : input.ambiguous ? "identité ambiguë" : input.pending ? "résolution en cours" : "identité inconnue";
     return `Aucun message automatique · ${identity} · sur « ${excerpt} »`;
@@ -1121,6 +1232,13 @@ function symbiosisSignalDetail(input: { type: string; postText: string; confiden
   if (!input.resolved) return `${input.pending ? "Résolution exacte en cours" : input.ambiguous ? "Deux identités exactes se contredisent" : "Aucune identité exacte"} · aucune activation automatique · sur « ${excerpt} »`;
   const outcomes = [input.hasConversation ? "conversation reliée" : null, input.hasCall ? "appel attribué par inférence" : null].filter(Boolean).join(" · ");
   return `Identité prouvée ${Math.round(input.confidence * 100)} %${outcomes ? ` · ${outcomes}` : " · aucune suite observée"} · sur « ${excerpt} »`;
+}
+
+function unicodeExcerpt(value: string, maxCodePoints: number): string {
+  const codePoints = Array.from(value);
+  return codePoints.length > maxCodePoints
+    ? `${codePoints.slice(0, maxCodePoints).join("")}…`
+    : value;
 }
 
 function activityPriority(status: "pending" | "running" | "completed" | "attention"): number {

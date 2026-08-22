@@ -24,7 +24,7 @@ import {
 import { createProductResearchHttpHandler } from "@outbound/interface/http/product-research-handler";
 import { validOutputFor } from "../fixtures/research-agent-fixtures";
 
-const databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
+const databaseUrl = process.env.TEST_DATABASE_URL;
 const databaseDescribe = databaseUrl ? describe : describe.skip;
 
 databaseDescribe("F-011 human review and publication", () => {

@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { and, count, eq } from "drizzle-orm";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import type { InboundReplyAgent } from "@outbound/application/campaigns/inbound-reply-agent";
+import { OutboundDeliveryError } from "@outbound/application/campaigns/outbound-channel-gateway";
 import { PROSPECT_DECISION_JOB_TYPE } from "@outbound/application/campaigns/prospect-decision";
 import type { LeasedJob } from "@outbound/application/jobs/job-queue";
 import { createDatabase } from "@outbound/infrastructure/database/client";
@@ -18,6 +19,7 @@ import {
   jobs,
   outboxEvents,
   outreachActions,
+  outreachAttempts,
   prospectDecisions,
   prospectDiscoveryCandidates,
   prospectDiscoveryRuns,
@@ -27,13 +29,15 @@ import {
   workspaces,
 } from "@outbound/infrastructure/database/schema";
 import { InboundReplyJobProcessor } from "@outbound/infrastructure/campaigns/inbound-reply-runner";
+import { CampaignHealthReconciler } from "@outbound/infrastructure/campaigns/campaign-health-reconciler";
 import { OutreachDispatchJobProcessor } from "@outbound/infrastructure/campaigns/outreach-dispatch-runner";
 import { PostgresProspectDecisionScheduler } from "@outbound/infrastructure/campaigns/postgres-prospect-decision-scheduler";
 import { ProspectDecisionJobProcessor } from "@outbound/infrastructure/campaigns/prospect-decision-runner";
 import { UnipileWebhookIngestor } from "@outbound/infrastructure/campaigns/unipile-webhook-ingestor";
 import { PostgresJobQueue } from "@outbound/infrastructure/jobs/postgres-job-queue";
+import { PostgresJobOutcomeReconciler } from "@outbound/infrastructure/jobs/postgres-job-outcome-reconciler";
 
-const databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
+const databaseUrl = process.env.TEST_DATABASE_URL;
 const databaseDescribe = databaseUrl ? describe : describe.skip;
 
 databaseDescribe("outbound send safety", () => {
@@ -252,6 +256,559 @@ databaseDescribe("outbound send safety", () => {
       status: "sent",
       lastErrorCode: null,
     });
+  });
+
+  test("a recent LinkedIn invitation waits seven days without consuming the delivery retry budget", async () => {
+    await database.client`delete from jobs where workspace_id = ${workspaceId}`;
+    await database.db
+      .update(campaignEnrollments)
+      .set({ status: "cancelled", completedAt: now })
+      .where(and(eq(campaignEnrollments.workspaceId, workspaceId), eq(campaignEnrollments.contactId, contactId)));
+    const fixture = await campaignFixture("recent-invite", `recent-invite-account-${workspaceId}`, "scheduled");
+    await database.db
+      .update(outreachActions)
+      .set({ stepKind: "linkedin_invite", contentSnapshot: {
+        body: "",
+        subject: null,
+        recipient: {
+          value: "Marie Durand",
+          normalizedValue: "linkedin.com/in/marie-durand",
+          providerUserId: `person-${fixture.actionId}`,
+        },
+      } })
+      .where(and(eq(outreachActions.workspaceId, workspaceId), eq(outreachActions.id, fixture.actionId)));
+    const dispatchJob = await leasedJob(fixture.actionId, "recent-invite-worker");
+
+    await new OutreachDispatchJobProcessor(
+      database.db,
+      queue,
+      {
+        async send() {
+          throw new OutboundDeliveryError(
+            "LINKEDIN_INVITE_RECENT",
+            "A LinkedIn invitation was already sent recently",
+            "not_sent",
+            true,
+          );
+        },
+      },
+      clock,
+    ).process(dispatchJob);
+
+    const expectedAt = new Date(now.getTime() + 7 * 86_400_000);
+    expect(await action(fixture.actionId)).toMatchObject({
+      status: "scheduled",
+      dueAt: expectedAt,
+      lastErrorCode: "LINKEDIN_INVITE_RECENT",
+    });
+    const [deferredJob] = await database.db
+      .select()
+      .from(jobs)
+      .where(and(eq(jobs.workspaceId, workspaceId), eq(jobs.id, dispatchJob.id)));
+    expect(deferredJob).toMatchObject({
+      status: "pending",
+      attempts: 0,
+      availableAt: expectedAt,
+      lastErrorCode: "LINKEDIN_INVITE_RECENT",
+    });
+    await database.db
+      .update(campaignEnrollments)
+      .set({ status: "cancelled", completedAt: now })
+      .where(and(eq(campaignEnrollments.workspaceId, workspaceId), eq(campaignEnrollments.id, fixture.enrollmentId)));
+  });
+
+  test("the delivery attempt is durably visible before the provider is called", async () => {
+    await database.client`delete from jobs where workspace_id = ${workspaceId}`;
+    await database.db
+      .update(campaignEnrollments)
+      .set({ status: "cancelled", completedAt: now })
+      .where(and(eq(campaignEnrollments.workspaceId, workspaceId), eq(campaignEnrollments.contactId, contactId)));
+    const fixture = await campaignFixture("durable-attempt", `durable-attempt-account-${workspaceId}`, "scheduled");
+    const dispatchJob = await leasedJob(fixture.actionId, "durable-attempt-worker");
+    let attemptVisibleBeforeProvider = false;
+
+    await new OutreachDispatchJobProcessor(
+      database.db,
+      queue,
+      {
+        async send() {
+          const [attempt] = await database.db
+            .select({ id: outreachAttempts.id, status: outreachAttempts.status })
+            .from(outreachAttempts)
+            .where(and(
+              eq(outreachAttempts.workspaceId, workspaceId),
+              eq(outreachAttempts.outreachActionId, fixture.actionId),
+            ))
+            .limit(1);
+          attemptVisibleBeforeProvider = attempt?.status === "executing";
+          throw new OutboundDeliveryError("FIXTURE_NOT_SENT", "Fixture refusal before delivery", "not_sent", true);
+        },
+      },
+      clock,
+    ).process(dispatchJob);
+
+    expect(attemptVisibleBeforeProvider).toBe(true);
+    await database.db
+      .update(campaignEnrollments)
+      .set({ status: "cancelled", completedAt: now })
+      .where(and(eq(campaignEnrollments.workspaceId, workspaceId), eq(campaignEnrollments.id, fixture.enrollmentId)));
+  });
+
+  test("a provider refusal proven as not sent is reconciled into one durable retry", async () => {
+    await database.client`delete from jobs where workspace_id = ${workspaceId}`;
+    const recoveryContactId = crypto.randomUUID();
+    await database.db.insert(contacts).values({
+      id: recoveryContactId,
+      workspaceId,
+      firstName: "Recoverable",
+      lastName: "Refusal",
+    });
+    const fixture = await campaignFixture(
+      "recoverable-provider-refusal",
+      `recoverable-account-${workspaceId}`,
+      "scheduled",
+      0,
+      recoveryContactId,
+    );
+    const attemptId = crypto.randomUUID();
+    const providerError = "Unipile returned 422: {\"type\":\"errors/limit_exceeded\",\"detail\":\"You have reached the usage limit set by the provider for the current period.\"}";
+    await database.db.update(outreachActions).set({
+      status: "failed",
+      lastErrorCode: "ACTION_EXECUTION_STATE_UNKNOWN",
+      lastErrorMessage: "Provider outcome was not classified",
+      updatedAt: now,
+    }).where(and(eq(outreachActions.workspaceId, workspaceId), eq(outreachActions.id, fixture.actionId)));
+    await database.db.update(campaigns).set({
+      automationStage: "attention",
+      automationErrorCode: "UNIPILE_422",
+      automationErrorMessage: providerError,
+      updatedAt: now,
+    }).where(and(eq(campaigns.workspaceId, workspaceId), eq(campaigns.id, fixture.campaignId)));
+    await database.db.update(campaignEnrollments).set({ status: "cancelled", completedAt: now })
+      .where(and(eq(campaignEnrollments.workspaceId, workspaceId), eq(campaignEnrollments.id, fixture.enrollmentId)));
+    await database.db.insert(outreachAttempts).values({
+      id: attemptId,
+      workspaceId,
+      actionId: fixture.actionId,
+      outreachActionId: fixture.actionId,
+      attempt: 1,
+      attemptNumber: 1,
+      status: "unknown",
+      errorCode: "UNIPILE_422",
+      errorMessage: providerError,
+      attemptedAt: now,
+      startedAt: now,
+    });
+
+    const reconciler = new PostgresJobOutcomeReconciler(database.db, clock);
+    expect(await reconciler.reconcileRecoverableOutreachActions()).toBe(1);
+    expect(await reconciler.reconcileRecoverableOutreachActions()).toBe(0);
+    const expectedAt = new Date(now.getTime() + 8 * 60 * 60_000);
+    expect(await action(fixture.actionId)).toMatchObject({
+      status: "scheduled",
+      dueAt: expectedAt,
+      lastErrorCode: "UNIPILE_PROVIDER_LIMIT",
+    });
+    const [enrollment] = await database.db.select().from(campaignEnrollments).where(and(
+      eq(campaignEnrollments.workspaceId, workspaceId),
+      eq(campaignEnrollments.id, fixture.enrollmentId),
+    ));
+    expect(enrollment).toMatchObject({ status: "active", completedAt: null });
+    const recoveryJobs = await database.db.select().from(jobs).where(and(
+      eq(jobs.workspaceId, workspaceId),
+      eq(jobs.type, "outreach.dispatch"),
+    ));
+    expect(recoveryJobs.filter((job) => (job.payload as { actionId?: string }).actionId === fixture.actionId)).toHaveLength(1);
+    expect(recoveryJobs.find((job) => (job.payload as { actionId?: string }).actionId === fixture.actionId)).toMatchObject({
+      status: "pending",
+      attempts: 0,
+      availableAt: expectedAt,
+    });
+    expect(await new CampaignHealthReconciler(database.db, clock).reconcile()).toBeGreaterThanOrEqual(1);
+    const [recoveredCampaign] = await database.db.select().from(campaigns).where(and(
+      eq(campaigns.workspaceId, workspaceId),
+      eq(campaigns.id, fixture.campaignId),
+    ));
+    expect(recoveredCampaign).toMatchObject({
+      status: "active",
+      automationStage: "running",
+      automationErrorCode: null,
+      automationErrorMessage: null,
+    });
+    await database.db.update(campaignEnrollments).set({ status: "cancelled", completedAt: now })
+      .where(and(eq(campaignEnrollments.workspaceId, workspaceId), eq(campaignEnrollments.id, fixture.enrollmentId)));
+  });
+
+  test("an exhausted pre-send window wait resumes and clears its obsolete queue failure without a provider attempt", async () => {
+    await database.client`delete from jobs where workspace_id = ${workspaceId}`;
+    const waitingContactId = crypto.randomUUID();
+    await database.db.insert(contacts).values({
+      id: waitingContactId,
+      workspaceId,
+      firstName: "Pre-send",
+      lastName: "Wait",
+    });
+    const fixture = await campaignFixture(
+      "exhausted-pre-send-wait",
+      `pre-send-wait-account-${workspaceId}`,
+      "scheduled",
+      0,
+      waitingContactId,
+    );
+    await database.db.update(outreachActions).set({
+      status: "failed",
+      lastErrorCode: "OUTSIDE_SENDING_WINDOW_EXHAUSTED",
+      lastErrorMessage: "Action reportée au prochain créneau du destinataire. Le nombre maximal de reports a été atteint.",
+      updatedAt: now,
+    }).where(and(eq(outreachActions.workspaceId, workspaceId), eq(outreachActions.id, fixture.actionId)));
+    await database.db.update(campaignEnrollments).set({ status: "cancelled", completedAt: now })
+      .where(and(eq(campaignEnrollments.workspaceId, workspaceId), eq(campaignEnrollments.id, fixture.enrollmentId)));
+    await database.db.update(campaigns).set({
+      automationStage: "attention",
+      automationErrorCode: "OUTSIDE_SENDING_WINDOW_EXHAUSTED",
+      automationErrorMessage: "The old queue exhausted a schedule wait",
+      updatedAt: now,
+    }).where(and(eq(campaigns.workspaceId, workspaceId), eq(campaigns.id, fixture.campaignId)));
+    const exhaustedJobId = crypto.randomUUID();
+    await database.db.insert(jobs).values({
+      id: exhaustedJobId,
+      workspaceId,
+      type: "outreach.dispatch",
+      payload: { workspaceId, actionId: fixture.actionId },
+      idempotencyKey: `${fixture.actionId}:dispatch:legacy-window-wait`,
+      correlationId: fixture.actionId,
+      status: "dead_lettered",
+      attempts: 5,
+      maxAttempts: 5,
+      availableAt: now,
+      completedAt: now,
+      lastErrorCode: "OUTSIDE_SENDING_WINDOW",
+      lastErrorMessage: "Action reportée au prochain créneau du destinataire.",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const reconciler = new PostgresJobOutcomeReconciler(database.db, clock);
+    expect(await reconciler.reconcileExhaustedPreSendWaits()).toBeGreaterThanOrEqual(1);
+    expect(await reconciler.reconcileExhaustedPreSendWaits()).toBe(0);
+    expect(await action(fixture.actionId)).toMatchObject({
+      status: "scheduled",
+      dueAt: now,
+      lastErrorCode: "OUTSIDE_SENDING_WINDOW",
+    });
+    const relatedAttempts = await database.db.select().from(outreachAttempts).where(and(
+      eq(outreachAttempts.workspaceId, workspaceId),
+      eq(outreachAttempts.outreachActionId, fixture.actionId),
+    ));
+    expect(relatedAttempts).toHaveLength(0);
+    const relatedJobs = await database.db.select().from(jobs).where(and(
+      eq(jobs.workspaceId, workspaceId),
+      eq(jobs.type, "outreach.dispatch"),
+    ));
+    expect(relatedJobs.filter((job) => (
+      (job.payload as { actionId?: string }).actionId === fixture.actionId
+      && ["pending", "running", "retry"].includes(job.status)
+    ))).toHaveLength(1);
+    expect(relatedJobs.find((job) => job.id === exhaustedJobId)).toMatchObject({
+      status: "completed",
+      lastErrorCode: "JOB_OUTCOME_RECONCILED",
+    });
+    await database.db.update(jobs).set({
+      status: "dead_lettered",
+      attempts: 5,
+      completedAt: now,
+      lastErrorCode: "OUTSIDE_SENDING_WINDOW",
+      lastErrorMessage: "Legacy failure left behind by an older worker.",
+      updatedAt: now,
+    }).where(and(eq(jobs.workspaceId, workspaceId), eq(jobs.id, exhaustedJobId)));
+    expect(await reconciler.reconcileExhaustedPreSendWaits()).toBe(1);
+    expect(await reconciler.reconcileExhaustedPreSendWaits()).toBe(0);
+    const [historicalFailure] = await database.db.select().from(jobs).where(and(
+      eq(jobs.workspaceId, workspaceId),
+      eq(jobs.id, exhaustedJobId),
+    ));
+    expect(historicalFailure).toMatchObject({
+      status: "completed",
+      lastErrorCode: "JOB_OUTCOME_RECONCILED",
+    });
+    expect(await new CampaignHealthReconciler(database.db, clock).reconcile()).toBe(1);
+    const [recoveredCampaign] = await database.db.select().from(campaigns).where(and(
+      eq(campaigns.workspaceId, workspaceId),
+      eq(campaigns.id, fixture.campaignId),
+    ));
+    expect(recoveredCampaign).toMatchObject({
+      status: "active",
+      automationStage: "running",
+      automationErrorCode: null,
+    });
+    await database.db.update(campaignEnrollments).set({ status: "cancelled", completedAt: now })
+      .where(and(eq(campaignEnrollments.workspaceId, workspaceId), eq(campaignEnrollments.id, fixture.enrollmentId)));
+  });
+
+  test("an unknown action with no durable provider attempt is proven not sent and resumes automatically", async () => {
+    await database.client`delete from jobs where workspace_id = ${workspaceId}`;
+    const recoveryContactId = crypto.randomUUID();
+    await database.db.insert(contacts).values({
+      id: recoveryContactId,
+      workspaceId,
+      firstName: "Pre-provider",
+      lastName: "Recovery",
+    });
+    const fixture = await campaignFixture(
+      "unknown-before-provider-call",
+      `unknown-pre-provider-account-${workspaceId}`,
+      "scheduled",
+      0,
+      recoveryContactId,
+    );
+    await database.db.update(outreachActions).set({
+      status: "failed",
+      lastErrorCode: "ACTION_EXECUTION_STATE_UNKNOWN",
+      lastErrorMessage: "Lease expired before a durable provider attempt existed.",
+      updatedAt: now,
+    }).where(and(eq(outreachActions.workspaceId, workspaceId), eq(outreachActions.id, fixture.actionId)));
+    await database.db.update(campaignEnrollments).set({ status: "cancelled", completedAt: now })
+      .where(and(eq(campaignEnrollments.workspaceId, workspaceId), eq(campaignEnrollments.id, fixture.enrollmentId)));
+    await database.db.update(campaigns).set({
+      automationStage: "attention",
+      automationErrorCode: "ACTION_EXECUTION_STATE_UNKNOWN",
+      automationErrorMessage: "A prior lease expired.",
+      updatedAt: now,
+    }).where(and(eq(campaigns.workspaceId, workspaceId), eq(campaigns.id, fixture.campaignId)));
+
+    const reconciler = new PostgresJobOutcomeReconciler(database.db, clock);
+    expect(await reconciler.reconcileExhaustedPreSendWaits()).toBe(1);
+    expect(await reconciler.reconcileExhaustedPreSendWaits()).toBe(0);
+    expect(await action(fixture.actionId)).toMatchObject({
+      status: "scheduled",
+      dueAt: now,
+      lastErrorCode: "PROVEN_NOT_SENT_RECOVERED",
+    });
+    expect(await database.db.select().from(outreachAttempts).where(and(
+      eq(outreachAttempts.workspaceId, workspaceId),
+      eq(outreachAttempts.outreachActionId, fixture.actionId),
+    ))).toHaveLength(0);
+    const recoveryJobs = await database.db.select().from(jobs).where(and(
+      eq(jobs.workspaceId, workspaceId),
+      eq(jobs.type, "outreach.dispatch"),
+    ));
+    expect(recoveryJobs.filter((job) => (job.payload as { actionId?: string }).actionId === fixture.actionId)).toHaveLength(1);
+    expect(await new CampaignHealthReconciler(database.db, clock).reconcile()).toBe(1);
+    const [recoveredCampaign] = await database.db.select().from(campaigns).where(and(
+      eq(campaigns.workspaceId, workspaceId),
+      eq(campaigns.id, fixture.campaignId),
+    ));
+    expect(recoveredCampaign).toMatchObject({ status: "active", automationStage: "running", automationErrorCode: null });
+    await database.db.update(campaignEnrollments).set({ status: "cancelled", completedAt: now })
+      .where(and(eq(campaignEnrollments.workspaceId, workspaceId), eq(campaignEnrollments.id, fixture.enrollmentId)));
+  });
+
+  test("a provider-free campaign composition repairs itself once and then stays failed closed", async () => {
+    await database.client`delete from jobs where workspace_id = ${workspaceId}`;
+    const composingContactId = crypto.randomUUID();
+    await database.db.insert(contacts).values({
+      id: composingContactId,
+      workspaceId,
+      firstName: "Composition",
+      lastName: "Repair",
+    });
+    const fixture = await campaignFixture(
+      "campaign-composition-repair",
+      `composition-repair-account-${workspaceId}`,
+      "scheduled",
+      0,
+      composingContactId,
+    );
+    const compositionJobId = crypto.randomUUID();
+    await database.db.insert(jobs).values({
+      id: compositionJobId,
+      workspaceId,
+      type: "campaign.messages.compose",
+      payload: { workspaceId, campaignId: fixture.campaignId, incremental: true, candidateIds: [] },
+      idempotencyKey: `${fixture.campaignId}:compose:legacy-failure`,
+      correlationId: fixture.campaignId,
+      status: "dead_lettered",
+      attempts: 3,
+      maxAttempts: 3,
+      availableAt: now,
+      completedAt: now,
+      lastErrorCode: "CAMPAIGN_COMPOSITION_FAILED",
+      lastErrorMessage: "CAMPAIGN_EDITORIAL_REVIEW_TOOL_CALL_MISSING",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const reconciler = new PostgresJobOutcomeReconciler(database.db, clock);
+    expect(await reconciler.reconcile()).toBe(1);
+    const [repaired] = await database.db.select().from(jobs).where(and(
+      eq(jobs.workspaceId, workspaceId),
+      eq(jobs.id, compositionJobId),
+    ));
+    expect(repaired).toMatchObject({
+      status: "pending",
+      attempts: 0,
+      completedAt: null,
+      lastErrorCode: "JOB_RECONCILED",
+      payload: {
+        workspaceId,
+        campaignId: fixture.campaignId,
+        incremental: true,
+        candidateIds: [],
+        _reconciliationAttempts: 1,
+      },
+    });
+    const providerAttempts = await database.db.select().from(outreachAttempts).where(and(
+      eq(outreachAttempts.workspaceId, workspaceId),
+      eq(outreachAttempts.outreachActionId, fixture.actionId),
+    ));
+    expect(providerAttempts).toHaveLength(0);
+
+    await database.db.update(jobs).set({
+      status: "dead_lettered",
+      attempts: 3,
+      completedAt: now,
+      lastErrorCode: "CAMPAIGN_COMPOSITION_FAILED",
+      lastErrorMessage: "SEQUENCE_ENROLLMENT_CREATE_FAILED",
+      updatedAt: now,
+    }).where(and(eq(jobs.workspaceId, workspaceId), eq(jobs.id, compositionJobId)));
+    expect(await reconciler.reconcile()).toBe(0);
+    const [exhausted] = await database.db.select().from(jobs).where(and(
+      eq(jobs.workspaceId, workspaceId),
+      eq(jobs.id, compositionJobId),
+    ));
+    expect(exhausted).toMatchObject({ status: "dead_lettered", attempts: 3 });
+    await database.db.update(campaignEnrollments).set({ status: "cancelled", completedAt: now })
+      .where(and(eq(campaignEnrollments.workspaceId, workspaceId), eq(campaignEnrollments.id, fixture.enrollmentId)));
+  });
+
+  test("a completed composition clears its obsolete campaign attention without a provider attempt", async () => {
+    await database.client`delete from jobs where workspace_id = ${workspaceId}`;
+    const recoveredContactId = crypto.randomUUID();
+    await database.db.insert(contacts).values({
+      id: recoveredContactId,
+      workspaceId,
+      firstName: "Recovered",
+      lastName: "Composition",
+    });
+    const fixture = await campaignFixture(
+      "completed-composition-health",
+      `completed-composition-account-${workspaceId}`,
+      "scheduled",
+      0,
+      recoveredContactId,
+    );
+    await database.db.update(campaigns).set({
+      automationStage: "attention",
+      automationErrorCode: "CAMPAIGN_COMPOSITION_FAILED",
+      automationErrorMessage: "The previous model request failed before the repaired retry completed.",
+      updatedAt: now,
+    }).where(and(eq(campaigns.workspaceId, workspaceId), eq(campaigns.id, fixture.campaignId)));
+    await database.db.insert(jobs).values({
+      id: crypto.randomUUID(),
+      workspaceId,
+      type: "campaign.messages.compose",
+      payload: { workspaceId, campaignId: fixture.campaignId, incremental: true, candidateIds: [] },
+      idempotencyKey: `${fixture.campaignId}:compose:completed-recovery`,
+      correlationId: fixture.campaignId,
+      status: "completed",
+      attempts: 2,
+      maxAttempts: 3,
+      availableAt: now,
+      completedAt: new Date(now.getTime() + 1_000),
+      lastErrorCode: "CAMPAIGN_COMPOSITION_FAILED",
+      lastErrorMessage: "The first attempt failed but the retry completed.",
+      createdAt: now,
+      updatedAt: new Date(now.getTime() + 1_000),
+    });
+
+    expect(await new CampaignHealthReconciler(database.db, clock).reconcile()).toBe(1);
+    const [campaign] = await database.db.select().from(campaigns).where(and(
+      eq(campaigns.workspaceId, workspaceId),
+      eq(campaigns.id, fixture.campaignId),
+    ));
+    expect(campaign).toMatchObject({
+      status: "active",
+      automationStage: "running",
+      automationErrorCode: null,
+      automationErrorMessage: null,
+    });
+    const providerAttempts = await database.db.select().from(outreachAttempts).where(and(
+      eq(outreachAttempts.workspaceId, workspaceId),
+      eq(outreachAttempts.outreachActionId, fixture.actionId),
+    ));
+    expect(providerAttempts).toHaveLength(0);
+    await database.db.update(campaignEnrollments).set({ status: "cancelled", completedAt: now })
+      .where(and(eq(campaignEnrollments.workspaceId, workspaceId), eq(campaignEnrollments.id, fixture.enrollmentId)));
+  });
+
+  test("an expired provider execution fails closed without recreating a delivery", async () => {
+    await database.db
+      .update(campaignEnrollments)
+      .set({ status: "cancelled", completedAt: now })
+      .where(and(eq(campaignEnrollments.workspaceId, workspaceId), eq(campaignEnrollments.contactId, contactId)));
+    const fixture = await campaignFixture("lost-provider-result", `lost-account-${workspaceId}`, "executing");
+    await database.db.update(outreachActions).set({
+      lockedAt: new Date(now.getTime() - 120_000),
+      lockedUntil: new Date(now.getTime() - 60_000),
+    }).where(and(eq(outreachActions.workspaceId, workspaceId), eq(outreachActions.id, fixture.actionId)));
+
+    const reconciler = new PostgresJobOutcomeReconciler(database.db, clock);
+    expect(await reconciler.reconcileStaleOutreachActions()).toBe(1);
+    expect(await action(fixture.actionId)).toMatchObject({
+      status: "failed",
+      lastErrorCode: "ACTION_EXECUTION_STATE_UNKNOWN",
+      lockedAt: null,
+      lockedUntil: null,
+    });
+    expect(await reconciler.reconcileStaleOutreachActions()).toBe(0);
+    const relatedJobs = await database.db.select().from(jobs).where(and(
+      eq(jobs.workspaceId, workspaceId),
+      eq(jobs.type, "outreach.dispatch"),
+    ));
+    expect(relatedJobs.some((job) => (job.payload as { actionId?: string }).actionId === fixture.actionId)).toBe(false);
+  });
+
+  test("campaign health surfaces a failed delivery even when the campaign was still marked sending", async () => {
+    const healthContactId = crypto.randomUUID();
+    await database.db.insert(contacts).values({
+      id: healthContactId,
+      workspaceId,
+      firstName: "Campaign",
+      lastName: "Health",
+    });
+    const fixture = await campaignFixture(
+      "failed-health-projection",
+      `failed-health-account-${workspaceId}`,
+      "scheduled",
+      0,
+      healthContactId,
+    );
+    await database.db.update(outreachActions).set({
+      status: "failed",
+      lastErrorCode: "UNIPILE_PROVIDER_LIMIT",
+      lastErrorMessage: "Provider refused the delivery",
+      updatedAt: now,
+    }).where(and(eq(outreachActions.workspaceId, workspaceId), eq(outreachActions.id, fixture.actionId)));
+    await database.db.update(campaigns).set({
+      automationStage: "sending",
+      automationErrorCode: null,
+      automationErrorMessage: null,
+      updatedAt: now,
+    }).where(and(eq(campaigns.workspaceId, workspaceId), eq(campaigns.id, fixture.campaignId)));
+
+    await new CampaignHealthReconciler(database.db, clock).reconcile();
+
+    const [campaign] = await database.db.select().from(campaigns).where(and(
+      eq(campaigns.workspaceId, workspaceId),
+      eq(campaigns.id, fixture.campaignId),
+    ));
+    expect(campaign).toMatchObject({
+      status: "active",
+      automationStage: "attention",
+      automationErrorCode: "UNIPILE_PROVIDER_LIMIT",
+    });
+    await database.db.update(campaignEnrollments).set({ status: "cancelled", completedAt: now })
+      .where(and(eq(campaignEnrollments.workspaceId, workspaceId), eq(campaignEnrollments.id, fixture.enrollmentId)));
   });
 
   test("a current account mapping wins over historical actions from another workspace", async () => {
@@ -488,6 +1045,7 @@ databaseDescribe("outbound send safety", () => {
     accountId: string,
     status: "cancelled" | "scheduled" | "executing" = "cancelled",
     dueOffsetMs = 0,
+    fixtureContactId = contactId,
   ) {
     const sequenceId = crypto.randomUUID();
     const sequenceVersionId = crypto.randomUUID();
@@ -523,7 +1081,7 @@ databaseDescribe("outbound send safety", () => {
       id: enrollmentId,
       workspaceId,
       campaignId,
-      contactId,
+      contactId: fixtureContactId,
       sequenceVersionId,
       status: status === "cancelled" ? "cancelled" : "active",
       completedAt: status === "cancelled" ? now : null,
@@ -534,7 +1092,7 @@ databaseDescribe("outbound send safety", () => {
       campaignId,
       enrollmentId,
       candidateId,
-      contactId,
+      contactId: fixtureContactId,
       sequenceVersionId,
       providerAccountId: accountId,
       channel: "linkedin",

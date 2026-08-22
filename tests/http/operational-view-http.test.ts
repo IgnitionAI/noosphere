@@ -16,7 +16,11 @@ describe("workspace operational view HTTP routes", () => {
 
     const activity = await handler(new Request("http://localhost/api/v1/activity?lens=outbound&cursor=25"));
     expect(activity.status).toBe(200);
-    expect(calls.at(-1)).toBe(`activity:${workspaceId}:outbound:25`);
+    expect(calls.at(-1)).toBe(`activity:${workspaceId}:outbound:all:25`);
+
+    const replies = await handler(new Request("http://localhost/api/v1/activity?lens=inbound&interactionType=reply"));
+    expect(replies.status).toBe(200);
+    expect(calls.at(-1)).toBe(`activity:${workspaceId}:inbound:reply:0`);
 
     const conversations = await handler(new Request("http://localhost/api/v1/conversations?channel=linkedin&scope=outside_campaign&source=inbound&page=2&pageSize=10&search=salim"));
     expect(conversations.status).toBe(200);
@@ -55,12 +59,16 @@ describe("workspace operational view HTTP routes", () => {
       expect(response.status).toBe(200);
     }
     expect(calls).toEqual([
-      `activity:${workspaceId}:inbound:0`,
-      `activity:${workspaceId}:symbiosis:0`,
-      `activity:${workspaceId}:outbound:0`,
+      `activity:${workspaceId}:inbound:all:0`,
+      `activity:${workspaceId}:symbiosis:all:0`,
+      `activity:${workspaceId}:outbound:all:0`,
     ]);
     const invalid = await handler(new Request("http://localhost/api/v1/activity?lens=command"));
     expect(invalid.status).toBe(422);
+    const invalidType = await handler(new Request("http://localhost/api/v1/activity?lens=inbound&interactionType=shared"));
+    expect(invalidType.status).toBe(422);
+    const invalidLensCombination = await handler(new Request("http://localhost/api/v1/activity?lens=outbound&interactionType=reply"));
+    expect(invalidLensCombination.status).toBe(422);
   });
 });
 
@@ -70,8 +78,8 @@ function context(role: "viewer") {
 
 function fakeViews(calls: string[]): OperationalViewsPort {
   return {
-    async getSummary(receivedWorkspaceId) { calls.push(`summary:${receivedWorkspaceId}`); return { asOf: new Date(), counts: { activeCampaigns: 0, prospects: 0, openConversations: 0, openOpportunities: 0, bookedCalls: 0, attention: 0 }, attention: [], jobs: { active: 0, failed: 0, running: [] }, nextAutomaticResearch: null, accountHealth: { connected: 0, degraded: 0, disconnected: 0, activeAlerts: 0 }, engines: { inbound: { status: "not_configured", label: "Inbound", summary: "", lastActivityAt: null, nextAction: null }, outbound: { status: "idle", label: "Outbound", summary: "", lastActivityAt: null, nextAction: null } }, nextOutcomes: [], attentionPagination: { nextCursor: null } }; },
-    async getActivity(input) { calls.push(`activity:${input.workspaceId}:${input.lens}:${input.offset ?? 0}`); return { lens: input.lens, asOf: new Date(), state: "idle", quality: "fresh", headline: "", counters: [], items: [], pagination: { nextCursor: null } }; },
+    async getSummary(receivedWorkspaceId) { calls.push(`summary:${receivedWorkspaceId}`); return { asOf: new Date(), counts: { activeCampaigns: 0, prospects: 0, contactedProspects: 0, publishedContents: 0, openConversations: 0, openOpportunities: 0, bookedCalls: 0, attention: 0 }, attention: [], jobs: { active: 0, failed: 0, running: [] }, nextAutomaticResearch: null, accountHealth: { connected: 0, degraded: 0, disconnected: 0, activeAlerts: 0 }, engines: { inbound: { status: "not_configured", label: "Inbound", summary: "", lastActivityAt: null, nextAction: null }, outbound: { status: "idle", label: "Outbound", summary: "", lastActivityAt: null, nextAction: null } }, nextOutcomes: [], attentionPagination: { nextCursor: null } }; },
+    async getActivity(input) { calls.push(`activity:${input.workspaceId}:${input.lens}:${input.interactionType ?? "all"}:${input.offset ?? 0}`); return { lens: input.lens, asOf: new Date(), state: "idle", quality: "fresh", headline: "", counters: [], items: [], pagination: { nextCursor: null } }; },
     async getSetupReadiness() { return { ready: true, asOf: new Date(), items: [] }; },
     async getCampaignView() { return { campaign: {}, autopilot: {}, population: { total: 0, eligible: 0, contacted: 0, replies: 0 }, timeline: [], nextAction: null } as never; },
     async listConversations(input) { calls.push(`conversations:${input.workspaceId}:${input.channel}:${input.scope}:${input.source}:${input.search}:${input.page}:${input.pageSize}`); return { data: [], pagination: { page: input.page, pageSize: input.pageSize, total: 0, hasNext: false }, sync: { totalAccounts: 0, readyAccounts: 0, backfillingAccounts: 0, errorAccounts: 0, lastSuccessAt: null } }; },

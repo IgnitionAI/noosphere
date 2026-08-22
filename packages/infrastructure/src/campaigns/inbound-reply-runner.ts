@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import {
   INBOUND_REPLY_SEND_JOB_TYPE,
 } from "@outbound/application/campaigns/autonomous-prospecting";
@@ -340,6 +340,19 @@ export class InboundReplyJobProcessor {
       )
       .limit(1);
     if (conversation) return conversation;
+
+    const [exactAction] = await this.database
+      .select({ contactId: outreachActions.contactId, campaignId: outreachActions.campaignId })
+      .from(outreachActions)
+      .where(and(
+        eq(outreachActions.workspaceId, input.workspaceId),
+        eq(outreachActions.providerAccountId, input.incoming.accountId),
+        eq(outreachActions.providerRequestId, input.incoming.messageId),
+      ))
+      .limit(1);
+    if (exactAction) return exactAction;
+
+    let contactId: string | null = null;
     const normalizedIdentity = normalizeSenderIdentity(input.incoming);
     if (normalizedIdentity) {
       const [identity] = await this.database
@@ -352,11 +365,11 @@ export class InboundReplyJobProcessor {
           ),
         )
         .limit(1);
-      if (identity) return { contactId: identity.contactId, campaignId: null };
+      contactId = identity?.contactId ?? null;
     }
-    if (input.incoming.senderProviderId) {
+    if (!contactId && input.incoming.senderProviderId) {
       const [candidate] = await this.database
-        .select({ contactId: campaignProspects.contactId, campaignId: campaignProspects.campaignId })
+        .select({ contactId: campaignProspects.contactId })
         .from(campaignProspects)
         .innerJoin(
           prospectDiscoveryCandidates,
@@ -371,10 +384,25 @@ export class InboundReplyJobProcessor {
             sql`${prospectDiscoveryCandidates.providerData}->>'providerId' = ${input.incoming.senderProviderId}`,
           ),
         )
+        .orderBy(desc(campaignProspects.updatedAt))
         .limit(1);
-      if (candidate?.contactId) return { contactId: candidate.contactId, campaignId: candidate.campaignId };
+      contactId = candidate?.contactId ?? null;
     }
-    return null;
+    if (!contactId) return null;
+
+    const [sentAction] = await this.database
+      .select({ contactId: outreachActions.contactId, campaignId: outreachActions.campaignId })
+      .from(outreachActions)
+      .where(and(
+        eq(outreachActions.workspaceId, input.workspaceId),
+        eq(outreachActions.contactId, contactId),
+        eq(outreachActions.providerAccountId, input.incoming.accountId),
+        eq(outreachActions.channel, input.incoming.channel),
+        eq(outreachActions.status, "sent"),
+      ))
+      .orderBy(desc(outreachActions.sentAt), desc(outreachActions.createdAt))
+      .limit(1);
+    return sentAction ?? { contactId, campaignId: null };
   }
 
   async #persistAndSuspend(input: {

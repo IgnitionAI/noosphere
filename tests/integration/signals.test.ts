@@ -6,7 +6,7 @@ import { authUsers, companies, contacts, workspaces } from "@outbound/infrastruc
 import type { SignalSource } from "@outbound/application/crm/signal-source";
 import { createSignalHttpHandler } from "@outbound/interface/http/signal-handler";
 
-const databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
+const databaseUrl = process.env.TEST_DATABASE_URL;
 const databaseDescribe = databaseUrl ? describe : describe.skip;
 
 databaseDescribe("F-027 intent signals", () => {

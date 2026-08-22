@@ -116,12 +116,19 @@ export class SocialContentSynchronizer {
           code: syncErrorCode(error),
           message: error instanceof Error ? error.message : String(error),
           now,
-          retryAfterMs: this.options.failureRetryMs ?? 5 * 60_000,
+          retryAfterMs: syncRetryAfterMs(error, this.options.failureRetryMs ?? 5 * 60_000),
         });
       }
     }
     return observed;
   }
+}
+
+function syncRetryAfterMs(error: unknown, fallbackMs: number): number {
+  if (error && typeof error === "object" && "retryAfterMs" in error && typeof error.retryAfterMs === "number" && Number.isFinite(error.retryAfterMs) && error.retryAfterMs > 0) {
+    return Math.min(24 * 60 * 60_000, Math.ceil(error.retryAfterMs));
+  }
+  return fallbackMs;
 }
 
 function nextCursor(

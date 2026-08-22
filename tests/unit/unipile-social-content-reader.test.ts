@@ -25,9 +25,33 @@ describe("Unipile social content reader", () => {
     expect(metrics).toEqual([expect.objectContaining({ providerPostId: "12345", impressions: 900, reactions: 12, comments: 3, reposts: null })]);
   });
 
-  test("classifies provider throttling as retryable without a delivery ambiguity", async () => {
-    const fetchImpl = (async () => new Response("limited", { status: 429 })) as unknown as typeof fetch;
+  test("skips a deleted post metric without marking the LinkedIn account unavailable", async () => {
+    const calls: string[] = [];
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      const postId = url.pathname.split("/").at(-1)!;
+      calls.push(postId);
+      if (postId === "deleted-post") {
+        return Response.json({ type: "errors/resource_not_found" }, { status: 404 });
+      }
+      return Response.json({ id: postId, impressions_counter: 120, reaction_counter: 7, comment_counter: 2, repost_counter: 1 });
+    }) as unknown as typeof fetch;
     const reader = new UnipileSocialContentReader({ dsn: "https://api.example.test", apiKey: "secret", fetchImpl });
-    await expect(reader.listOwnContent({ accountId: "account-fixture", cursor: null, limit: 25 })).rejects.toMatchObject({ code: "SOCIAL_RATE_LIMITED", retryable: true, deliveryState: "not_sent" });
+
+    const metrics = await reader.readMetrics({
+      accountId: "account-fixture",
+      providerPostIds: ["deleted-post", "available-post"],
+    });
+
+    expect(calls).toEqual(["deleted-post", "available-post"]);
+    expect(metrics).toEqual([
+      expect.objectContaining({ providerPostId: "available-post", impressions: 120, reactions: 7, comments: 2, reposts: 1 }),
+    ]);
+  });
+
+  test("classifies provider throttling as retryable without a delivery ambiguity", async () => {
+    const fetchImpl = (async () => new Response("limited", { status: 429, headers: { "retry-after": "90" } })) as unknown as typeof fetch;
+    const reader = new UnipileSocialContentReader({ dsn: "https://api.example.test", apiKey: "secret", fetchImpl });
+    await expect(reader.listOwnContent({ accountId: "account-fixture", cursor: null, limit: 25 })).rejects.toMatchObject({ code: "SOCIAL_RATE_LIMITED", retryable: true, deliveryState: "not_sent", retryAfterMs: 90_000 });
   });
 });

@@ -5,7 +5,7 @@ import { createDatabase } from "@outbound/infrastructure/database/client";
 import { PostgresOutboxDispatcher } from "@outbound/infrastructure/outbox/postgres-outbox-dispatcher";
 import { authUsers, workspaces } from "@outbound/infrastructure/database/schema";
 
-const databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
+const databaseUrl = process.env.TEST_DATABASE_URL;
 const databaseDescribe = databaseUrl ? describe : describe.skip;
 
 databaseDescribe("F-003 outbox dispatcher and audit log", () => {

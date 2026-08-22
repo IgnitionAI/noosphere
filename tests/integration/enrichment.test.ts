@@ -6,7 +6,7 @@ import { authUsers, companies, contactEmployments, contactIdentities, contacts, 
 import { createEnrichmentHttpHandler } from "@outbound/interface/http/enrichment-handler";
 import type { ProspectEnricher } from "@outbound/application/crm/prospect-enrichment-ports";
 
-const databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
+const databaseUrl = process.env.TEST_DATABASE_URL;
 const databaseDescribe = databaseUrl ? describe : describe.skip;
 
 databaseDescribe("F-025 enrichment foundations", () => {

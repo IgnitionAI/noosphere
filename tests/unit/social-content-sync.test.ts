@@ -41,6 +41,28 @@ describe("LNK-102 durable social content synchronization", () => {
     expect(await synchronizer.reconcile()).toBe(0);
     expect(failures).toEqual([expect.objectContaining({ code: "SOCIAL_RATE_LIMITED", retryAfterMs: 8_000 })]);
   });
+
+  test("honors the provider retry-after delay", async () => {
+    const failures: unknown[] = [];
+    const synchronizer = new SocialContentSynchronizer(
+      repository({ failures }),
+      {
+        async listOwnContent() {
+          throw Object.assign(new Error("rate limited"), {
+            code: "SOCIAL_RATE_LIMITED",
+            retryAfterMs: 90_000,
+          });
+        },
+      },
+      { async readMetrics() { return []; } },
+      { now: () => now, failureRetryMs: 8_000 },
+    );
+
+    expect(await synchronizer.reconcile()).toBe(0);
+    expect(failures).toEqual([
+      expect.objectContaining({ code: "SOCIAL_RATE_LIMITED", retryAfterMs: 90_000 }),
+    ]);
+  });
 });
 
 function repository(output: { pages?: unknown[]; failures?: unknown[]; lease?: SocialContentSyncLease }): SocialContentSyncRepository {

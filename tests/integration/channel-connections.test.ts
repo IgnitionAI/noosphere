@@ -5,7 +5,7 @@ import { PostgresUnipileChannelConnections } from "@outbound/infrastructure/chan
 import { createDatabase } from "@outbound/infrastructure/database/client";
 import { authUsers, connectedAccounts, workspaces } from "@outbound/infrastructure/database/schema";
 
-const databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
+const databaseUrl = process.env.TEST_DATABASE_URL;
 const databaseDescribe = databaseUrl ? describe : describe.skip;
 
 databaseDescribe("workspace Unipile channel connections", () => {

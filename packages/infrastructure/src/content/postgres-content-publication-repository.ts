@@ -14,12 +14,14 @@ import {
   CONTENT_PUBLICATION_JOB_TYPE,
 } from "@outbound/application/content/content-publications";
 import { textFingerprint, type ContentPublicationReconciliationView } from "@outbound/application/content/content-publication-reconciliation";
+import { resolveContentAutopilotCadence } from "@outbound/application/content/content-autopilot";
 import type { Database } from "@outbound/infrastructure/database/client";
 import {
   auditLogs,
   contentAssets,
   contentAssetVersions,
   contentIdeas,
+  contentIdeaSchedules,
   contentOperationRequests,
   contentPublicationAttempts,
   contentPublicationReconciliations,
@@ -32,6 +34,7 @@ import {
 } from "@outbound/infrastructure/database/schema";
 import type { PostgresUnipileChannelConnections } from "@outbound/infrastructure/channels/postgres-unipile-channel-connections";
 import { editorialStrategySnapshotSchema } from "@outbound/contracts/content";
+import { CONTENT_EDITORIAL_POLICY_VERSION } from "@outbound/domain/content/content-asset";
 
 export class PostgresSocialPublishingAccountResolver implements SocialPublishingAccountResolver {
   constructor(private readonly connections: PostgresUnipileChannelConnections) {}
@@ -85,6 +88,8 @@ export class PostgresContentPublicationRepository implements ContentPublicationR
         eq(contentAssetVersions.version, asset.latestVersion),
       )).limit(1))[0];
       if (!version || !version.ready) throw new Error("CONTENT_ASSET_NOT_READY");
+      const readiness = version.readiness as { policyVersion?: unknown };
+      if (readiness.policyVersion !== CONTENT_EDITORIAL_POLICY_VERSION) throw new Error("CONTENT_ASSET_EDITORIAL_POLICY_OUTDATED");
       const grounding = (await tx.select({
         strategyVersionId: contentIdeas.strategyVersionId,
         strategyStatus: editorialStrategies.status,
@@ -194,6 +199,24 @@ export class PostgresContentPublicationRepository implements ContentPublicationR
     return publicationRows[0] ? toPublication(publicationRows[0], reconciliationRows[0] ? toReconciliation(reconciliationRows[0]) : null) : null;
   }
 
+  async findLatestForAsset(input: Parameters<ContentPublicationRepository["findLatestForAsset"]>[0]): Promise<ContentPublicationView | null> {
+    const publication = (await this.database.select().from(contentPublications).where(and(
+      eq(contentPublications.workspaceId, input.workspaceId),
+      eq(contentPublications.assetId, input.assetId),
+    )).orderBy(
+      sql`case when ${contentPublications.status} = 'cancelled' then 1 else 0 end`,
+      desc(contentPublications.updatedAt),
+      desc(contentPublications.createdAt),
+      desc(contentPublications.id),
+    ).limit(1))[0];
+    if (!publication) return null;
+    const reconciliation = (await this.database.select().from(contentPublicationReconciliations).where(and(
+      eq(contentPublicationReconciliations.workspaceId, input.workspaceId),
+      eq(contentPublicationReconciliations.publicationId, publication.id),
+    )).limit(1))[0];
+    return toPublication(publication, reconciliation ? toReconciliation(reconciliation) : null);
+  }
+
   async reschedule(input: Parameters<ContentPublicationRepository["reschedule"]>[0]): Promise<ContentPublicationView> {
     return this.database.transaction(async (tx) => {
       const replay = await operationReplay(tx, input.workspaceId, "publication.reschedule", input.requestKey);
@@ -276,8 +299,22 @@ export class PostgresContentPublicationRepository implements ContentPublicationR
         if (validClaims !== strategy.allowedClaimIds.length) throw new Error("CONTENT_PUBLICATION_CLAIMS_NO_LONGER_VALID");
       }
       if (row.requestKey.startsWith("autopilot:publication:")) {
-        if (!strategy.cadence.preferredDays.includes(localIsoDay(row.scheduledFor, strategy.cadence.timezone))) throw new Error("CONTENT_PUBLICATION_CADENCE_CHANGED");
-        const window = localIsoWeekWindow(row.scheduledFor, strategy.cadence.timezone);
+        const schedule = (await tx.select({
+          enabled: contentIdeaSchedules.enabled,
+          publicationTimes: contentIdeaSchedules.publicationTimes,
+          publicationDays: contentIdeaSchedules.publicationDays,
+          timezone: contentIdeaSchedules.timezone,
+        }).from(contentIdeaSchedules).where(eq(contentIdeaSchedules.workspaceId, input.workspaceId)).limit(1))[0];
+        if (!schedule?.enabled) throw new Error("CONTENT_PUBLICATION_AUTOPILOT_PAUSED");
+        const cadence = resolveContentAutopilotCadence({
+          strategyCadence: strategy.cadence,
+          publicationTimes: schedule.publicationTimes,
+          publicationDays: schedule.publicationDays,
+          timezone: schedule.timezone,
+        });
+        if (!cadence.preferredDays.includes(localIsoDay(row.scheduledFor, cadence.timezone))) throw new Error("CONTENT_PUBLICATION_CADENCE_CHANGED");
+        if (!cadence.publicationTimes.includes(localHourMinute(row.scheduledFor, cadence.timezone))) throw new Error("CONTENT_PUBLICATION_CADENCE_CHANGED");
+        const window = localIsoWeekWindow(row.scheduledFor, cadence.timezone);
         const publishedThisWeek = (await tx.select({ value: count() }).from(contentPublications).where(and(
           eq(contentPublications.workspaceId, input.workspaceId),
           ne(contentPublications.id, row.id),
@@ -285,7 +322,7 @@ export class PostgresContentPublicationRepository implements ContentPublicationR
           gte(contentPublications.scheduledFor, window.start),
           lt(contentPublications.scheduledFor, window.end),
         )))[0]?.value ?? 0;
-        if (publishedThisWeek >= strategy.cadence.postsPerWeek) throw new Error("CONTENT_PUBLICATION_WEEKLY_BUDGET_REACHED");
+        if (publishedThisWeek >= cadence.postsPerWeek) throw new Error("CONTENT_PUBLICATION_WEEKLY_BUDGET_REACHED");
       }
 
       const attempt = row.attempts + 1;
@@ -449,6 +486,16 @@ function localIsoDay(date: Date, timezone: string): number {
   const parts = zonedParts(date, timezone);
   const day = new Date(Date.UTC(parts.year, parts.month - 1, parts.day)).getUTCDay();
   return day === 0 ? 7 : day;
+}
+
+function localHourMinute(date: Date, timezone: string): string {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-GB", {
+    timeZone: timezone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date).map((part) => [part.type, part.value]));
+  return `${parts.hour}:${parts.minute}`;
 }
 
 function localIsoWeekWindow(date: Date, timezone: string): { start: Date; end: Date } {

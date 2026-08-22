@@ -185,7 +185,7 @@ export class OutreachDispatchJobProcessor {
           updatedAt: this.clock.now(),
         })
         .where(and(eq(outreachActions.workspaceId, claimed.workspaceId), eq(outreachActions.id, claimed.id)));
-      await this.queue.retry({
+      await this.queue.defer({
         jobId: job.id,
         workerId: job.lockedBy,
         availableAt,
@@ -225,10 +225,19 @@ export class OutreachDispatchJobProcessor {
         error.deliveryState === "not_sent" &&
         error.retryable
       ) {
-        await this.#resetForRetry(claimed, attemptId, error);
-        const retryAt = error.code === "LINKEDIN_RELATION_PENDING" || error.code === "UNIPILE_PROVIDER_LIMIT"
-          ? new Date(this.clock.now().getTime() + 8 * 60 * 60_000)
-          : new Date(this.clock.now().getTime() + 60_000 * job.attempts);
+        const waitMs = providerWaitDurationMs(error.code);
+        const retryAt = new Date(this.clock.now().getTime() + (waitMs ?? 60_000 * job.attempts));
+        await this.#resetForRetry(claimed, attemptId, error, retryAt);
+        if (waitMs !== null) {
+          await this.queue.defer({
+            jobId: job.id,
+            workerId: job.lockedBy,
+            availableAt: retryAt,
+            errorCode: error.code,
+            errorMessage: error.message,
+          });
+          return;
+        }
         await this.queue.retry({
           jobId: job.id,
           workerId: job.lockedBy,
@@ -427,12 +436,18 @@ export class OutreachDispatchJobProcessor {
     return this.database.transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`${action.workspaceId}:${action.contactId}:outbound`}, 0))`);
       if (!await this.#finalSendGate(tx, action, normalizedRecipient)) return { kind: "blocked" as const };
-      await tx.insert(outreachAttempts).values({
+      // Persist the provider-call marker on an independent connection. If the
+      // worker dies during the external call, this row must survive the outer
+      // transaction rollback so reconciliation can fail closed with evidence.
+      await this.database.insert(outreachAttempts).values({
         id: attemptId,
         workspaceId: action.workspaceId,
+        actionId: action.id,
         outreachActionId: action.id,
+        attempt: attemptNumber,
         attemptNumber,
         status: "executing",
+        startedAt: this.clock.now(),
         attemptedAt: this.clock.now(),
       }).onConflictDoNothing();
       try {
@@ -739,16 +754,13 @@ export class OutreachDispatchJobProcessor {
         updatedAt: this.clock.now(),
       })
       .where(and(eq(outreachActions.workspaceId, action.workspaceId), eq(outreachActions.id, action.id)));
-    const outcome = await this.queue.retry({
+    await this.queue.defer({
       jobId: job.id,
       workerId: job.lockedBy,
       availableAt,
       errorCode: code,
       errorMessage: message,
     });
-    if (outcome === "dead_lettered") {
-      await this.#failUnknown(action, `${code}_EXHAUSTED`, `${message} Le nombre maximal de reports a été atteint.`);
-    }
   }
 
   async #markSent(
@@ -843,7 +855,12 @@ export class OutreachDispatchJobProcessor {
       });
   }
 
-  async #resetForRetry(action: ClaimedAction, attemptId: string, error: OutboundDeliveryError) {
+  async #resetForRetry(
+    action: ClaimedAction,
+    attemptId: string,
+    error: OutboundDeliveryError,
+    dueAt: Date,
+  ) {
     await this.database.transaction(async (tx) => {
       await tx
         .update(outreachAttempts)
@@ -853,6 +870,7 @@ export class OutreachDispatchJobProcessor {
         .update(outreachActions)
         .set({
           status: "scheduled",
+          dueAt,
           lockedAt: null,
           lockedUntil: null,
           lockedBy: null,
@@ -909,6 +927,12 @@ export class OutreachDispatchJobProcessor {
         .where(and(eq(campaigns.workspaceId, action.workspaceId), eq(campaigns.id, action.campaignId)));
     });
   }
+}
+
+function providerWaitDurationMs(code: string): number | null {
+  if (code === "LINKEDIN_INVITE_RECENT") return 7 * 86_400_000;
+  if (code === "LINKEDIN_RELATION_PENDING" || code === "UNIPILE_PROVIDER_LIMIT") return 8 * 60 * 60_000;
+  return null;
 }
 
 type ClaimedAction = NonNullable<Awaited<ReturnType<typeof loadClaimedAction>>> & {

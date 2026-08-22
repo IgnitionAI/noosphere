@@ -219,6 +219,8 @@ async function invokeCampaignContentModel(input: Parameters<CampaignContentModel
     schema: draft ? personalizedContentSchema : editorialReviewSchema,
   });
   const response = await new ChatOpenAI(input.fields)
+    // Kimi K3 rejects a named tool_choice while its thinking mode is enabled.
+    // The prompt still requires this exact tool and the response is validated below.
     .bindTools([submit], { tool_choice: "auto" })
     .invoke([...input.messages]);
   const call = response.tool_calls?.find((item) => item.name === name);

@@ -5,7 +5,7 @@ import { createDatabase } from "@outbound/infrastructure/database/client";
 import { authUsers, contacts, opportunities, workspaces } from "@outbound/infrastructure/database/schema";
 import { createAnalyticsHttpHandler } from "@outbound/interface/http/analytics-handler";
 
-const databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
+const databaseUrl = process.env.TEST_DATABASE_URL;
 const databaseDescribe = databaseUrl ? describe : describe.skip;
 
 databaseDescribe("F-051 deterministic workspace analytics", () => {

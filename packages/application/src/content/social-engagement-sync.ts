@@ -110,7 +110,10 @@ export class SocialEngagementSynchronizer {
       limit: Math.min(100, Math.max(1, this.options.targetLimit ?? 20)),
     });
     let observed = 0;
+    const deferredAccounts = new Set<string>();
     for (const target of targets) {
+      const accountKey = `${target.workspaceId}:${target.providerAccountId}`;
+      if (deferredAccounts.has(accountKey)) continue;
       const lease = await this.repository.acquire({ ...target, now, leaseMs: this.options.leaseMs ?? 2 * 60_000 });
       if (!lease) continue;
       try {
@@ -130,17 +133,26 @@ export class SocialEngagementSynchronizer {
           refreshIntervalMs: this.options.refreshIntervalMs ?? 15 * 60_000,
         });
       } catch (error) {
+        const code = syncErrorCode(error);
         await this.repository.markFailed({
           lease,
-          code: syncErrorCode(error),
+          code,
           message: error instanceof Error ? error.message : String(error),
           now,
-          retryAfterMs: this.options.failureRetryMs ?? 5 * 60_000,
+          retryAfterMs: syncRetryAfterMs(error, this.options.failureRetryMs ?? 5 * 60_000),
         });
+        if (code === "SOCIAL_RATE_LIMITED") deferredAccounts.add(accountKey);
       }
     }
     return observed;
   }
+}
+
+function syncRetryAfterMs(error: unknown, fallbackMs: number): number {
+  if (error && typeof error === "object" && "retryAfterMs" in error && typeof error.retryAfterMs === "number" && Number.isFinite(error.retryAfterMs) && error.retryAfterMs > 0) {
+    return Math.min(24 * 60 * 60_000, Math.ceil(error.retryAfterMs));
+  }
+  return fallbackMs;
 }
 
 function syncErrorCode(error: unknown): string {

@@ -45,60 +45,7 @@ describe("LangChainCampaignContentGenerator", () => {
       },
     );
 
-    const result = await generator.generate({
-      workspaceId: crypto.randomUUID(),
-      channel: "email",
-      campaignObjective: "Obtenir un échange de qualification de 15 minutes.",
-      icpName: "Directions juridiques réglementées",
-      problems: ["Documents dispersés"],
-      signals: ["Recrutement RSSI"],
-      offer: {
-        source: "offer_version",
-        name: "IgnitionRAG",
-        category: "saas",
-        valueProposition: "Recherche documentaire sécurisée et traçable",
-        targetAudience: "Directions juridiques",
-        pricing: { disclosure: "call_only" },
-        commercialRules: { noDiscountInMessage: true },
-        constraints: { deployment: "private" },
-        objections: ["Sécurité"],
-        claims: [],
-      },
-      previousMessages: [{
-        direction: "outbound",
-        body: "Bonjour Marie, votre équipe juridique grandit. Comment gérez-vous la recherche interne ?",
-        occurredAt: "2026-08-01T09:00:00.000Z",
-        source: "campaign",
-      }],
-      stepObjective: {
-        stage: "follow_up",
-        objective: "Ajouter un angle utile qui n’apparaît pas dans les messages précédents et obtenir une réponse simple, sans répéter l’ouverture.",
-      },
-      policy: { language: "fr", firstMessageInstructions: null, followUpInstructions: "Rester factuel." },
-      prospect: {
-        firstName: "Marie",
-        lastName: "Durand",
-        headline: "Directrice juridique",
-        companyName: "Cabinet Durand",
-        location: "Paris",
-        score: 82,
-        scoreExplanation: ["ICP exact"],
-        evidence: {
-          publicData: { signals: ["Recrutement RSSI", "Certification ISO 27001"] },
-          scoreFactors: ["ICP exact"],
-        },
-      },
-      templateSteps: [{
-        position: 2,
-        kind: "email",
-        delayDays: 4,
-        windowStart: "09:00",
-        windowEnd: "17:00",
-        subject: "Re: sécurité documentaire",
-        body: "Relance",
-        fallbackKind: null,
-      }],
-    });
+    const result = await generator.generate(campaignInput());
 
     expect(calls.map((call) => call.phase)).toEqual(["draft", "review"]);
     const draftContext = JSON.parse(calls[0]!.messages.at(-1)!.content);
@@ -112,4 +59,139 @@ describe("LangChainCampaignContentGenerator", () => {
     expect(result.steps[0]?.body).toContain("recrutement d’un RSSI");
     expect(result.metadata.editorialReview).toMatchObject({ verdict: "revised", genericityScore: 0.1 });
   });
+
+  test("keeps Kimi thinking compatible with the structured draft and editorial review", async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const body = await request.json() as Record<string, unknown>;
+        requests.push(body);
+        if (body.tool_choice !== "auto") {
+          return Response.json(
+            { error: { message: "tool_choice 'specified' is incompatible with thinking enabled" } },
+            { status: 400 },
+          );
+        }
+        const tools = body.tools as Array<{ function?: { name?: string } }>;
+        const name = tools[0]?.function?.name;
+        const args = name === "submit_campaign_content_draft"
+          ? {
+              steps: [{ position: 2, subject: "Re: sécurité documentaire", body: "Bonjour Marie, votre recrutement RSSI rend la traçabilité concrète. Est-ce déjà couvert ?" }],
+              assessment: { summary: "Bon fit", strengths: ["RSSI"], risks: [], recommendedAngle: "Traçabilité" },
+              knowledgeClaimIds: [],
+              knowledgeSourceIds: [],
+              offerClaimIds: [],
+            }
+          : {
+              final: {
+                steps: [{ position: 2, subject: "Re: sécurité documentaire", body: "Bonjour Marie, votre recrutement RSSI rend la traçabilité documentaire concrète. Est-ce déjà couvert côté recherche interne ?" }],
+                assessment: { summary: "Preuve précise", strengths: ["RSSI"], risks: [], recommendedAngle: "Traçabilité" },
+                knowledgeClaimIds: [],
+                knowledgeSourceIds: [],
+                offerClaimIds: [],
+              },
+              review: {
+                verdict: "approved",
+                genericityScore: 0.1,
+                issues: [],
+                changesApplied: [],
+                evidenceAnchor: "Recrutement RSSI",
+                stageObjectiveSatisfied: true,
+                previousMessageOverlap: "low",
+              },
+            };
+        return Response.json({
+          id: crypto.randomUUID(),
+          object: "chat.completion",
+          created: Math.floor(Date.now() / 1_000),
+          model: "k3",
+          choices: [{
+            index: 0,
+            finish_reason: "tool_calls",
+            message: {
+              role: "assistant",
+              content: null,
+              tool_calls: [{
+                id: crypto.randomUUID(),
+                type: "function",
+                function: { name, arguments: JSON.stringify(args) },
+              }],
+            },
+          }],
+          usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 },
+        });
+      },
+    });
+    try {
+      const generator = new LangChainCampaignContentGenerator({
+        AI_PROVIDER: "kimi-code",
+        KIMI_CODE_API_KEY: "test-key",
+        KIMI_CODE_BASE_URL: server.url.origin,
+        KIMI_SYNTHESIS_MODEL: "k3",
+      });
+      const result = await generator.generate(campaignInput());
+      expect(result.steps).toHaveLength(1);
+      expect(requests.map((request) => request.tool_choice)).toEqual(["auto", "auto"]);
+    } finally {
+      server.stop(true);
+    }
+  });
 });
+
+function campaignInput(): Parameters<LangChainCampaignContentGenerator["generate"]>[0] {
+  return {
+    workspaceId: crypto.randomUUID(),
+    channel: "email",
+    campaignObjective: "Obtenir un échange de qualification de 15 minutes.",
+    icpName: "Directions juridiques réglementées",
+    problems: ["Documents dispersés"],
+    signals: ["Recrutement RSSI"],
+    offer: {
+      source: "offer_version",
+      name: "IgnitionRAG",
+      category: "saas",
+      valueProposition: "Recherche documentaire sécurisée et traçable",
+      targetAudience: "Directions juridiques",
+      pricing: { disclosure: "call_only" },
+      commercialRules: { noDiscountInMessage: true },
+      constraints: { deployment: "private" },
+      objections: ["Sécurité"],
+      claims: [],
+    },
+    previousMessages: [{
+      direction: "outbound",
+      body: "Bonjour Marie, votre équipe juridique grandit. Comment gérez-vous la recherche interne ?",
+      occurredAt: "2026-08-01T09:00:00.000Z",
+      source: "campaign",
+    }],
+    stepObjective: {
+      stage: "follow_up",
+      objective: "Ajouter un angle utile qui n’apparaît pas dans les messages précédents et obtenir une réponse simple, sans répéter l’ouverture.",
+    },
+    policy: { language: "fr", firstMessageInstructions: null, followUpInstructions: "Rester factuel." },
+    prospect: {
+      firstName: "Marie",
+      lastName: "Durand",
+      headline: "Directrice juridique",
+      companyName: "Cabinet Durand",
+      location: "Paris",
+      score: 82,
+      scoreExplanation: ["ICP exact"],
+      evidence: {
+        publicData: { signals: ["Recrutement RSSI", "Certification ISO 27001"] },
+        scoreFactors: ["ICP exact"],
+      },
+    },
+    templateSteps: [{
+      position: 2,
+      kind: "email",
+      delayDays: 4,
+      windowStart: "09:00",
+      windowEnd: "17:00",
+      subject: "Re: sécurité documentaire",
+      body: "Relance",
+      fallbackKind: null,
+    }],
+  };
+}

@@ -10,7 +10,7 @@ import type { LeasedJob } from "@outbound/application/jobs/job-queue";
 import { createCrmHttpHandler } from "@outbound/interface/http/crm-handler";
 import { createImportHttpHandler } from "@outbound/interface/http/import-handler";
 
-const databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
+const databaseUrl = process.env.TEST_DATABASE_URL;
 const databaseDescribe = databaseUrl ? describe : describe.skip;
 
 databaseDescribe("F-022 CSV imports", () => {

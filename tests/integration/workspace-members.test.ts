@@ -6,7 +6,7 @@ import { PostgresWorkspaceRepository } from "@outbound/infrastructure/workspaces
 import { authUsers, workspaces } from "@outbound/infrastructure/database/schema";
 import { createWorkspaceHttpHandler } from "@outbound/interface/http/workspace-handler";
 
-const databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
+const databaseUrl = process.env.TEST_DATABASE_URL;
 const databaseDescribe = databaseUrl ? describe : describe.skip;
 
 databaseDescribe("F-002 workspace members and invitations", () => {

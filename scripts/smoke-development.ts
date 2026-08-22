@@ -144,11 +144,49 @@ if (!workspaceSettingsPage.ok || !workspaceSettingsHtml.includes("Configuration"
   throw new Error(`Workspace settings page smoke test failed: ${workspaceSettingsPage.status}`);
 }
 
+let inboundAutopilotStatus = "not_configured";
+const editorialStrategyResponse = await fetch(`${apiUrl}/api/v1/content/strategy`, { headers });
+if (editorialStrategyResponse.ok) {
+  const autopilotResponse = await fetch(`${apiUrl}/api/v1/content/autopilot`, { headers });
+  if (!autopilotResponse.ok) throw new Error(`Inbound autopilot lookup failed: ${autopilotResponse.status}`);
+  const autopilot = await autopilotResponse.json() as { enabled?: boolean };
+  const inboundActivityPage = await fetch(`${webUrl}/w/${workspace.slug}/activity?lens=inbound`, { headers: { cookie } });
+  const inboundActivityHtml = await inboundActivityPage.text();
+  const expectedStatus = autopilot.enabled ? "Inbound actif" : "Inbound en pause";
+  inboundAutopilotStatus = autopilot.enabled ? "active" : "paused";
+  if (!inboundActivityPage.ok || !inboundActivityHtml.includes(expectedStatus)) {
+    throw new Error(`Inbound activity status is not explicit: ${inboundActivityPage.status}`);
+  }
+  const ideasResponse = await fetch(`${apiUrl}/api/v1/content/ideas?limit=1`, { headers });
+  if (!ideasResponse.ok) throw new Error(`Inbound ideas lookup failed: ${ideasResponse.status}`);
+  const ideas = await ideasResponse.json() as { data?: Array<{ id?: string }> };
+  const ideaId = ideas.data?.[0]?.id;
+  if (ideaId) {
+    const ideaPage = await fetch(`${webUrl}/w/${workspace.slug}/content/ideas/${ideaId}`, { headers: { cookie } });
+    const ideaHtml = await ideaPage.text();
+    const expectedJourneyState = autopilot.enabled ? "Automatique" : "L’Inbound est en pause";
+    if (
+      !ideaPage.ok
+      || !ideaHtml.includes("Ce que Noosphere fait")
+      || !ideaHtml.includes(expectedJourneyState)
+    ) {
+      throw new Error(`Inbound idea journey is not explicit: ${ideaPage.status}`);
+    }
+  }
+}
+
 const inboxPage = await fetch(`${webUrl}/w/${workspace.slug}/inbox`, {
   headers: { cookie },
 });
 const inboxHtml = await inboxPage.text();
-if (!inboxPage.ok || !inboxHtml.includes("Toutes les conversations des comptes LinkedIn, email et WhatsApp associés.")) {
+const hasUnifiedInboxControls = [
+  "Messages",
+  "LinkedIn",
+  "Email",
+  "WhatsApp",
+  "Campagne et hors campagne",
+].every((marker) => inboxHtml.includes(marker));
+if (!inboxPage.ok || !hasUnifiedInboxControls) {
   throw new Error(`Unified inbox page smoke test failed: ${inboxPage.status}`);
 }
 
@@ -234,6 +272,7 @@ console.info(
     operatorConsole: "readable",
     unifiedInbox: "readable",
     prospectCampaignFilters: "readable",
+    inboundAutopilotStatus,
     simpleIcpLaunch: "readable",
     calendarProduct: "readable",
     workspaceOnboarding: "resumable",

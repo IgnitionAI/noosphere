@@ -21,8 +21,14 @@ describe("Noosphere content generation HTTP", () => {
   });
 
   test("lets viewers inspect evidence and content but never generate or improve", async () => {
-    const handler = createContentGenerationHttpHandler({ contextResolver: context("viewer"), application: { async findIdea() { return { id: ideaId }; }, async findAssetByIdea() { return null; } } as never });
-    expect((await handler(request(`/api/v1/content/ideas/${ideaId}`))).status).toBe(200);
+    const handler = createContentGenerationHttpHandler({
+      contextResolver: context("viewer"),
+      application: { async findIdea() { return { id: ideaId }; }, async findAssetByIdea() { return { id: assetId }; } } as never,
+      publications: { async findLatestForAsset() { return { id: "31000000-0000-4000-8000-000000000005", status: "scheduled" } as never; } },
+    });
+    const detail = await handler(request(`/api/v1/content/ideas/${ideaId}`));
+    expect(detail.status).toBe(200);
+    expect((await detail.json() as { publication: { status: string } }).publication.status).toBe("scheduled");
     expect((await handler(request(`/api/v1/content/ideas/${ideaId}/brief`, "POST", { requestKey: "content-request-3" }))).status).toBe(403);
     expect((await handler(request(`/api/v1/content/assets/${assetId}/improve`, "POST", { requestKey: "content-request-4" }))).status).toBe(403);
   });

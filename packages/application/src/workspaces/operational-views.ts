@@ -3,6 +3,9 @@ export type AttentionSeverity = "info" | "warning" | "critical";
 export const noosphereLenses = ["inbound", "symbiosis", "outbound"] as const;
 export type NoosphereLens = (typeof noosphereLenses)[number];
 
+export const activityInteractionTypes = ["reply", "comment", "reaction", "mention"] as const;
+export type ActivityInteractionType = (typeof activityInteractionTypes)[number];
+
 export type EngineOperationalStatus = "not_configured" | "idle" | "running" | "degraded" | "paused";
 
 export interface EngineOperationalState {
@@ -41,6 +44,8 @@ export interface WorkspaceOperationalSummary {
   readonly counts: {
     readonly activeCampaigns: number;
     readonly prospects: number;
+    readonly contactedProspects: number;
+    readonly publishedContents: number;
     readonly openConversations: number;
     readonly openOpportunities: number;
     readonly bookedCalls: number;

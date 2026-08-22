@@ -5,6 +5,48 @@ import { SystemClock } from "@outbound/application/shared/ports";
 import { ResearchWorker } from "../../apps/worker/src/research-worker";
 
 describe("ResearchWorker job leases", () => {
+  test("a long maintenance pass cannot monopolize every subsequent worker tick", async () => {
+    let currentTime = new Date("2026-08-22T06:00:00.000Z");
+    let maintenanceRuns = 0;
+    let leaseCalls = 0;
+    const queue: JobQueue = {
+      async enqueue() { return { inserted: true }; },
+      async lease() { leaseCalls += 1; return []; },
+      async renewLease() { return true; },
+      async acknowledge() {},
+      async defer() {},
+      async retry() { return "scheduled"; },
+    };
+    const worker = new ResearchWorker(
+      queue,
+      { async process() {} } as unknown as ResearchOrchestrator,
+      { now: () => currentTime },
+      { workerId: "worker-test", leaseMs: 60_000, batchSize: 1, pollIntervalMs: 1 },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        async reconcile() {
+          maintenanceRuns += 1;
+          currentTime = new Date(currentTime.getTime() + 61_000);
+          return 0;
+        },
+      },
+    );
+
+    await worker.tick();
+    await worker.tick();
+
+    expect(maintenanceRuns).toBe(1);
+    expect(leaseCalls).toBe(2);
+  });
+
   test("renews the lease while a long AI stage is executing", async () => {
     const now = new Date();
     const job: LeasedJob = {
@@ -36,6 +78,7 @@ describe("ResearchWorker job leases", () => {
         return true;
       },
       async acknowledge() {},
+      async defer() {},
       async retry() {
         return "scheduled";
       },
@@ -84,6 +127,7 @@ describe("ResearchWorker job leases", () => {
         return true;
       },
       async acknowledge() {},
+      async defer() {},
       async retry() {
         throw new Error("JOB_LEASE_LOST");
       },
@@ -132,6 +176,7 @@ describe("ResearchWorker job leases", () => {
       },
       async renewLease() { return true; },
       async acknowledge() {},
+      async defer() {},
       async retry() { return "scheduled"; },
     };
     const worker = new ResearchWorker(
@@ -160,6 +205,7 @@ describe("ResearchWorker job leases", () => {
       },
       async renewLease() { return true; },
       async acknowledge() {},
+      async defer() {},
       async retry() { return "scheduled"; },
     };
     const worker = new ResearchWorker(

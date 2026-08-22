@@ -69,8 +69,8 @@ export class ResearchWorker {
   async tick(): Promise<number> {
     const now = this.clock.now();
     if (this.maintenance && now.getTime() - this.#lastMaintenanceAt >= 60_000) {
-      this.#lastMaintenanceAt = now.getTime();
       await this.maintenance.reconcile();
+      this.#lastMaintenanceAt = this.clock.now().getTime();
     }
     if (this.outreachProcessor) await this.outreachProcessor.markDue({ now, queue: this.queue });
     const availableTypes = [

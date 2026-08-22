@@ -369,6 +369,21 @@ export class CampaignCompositionJobProcessor {
           sequenceVersionId,
           now,
         });
+        if (!enrollmentId) {
+          await tx.update(campaignProspects).set({
+            status: "excluded",
+            state: "excluded",
+            eligible: false,
+            exclusionReason: "ACTIVE_SEQUENCE_CONFLICT",
+            excludedAt: now,
+            updatedAt: now,
+          }).where(and(
+            eq(campaignProspects.workspaceId, input.workspaceId),
+            eq(campaignProspects.campaignId, input.campaignId),
+            eq(campaignProspects.candidateId, prospect.candidateId),
+          ));
+          continue;
+        }
         const channels = prospect.channels as ProspectChannels;
         const identity = channels[input.campaign.channel!];
         if (!identity.value || !identity.normalizedValue) throw new Error("OUTREACH_IDENTITY_MISSING");
@@ -494,14 +509,48 @@ export class CampaignCompositionJobProcessor {
             updatedAt: now,
           }).onConflictDoNothing();
         }
+        await tx.update(campaignProspects).set({
+          status: "enrolled",
+          enrolledAt: now,
+          updatedAt: now,
+        }).where(and(
+          eq(campaignProspects.workspaceId, input.workspaceId),
+          eq(campaignProspects.campaignId, input.campaignId),
+          eq(campaignProspects.candidateId, prospect.candidateId),
+        ));
       }
-      if (!earliestDueAt) throw new Error("NO_OUTREACH_ACTIONS_SCHEDULED");
+      if (!earliestDueAt) {
+        await tx.update(campaigns).set({
+          status: "active",
+          automationStage: "sourcing",
+          automationErrorCode: null,
+          automationErrorMessage: null,
+          updatedAt: now,
+        }).where(and(eq(campaigns.workspaceId, input.workspaceId), eq(campaigns.id, input.campaignId)));
+        await tx.insert(outboxEvents).values({
+          workspaceId: input.workspaceId,
+          aggregateType: "Campaign",
+          aggregateId: input.campaignId,
+          eventType: "CampaignProspectsSkipped",
+          payload: {
+            campaignId: input.campaignId,
+            reason: "ACTIVE_SEQUENCE_CONFLICT",
+            prospectCount: prospects.length,
+          },
+        });
+        return;
+      }
       const activatesCampaign = !input.incremental || input.campaign.status === "draft";
       await tx
         .update(campaigns)
         .set(!activatesCampaign
           ? {
               sequenceVersionId,
+              ...(input.campaign.automationStage === "attention"
+                ? { automationStage: "scheduled" as const }
+                : {}),
+              automationErrorCode: null,
+              automationErrorMessage: null,
               updatedAt: now,
             }
           : {
@@ -598,7 +647,7 @@ async function ensureEnrollment(
     sequenceVersionId: string;
     now: Date;
   },
-): Promise<string> {
+): Promise<string | null> {
   const id = crypto.randomUUID();
   const [inserted] = await tx.insert(campaignEnrollments).values({
     id,
@@ -612,7 +661,7 @@ async function ensureEnrollment(
   }).onConflictDoNothing().returning({ id: campaignEnrollments.id });
   if (inserted) return inserted.id;
   const [existing] = await tx
-    .select({ id: campaignEnrollments.id })
+    .select({ id: campaignEnrollments.id, status: campaignEnrollments.status })
     .from(campaignEnrollments)
     .where(
       and(
@@ -622,8 +671,29 @@ async function ensureEnrollment(
       ),
     )
     .limit(1);
+  if (existing?.status === "active") return existing.id;
+  const [activeConflict] = await tx
+    .select({ id: campaignEnrollments.id, campaignId: campaignEnrollments.campaignId })
+    .from(campaignEnrollments)
+    .where(and(
+      eq(campaignEnrollments.workspaceId, input.workspaceId),
+      eq(campaignEnrollments.contactId, input.contactId),
+      eq(campaignEnrollments.status, "active"),
+    ))
+    .limit(1);
+  if (activeConflict && activeConflict.campaignId !== input.campaignId) return null;
   if (!existing) throw new Error("SEQUENCE_ENROLLMENT_CREATE_FAILED");
-  return existing.id;
+  const [reactivated] = await tx.update(campaignEnrollments).set({
+    status: "active",
+    sequenceVersionId: input.sequenceVersionId,
+    enrolledAt: input.now,
+    completedAt: null,
+  }).where(and(
+    eq(campaignEnrollments.workspaceId, input.workspaceId),
+    eq(campaignEnrollments.id, existing.id),
+  )).returning({ id: campaignEnrollments.id });
+  if (!reactivated) throw new Error("SEQUENCE_ENROLLMENT_CREATE_FAILED");
+  return reactivated.id;
 }
 
 function providerUserId(value: unknown): string | null {

@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { resolve } from "node:path";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import {
   CreateProductResearchRun,
@@ -33,6 +33,7 @@ import {
   opportunities,
   replyClassifications,
   outboxEvents,
+  prospectDiscoveryCandidates,
   prospectDiscoveryRuns,
   prospectingPlans,
   prospectDecisions,
@@ -68,7 +69,7 @@ import { ProspectDecisionJobProcessor } from "@outbound/infrastructure/campaigns
 import { DailyProspectingScheduler } from "@outbound/infrastructure/campaigns/daily-prospecting-scheduler";
 import { AUTONOMOUS_SOURCING_VERSION } from "@outbound/application/campaigns/autonomous-prospecting";
 
-const databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
+const databaseUrl = process.env.TEST_DATABASE_URL;
 const databaseDescribe = databaseUrl ? describe : describe.skip;
 
 databaseDescribe("V3 automatic ICP publication", () => {
@@ -667,6 +668,17 @@ databaseDescribe("V3 automatic ICP publication", () => {
       .from(campaignEnrollments)
       .where(eq(campaignEnrollments.campaignId, firstCampaign.id));
     expect(enrollments).toHaveLength(1);
+    if (!scoredProspect?.contactId) throw new Error("SCORED_PROSPECT_CONTACT_REQUIRED");
+    const [enrolledProspect] = await database.db
+      .select()
+      .from(campaignProspects)
+      .where(and(
+        eq(campaignProspects.workspaceId, workspaceId),
+        eq(campaignProspects.campaignId, firstCampaign.id),
+        eq(campaignProspects.contactId, scoredProspect.contactId),
+      ));
+    expect(enrolledProspect).toMatchObject({ status: "enrolled" });
+    expect(enrolledProspect?.enrolledAt).toBeInstanceOf(Date);
     const actions = await database.db
       .select()
       .from(outreachActions)
@@ -680,6 +692,182 @@ databaseDescribe("V3 automatic ICP publication", () => {
       generation: { promptVersion: "fixture-personalization-v1" },
       schedule: { activeDays: [1, 2, 3, 4, 5], timezone: "Europe/Paris", policyVersion: 1 },
     });
+
+    const recoveredCampaignId = crypto.randomUUID();
+    const recoveredCandidateId = crypto.randomUUID();
+    const recoveredContactId = crypto.randomUUID();
+    await database.db.insert(campaigns).values({
+      id: recoveredCampaignId,
+      workspaceId,
+      name: "Recovered incremental composition",
+      objective: "Clear an obsolete composition failure after a successful retry",
+      status: "active",
+      icpVersionId: firstCampaign.icpVersionId,
+      channel: firstCampaign.channel,
+      sequenceId: firstCampaign.sequenceId,
+      sequenceVersionId: activatedCampaign!.sequenceVersionId,
+      autopilotPolicy: firstCampaign.autopilotPolicy,
+      automationStage: "attention",
+      automationErrorCode: "CAMPAIGN_COMPOSITION_FAILED",
+      automationErrorMessage: "An older Kimi request failed before the runtime repair.",
+    });
+    await database.db.insert(contacts).values({
+      id: recoveredContactId,
+      workspaceId,
+      firstName: "Claire",
+      lastName: "Martin",
+    });
+    await database.db.insert(prospectDiscoveryCandidates).values({
+      id: recoveredCandidateId,
+      workspaceId,
+      runId: dailyRecoveryRun!.id,
+      fullName: "Claire Martin",
+      headline: "Associée · Cabinet Martin",
+      linkedinUrl: "https://www.linkedin.com/in/claire-martin/",
+      linkedinNormalized: "linkedin.com/in/claire-martin",
+      location: "Lyon, France",
+      companyName: "Cabinet Martin",
+      channels: {
+        linkedin: {
+          value: "https://www.linkedin.com/in/claire-martin/",
+          normalizedValue: "linkedin.com/in/claire-martin",
+          status: "verified",
+          confidence: "high",
+          source: "unipile_linkedin_search",
+        },
+        email: { value: null, normalizedValue: null, status: "unavailable", confidence: "none", source: null },
+        whatsapp: { value: null, normalizedValue: null, status: "unavailable", confidence: "none", source: null },
+      },
+      providerData: { providerId: "linkedin-claire" },
+      icpFit: { matches: ["Secteur juridique", "Rôle décideur"], gaps: [] },
+    });
+    await database.db.insert(campaignProspects).values({
+      workspaceId,
+      campaignId: recoveredCampaignId,
+      candidateId: recoveredCandidateId,
+      contactId: recoveredContactId,
+      status: "candidate",
+      state: "imported",
+      score: scoredProspect!.score,
+      scoreExplanation: scoredProspect!.scoreExplanation,
+      aiAssessment: scoredProspect!.aiAssessment,
+      eligible: true,
+      personalizedSteps: scoredProspect!.personalizedSteps,
+    });
+    await queue.enqueue({
+      id: crypto.randomUUID(),
+      workspaceId,
+      type: "campaign.messages.compose",
+      payload: { workspaceId, campaignId: recoveredCampaignId, incremental: true, candidateIds: [recoveredCandidateId] },
+      idempotencyKey: `campaign:${recoveredCampaignId}:recovered-incremental-fixture`,
+      correlationId: `campaign:${recoveredCampaignId}`,
+      maxAttempts: 3,
+      availableAt: clock.now(),
+    });
+    const [recoveredCompositionJob] = await queue.lease({
+      workerId: "campaign-recovered-composition-worker",
+      types: ["campaign.messages.compose"],
+      limit: 1,
+      leaseMs: 30_000,
+      now: clock.now(),
+    });
+    expect(recoveredCompositionJob).toBeDefined();
+    await new CampaignCompositionJobProcessor(
+      database.db,
+      queue,
+      new FixtureCampaignContentGenerator(),
+      { async resolveHealthyAccount() { return { provider: "unipile", accountId: linkedinAccountId }; } },
+      clock,
+    ).process(recoveredCompositionJob!);
+    const [recoveredCampaign] = await database.db.select().from(campaigns).where(and(
+      eq(campaigns.workspaceId, workspaceId),
+      eq(campaigns.id, recoveredCampaignId),
+    ));
+    expect(recoveredCampaign).toMatchObject({
+      status: "active",
+      automationStage: "scheduled",
+      automationErrorCode: null,
+      automationErrorMessage: null,
+    });
+    const recoveryDecisionJobs = await database.db.select({ jobId: prospectDecisions.jobId })
+      .from(prospectDecisions)
+      .where(and(
+        eq(prospectDecisions.workspaceId, workspaceId),
+        eq(prospectDecisions.campaignId, recoveredCampaignId),
+      ));
+    await database.db.update(jobs)
+      .set({ availableAt: new Date(clock.now().getTime() + 365 * 86_400_000) })
+      .where(inArray(jobs.id, recoveryDecisionJobs.map((item) => item.jobId)));
+
+    const conflictCampaignId = crypto.randomUUID();
+    await database.db.insert(campaigns).values({
+      id: conflictCampaignId,
+      workspaceId,
+      name: "Campaign with an already active contact",
+      objective: "Keep sourcing instead of failing the whole campaign",
+      status: "active",
+      icpVersionId: firstCampaign.icpVersionId,
+      channel: firstCampaign.channel,
+      sequenceId: firstCampaign.sequenceId,
+      sequenceVersionId: activatedCampaign!.sequenceVersionId,
+      autopilotPolicy: firstCampaign.autopilotPolicy,
+      automationStage: "composing",
+    });
+    await database.db.insert(campaignProspects).values({
+      workspaceId,
+      campaignId: conflictCampaignId,
+      candidateId: scoredProspect!.candidateId,
+      contactId: scoredProspect!.contactId,
+      status: "candidate",
+      state: "imported",
+      score: scoredProspect!.score,
+      scoreExplanation: scoredProspect!.scoreExplanation,
+      aiAssessment: scoredProspect!.aiAssessment,
+      eligible: true,
+      personalizedSteps: scoredProspect!.personalizedSteps,
+    });
+    await queue.enqueue({
+      id: crypto.randomUUID(),
+      workspaceId,
+      type: "campaign.messages.compose",
+      payload: { workspaceId, campaignId: conflictCampaignId, incremental: true, candidateIds: [scoredProspect!.candidateId] },
+      idempotencyKey: `campaign:${conflictCampaignId}:conflict-fixture`,
+      correlationId: `campaign:${conflictCampaignId}`,
+      maxAttempts: 3,
+      availableAt: clock.now(),
+    });
+    const [conflictCompositionJob] = await queue.lease({
+      workerId: "campaign-conflict-composition-worker",
+      types: ["campaign.messages.compose"],
+      limit: 1,
+      leaseMs: 30_000,
+      now: clock.now(),
+    });
+    expect(conflictCompositionJob).toBeDefined();
+    await new CampaignCompositionJobProcessor(
+      database.db,
+      queue,
+      new FixtureCampaignContentGenerator(),
+      { async resolveHealthyAccount() { return { provider: "unipile", accountId: linkedinAccountId }; } },
+      clock,
+    ).process(conflictCompositionJob!);
+    const [excludedConflictProspect] = await database.db.select().from(campaignProspects).where(and(
+      eq(campaignProspects.workspaceId, workspaceId),
+      eq(campaignProspects.campaignId, conflictCampaignId),
+    ));
+    expect(excludedConflictProspect).toMatchObject({
+      status: "excluded",
+      state: "excluded",
+      eligible: false,
+      exclusionReason: "ACTIVE_SEQUENCE_CONFLICT",
+    });
+    const [continuedConflictCampaign] = await database.db.select().from(campaigns).where(and(
+      eq(campaigns.workspaceId, workspaceId),
+      eq(campaigns.id, conflictCampaignId),
+    ));
+    expect(continuedConflictCampaign).toMatchObject({ status: "active", automationStage: "sourcing", automationErrorCode: null });
+    expect(await database.db.select().from(campaignEnrollments).where(eq(campaignEnrollments.campaignId, conflictCampaignId))).toHaveLength(0);
+    expect(await database.db.select().from(outreachActions).where(eq(outreachActions.campaignId, conflictCampaignId))).toHaveLength(0);
     const lockedPolicyUpdate = await campaignHandler(
       new Request(`http://localhost/api/v1/campaigns/${firstCampaign.id}/autopilot-policy`, {
         method: "PATCH",

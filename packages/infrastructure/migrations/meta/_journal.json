@@ -568,6 +568,20 @@
       "when": 1797847200000,
       "tag": "0080_provider_effect_reconciliation_final",
       "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "7",
+      "when": 1797850800000,
+      "tag": "0081_campaign_prospect_enrollment_consistency",
+      "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "7",
+      "when": 1797854400000,
+      "tag": "0082_configurable_content_publication_cadence",
+      "breakpoints": true
     }
   ]
 }

@@ -6,6 +6,7 @@ import {
   type ResearchStage,
 } from "@outbound/domain/gtm/product-research";
 import type {
+  DeferJobRequest,
   JobQueue,
   LeaseJobsRequest,
   LeasedJob,
@@ -477,6 +478,19 @@ export class InMemoryResearchBackend
     job.lockedUntil = null;
     job.lastErrorCode = request.errorCode;
     return job.status === "retry" ? "scheduled" : "dead_lettered";
+  }
+
+  async defer(request: DeferJobRequest): Promise<void> {
+    const job = this.#jobs.get(request.jobId);
+    if (!job || job.status !== "running" || job.lockedBy !== request.workerId) {
+      throw new Error("JOB_LEASE_LOST");
+    }
+    job.status = "pending";
+    job.attempts = Math.max(0, job.attempts - 1);
+    job.availableAt = request.availableAt;
+    job.lockedBy = null;
+    job.lockedUntil = null;
+    job.lastErrorCode = request.errorCode;
   }
 
   inspectJobs(): readonly StoredJob[] {

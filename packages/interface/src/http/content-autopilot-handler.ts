@@ -29,6 +29,8 @@ export function createContentAutopilotHttpHandler(input: {
           enabled: body.enabled,
           localTime: body.localTime,
           timezone: body.timezone,
+          ...(body.publicationTimes ? { publicationTimes: body.publicationTimes } : {}),
+          ...(body.publicationDays ? { publicationDays: body.publicationDays } : {}),
         })));
       }
       return problem(405, "METHOD_NOT_ALLOWED", "The HTTP method is not allowed");

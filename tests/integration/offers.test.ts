@@ -5,7 +5,7 @@ import { createDatabase } from "@outbound/infrastructure/database/client";
 import { authUsers, offers, workspaces } from "@outbound/infrastructure/database/schema";
 import { createOfferHttpHandler } from "@outbound/interface/http/offer-handler";
 
-const databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
+const databaseUrl = process.env.TEST_DATABASE_URL;
 const databaseDescribe = databaseUrl ? describe : describe.skip;
 
 databaseDescribe("F-010 offers", () => {

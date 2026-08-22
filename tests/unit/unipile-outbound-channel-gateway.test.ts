@@ -182,6 +182,39 @@ describe("UnipileOutboundChannelGateway", () => {
       retryable: true,
     });
   });
+
+  test("turns a recently sent LinkedIn invitation into a safe cooldown", async () => {
+    const gateway = new UnipileOutboundChannelGateway({
+      dsn: "https://api37.unipile.com:16796",
+      apiKey: "secret-key",
+      fetchImpl: (async () => Response.json({
+        status: 422,
+        type: "errors/already_invited_recently",
+        title: "Should delay new invitation to this recipient",
+        detail: "An invitation has already been sent recently to this recipient. Please try again later.",
+      }, { status: 422 })) as unknown as typeof fetch,
+    });
+
+    const error = await gateway.send({
+      accountId: "linkedin-account",
+      channel: "linkedin",
+      stepKind: "linkedin_invite",
+      recipient: {
+        value: "Marie Durand",
+        normalizedValue: "linkedin.com/in/marie-durand",
+        providerUserId: "provider-marie",
+      },
+      subject: null,
+      body: "",
+      idempotencyKey: "invite-recent:test",
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({
+      code: "LINKEDIN_INVITE_RECENT",
+      deliveryState: "not_sent",
+      retryable: true,
+    });
+  });
 });
 
 function fakeFetch(handler: (url: string, init?: RequestInit) => Response): typeof fetch {

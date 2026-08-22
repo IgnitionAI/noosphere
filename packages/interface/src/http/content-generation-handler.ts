@@ -1,5 +1,6 @@
 import { ZodError, z } from "zod";
 import type { ContentGenerationApplication } from "@outbound/application/content/content-generation";
+import type { ContentPublicationRepository } from "@outbound/application/content/content-publications";
 import { contentGenerationRequestSchema } from "@outbound/contracts/content";
 import type { RequestContextResolver } from "@outbound/interface/http/request-context";
 import { RequestAuthenticationError, WorkspaceAccessDeniedError, WorkspaceContextRequiredError } from "@outbound/interface/http/request-context";
@@ -13,7 +14,11 @@ export function isContentGenerationRoute(pathname: string): boolean {
     || /^\/api\/v1\/content\/generation-runs\/[^/]+$/.test(pathname);
 }
 
-export function createContentGenerationHttpHandler(input: { application: ContentGenerationApplication; contextResolver: RequestContextResolver }) {
+export function createContentGenerationHttpHandler(input: {
+  application: ContentGenerationApplication;
+  contextResolver: RequestContextResolver;
+  publications?: Pick<ContentPublicationRepository, "findLatestForAsset">;
+}) {
   return async function handle(request: Request): Promise<Response> {
     try {
       const context = await input.contextResolver.resolve(request);
@@ -30,7 +35,11 @@ export function createContentGenerationHttpHandler(input: { application: Content
         const ideaId = uuid.parse(idea[1]);
         const found = await input.application.findIdea({ workspaceId: context.workspaceId, ideaId });
         if (!found) return problem(404, "CONTENT_IDEA_NOT_FOUND", "The idea does not exist in this workspace");
-        return json(normalize({ idea: found, asset: await input.application.findAssetByIdea({ workspaceId: context.workspaceId, ideaId }) }));
+        const asset = await input.application.findAssetByIdea({ workspaceId: context.workspaceId, ideaId });
+        const publication = asset && input.publications
+          ? await input.publications.findLatestForAsset({ workspaceId: context.workspaceId, assetId: asset.id })
+          : null;
+        return json(normalize({ idea: found, asset, publication }));
       }
       const improve = pathname.match(/^\/api\/v1\/content\/assets\/([^/]+)\/improve$/);
       if (improve && request.method === "POST") {

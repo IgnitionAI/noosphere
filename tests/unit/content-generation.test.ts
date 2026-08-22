@@ -13,7 +13,7 @@ describe("CNT-101 grounded content pipeline", () => {
   });
 
   test("blocks a draft claim that the evidence auditor silently skipped", () => {
-    const readiness = evaluateContentReadiness({ draft: draft(), audit: { ...audit(), reviewedClaims: [] }, critique: critique(), availableEvidenceKeys: ["proof:1"] });
+    const readiness = evaluateContentReadiness({ draft: draft(), audit: { ...audit(), reviewedClaims: [] }, critique: critique(), availableEvidenceKeys: ["proof:1"], recentBodies: [] });
     expect(readiness).toEqual({ ready: false, blockers: ["unaudited_claim"] });
   });
 
@@ -23,9 +23,131 @@ describe("CNT-101 grounded content pipeline", () => {
       audit: audit(),
       critique: critique(),
       availableEvidenceKeys: ["proof:1"],
+      recentBodies: [],
     });
     expect(readiness.ready).toBe(false);
     expect(readiness.blockers).toContain("generic_language");
+  });
+
+  test("blocks internal evidence-audit narration from leaking into the visible post", () => {
+    const readiness = evaluateContentReadiness({
+      draft: {
+        ...draft(),
+        body: "Ce qui est documenté : Noosphere relie le contenu aux conversations. Notre analyse ne constitue pas une garantie. La seule affirmation factuelle est celle du registre de preuves.",
+      },
+      audit: audit(),
+      critique: critique(),
+      availableEvidenceKeys: ["proof:1"],
+      recentBodies: [],
+    });
+
+    expect(readiness.ready).toBe(false);
+    expect(readiness.blockers).toContain("audit_language");
+  });
+
+  test("blocks an overlong LinkedIn post before publication", () => {
+    const readiness = evaluateContentReadiness({
+      draft: {
+        ...draft(),
+        body: `${draft().body} ${"Une décision utile part d’un problème précis et se termine par une action claire. ".repeat(24)}`,
+      },
+      audit: audit(),
+      critique: critique(),
+      availableEvidenceKeys: ["proof:1"],
+      recentBodies: [],
+    });
+
+    expect(readiness.ready).toBe(false);
+    expect(readiness.blockers).toContain("too_long");
+  });
+
+  test("blocks a post that asks the reader to answer multiple questions", () => {
+    const readiness = evaluateContentReadiness({
+      draft: {
+        ...draft(),
+        body: "Pourquoi perdre une preuve au moment de décider ? Noosphere relie le contenu aux conversations. Comment vérifiez-vous vos preuves ?",
+      },
+      audit: audit(),
+      critique: critique(),
+      availableEvidenceKeys: ["proof:1"],
+      recentBodies: [],
+    });
+
+    expect(readiness.ready).toBe(false);
+    expect(readiness.blockers).toContain("multiple_questions");
+  });
+
+  test("blocks a near-duplicate of a recent workspace post even when the critic misses it", () => {
+    const readiness = evaluateContentReadiness({
+      draft: draft(),
+      audit: audit(),
+      critique: critique(),
+      availableEvidenceKeys: ["proof:1"],
+      recentBodies: [
+        "Une clause introuvable coûte plus qu'une recherche. Les équipes juridiques ont besoin d'une preuve résoluble avant de décider. Noosphere relie le contenu aux conversations. Échangeons.",
+      ],
+    });
+
+    expect(readiness.ready).toBe(false);
+    expect(readiness.blockers).toContain("repetition");
+  });
+
+  test("allows a distinct angle to reuse the same grounded product claim", () => {
+    const readiness = evaluateContentReadiness({
+      draft: draft(),
+      audit: audit(),
+      critique: critique(),
+      availableEvidenceKeys: ["proof:1"],
+      recentBodies: [
+        "Publier ne suffit pas à créer une opportunité commerciale. Une équipe doit savoir relier un signal social à la bonne personne, puis garder le contexte quand la discussion commence. Noosphere relie le contenu aux conversations.",
+      ],
+    });
+
+    expect(readiness).toEqual({ ready: true, blockers: [] });
+  });
+
+  test("keeps editorial polish advice non-blocking", () => {
+    const readiness = evaluateContentReadiness({
+      draft: draft(),
+      audit: audit(),
+      critique: {
+        ...critique(),
+        genericPhrases: ["D'où la seule question qui compte vraiment"],
+        issues: [{ severity: "advice", code: "mild_rhetorical_inflation", message: "Retirer cette emphase rendrait le texte plus sobre." }],
+      },
+      availableEvidenceKeys: ["proof:1"],
+      recentBodies: [],
+    });
+
+    expect(readiness).toEqual({ ready: true, blockers: [] });
+  });
+
+  test("accepts a sourced factual claim when the auditor wraps it in editorial context and also reviews opinions", () => {
+    const readiness = evaluateContentReadiness({
+      draft: draft(),
+      audit: {
+        ...audit(),
+        reviewedClaims: [
+          {
+            statement: `Ce qui est documenté : ${draft().factualClaims[0]!.statement}`,
+            sourceKeys: ["proof:1"],
+            verdict: "supported",
+            reason: "La preuve reprend explicitement le claim.",
+          },
+          {
+            statement: draft().opinionStatements[0]!,
+            sourceKeys: [],
+            verdict: "supported",
+            reason: "Cette phrase est explicitement une opinion.",
+          },
+        ],
+      },
+      critique: critique(),
+      availableEvidenceKeys: ["proof:1"],
+      recentBodies: [],
+    });
+
+    expect(readiness).toEqual({ ready: true, blockers: [] });
   });
 
   test("repairs one deterministically rejected writer draft with explicit feedback", async () => {
@@ -80,7 +202,7 @@ describe("CNT-101 grounded content pipeline", () => {
     expect(calls).toEqual(["start", "audit", "audit_saved", "critic", "ready", "ack"]);
   });
 
-  test("repairs one audit-rejected draft before the critic sees it", async () => {
+  test("repairs a repeatedly audit-rejected draft with a bounded second pass before the critic sees it", async () => {
     const calls: string[] = [];
     const feedback: Array<readonly string[] | undefined> = [];
     const context = pipelineContext("audit");
@@ -100,14 +222,85 @@ describe("CNT-101 grounded content pipeline", () => {
       async audit() {
         calls.push("audit");
         auditAttempt += 1;
-        return auditAttempt === 1 ? { ...audit(), ungroundedStatements: ["Le hook factuel manque au registre."] } : audit();
+        return auditAttempt <= 2
+          ? { ...audit(), ungroundedStatements: [`Le hook factuel manque au registre (audit ${auditAttempt}).`] }
+          : audit();
       },
       async critique() { calls.push("critic"); return critique(); },
     }, queue);
 
     await processor.process(job(context.run.workspaceId, context.run.id));
 
-    expect(feedback).toEqual([["CONTENT_AUDIT_UNGROUNDED_STATEMENT: Le hook factuel manque au registre."]]);
+    expect(feedback).toEqual([
+      ["CONTENT_AUDIT_UNGROUNDED_STATEMENT: Le hook factuel manque au registre (audit 1)."],
+      ["CONTENT_AUDIT_UNGROUNDED_STATEMENT: Le hook factuel manque au registre (audit 2)."],
+    ]);
+    expect(calls).toEqual(["start", "audit", "writer_repair", "draft_repaired", "audit", "writer_repair", "draft_repaired", "audit", "audit_saved", "critic", "ready", "ack"]);
+  });
+
+  test("repairs a critic-rejected draft, then re-audits it before final readiness", async () => {
+    const calls: string[] = [];
+    const feedback: Array<readonly string[] | undefined> = [];
+    const context = pipelineContext("audit");
+    const repository = {
+      async loadContext() { return context; },
+      async startRun() { calls.push("start"); },
+      async reviseDraftAfterCritique() { calls.push("draft_repaired_after_critique"); },
+      async saveAudit() { calls.push("audit_saved"); },
+      async completeRun(input: { readiness: { ready: boolean } }) { calls.push(input.readiness.ready ? "ready" : "blocked"); },
+      async failRun() {},
+    } as unknown as ContentGenerationRepository;
+    const queue = { async acknowledge() { calls.push("ack"); } } as unknown as JobQueue;
+    let criticAttempt = 0;
+    const processor = new ContentGenerationJobProcessor(repository, {
+      async buildBrief() { throw new Error("brief must not replay"); },
+      async write(input) { calls.push("writer_repair"); feedback.push(input.validationFeedback); return draft(); },
+      async audit() { calls.push("audit"); return audit(); },
+      async critique() {
+        calls.push("critic");
+        criticAttempt += 1;
+        return criticAttempt === 1
+          ? { ...critique(), issues: [{ severity: "blocker" as const, code: "META_FRAMING_LABELS", message: "Supprimer le méta-discours et écrire le fait directement." }] }
+          : critique();
+      },
+    }, queue);
+
+    await processor.process(job(context.run.workspaceId, context.run.id));
+
+    expect(feedback).toEqual([["CONTENT_CRITIQUE_BLOCKER [META_FRAMING_LABELS]: Supprimer le méta-discours et écrire le fait directement."]]);
+    expect(calls).toEqual(["start", "audit", "audit_saved", "critic", "writer_repair", "draft_repaired_after_critique", "audit", "audit_saved", "critic", "ready", "ack"]);
+  });
+
+  test("repairs a removable forbidden topic before the final critic", async () => {
+    const calls: string[] = [];
+    const feedback: Array<readonly string[] | undefined> = [];
+    const context = pipelineContext("audit");
+    const repository = {
+      async loadContext() { return context; },
+      async startRun() { calls.push("start"); },
+      async reviseDraftAfterAudit() { calls.push("draft_repaired"); },
+      async saveAudit() { calls.push("audit_saved"); },
+      async completeRun(input: { readiness: { ready: boolean } }) { calls.push(input.readiness.ready ? "ready" : "blocked"); },
+      async failRun() {},
+    } as unknown as ContentGenerationRepository;
+    const queue = { async acknowledge() { calls.push("ack"); } } as unknown as JobQueue;
+    let auditAttempt = 0;
+    const processor = new ContentGenerationJobProcessor(repository, {
+      async buildBrief() { throw new Error("brief must not replay"); },
+      async write(input) { calls.push("writer_repair"); feedback.push(input.validationFeedback); return draft(); },
+      async audit() {
+        calls.push("audit");
+        auditAttempt += 1;
+        return auditAttempt === 1
+          ? { ...audit(), forbiddenTopicMatches: ["Capacité produit non sourcée"] }
+          : audit();
+      },
+      async critique() { calls.push("critic"); return critique(); },
+    }, queue);
+
+    await processor.process(job(context.run.workspaceId, context.run.id));
+
+    expect(feedback).toEqual([["CONTENT_AUDIT_FORBIDDEN_TOPIC: Capacité produit non sourcée"]]);
     expect(calls).toEqual(["start", "audit", "writer_repair", "draft_repaired", "audit", "audit_saved", "critic", "ready", "ack"]);
   });
 });

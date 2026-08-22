@@ -201,6 +201,49 @@ export class PostgresSocialEngagementSyncRepository implements SocialEngagementS
   }
 
   async markFailed(input: Parameters<SocialEngagementSyncRepository["markFailed"]>[0]): Promise<void> {
+    if (input.code === "SOCIAL_RATE_LIMITED") {
+      await this.database.transaction(async (tx) => {
+        const retryAt = new Date(input.now.getTime() + input.retryAfterMs);
+        const released = await tx.update(socialInteractionSyncStates).set({
+          status: "idle",
+          leaseToken: null,
+          lockedUntil: null,
+          nextSyncAt: retryAt,
+          lastErrorCode: null,
+          lastErrorMessage: null,
+          updatedAt: input.now,
+        }).where(and(
+          eq(socialInteractionSyncStates.workspaceId, input.lease.workspaceId),
+          eq(socialInteractionSyncStates.id, input.lease.stateId),
+          eq(socialInteractionSyncStates.leaseToken, input.lease.leaseToken),
+          eq(socialInteractionSyncStates.scanToken, input.lease.scanToken),
+        )).returning({ id: socialInteractionSyncStates.id });
+        if (!released[0]) throw new Error("SOCIAL_ENGAGEMENT_SYNC_LEASE_LOST");
+
+        await tx.update(socialInteractionSyncStates).set({
+          status: "idle",
+          nextSyncAt: retryAt,
+          lastErrorCode: null,
+          lastErrorMessage: null,
+          updatedAt: input.now,
+        }).where(and(
+          eq(socialInteractionSyncStates.workspaceId, input.lease.workspaceId),
+          eq(socialInteractionSyncStates.providerAccountId, input.lease.providerAccountId),
+          lte(socialInteractionSyncStates.nextSyncAt, retryAt),
+          or(
+            ne(socialInteractionSyncStates.status, "error"),
+            eq(socialInteractionSyncStates.lastErrorCode, "SOCIAL_RATE_LIMITED"),
+          ),
+          or(
+            ne(socialInteractionSyncStates.status, "syncing"),
+            isNull(socialInteractionSyncStates.lockedUntil),
+            lte(socialInteractionSyncStates.lockedUntil, input.now),
+          ),
+        ));
+      });
+      return;
+    }
+
     const updated = await this.database.update(socialInteractionSyncStates).set({
       status: "error",
       leaseToken: null,

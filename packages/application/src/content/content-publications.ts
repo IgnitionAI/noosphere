@@ -95,6 +95,7 @@ export interface ContentPublicationRepository {
   }): Promise<ContentPublicationView>;
   list(input: { readonly workspaceId: string; readonly cursor?: string; readonly limit: number }): Promise<{ readonly data: readonly ContentPublicationView[]; readonly nextCursor: string | null }>;
   find(input: { readonly workspaceId: string; readonly publicationId: string }): Promise<ContentPublicationView | null>;
+  findLatestForAsset(input: { readonly workspaceId: string; readonly assetId: string }): Promise<ContentPublicationView | null>;
   reschedule(input: { readonly workspaceId: string; readonly userId: string; readonly publicationId: string; readonly requestKey: string; readonly scheduledFor: Date; readonly now: Date }): Promise<ContentPublicationView>;
   cancel(input: { readonly workspaceId: string; readonly userId: string; readonly publicationId: string; readonly requestKey: string; readonly now: Date }): Promise<ContentPublicationView>;
   inspectExecution(input: { readonly workspaceId: string; readonly publicationId: string; readonly now: Date }): Promise<"ready" | "terminal" | "unknown">;
@@ -114,6 +115,7 @@ export class ContentPublicationApplication {
 
   list(input: Parameters<ContentPublicationRepository["list"]>[0]) { return this.repository.list(input); }
   find(input: Parameters<ContentPublicationRepository["find"]>[0]) { return this.repository.find(input); }
+  findLatestForAsset(input: Parameters<ContentPublicationRepository["findLatestForAsset"]>[0]) { return this.repository.findLatestForAsset(input); }
 
   async schedule(input: { readonly workspaceId: string; readonly userId: string | null; readonly assetId: string; readonly requestKey: string; readonly scheduledFor: Date; readonly now?: Date }) {
     const replay = await this.repository.findRequest({ workspaceId: input.workspaceId, operation: "publication.schedule", requestKey: input.requestKey });

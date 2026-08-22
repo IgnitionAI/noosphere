@@ -99,6 +99,7 @@ import { AttributionReconciler } from "@outbound/application/attribution/attribu
 import { PostgresAttributionRepository } from "@outbound/infrastructure/attribution/postgres-attribution-repository";
 import { ContentAutopilotReconciler } from "@outbound/application/content/content-autopilot";
 import { PostgresContentAutopilotRepository } from "@outbound/infrastructure/content/postgres-content-autopilot-repository";
+import { PostgresJobOutcomeReconciler } from "@outbound/infrastructure/jobs/postgres-job-outcome-reconciler";
 import { EditorialLearningReconciler } from "@outbound/application/content/editorial-learning";
 import { PostgresEditorialLearningRepository } from "@outbound/infrastructure/content/postgres-editorial-learning-repository";
 import { ContentPublicationOutcomeReconciler } from "@outbound/application/content/content-publication-reconciliation";
@@ -341,6 +342,7 @@ const contentAutopilotReconciler = new ContentAutopilotReconciler(
   contentPublicationApplication,
   clock,
 );
+const jobOutcomeReconciler = new PostgresJobOutcomeReconciler(database.db, clock);
 const prospectAssessmentReconciler = new ProspectAssessmentReconciler(database.db, clock);
 const campaignHealthReconciler = new CampaignHealthReconciler(database.db, clock);
 const sourcingRetentionReconciler = new SourcingRetentionReconciler(database.db, clock);
@@ -397,7 +399,10 @@ const editorialLearningReconciler = new EditorialLearningReconciler(
 );
 const maintenance = {
   async reconcile() {
-    const [dailyRuns, dailyIdeaRuns, assessmentJobs, repairedCampaigns, retainedSourcing, inboundEvents, observedSocialEngagements] = await Promise.all([
+    const reconciledPreSendWaits = await jobOutcomeReconciler.reconcileExhaustedPreSendWaits();
+    const reconciledRecoverableProviderRefusals = await jobOutcomeReconciler.reconcileRecoverableOutreachActions();
+    const reconciledStaleProviderActions = await jobOutcomeReconciler.reconcileStaleOutreachActions();
+    const [dailyRuns, dailyIdeaRuns, assessmentJobs, repairedCampaigns, retainedSourcing, inboundEvents, observedSocialEngagements, reconciledJobOutcomes] = await Promise.all([
       dailyProspectingScheduler.reconcile(),
       dailyContentIdeaScheduler.reconcile(),
       prospectAssessmentReconciler.reconcile(),
@@ -405,12 +410,25 @@ const maintenance = {
       sourcingRetentionReconciler.reconcile(),
       unipileInboxSynchronizer?.reconcile() ?? Promise.resolve(0),
       socialEngagementSynchronizer?.reconcile() ?? Promise.resolve(0),
+      jobOutcomeReconciler.reconcile(),
     ]);
     const reconciledProviderEffects = await contentPublicationOutcomeReconciler?.reconcile() ?? 0;
     const observedSocialPosts = await socialContentSynchronizer?.reconcile() ?? 0;
     const automatedContentActions = await contentAutopilotReconciler.reconcile();
     if (automatedContentActions > 0) {
       console.info(JSON.stringify({ event: "linkedin_content_autopilot_progressed", actions: automatedContentActions }));
+    }
+    if (reconciledJobOutcomes > 0) {
+      console.info(JSON.stringify({ event: "job_outcomes_reconciled", count: reconciledJobOutcomes }));
+    }
+    if (reconciledStaleProviderActions > 0) {
+      console.info(JSON.stringify({ event: "stale_outreach_actions_failed_closed", count: reconciledStaleProviderActions }));
+    }
+    if (reconciledRecoverableProviderRefusals > 0) {
+      console.info(JSON.stringify({ event: "recoverable_outreach_actions_rescheduled", count: reconciledRecoverableProviderRefusals }));
+    }
+    if (reconciledPreSendWaits > 0) {
+      console.info(JSON.stringify({ event: "exhausted_pre_send_waits_rescheduled", count: reconciledPreSendWaits }));
     }
     if (inboundEvents > 0) {
       console.info(JSON.stringify({ event: "unipile_inbox_mirror_updated", importedMessages: inboundEvents }));
@@ -432,7 +450,7 @@ const maintenance = {
     if (editorialLearningVersions > 0) {
       console.info(JSON.stringify({ event: "linkedin_editorial_learning_updated", versions: editorialLearningVersions }));
     }
-    return dailyRuns + dailyIdeaRuns + automatedContentActions + assessmentJobs + repairedCampaigns + retainedSourcing + inboundEvents + reconciledProviderEffects + observedSocialPosts + observedSocialEngagements + attributedInteractions + editorialLearningVersions;
+    return dailyRuns + dailyIdeaRuns + automatedContentActions + assessmentJobs + repairedCampaigns + retainedSourcing + inboundEvents + reconciledProviderEffects + observedSocialPosts + observedSocialEngagements + attributedInteractions + editorialLearningVersions + reconciledJobOutcomes + reconciledPreSendWaits + reconciledRecoverableProviderRefusals + reconciledStaleProviderActions;
   },
 };
 const orchestrator = new ResearchOrchestrator(
@@ -468,6 +486,18 @@ for (const signal of ["SIGTERM", "SIGINT"] as const) {
 
 console.info(JSON.stringify({ event: "research_worker_started" }));
 try {
+  const reconciledPreSendWaits = await jobOutcomeReconciler.reconcileExhaustedPreSendWaits();
+  if (reconciledPreSendWaits > 0) {
+    console.info(JSON.stringify({ event: "exhausted_pre_send_waits_rescheduled", count: reconciledPreSendWaits }));
+  }
+  const reconciledRecoverableProviderRefusals = await jobOutcomeReconciler.reconcileRecoverableOutreachActions();
+  if (reconciledRecoverableProviderRefusals > 0) {
+    console.info(JSON.stringify({ event: "recoverable_outreach_actions_rescheduled", count: reconciledRecoverableProviderRefusals }));
+  }
+  const reconciledStaleProviderActions = await jobOutcomeReconciler.reconcileStaleOutreachActions();
+  if (reconciledStaleProviderActions > 0) {
+    console.info(JSON.stringify({ event: "stale_outreach_actions_failed_closed", count: reconciledStaleProviderActions }));
+  }
   const repairedCampaigns = await new CampaignSourcingReconciler(database.db, clock).reconcile();
   if (repairedCampaigns > 0) {
     console.info(JSON.stringify({ event: "campaign_sourcing_reconciled", count: repairedCampaigns }));

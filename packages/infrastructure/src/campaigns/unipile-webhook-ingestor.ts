@@ -188,6 +188,18 @@ async function matchInboundContact(
     .limit(1);
   if (conversation) return conversation;
 
+  const [exactAction] = await tx
+    .select({ contactId: outreachActions.contactId, campaignId: outreachActions.campaignId })
+    .from(outreachActions)
+    .where(and(
+      eq(outreachActions.workspaceId, workspaceId),
+      eq(outreachActions.providerAccountId, incoming.accountId),
+      eq(outreachActions.providerRequestId, incoming.messageId),
+    ))
+    .limit(1);
+  if (exactAction) return exactAction;
+
+  let contactId: string | null = null;
   if (incoming.senderValue && incoming.channel !== "linkedin") {
     try {
       const normalized = incoming.channel === "email"
@@ -201,16 +213,16 @@ async function matchInboundContact(
           eq(contactIdentities.normalizedValue, normalized),
         ))
         .limit(1);
-      if (identity) return { contactId: identity.contactId, campaignId: null };
+      contactId = identity?.contactId ?? null;
     } catch {
       // Invalid provider identities are still processed asynchronously and
       // recorded as unmatched rather than weakening the ingestion barrier.
     }
   }
 
-  if (incoming.senderProviderId) {
+  if (!contactId && incoming.senderProviderId) {
     const [candidate] = await tx
-      .select({ contactId: campaignProspects.contactId, campaignId: campaignProspects.campaignId })
+      .select({ contactId: campaignProspects.contactId })
       .from(campaignProspects)
       .innerJoin(
         prospectDiscoveryCandidates,
@@ -223,19 +235,26 @@ async function matchInboundContact(
         eq(campaignProspects.workspaceId, workspaceId),
         sql`${prospectDiscoveryCandidates.providerData}->>'providerId' = ${incoming.senderProviderId}`,
       ))
+      .orderBy(desc(campaignProspects.updatedAt))
       .limit(1);
-    if (candidate?.contactId) return { contactId: candidate.contactId, campaignId: candidate.campaignId };
+    contactId = candidate?.contactId ?? null;
   }
+
+  if (!contactId) return null;
   const [sentAction] = await tx
     .select({ contactId: outreachActions.contactId, campaignId: outreachActions.campaignId })
     .from(outreachActions)
     .where(and(
       eq(outreachActions.workspaceId, workspaceId),
-      eq(outreachActions.providerRequestId, incoming.messageId),
+      eq(outreachActions.contactId, contactId),
+      eq(outreachActions.providerAccountId, incoming.accountId),
+      eq(outreachActions.channel, incoming.channel),
+      eq(outreachActions.status, "sent"),
     ))
+    .orderBy(desc(outreachActions.sentAt), desc(outreachActions.createdAt))
     .limit(1);
   if (sentAction) return sentAction;
-  return null;
+  return { contactId, campaignId: null };
 }
 
 export async function recordRejectedUnipileWebhook(database: Database, rawBody: string, reasonCode: string, now = new Date()): Promise<boolean> {

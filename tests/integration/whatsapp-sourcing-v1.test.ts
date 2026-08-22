@@ -438,6 +438,7 @@ function acknowledgementQueue(): JobQueue {
     async lease() { return []; },
     async renewLease() { return true; },
     async acknowledge() {},
+    async defer() {},
     async retry() { return "scheduled"; },
   };
 }

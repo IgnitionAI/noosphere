@@ -22,7 +22,7 @@ import {
 } from "@outbound/infrastructure/database/schema";
 import { createDiscoveryHttpHandler } from "@outbound/interface/http/discovery-handler";
 
-const databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
+const databaseUrl = process.env.TEST_DATABASE_URL;
 const databaseDescribe = databaseUrl ? describe : describe.skip;
 
 databaseDescribe("F-023 prospect discovery", () => {
@@ -368,6 +368,7 @@ databaseDescribe("F-023 prospect discovery", () => {
       async lease() { return []; },
       async renewLease() { return true; },
       async acknowledge() {},
+      async defer() {},
       async retry() { return "scheduled"; },
     };
     const asyncHandle = createDiscoveryHttpHandler({

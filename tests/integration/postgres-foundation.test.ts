@@ -13,10 +13,12 @@ import { createBetterAuthRuntime } from "@outbound/infrastructure/auth/better-au
 import { createDatabase } from "@outbound/infrastructure/database/client";
 import { PostgresProductResearchRepository } from "@outbound/infrastructure/gtm/postgres-product-research-repository";
 import { PostgresJobQueue } from "@outbound/infrastructure/jobs/postgres-job-queue";
+import { PostgresJobOutcomeReconciler } from "@outbound/infrastructure/jobs/postgres-job-outcome-reconciler";
 import { PostgresResearchToolRequestRegistry } from "@outbound/infrastructure/ai/postgres-research-tool-request-registry";
 import {
   marketEvidence,
   productResearchRuns,
+  researchDocuments,
   researchWorkItems,
   workspaces,
 } from "@outbound/infrastructure/database/schema";
@@ -26,7 +28,7 @@ import { createWorkspaceHttpHandler } from "@outbound/interface/http/workspace-h
 import { bootstrapOwner } from "../../scripts/bootstrap-owner";
 import { validOutputFor } from "../fixtures/research-agent-fixtures";
 
-const databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
+const databaseUrl = process.env.TEST_DATABASE_URL;
 const databaseDescribe = databaseUrl ? describe : describe.skip;
 
 databaseDescribe("PostgreSQL F-009 foundation", () => {
@@ -51,12 +53,14 @@ databaseDescribe("PostgreSQL F-009 foundation", () => {
 
   afterEach(async () => {
     await database.client`delete from jobs where workspace_id in (${workspaceA}, ${workspaceB})`;
+    await database.client`delete from research_documents where workspace_id in (${workspaceA}, ${workspaceB})`;
     await database.client`delete from outbox_events where workspace_id in (${workspaceA}, ${workspaceB})`;
     await database.client`delete from product_research_runs where workspace_id in (${workspaceA}, ${workspaceB})`;
   });
 
   afterAll(async () => {
     await database.client`delete from jobs where workspace_id in (${workspaceA}, ${workspaceB})`;
+    await database.client`delete from research_documents where workspace_id in (${workspaceA}, ${workspaceB})`;
     await database.client`delete from outbox_events where workspace_id in (${workspaceA}, ${workspaceB})`;
     await database.client`delete from product_research_runs where workspace_id in (${workspaceA}, ${workspaceB})`;
     await database.client`delete from workspaces where id in (${workspaceA}, ${workspaceB})`;
@@ -94,6 +98,150 @@ databaseDescribe("PostgreSQL F-009 foundation", () => {
     expect(leased).toBeDefined();
     expect(leased!.payload).toEqual({ test: true });
     await queue.acknowledge(leased!.id, leased!.lockedBy, new Date());
+  });
+
+  test("dead-letters an expired final lease instead of leaving the job running forever", async () => {
+    const now = new Date();
+    const jobType = `integration.expired-final-lease.${crypto.randomUUID()}`;
+    const jobId = ids.generate();
+    await queue.enqueue({
+      id: jobId,
+      workspaceId: workspaceA,
+      type: jobType,
+      payload: { test: "worker-crash" },
+      idempotencyKey: `expired-final-lease-${crypto.randomUUID()}`,
+      correlationId: "integration-expired-final-lease",
+      maxAttempts: 1,
+      availableAt: now,
+    });
+    const [leased] = await queue.lease({
+      workerId: "crashed-worker",
+      types: [jobType],
+      limit: 1,
+      leaseMs: 1_000,
+      now,
+    });
+    expect(leased?.attempts).toBe(1);
+
+    const afterExpiry = new Date(now.getTime() + 2_000);
+    expect(await queue.lease({
+      workerId: "recovery-worker",
+      types: [jobType],
+      limit: 1,
+      leaseMs: 1_000,
+      now: afterExpiry,
+    })).toEqual([]);
+
+    const rows = await database.client<{ status: string; last_error_code: string | null; completed_at: Date | null }[]>`
+      select status, last_error_code, completed_at
+      from jobs
+      where id = ${jobId}
+    `;
+    expect(rows[0]).toMatchObject({
+      status: "dead_lettered",
+      last_error_code: "JOB_LEASE_EXHAUSTED",
+      completed_at: afterExpiry,
+    });
+  });
+
+  test("defers scheduled work without exhausting the retry budget", async () => {
+    const now = new Date();
+    const availableAt = new Date(now.getTime() + 60_000);
+    const jobType = `integration.defer.${crypto.randomUUID()}`;
+    const jobId = ids.generate();
+    await queue.enqueue({
+      id: jobId,
+      workspaceId: workspaceA,
+      type: jobType,
+      payload: { reason: "outside-window" },
+      idempotencyKey: `defer-${crypto.randomUUID()}`,
+      correlationId: "integration-defer",
+      maxAttempts: 1,
+      availableAt: now,
+    });
+    const [leased] = await queue.lease({
+      workerId: "window-worker",
+      types: [jobType],
+      limit: 1,
+      leaseMs: 30_000,
+      now,
+    });
+    await queue.defer({
+      jobId,
+      workerId: leased!.lockedBy,
+      availableAt,
+      errorCode: "OUTSIDE_SENDING_WINDOW",
+      errorMessage: "Wait for the configured window",
+    });
+
+    const rows = await database.client<{ status: string; attempts: number; available_at: Date }[]>`
+      select status, attempts, available_at from jobs where id = ${jobId}
+    `;
+    expect(rows[0]).toMatchObject({ status: "pending", attempts: 0, available_at: availableAt });
+    const [reLeased] = await queue.lease({
+      workerId: "next-window-worker",
+      types: [jobType],
+      limit: 1,
+      leaseMs: 30_000,
+      now: availableAt,
+    });
+    expect(reLeased?.attempts).toBe(1);
+    await queue.acknowledge(reLeased!.id, reLeased!.lockedBy, availableAt);
+  });
+
+  test("normalizes and revives one legacy document job without touching provider delivery jobs", async () => {
+    const now = new Date();
+    const documentId = crypto.randomUUID();
+    const documentJobId = crypto.randomUUID();
+    const deliveryJobId = crypto.randomUUID();
+    await database.db.insert(researchDocuments).values({
+      id: documentId,
+      workspaceId: workspaceA,
+      filename: "legacy.md",
+      contentType: "text/markdown",
+      sizeBytes: 12,
+      checksumSha256: "a".repeat(64),
+      objectKey: `${workspaceA}/legacy.md`,
+      status: "uploaded",
+    });
+    await queue.enqueue({
+      id: documentJobId,
+      workspaceId: workspaceA,
+      type: "research.document.process",
+      payload: JSON.stringify({ workspaceId: workspaceA, documentId }),
+      idempotencyKey: `legacy-document-${documentId}`,
+      correlationId: "integration-document-reconcile",
+      maxAttempts: 3,
+      availableAt: now,
+    });
+    await queue.enqueue({
+      id: deliveryJobId,
+      workspaceId: workspaceA,
+      type: "outreach.dispatch",
+      payload: { workspaceId: workspaceA, actionId: crypto.randomUUID() },
+      idempotencyKey: `delivery-${crypto.randomUUID()}`,
+      correlationId: "integration-provider-delivery",
+      maxAttempts: 3,
+      availableAt: now,
+    });
+    await database.client`
+      update jobs set status = 'dead_lettered', attempts = max_attempts, completed_at = ${now}
+      where id in (${documentJobId}, ${deliveryJobId})
+    `;
+
+    const reconciler = new PostgresJobOutcomeReconciler(database.db, { now: () => now });
+    expect(await reconciler.reconcile()).toBe(1);
+    const rows = await database.client<{ id: string; status: string; attempts: number; payload: unknown }[]>`
+      select id, status, attempts, payload from jobs where id in (${documentJobId}, ${deliveryJobId}) order by id
+    `;
+    const documentJob = rows.find((row) => row.id === documentJobId);
+    const deliveryJob = rows.find((row) => row.id === deliveryJobId);
+    expect(documentJob).toMatchObject({
+      status: "pending",
+      attempts: 0,
+      payload: { workspaceId: workspaceA, documentId, _reconciliationAttempts: 1 },
+    });
+    expect(deliveryJob?.status).toBe("dead_lettered");
   });
 
   test("leases fairly across workspaces even when one workspace has a large fan-out", async () => {

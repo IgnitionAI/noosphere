@@ -38,13 +38,41 @@ describe("ENG-101 durable social engagement synchronization", () => {
     expect(await synchronizer.reconcile()).toBe(0);
     expect(failures).toEqual([expect.objectContaining({ code: "SOCIAL_RATE_LIMITED", retryAfterMs: 9_000, lease: expect.objectContaining({ scanToken: "scan-1" }) })]);
   });
+
+  test("honors the provider cooldown and stops reading the rate-limited account", async () => {
+    const failures: unknown[] = [];
+    const targets = [
+      target,
+      { ...target, socialContentId: "post-2", providerSocialId: "urn:li:activity:456", kind: "reactions" as const },
+    ];
+    let reads = 0;
+    const synchronizer = new SocialEngagementSynchronizer(
+      repository({ failures, targets }),
+      {
+        async listEngagements() {
+          reads += 1;
+          throw Object.assign(new Error("rate limited"), {
+            code: "SOCIAL_RATE_LIMITED",
+            retryAfterMs: 120_000,
+          });
+        },
+      },
+      { now: () => now, failureRetryMs: 9_000 },
+    );
+
+    expect(await synchronizer.reconcile()).toBe(0);
+    expect(reads).toBe(1);
+    expect(failures).toEqual([
+      expect.objectContaining({ code: "SOCIAL_RATE_LIMITED", retryAfterMs: 120_000 }),
+    ]);
+  });
 });
 
-function repository(output: { pages?: unknown[]; failures?: unknown[]; target?: SocialEngagementSyncTarget; lease?: SocialEngagementSyncLease }): SocialEngagementSyncRepository {
+function repository(output: { pages?: unknown[]; failures?: unknown[]; target?: SocialEngagementSyncTarget; targets?: readonly SocialEngagementSyncTarget[]; lease?: SocialEngagementSyncLease }): SocialEngagementSyncRepository {
   const current = output.target ?? target;
   return {
-    async listDueTargets() { return [current]; },
-    async acquire() { return output.lease ?? lease(current); },
+    async listDueTargets() { return output.targets ?? [current]; },
+    async acquire(input) { return output.lease ?? lease(input); },
     async persistPage(input) { output.pages?.push(input); return input.engagements.length; },
     async markFailed(input) { output.failures?.push(input); },
     async list() { return { data: [], nextCursor: null }; },

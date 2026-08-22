@@ -1,13 +1,46 @@
 import type { ContentGenerationRepository } from "@outbound/application/content/content-generation";
 import type { ContentPublicationApplication } from "@outbound/application/content/content-publications";
 import type { Clock } from "@outbound/application/shared/ports";
-import type { EditorialStrategySnapshot } from "@outbound/domain/content/editorial-strategy";
+import { CONTENT_EDITORIAL_POLICY_VERSION } from "@outbound/domain/content/content-asset";
+
+export interface ContentAutopilotCadence {
+  readonly postsPerWeek: number;
+  readonly preferredDays: readonly number[];
+  readonly publicationTimes: readonly string[];
+  readonly timezone: string;
+}
+
+export function resolveContentAutopilotCadence(input: {
+  readonly strategyCadence: Omit<ContentAutopilotCadence, "publicationTimes">;
+  readonly publicationTimes?: readonly string[] | null | undefined;
+  readonly publicationDays?: readonly number[] | null | undefined;
+  readonly timezone?: string | null | undefined;
+}): ContentAutopilotCadence {
+  const publicationTimes = input.publicationTimes?.length
+    ? [...new Set(input.publicationTimes)].sort()
+    : ["09:00"];
+  const preferredDays = input.publicationDays?.length
+    ? [...new Set(input.publicationDays)].sort((left, right) => left - right)
+    : [...input.strategyCadence.preferredDays];
+  const hasOperationalOverride = Boolean(input.publicationTimes?.length || input.publicationDays?.length);
+  return {
+    postsPerWeek: hasOperationalOverride
+      ? publicationTimes.length * preferredDays.length
+      : input.strategyCadence.postsPerWeek,
+    preferredDays,
+    publicationTimes,
+    timezone: input.timezone ?? input.strategyCadence.timezone,
+  };
+}
 
 export interface ContentAutopilotView {
   readonly configured: boolean;
   readonly enabled: boolean;
   readonly localTime: string;
   readonly timezone: string;
+  readonly publicationTimes: readonly string[];
+  readonly publicationDays: readonly number[];
+  readonly postsPerWeek: number;
   readonly lastRunAt: Date | null;
   readonly nextRunAt: Date | null;
   readonly nextPublicationAt: Date | null;
@@ -22,7 +55,13 @@ export interface ContentAutopilotView {
 export interface ContentAutopilotWorkspace {
   readonly workspaceId: string;
   readonly strategyVersionId: string;
-  readonly cadence: EditorialStrategySnapshot["cadence"];
+  readonly cadence: ContentAutopilotCadence;
+}
+
+export interface ContentAutopilotRepairCandidate {
+  readonly assetId: string;
+  readonly attempt: number;
+  readonly blockers: readonly string[];
 }
 
 export interface ContentAutopilotRepository {
@@ -34,10 +73,13 @@ export interface ContentAutopilotRepository {
     readonly enabled: boolean;
     readonly localTime: string;
     readonly timezone: string;
+    readonly publicationTimes?: readonly string[];
+    readonly publicationDays?: readonly number[];
     readonly now: Date;
   }): Promise<ContentAutopilotView>;
   listEnabled(input: { readonly limit: number }): Promise<readonly ContentAutopilotWorkspace[]>;
   listGenerationCandidates(input: { readonly workspaceId: string; readonly strategyVersionId: string; readonly now: Date; readonly limit: number }): Promise<readonly { readonly ideaId: string }[]>;
+  listRepairCandidates(input: { readonly workspaceId: string; readonly strategyVersionId: string; readonly limit: number }): Promise<readonly ContentAutopilotRepairCandidate[]>;
   listPublicationCandidates(input: { readonly workspaceId: string; readonly strategyVersionId: string; readonly limit: number }): Promise<readonly { readonly assetId: string; readonly assetVersionId: string; readonly publicationSequence: number }[]>;
   listOccupiedPublicationTimes(input: { readonly workspaceId: string; readonly from: Date; readonly to: Date }): Promise<readonly Date[]>;
   recordDeferred(input: { readonly workspaceId: string; readonly assetId: string; readonly code: string; readonly message: string; readonly now: Date }): Promise<void>;
@@ -60,6 +102,8 @@ export class ContentAutopilotApplication {
     readonly enabled: boolean;
     readonly localTime: string;
     readonly timezone: string;
+    readonly publicationTimes?: readonly string[];
+    readonly publicationDays?: readonly number[];
   }): Promise<ContentAutopilotView> {
     return this.repository.configure({ ...input, now: this.clock.now() });
   }
@@ -85,22 +129,42 @@ export class ContentAutopilotReconciler {
 
   async #reconcileWorkspace(workspace: ContentAutopilotWorkspace, now: Date): Promise<number> {
     let progressed = 0;
-    const generationCandidates = await this.repository.listGenerationCandidates({
+    const repairCandidates = await this.repository.listRepairCandidates({
       workspaceId: workspace.workspaceId,
       strategyVersionId: workspace.strategyVersionId,
-      now,
-      limit: Math.min(14, Math.max(2, workspace.cadence.postsPerWeek * 2)),
+      limit: Math.min(8, Math.max(2, workspace.cadence.postsPerWeek)),
     });
-    for (const candidate of generationCandidates) {
+    for (const candidate of repairCandidates.slice(0, 1)) {
       await this.generation.createGeneration({
         workspaceId: workspace.workspaceId,
         userId: null,
-        ideaId: candidate.ideaId,
-        operation: "asset.generate",
-        requestKey: `autopilot:generation:${candidate.ideaId}`,
+        assetId: candidate.assetId,
+        operation: "asset.improve",
+        requestKey: `autopilot:repair:${candidate.assetId}:${CONTENT_EDITORIAL_POLICY_VERSION}:v${candidate.attempt}`,
+        instruction: automaticRepairInstruction(candidate.blockers),
         now,
       });
       progressed += 1;
+    }
+
+    if (repairCandidates.length === 0) {
+      const generationCandidates = await this.repository.listGenerationCandidates({
+        workspaceId: workspace.workspaceId,
+        strategyVersionId: workspace.strategyVersionId,
+        now,
+        limit: 1,
+      });
+      for (const candidate of generationCandidates.slice(0, 1)) {
+        await this.generation.createGeneration({
+          workspaceId: workspace.workspaceId,
+          userId: null,
+          ideaId: candidate.ideaId,
+          operation: "asset.generate",
+          requestKey: `autopilot:generation:${candidate.ideaId}`,
+          now,
+        });
+        progressed += 1;
+      }
     }
 
     const candidates = await this.repository.listPublicationCandidates({
@@ -148,37 +212,48 @@ export class ContentAutopilotReconciler {
   }
 }
 
+function automaticRepairInstruction(blockers: readonly string[]): string {
+  const bounded = [...new Set(blockers)].slice(0, 8);
+  return [
+    "Produis une nouvelle version autonome à partir du même brief et des mêmes preuves.",
+    `Répare strictement ces blocages sans ajouter de fait ni de claim : ${bounded.join(", ") || "editorial_blocker"}.`,
+    "Supprime toute phrase non prouvée, formulation générique ou répétition signalée. Garde un hook spécifique et un seul CTA aligné.",
+  ].join(" ");
+}
+
 export function nextCadenceSlots(input: {
   readonly now: Date;
-  readonly cadence: EditorialStrategySnapshot["cadence"];
+  readonly cadence: Omit<ContentAutopilotCadence, "publicationTimes"> & { readonly publicationTimes?: readonly string[] };
   readonly occupied: readonly Date[];
   readonly count: number;
   readonly localTime?: string;
 }): readonly Date[] {
   if (input.count <= 0) return [];
-  const localTime = input.localTime ?? "09:00";
+  const publicationTimes = [...new Set(input.cadence.publicationTimes ?? [input.localTime ?? "09:00"])].sort();
   const preferredDays = new Set(input.cadence.preferredDays);
   const usedByWeek = new Map<string, number>();
-  const usedDays = new Set<string>();
+  const usedSlots = new Set<string>();
   for (const occupied of input.occupied) {
-    const key = localDateKey(occupied, input.cadence.timezone);
-    usedDays.add(key);
+    usedSlots.add(localDateTimeKey(occupied, input.cadence.timezone));
     const week = isoWeekKey(occupied, input.cadence.timezone);
     usedByWeek.set(week, (usedByWeek.get(week) ?? 0) + 1);
   }
   const slots: Date[] = [];
   for (let offset = 0; offset < 84 && slots.length < input.count; offset += 1) {
-    const candidate = localOccurrence(input.now, offset, localTime, input.cadence.timezone);
-    if (candidate.getTime() <= input.now.getTime() + 60_000) continue;
-    const day = isoDay(candidate, input.cadence.timezone);
-    if (!preferredDays.has(day)) continue;
-    const dateKey = localDateKey(candidate, input.cadence.timezone);
-    if (usedDays.has(dateKey)) continue;
-    const week = isoWeekKey(candidate, input.cadence.timezone);
-    if ((usedByWeek.get(week) ?? 0) >= input.cadence.postsPerWeek) continue;
-    slots.push(candidate);
-    usedDays.add(dateKey);
-    usedByWeek.set(week, (usedByWeek.get(week) ?? 0) + 1);
+    for (const publicationTime of publicationTimes) {
+      const candidate = localOccurrence(input.now, offset, publicationTime, input.cadence.timezone);
+      if (candidate.getTime() <= input.now.getTime() + 60_000) continue;
+      const day = isoDay(candidate, input.cadence.timezone);
+      if (!preferredDays.has(day)) continue;
+      const slotKey = localDateTimeKey(candidate, input.cadence.timezone);
+      if (usedSlots.has(slotKey)) continue;
+      const week = isoWeekKey(candidate, input.cadence.timezone);
+      if ((usedByWeek.get(week) ?? 0) >= input.cadence.postsPerWeek) continue;
+      slots.push(candidate);
+      usedSlots.add(slotKey);
+      usedByWeek.set(week, (usedByWeek.get(week) ?? 0) + 1);
+      if (slots.length >= input.count) break;
+    }
   }
   return slots;
 }
@@ -202,6 +277,17 @@ function isoDay(date: Date, timezone: string): number {
 function localDateKey(date: Date, timezone: string): string {
   const parts = zonedParts(date, timezone);
   return `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
+}
+
+function localDateTimeKey(date: Date, timezone: string): string {
+  const dateKey = localDateKey(date, timezone);
+  const values = Object.fromEntries(new Intl.DateTimeFormat("en-GB", {
+    timeZone: timezone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date).map((part) => [part.type, part.value]));
+  return `${dateKey} ${values.hour}:${values.minute}`;
 }
 
 function isoWeekKey(date: Date, timezone: string): string {

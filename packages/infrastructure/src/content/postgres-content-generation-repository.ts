@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import type {
   ContentAssetVersionView,
   ContentAssetView,
@@ -12,7 +12,7 @@ import {
 } from "@outbound/application/content/content-generation";
 import type { ContentIdeaEvidence, ContentIdeaView } from "@outbound/application/content/content-ideas";
 import type { ContentIdeaStatus } from "@outbound/domain/content/content-idea";
-import type { ContentGenerationStage, ContentGenerationStatus } from "@outbound/domain/content/content-asset";
+import { CONTENT_EDITORIAL_POLICY_VERSION, type ContentGenerationStage, type ContentGenerationStatus } from "@outbound/domain/content/content-asset";
 import {
   contentBriefSnapshotSchema,
   contentDraftSnapshotSchema,
@@ -30,7 +30,6 @@ import {
   contentIdeaSources,
   contentIdeas,
   contentOperationRequests,
-  contentPublications,
   editorialStrategyVersions,
   jobs,
   outboxEvents,
@@ -74,10 +73,15 @@ export class PostgresContentGenerationRepository implements ContentGenerationRep
       const idea = (await tx.select().from(contentIdeas).where(and(eq(contentIdeas.workspaceId, input.workspaceId), eq(contentIdeas.id, ideaId))).limit(1))[0];
       if (!idea) throw new Error("CONTENT_IDEA_NOT_FOUND");
       if (idea.status === "discarded" || idea.status === "expired") throw new Error("CONTENT_IDEA_NOT_GENERATABLE");
-      const sources = await tx.select({ id: contentIdeaSources.id }).from(contentIdeaSources).where(and(
+      const sources = await tx.select({
+        id: contentIdeaSources.id,
+        type: contentIdeaSources.type,
+        sourceRef: contentIdeaSources.sourceRef,
+        contentHash: contentIdeaSources.contentHash,
+      }).from(contentIdeaSources).where(and(
         eq(contentIdeaSources.workspaceId, input.workspaceId),
         eq(contentIdeaSources.ideaId, idea.id),
-      )).limit(1);
+      ));
       if (sources.length === 0) throw new Error("CONTENT_IDEA_EVIDENCE_REQUIRED");
 
       if (!asset) {
@@ -90,6 +94,33 @@ export class PostgresContentGenerationRepository implements ContentGenerationRep
       }
       if (!asset) throw new Error("CONTENT_ASSET_CREATION_FAILED");
 
+      const currentEvidenceHashes = new Map(sources.map((source) => [
+        `${source.type}:${source.sourceRef}`,
+        source.contentHash,
+      ]));
+      const previousBrief = input.operation === "asset.improve" && asset.latestVersion > 0
+        ? (await tx.select({
+            id: contentBriefs.id,
+            snapshot: contentBriefs.snapshot,
+            evidenceSnapshot: contentBriefs.evidenceSnapshot,
+          }).from(contentAssetVersions)
+            .innerJoin(contentBriefs, and(
+              eq(contentBriefs.workspaceId, contentAssetVersions.workspaceId),
+              eq(contentBriefs.id, contentAssetVersions.briefId),
+            ))
+            .where(and(
+              eq(contentAssetVersions.workspaceId, input.workspaceId),
+              eq(contentAssetVersions.assetId, asset.id),
+              eq(contentAssetVersions.version, asset.latestVersion),
+              eq(contentBriefs.ideaId, idea.id),
+              eq(contentBriefs.strategyVersionId, idea.strategyVersionId),
+            ))
+            .limit(1))[0]
+        : undefined;
+      const reusableBrief = previousBrief
+        ? parseReusableBrief(previousBrief, currentEvidenceHashes)
+        : null;
+
       const runId = crypto.randomUUID();
       const run = (await tx.insert(contentGenerationRuns).values({
         id: runId,
@@ -98,12 +129,25 @@ export class PostgresContentGenerationRepository implements ContentGenerationRep
         assetId: asset.id,
         strategyVersionId: idea.strategyVersionId,
         status: "queued",
-        stage: "brief",
+        stage: reusableBrief ? "writer" : "brief",
+        briefSnapshot: reusableBrief?.snapshot ?? null,
         instruction: input.instruction?.trim() || null,
         createdBy: input.userId,
         createdAt: input.now,
         updatedAt: input.now,
       }).returning())[0]!;
+      if (reusableBrief) {
+        await tx.insert(contentBriefs).values({
+          id: crypto.randomUUID(),
+          workspaceId: input.workspaceId,
+          runId,
+          ideaId: idea.id,
+          strategyVersionId: idea.strategyVersionId,
+          snapshot: reusableBrief.snapshot,
+          evidenceSnapshot: reusableBrief.evidenceSnapshot,
+          createdAt: input.now,
+        });
+      }
       await tx.insert(contentOperationRequests).values({
         workspaceId: input.workspaceId,
         operation: input.operation,
@@ -118,6 +162,15 @@ export class PostgresContentGenerationRepository implements ContentGenerationRep
         maxAttempts: 4, priority: CONTENT_GENERATION_JOB_PRIORITY, availableAt: input.now, createdAt: input.now, updatedAt: input.now,
       });
       await appendEvent(tx, { workspaceId: input.workspaceId, userId: input.userId, runId, eventType: "ContentGenerationScheduled", changes: { ideaId: idea.id, assetId: asset.id, operation: input.operation } });
+      if (reusableBrief) {
+        await appendEvent(tx, {
+          workspaceId: input.workspaceId,
+          userId: input.userId,
+          runId,
+          eventType: "ContentBriefReused",
+          changes: { sourceBriefId: reusableBrief.sourceBriefId, evidenceCount: reusableBrief.snapshot.evidenceKeys.length },
+        });
+      }
       return toRun(run);
     });
   }
@@ -140,7 +193,13 @@ export class PostgresContentGenerationRepository implements ContentGenerationRep
     const assets = await this.database.select().from(contentAssets).where(and(eq(contentAssets.workspaceId, input.workspaceId), eq(contentAssets.ideaId, input.ideaId), eq(contentAssets.type, "linkedin_text"))).limit(1);
     const asset = assets[0];
     if (!asset) return null;
-    const versions = await this.database.select().from(contentAssetVersions).where(and(eq(contentAssetVersions.workspaceId, input.workspaceId), eq(contentAssetVersions.assetId, asset.id))).orderBy(desc(contentAssetVersions.version)).limit(1);
+    const versions = asset.latestVersion > 0
+      ? await this.database.select().from(contentAssetVersions).where(and(
+          eq(contentAssetVersions.workspaceId, input.workspaceId),
+          eq(contentAssetVersions.assetId, asset.id),
+          eq(contentAssetVersions.version, asset.latestVersion),
+        )).limit(1)
+      : [];
     return toAsset(asset, versions[0] ? toVersion(versions[0]) : null);
   }
 
@@ -153,22 +212,22 @@ export class PostgresContentGenerationRepository implements ContentGenerationRep
     const current = rows[0];
     if (!current) throw new Error("CONTENT_GENERATION_RUN_NOT_FOUND");
     const sourceRows = await this.database.select().from(contentIdeaSources).where(and(eq(contentIdeaSources.workspaceId, input.workspaceId), eq(contentIdeaSources.ideaId, current.idea.id))).orderBy(desc(contentIdeaSources.collectedAt));
-    const recent = await this.database.select({
-      body: contentAssetVersions.body,
-      publishedAt: contentPublications.publishedAt,
-    }).from(contentAssetVersions)
-      .innerJoin(contentPublications, and(
-        eq(contentPublications.workspaceId, contentAssetVersions.workspaceId),
-        eq(contentPublications.assetVersionId, contentAssetVersions.id),
+    const recent = await this.database.select({ body: contentAssetVersions.body })
+      .from(contentAssetVersions)
+      .innerJoin(contentAssets, and(
+        eq(contentAssets.workspaceId, contentAssetVersions.workspaceId),
+        eq(contentAssets.id, contentAssetVersions.assetId),
+        eq(contentAssets.latestVersion, contentAssetVersions.version),
       ))
       .where(and(
         eq(contentAssetVersions.workspaceId, input.workspaceId),
-        eq(contentPublications.status, "published"),
+        eq(contentAssetVersions.ready, true),
+        ne(contentAssets.id, current.run.assetId),
       ))
-      .orderBy(desc(contentPublications.publishedAt))
-      .limit(24);
+      .orderBy(desc(contentAssetVersions.createdAt), desc(contentAssetVersions.id))
+      .limit(12);
     const evidence = sourceRows.map(toEvidence);
-    const recentBodies = [...new Set(recent.map((item) => item.body))].slice(0, 12);
+    const recentBodies = [...new Set(recent.map((item) => item.body))];
     return {
       run: toRun(current.run),
       idea: toIdea(current.idea, evidence),
@@ -210,6 +269,10 @@ export class PostgresContentGenerationRepository implements ContentGenerationRep
 
   async reviseDraftAfterAudit(input: Parameters<ContentGenerationRepository["reviseDraftAfterAudit"]>[0]): Promise<void> {
     await this.advance(input.workspaceId, input.runId, "audit", { draftSnapshot: input.draft, auditSnapshot: null, updatedAt: input.now }, "ContentDraftRepairedAfterAudit", input.now, "audit");
+  }
+
+  async reviseDraftAfterCritique(input: Parameters<ContentGenerationRepository["reviseDraftAfterCritique"]>[0]): Promise<void> {
+    await this.advance(input.workspaceId, input.runId, "critic", { draftSnapshot: input.draft, auditSnapshot: null, critiqueSnapshot: null, updatedAt: input.now }, "ContentDraftRepairedAfterCritique", input.now, "audit");
   }
 
   async saveAudit(input: Parameters<ContentGenerationRepository["saveAudit"]>[0]): Promise<void> {
@@ -267,7 +330,9 @@ export class PostgresContentGenerationRepository implements ContentGenerationRep
       const audit = contentEvidenceAuditSchema.parse(run.auditSnapshot);
       await tx.insert(contentAssetVersions).values({
         id: versionId, workspaceId: input.workspaceId, assetId: asset.id, briefId: brief.id, generationRunId: run.id,
-        version, body: draft.body, draft, audit, critique: input.critique, readiness: input.readiness, ready: input.readiness.ready, createdAt: input.now,
+        version, body: draft.body, draft, audit, critique: input.critique,
+        readiness: { ...input.readiness, policyVersion: CONTENT_EDITORIAL_POLICY_VERSION },
+        ready: input.readiness.ready, createdAt: input.now,
       }).onConflictDoNothing({ target: [contentAssetVersions.workspaceId, contentAssetVersions.generationRunId] });
       await tx.update(contentAssets).set({ status: input.readiness.ready ? "ready" : "blocked", latestVersion: version, updatedAt: input.now }).where(and(eq(contentAssets.workspaceId, input.workspaceId), eq(contentAssets.id, asset.id)));
       await tx.update(contentGenerationRuns).set({
@@ -328,6 +393,36 @@ function toAsset(row: typeof contentAssets.$inferSelect, latest: ContentAssetVer
 
 function stageAfter(current: ContentGenerationStage, expected: ContentGenerationStage): boolean {
   return ["brief", "writer", "audit", "critic", "completed"].indexOf(current) > ["brief", "writer", "audit", "critic", "completed"].indexOf(expected);
+}
+
+function parseReusableBrief(
+  row: { id: string; snapshot: unknown; evidenceSnapshot: unknown },
+  currentEvidenceHashes: ReadonlyMap<string, string>,
+): {
+  sourceBriefId: string;
+  snapshot: ReturnType<typeof contentBriefSnapshotSchema.parse>;
+  evidenceSnapshot: readonly { key: string; contentHash: string }[];
+} | null {
+  try {
+    const snapshot = contentBriefSnapshotSchema.parse(row.snapshot);
+    if (!Array.isArray(row.evidenceSnapshot)) return null;
+    const evidenceSnapshot: Array<{ key: string; contentHash: string }> = [];
+    for (const item of row.evidenceSnapshot) {
+      if (!item || typeof item !== "object") return null;
+      const key = "key" in item && typeof item.key === "string" ? item.key : null;
+      const contentHash = "contentHash" in item && typeof item.contentHash === "string" ? item.contentHash : null;
+      if (!key || !contentHash) return null;
+      evidenceSnapshot.push({ key, contentHash });
+    }
+    const priorEvidenceHashes = new Map(evidenceSnapshot.map((item) => [item.key, item.contentHash]));
+    if (snapshot.evidenceKeys.some((key) => (
+      !currentEvidenceHashes.has(key)
+      || currentEvidenceHashes.get(key) !== priorEvidenceHashes.get(key)
+    ))) return null;
+    return { sourceBriefId: row.id, snapshot, evidenceSnapshot };
+  } catch {
+    return null;
+  }
 }
 
 async function appendEvent(tx: any, input: { workspaceId: string; userId: string | null; runId: string; eventType: string; changes: unknown }) {

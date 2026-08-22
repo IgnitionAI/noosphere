@@ -7,7 +7,7 @@ import { PostgresOutreachScheduler } from "@outbound/infrastructure/scheduler/po
 import type { UnipileClient, UnipileAccountSnapshot } from "@outbound/infrastructure/integrations/unipile-client";
 import { createOutreachHttpHandler } from "@outbound/interface/http/outreach-handler";
 
-const databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
+const databaseUrl = process.env.TEST_DATABASE_URL;
 const databaseDescribe = databaseUrl ? describe : describe.skip;
 
 databaseDescribe("F-034 outreach scheduler", () => {

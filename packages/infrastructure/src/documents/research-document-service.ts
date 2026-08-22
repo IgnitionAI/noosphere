@@ -263,12 +263,26 @@ export class ResearchDocumentService {
       });
       await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
     } catch (error) {
+      const failureCode = documentProcessingFailureCode(error);
+      if (documentProcessingFailureDisposition(failureCode) === "terminal") {
+        await this.db
+          .update(researchDocuments)
+          .set({ status: "failed", failureCode, updatedAt: this.clock.now() })
+          .where(
+            and(
+              eq(researchDocuments.workspaceId, payload.workspaceId),
+              eq(researchDocuments.id, payload.documentId),
+            ),
+          );
+        await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
+        return;
+      }
       const outcome = await this.queue.retry({
         jobId: job.id,
         workerId: job.lockedBy,
         availableAt: new Date(this.clock.now().getTime() + 30_000 * job.attempts),
         errorCode: "RESEARCH_DOCUMENT_PROCESSING_FAILED",
-        errorMessage: error instanceof Error ? error.message : String(error),
+        errorMessage: failureCode,
       });
       await this.db
         .update(researchDocuments)
@@ -303,6 +317,25 @@ export class ResearchDocumentService {
       .limit(1);
     return rows[0] ?? null;
   }
+}
+
+export function documentProcessingFailureDisposition(code: string): "terminal" | "retry" {
+  return new Set([
+    "DOCUMENT_FORMAT_UNSUPPORTED_BY_LIGHTWEIGHT_EXTRACTOR",
+    "DOCUMENT_PDF_TOO_LARGE_FOR_LIGHTWEIGHT_EXTRACTOR",
+    "DOCUMENT_TEXT_EMPTY",
+    "DOCUMENT_PDF_EXTRACTION_FAILED",
+    "RESEARCH_DOCUMENT_CHECKSUM_MISMATCH",
+    "RESEARCH_DOCUMENT_CONTENT_TYPE_MISMATCH",
+    "RESEARCH_DOCUMENT_OBJECT_EMPTY",
+  ]).has(code) ? "terminal" : "retry";
+}
+
+function documentProcessingFailureCode(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return /^[A-Z][A-Z0-9_]{2,159}$/.test(message)
+    ? message
+    : "RESEARCH_DOCUMENT_PROCESSING_FAILED";
 }
 
 export class ParadeDbInternalDocumentSearch implements InternalDocumentSearch {

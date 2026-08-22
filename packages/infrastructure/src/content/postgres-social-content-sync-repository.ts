@@ -185,13 +185,14 @@ export class PostgresSocialContentSyncRepository implements SocialContentSyncRep
   }
 
   async markFailed(input: Parameters<SocialContentSyncRepository["markFailed"]>[0]): Promise<void> {
+    const automaticallyDeferred = input.code === "SOCIAL_RATE_LIMITED";
     const updated = await this.database.update(socialContentSyncStates).set({
-      status: "error",
+      status: automaticallyDeferred ? "idle" : "error",
       leaseToken: null,
       lockedUntil: null,
       nextSyncAt: new Date(input.now.getTime() + input.retryAfterMs),
-      lastErrorCode: input.code,
-      lastErrorMessage: input.message.slice(0, 4_000),
+      lastErrorCode: automaticallyDeferred ? null : input.code,
+      lastErrorMessage: automaticallyDeferred ? null : input.message.slice(0, 4_000),
       updatedAt: input.now,
     }).where(and(
       eq(socialContentSyncStates.workspaceId, input.lease.workspaceId),

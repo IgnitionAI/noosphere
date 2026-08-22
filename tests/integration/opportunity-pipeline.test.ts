@@ -7,7 +7,7 @@ import { authUsers, contacts, opportunities, opportunityStageHistory, workspaceM
 import { PostgresOpportunityRepository } from "@outbound/infrastructure/pipeline/postgres-opportunity-repository";
 import { createOpportunityHttpHandler } from "@outbound/interface/http/opportunity-handler";
 
-const databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
+const databaseUrl = process.env.TEST_DATABASE_URL;
 const databaseDescribe = databaseUrl ? describe : describe.skip;
 
 databaseDescribe("F-044 opportunity pipeline completion", () => {

@@ -6,7 +6,7 @@ import { createDatabase } from "@outbound/infrastructure/database/client";
 import { createConnectedAccountHttpHandler } from "@outbound/interface/http/connected-account-handler";
 import type { UnipileClient, UnipileAccountSnapshot } from "@outbound/infrastructure/integrations/unipile-client";
 
-const databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
+const databaseUrl = process.env.TEST_DATABASE_URL;
 const databaseDescribe = databaseUrl ? describe : describe.skip;
 
 databaseDescribe("F-035 connected accounts", () => {

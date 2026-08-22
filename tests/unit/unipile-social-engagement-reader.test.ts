@@ -51,7 +51,7 @@ describe("Unipile social engagement reader", () => {
   });
 
   test("classifies throttling as retryable", async () => {
-    const reader = new UnipileSocialEngagementReader({ dsn: "https://api.example.test", apiKey: "secret", fetchImpl: (async () => new Response("limited", { status: 429 })) as unknown as typeof fetch });
-    await expect(reader.listEngagements({ accountId: "account-1", providerSocialId: "urn:li:activity:123", kind: "comments", parentProviderInteractionId: null, cursor: null, limit: 25 })).rejects.toMatchObject({ code: "SOCIAL_RATE_LIMITED", retryable: true, deliveryState: "not_sent" });
+    const reader = new UnipileSocialEngagementReader({ dsn: "https://api.example.test", apiKey: "secret", fetchImpl: (async () => new Response("limited", { status: 429, headers: { "retry-after": "120" } })) as unknown as typeof fetch });
+    await expect(reader.listEngagements({ accountId: "account-1", providerSocialId: "urn:li:activity:123", kind: "comments", parentProviderInteractionId: null, cursor: null, limit: 25 })).rejects.toMatchObject({ code: "SOCIAL_RATE_LIMITED", retryable: true, deliveryState: "not_sent", retryAfterMs: 120_000 });
   });
 });

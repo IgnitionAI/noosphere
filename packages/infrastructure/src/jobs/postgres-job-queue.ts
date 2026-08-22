@@ -1,4 +1,5 @@
 import type {
+  DeferJobRequest,
   JobQueue,
   LeaseJobsRequest,
   LeasedJob,
@@ -49,6 +50,21 @@ export class PostgresJobQueue implements JobQueue {
     const typeArrayLiteral = `{${request.types.join(",")}}`;
     const lockedUntil = new Date(request.now.getTime() + request.leaseMs);
     const rows = await this.sql.begin(async (transaction) => {
+      await transaction`
+        update jobs
+        set status = 'dead_lettered',
+            completed_at = ${request.now},
+            locked_at = null,
+            locked_until = null,
+            locked_by = null,
+            last_error_code = coalesce(last_error_code, 'JOB_LEASE_EXHAUSTED'),
+            last_error_message = coalesce(last_error_message, 'Worker lease expired after the maximum number of attempts'),
+            updated_at = ${request.now}
+        where type = any(${typeArrayLiteral}::text[])
+          and status = 'running'
+          and attempts >= max_attempts
+          and (locked_until is null or locked_until <= ${request.now})
+      `;
       return transaction<JobRow[]>`
         with ranked as (
           select id,
@@ -142,6 +158,26 @@ export class PostgresJobQueue implements JobQueue {
     const row = rows[0];
     if (!row) throw new Error("JOB_LEASE_LOST");
     return row.status === "retry" ? "scheduled" : "dead_lettered";
+  }
+
+  async defer(request: DeferJobRequest): Promise<void> {
+    const rows = await this.sql`
+      update jobs
+      set status = 'pending',
+          attempts = greatest(attempts - 1, 0),
+          available_at = ${request.availableAt},
+          locked_at = null,
+          locked_until = null,
+          locked_by = null,
+          last_error_code = ${request.errorCode},
+          last_error_message = ${request.errorMessage.slice(0, 4_000)},
+          updated_at = now()
+      where id = ${request.jobId}
+        and status = 'running'
+        and locked_by = ${request.workerId}
+      returning id
+    `;
+    if (rows.length !== 1) throw new Error("JOB_LEASE_LOST");
   }
 }
 

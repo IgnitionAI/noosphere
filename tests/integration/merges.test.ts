@@ -6,7 +6,7 @@ import { authUsers, workspaces } from "@outbound/infrastructure/database/schema"
 import { createCrmHttpHandler } from "@outbound/interface/http/crm-handler";
 import { createMergeHttpHandler } from "@outbound/interface/http/merge-handler";
 
-const databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
+const databaseUrl = process.env.TEST_DATABASE_URL;
 const databaseDescribe = databaseUrl ? describe : describe.skip;
 
 databaseDescribe("F-024 reversible contact merges", () => {

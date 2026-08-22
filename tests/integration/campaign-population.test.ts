@@ -4,7 +4,7 @@ import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { createDatabase } from "@outbound/infrastructure/database/client";
 import { createCampaignHttpHandler } from "@outbound/interface/http/campaign-handler";
 
-const databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
+const databaseUrl = process.env.TEST_DATABASE_URL;
 const databaseDescribe = databaseUrl ? describe : describe.skip;
 
 databaseDescribe("F-032 campaign population and enrollment", () => {

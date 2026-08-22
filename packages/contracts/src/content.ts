@@ -126,4 +126,14 @@ export const contentAutopilotConfigureRequestSchema = z.object({
       return false;
     }
   }, "Invalid IANA timezone"),
+  publicationTimes: z.array(z.string().regex(/^(?:[01][0-9]|2[0-3]):[0-5][0-9]$/))
+    .min(1)
+    .max(2)
+    .refine((values) => new Set(values).size === values.length, "Publication times must be unique")
+    .optional(),
+  publicationDays: z.array(z.number().int().min(1).max(7))
+    .min(1)
+    .max(7)
+    .refine((values) => new Set(values).size === values.length, "Publication days must be unique")
+    .optional(),
 }).strict();

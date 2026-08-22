@@ -1561,12 +1561,18 @@ export const contentIdeaSchedules = pgTable(
     enabled: boolean("enabled").notNull().default(true),
     localTime: varchar("local_time", { length: 5 }).notNull().default("06:00"),
     timezone: varchar("timezone", { length: 120 }).notNull().default("Europe/Paris"),
+    publicationTimes: varchar("publication_times", { length: 5 }).array(),
+    publicationDays: integer("publication_days").array(),
     lastRunAt: timestamp("last_run_at", { withTimezone: true }),
     nextRunAt: timestamp("next_run_at", { withTimezone: true }).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [check("content_idea_schedules_local_time_ck", sql`${table.localTime} ~ '^(?:[01][0-9]|2[0-3]):[0-5][0-9]$'`)],
+  (table) => [
+    check("content_idea_schedules_local_time_ck", sql`${table.localTime} ~ '^(?:[01][0-9]|2[0-3]):[0-5][0-9]$'`),
+    check("content_idea_schedules_publication_times_ck", sql`${table.publicationTimes} is null or (cardinality(${table.publicationTimes}) between 1 and 2 and array_to_string(${table.publicationTimes}, ',') ~ '^(?:[01][0-9]|2[0-3]):[0-5][0-9](,(?:[01][0-9]|2[0-3]):[0-5][0-9])?$')`),
+    check("content_idea_schedules_publication_days_ck", sql`${table.publicationDays} is null or (cardinality(${table.publicationDays}) between 1 and 7 and ${table.publicationDays} <@ array[1,2,3,4,5,6,7])`),
+  ],
 );
 
 export const contentAssets = pgTable(

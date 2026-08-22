@@ -8,7 +8,7 @@ import { createCrmHttpHandler } from "@outbound/interface/http/crm-handler";
 import { PostgresJobQueue } from "@outbound/infrastructure/jobs/postgres-job-queue";
 import { ProspectDecisionJobProcessor } from "@outbound/infrastructure/campaigns/prospect-decision-runner";
 
-const databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
+const databaseUrl = process.env.TEST_DATABASE_URL;
 const databaseDescribe = databaseUrl ? describe : describe.skip;
 
 databaseDescribe("F-020/F-021 CRM foundation", () => {

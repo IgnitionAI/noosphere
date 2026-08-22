@@ -20,7 +20,7 @@ import {
 } from "@outbound/infrastructure/database/schema";
 import { PostgresJobQueue } from "@outbound/infrastructure/jobs/postgres-job-queue";
 
-const databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
+const databaseUrl = process.env.TEST_DATABASE_URL;
 const databaseDescribe = databaseUrl ? describe : describe.skip;
 
 databaseDescribe("AI-140 continuous AI evaluation", () => {

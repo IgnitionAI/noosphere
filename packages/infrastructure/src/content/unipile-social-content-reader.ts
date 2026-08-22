@@ -43,7 +43,15 @@ export class UnipileSocialContentReader implements SocialContentReader, SocialMe
     const results: SocialMetricsSnapshot[] = [];
     for (const providerPostId of [...new Set(input.providerPostIds)].slice(0, 100)) {
       requireValue(providerPostId, "providerPostId");
-      const post = await this.#read(`/api/v1/posts/${encodeURIComponent(providerPostId)}?account_id=${encodeURIComponent(input.accountId)}`);
+      let post: Record<string, unknown>;
+      try {
+        post = await this.#read(`/api/v1/posts/${encodeURIComponent(providerPostId)}?account_id=${encodeURIComponent(input.accountId)}`);
+      } catch (error) {
+        // A deleted or no-longer-visible post must not invalidate the account
+        // nor discard every other post already returned by the provider page.
+        if (error instanceof SocialProviderError && error.code === "SOCIAL_ACCOUNT_UNAVAILABLE") continue;
+        throw error;
+      }
       const canonicalId = providerPostIdentifier(post) ?? providerPostId;
       results.push({
         providerPostId: canonicalId,
@@ -65,7 +73,7 @@ export class UnipileSocialContentReader implements SocialContentReader, SocialMe
         headers: { accept: "application/json", "X-API-KEY": this.#apiKey },
         signal: controller.signal,
       });
-      if (!response.ok) throw providerReadError(response.status, await safeDetail(response));
+      if (!response.ok) throw providerReadError(response.status, await safeDetail(response), retryAfterMilliseconds(response.headers.get("retry-after")));
       const body: unknown = await response.json().catch(() => null);
       if (!body || typeof body !== "object" || Array.isArray(body)) throw invalidResponse("Unipile returned invalid social content JSON");
       return body as Record<string, unknown>;
@@ -105,11 +113,21 @@ function numericActivityId(value: string | null): string | null {
   return match?.[1] ?? null;
 }
 
-function providerReadError(status: number, detail: string): SocialProviderError {
+function providerReadError(status: number, detail: string, retryAfterMs: number | null): SocialProviderError {
   if (status === 401 || status === 403) return new SocialProviderError("SOCIAL_AUTHENTICATION_FAILED", `Unipile refused the LinkedIn read${detail}`, "not_sent", false);
   if (status === 404 || status === 422) return new SocialProviderError("SOCIAL_ACCOUNT_UNAVAILABLE", `Unipile cannot read this LinkedIn resource${detail}`, "not_sent", false);
-  if (status === 429) return new SocialProviderError("SOCIAL_RATE_LIMITED", `Unipile rate limit reached${detail}`, "not_sent", true);
+  if (status === 429) return new SocialProviderError("SOCIAL_RATE_LIMITED", `Unipile rate limit reached${detail}`, "not_sent", true, retryAfterMs);
   return new SocialProviderError("SOCIAL_PROVIDER_UNAVAILABLE", `Unipile returned ${status}${detail}`, "not_sent", status >= 500);
+}
+
+function retryAfterMilliseconds(value: string | null): number | null {
+  if (!value) return null;
+  const seconds = Number(value);
+  const milliseconds = Number.isFinite(seconds)
+    ? Math.ceil(seconds * 1_000)
+    : new Date(value).getTime() - Date.now();
+  if (!Number.isFinite(milliseconds) || milliseconds <= 0) return null;
+  return Math.min(24 * 60 * 60_000, milliseconds);
 }
 
 function invalidResponse(message: string) { return new SocialProviderError("SOCIAL_PROVIDER_RESPONSE_INVALID", message, "not_sent", false); }

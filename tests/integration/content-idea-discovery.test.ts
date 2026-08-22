@@ -16,7 +16,7 @@ import {
 import { PostgresContentIdeaRepository } from "@outbound/infrastructure/content/postgres-content-idea-repository";
 import { DailyContentIdeaScheduler } from "@outbound/infrastructure/content/daily-content-idea-scheduler";
 
-const databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
+const databaseUrl = process.env.TEST_DATABASE_URL;
 const databaseDescribe = databaseUrl ? describe : describe.skip;
 
 databaseDescribe("IDE-101 durable content idea discovery", () => {

@@ -87,4 +87,51 @@ describe("JobQueue contract", () => {
       }),
     ).toBe("dead_lettered");
   });
+
+  test("defers scheduled work without consuming an execution attempt", async () => {
+    const queue = new InMemoryResearchBackend();
+    const now = new Date("2026-07-24T10:00:00.000Z");
+    const dueAt = new Date("2026-07-25T09:00:00.000Z");
+    const jobId = crypto.randomUUID();
+    await queue.enqueue({
+      id: jobId,
+      workspaceId: crypto.randomUUID(),
+      type: "outreach.dispatch",
+      payload: {},
+      idempotencyKey: "scheduled-window",
+      correlationId: "correlation",
+      maxAttempts: 1,
+      availableAt: now,
+    });
+    const [leased] = await queue.lease({
+      workerId: "worker-a",
+      types: ["outreach.dispatch"],
+      limit: 1,
+      leaseMs: 1_000,
+      now,
+    });
+
+    await queue.defer({
+      jobId,
+      workerId: leased!.lockedBy,
+      availableAt: dueAt,
+      errorCode: "OUTSIDE_SENDING_WINDOW",
+      errorMessage: "Wait for the recipient business window",
+    });
+
+    expect(queue.inspectJobs()[0]).toMatchObject({
+      status: "pending",
+      attempts: 0,
+      availableAt: dueAt,
+      lastErrorCode: "OUTSIDE_SENDING_WINDOW",
+    });
+    const [reLeased] = await queue.lease({
+      workerId: "worker-b",
+      types: ["outreach.dispatch"],
+      limit: 1,
+      leaseMs: 1_000,
+      now: dueAt,
+    });
+    expect(reLeased?.attempts).toBe(1);
+  });
 });

@@ -157,6 +157,17 @@ export class UnipileOutboundChannelGateway implements OutboundChannelGateway {
       const detail = (await response.text().catch(() => "")).replace(/\s+/g, " ").slice(0, 500);
       if (
         response.status === 422
+        && /already_invited_recently|invitation has already been sent recently/i.test(detail)
+      ) {
+        throw new OutboundDeliveryError(
+          "LINKEDIN_INVITE_RECENT",
+          "A LinkedIn invitation was already sent recently; wait before trying this recipient again",
+          "not_sent",
+          true,
+        );
+      }
+      if (
+        response.status === 422
         && /limit_exceeded|usage limit set by the provider|provider.*limit/i.test(detail)
       ) {
         throw new OutboundDeliveryError(

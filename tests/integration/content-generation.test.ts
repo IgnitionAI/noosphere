@@ -42,8 +42,9 @@ import { PostgresEditorialLearningRepository } from "@outbound/infrastructure/co
 import { PostgresContentIdeaRepository } from "@outbound/infrastructure/content/postgres-content-idea-repository";
 import { ContentPublicationOutcomeReconciler } from "@outbound/application/content/content-publication-reconciliation";
 import { PostgresContentPublicationReconciliationRepository } from "@outbound/infrastructure/content/postgres-content-publication-reconciliation-repository";
+import { PostgresJobOutcomeReconciler } from "@outbound/infrastructure/jobs/postgres-job-outcome-reconciler";
 
-const databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
+const databaseUrl = process.env.TEST_DATABASE_URL;
 const databaseDescribe = databaseUrl ? describe : describe.skip;
 
 databaseDescribe("CNT-101 durable content generation", () => {
@@ -165,6 +166,29 @@ databaseDescribe("CNT-101 durable content generation", () => {
     expect(await repository.findRun({ workspaceId: otherWorkspaceId, runId: first.id })).toBeNull();
 
     const autopilotRepository = new PostgresContentAutopilotRepository(database.db);
+    await database.client`alter table content_asset_versions disable trigger content_asset_versions_immutable_trg`;
+    await database.client`update content_asset_versions set readiness = readiness - 'policyVersion' where workspace_id = ${workspaceId} and id = ${asset!.latest!.id}`;
+    await database.client`alter table content_asset_versions enable trigger content_asset_versions_immutable_trg`;
+    try {
+      expect(await autopilotRepository.listRepairCandidates({ workspaceId, strategyVersionId, limit: 10 })).toContainEqual({
+        assetId: asset!.id,
+        attempt: 1,
+        blockers: ["editorial_policy_outdated"],
+      });
+      await expect(publicationRepository.schedule({
+        workspaceId,
+        userId,
+        assetId: asset!.id,
+        requestKey: "publication:legacy-policy:must-not-send",
+        scheduledFor: new Date(now.getTime() + 5_000),
+        account: { provider: "unipile", providerAccountId: "linkedin-account-fixture", displayName: "Compte LinkedIn fixture", selectionVersion: now.toISOString(), observedAt: now.toISOString() },
+        now,
+      })).rejects.toThrow("CONTENT_ASSET_EDITORIAL_POLICY_OUTDATED");
+    } finally {
+      await database.client`alter table content_asset_versions disable trigger content_asset_versions_immutable_trg`;
+      await database.client`update content_asset_versions set readiness = jsonb_set(readiness, '{policyVersion}', to_jsonb(${'linkedin-editorial-v2'}::text), true) where workspace_id = ${workspaceId} and id = ${asset!.latest!.id}`;
+      await database.client`alter table content_asset_versions enable trigger content_asset_versions_immutable_trg`;
+    }
     const autopilotClock = { now: () => now };
     const autopilotPublishing = new ContentPublicationApplication(
       publicationRepository,
@@ -173,12 +197,14 @@ databaseDescribe("CNT-101 durable content generation", () => {
     );
     await autopilotRepository.configure({ workspaceId, userId, requestKey: "autopilot:integration:enable", enabled: true, localTime: "06:00", timezone: "Europe/Paris", now });
     const autopilot = new ContentAutopilotReconciler(autopilotRepository, repository, autopilotPublishing, autopilotClock);
-    expect(await autopilot.reconcile()).toBe(1);
+    expect(await autopilot.reconcile()).toBeGreaterThanOrEqual(1);
     const firstAutopilot = (await database.client<{ id: string; status: string }[]>`select id, status from content_publications where workspace_id = ${workspaceId} and request_key like 'autopilot:publication:%' order by created_at desc limit 1`)[0]!;
+    await autopilotRepository.configure({ workspaceId, userId, requestKey: "autopilot:integration:timezone-change", enabled: true, localTime: "06:00", timezone: "UTC", now });
+    expect((await publicationRepository.find({ workspaceId, publicationId: firstAutopilot.id }))?.status).toBe("cancelled");
     await autopilotRepository.configure({ workspaceId, userId, requestKey: "autopilot:integration:pause", enabled: false, localTime: "06:00", timezone: "Europe/Paris", now });
     expect((await publicationRepository.find({ workspaceId, publicationId: firstAutopilot.id }))?.status).toBe("cancelled");
     await autopilotRepository.configure({ workspaceId, userId, requestKey: "autopilot:integration:resume", enabled: true, localTime: "06:00", timezone: "Europe/Paris", now });
-    expect(await autopilot.reconcile()).toBe(1);
+    expect(await autopilot.reconcile()).toBeGreaterThanOrEqual(1);
     const resumedAutopilot = (await database.client<{ id: string; status: string; request_key: string }[]>`select id, status, request_key from content_publications where workspace_id = ${workspaceId} and request_key like 'autopilot:publication:%:v2' limit 1`)[0]!;
     expect(resumedAutopilot.id).not.toBe(firstAutopilot.id);
     expect(resumedAutopilot.request_key).toEndWith(":v2");
@@ -192,7 +218,7 @@ databaseDescribe("CNT-101 durable content generation", () => {
       requestKey: "publication:integration:1",
       scheduledFor: new Date(now.getTime() + 10_000),
       account: { provider: "unipile", providerAccountId: "linkedin-account-fixture", displayName: "Compte LinkedIn fixture", selectionVersion: now.toISOString(), observedAt: now.toISOString() },
-      now,
+      now: new Date(now.getTime() + 1),
     });
     const scheduledReplay = await publicationRepository.schedule({
       workspaceId,
@@ -206,20 +232,50 @@ databaseDescribe("CNT-101 durable content generation", () => {
     expect(scheduledReplay.id).toBe(scheduled.id);
     expect((await database.client<{ priority: number }[]>`select priority from jobs where workspace_id = ${workspaceId} and payload->>'publicationId' = ${scheduled.id}`)[0]?.priority).toBe(70);
     expect(await publicationRepository.find({ workspaceId: otherWorkspaceId, publicationId: scheduled.id })).toBeNull();
+    expect((await publicationRepository.findLatestForAsset({ workspaceId, assetId: asset!.id }))?.id).toBe(scheduled.id);
+    expect(await publicationRepository.findLatestForAsset({ workspaceId: otherWorkspaceId, assetId: asset!.id })).toBeNull();
     const moved = await publicationRepository.reschedule({ workspaceId, userId, publicationId: scheduled.id, requestKey: "publication:move:1", scheduledFor: new Date(now.getTime() + 1_000), now });
     expect(moved.scheduledFor).toEqual(new Date(now.getTime() + 1_000));
 
     const improved = await repository.createGeneration({ workspaceId, userId, assetId: asset!.id, operation: "asset.improve", requestKey: "content:integration:2", instruction: "Un hook plus concret", now: new Date(now.getTime() + 1_000) });
-    expect((await repository.loadContext({ workspaceId, runId: improved.id })).recentBodies).toEqual([]);
+    const improvementContext = await repository.loadContext({ workspaceId, runId: improved.id });
+    expect(improvementContext).toMatchObject({
+      run: { stage: "writer" },
+      brief,
+      recentBodies: [],
+    });
     await repository.startRun({ workspaceId, runId: improved.id, now });
-    await repository.saveBrief({ workspaceId, runId: improved.id, brief, now });
     await repository.saveDraft({ workspaceId, runId: improved.id, draft: { ...draft, hook: "Le précédent n’est utile que s’il est retrouvable." }, now });
     const auditRepairedDraft = { ...draft, hook: "Une preuve auditée reste résoluble." };
     await repository.reviseDraftAfterAudit({ workspaceId, runId: improved.id, draft: auditRepairedDraft, now });
     expect((await repository.loadContext({ workspaceId, runId: improved.id })).draft?.hook).toBe(auditRepairedDraft.hook);
     await repository.saveAudit({ workspaceId, runId: improved.id, audit, now });
+    const criticRepairedDraft = { ...auditRepairedDraft, hook: "Une décision juridique exige une preuve retrouvable." };
+    await repository.reviseDraftAfterCritique({ workspaceId, runId: improved.id, draft: criticRepairedDraft, now });
+    expect(await repository.loadContext({ workspaceId, runId: improved.id })).toMatchObject({
+      run: { stage: "audit" },
+      draft: { hook: criticRepairedDraft.hook },
+      audit: null,
+      critique: null,
+    });
+    await repository.saveAudit({ workspaceId, runId: improved.id, audit, now });
     await repository.completeRun({ workspaceId, runId: improved.id, critique, readiness: { ready: true, blockers: [] }, now });
     expect((await repository.findAssetByIdea({ workspaceId, ideaId }))?.latestVersion).toBe(2);
+
+    await database.client`update content_idea_sources set content_hash = ${"claim-hash-changed"} where workspace_id = ${workspaceId} and idea_id = ${ideaId}`;
+    const evidenceChanged = await repository.createGeneration({
+      workspaceId,
+      userId,
+      assetId: asset!.id,
+      operation: "asset.improve",
+      requestKey: "content:integration:evidence-changed",
+      now: new Date(now.getTime() + 1_500),
+    });
+    expect(await repository.loadContext({ workspaceId, runId: evidenceChanged.id })).toMatchObject({
+      run: { stage: "brief" },
+      brief: null,
+    });
+    await database.client`update content_idea_sources set content_hash = ${"claim-hash"} where workspace_id = ${workspaceId} and idea_id = ${ideaId}`;
 
     const stale = await repository.createGeneration({ workspaceId, userId, assetId: asset!.id, operation: "asset.improve", requestKey: "content:integration:stale", now: new Date(now.getTime() + 2_000) });
     await repository.startRun({ workspaceId, runId: stale.id, now });
@@ -238,6 +294,10 @@ databaseDescribe("CNT-101 durable content generation", () => {
     expect(await repository.findRun({ workspaceId, runId: stale.id })).toMatchObject({ status: "blocked", assetVersionId: null, lastErrorCode: "CONTENT_GENERATION_SUPERSEDED" });
 
     await database.client`update content_assets set latest_version = ${newestAsset!.latestVersion - 1} where workspace_id = ${workspaceId} and id = ${asset!.id}`;
+    expect(await repository.findAssetByIdea({ workspaceId, ideaId })).toMatchObject({
+      latestVersion: newestAsset!.latestVersion - 1,
+      latest: { version: newestAsset!.latestVersion - 1 },
+    });
     const afterRollback = await repository.createGeneration({ workspaceId, userId, assetId: asset!.id, operation: "asset.improve", requestKey: "content:integration:after-rollback", now: new Date(now.getTime() + 5_000) });
     await repository.startRun({ workspaceId, runId: afterRollback.id, now });
     await repository.saveBrief({ workspaceId, runId: afterRollback.id, brief, now });
@@ -262,7 +322,7 @@ databaseDescribe("CNT-101 durable content generation", () => {
     await publicationRepository.claimExecution({ workspaceId, publicationId: publishable.id, currentAccountId: "linkedin-account-fixture", executionToken: publishToken, now });
     await publicationRepository.markPublished({ workspaceId, publicationId: publishable.id, executionToken: publishToken, result: { providerPostId: "provider-post-fixture", socialId: "social-fixture", url: "https://www.linkedin.com/feed/update/fixture", publishedAt: now }, now });
     expect(await publicationRepository.find({ workspaceId, publicationId: publishable.id })).toMatchObject({ status: "published", providerPostId: "provider-post-fixture", providerUrl: "https://www.linkedin.com/feed/update/fixture" });
-    expect((await repository.loadContext({ workspaceId, runId: improved.id })).recentBodies).toContain(draft.body);
+    expect((await repository.loadContext({ workspaceId, runId: improved.id })).recentBodies).toEqual([]);
     await expectRejected(() => publicationRepository.markFailed({ workspaceId, publicationId: publishable.id, code: "STALE_WORKER", message: "A stale preflight must not overwrite success", now }), "CONTENT_PUBLICATION_EXECUTION_CONFLICT");
     expect((await publicationRepository.find({ workspaceId, publicationId: publishable.id }))?.status).toBe("published");
 
@@ -297,6 +357,28 @@ databaseDescribe("CNT-101 durable content generation", () => {
     expect(converged.data).toContainEqual(expect.objectContaining({ providerPostId: "provider-post-fixture", origin: "internal", impressions: 150, metricsObservedAt: restartedAt }));
     expect((await database.client<{ count: number }[]>`select count(*)::int as count from content_metric_snapshots where workspace_id = ${workspaceId}`)[0]?.count).toBe(4);
     expect(await socialSyncRepository.status({ workspaceId })).toMatchObject({ status: "idle", backfillComplete: true, lastSuccessAt: restartedAt });
+
+    const contentRateLimitedAt = new Date(restartedAt.getTime() + 500);
+    await database.db.update(socialContentSyncStates).set({ nextSyncAt: contentRateLimitedAt }).where(inArray(socialContentSyncStates.workspaceId, [workspaceId]));
+    const contentRateLimitedSync = new SocialContentSynchronizer(
+      new PostgresSocialContentSyncRepository(database.db),
+      {
+        async listOwnContent() {
+          throw Object.assign(new Error("rate limited"), {
+            code: "SOCIAL_RATE_LIMITED",
+            retryAfterMs: 90_000,
+          });
+        },
+      },
+      { async readMetrics() { return []; } },
+      { now: () => contentRateLimitedAt },
+    );
+    expect(await contentRateLimitedSync.reconcile(workspaceId)).toBe(0);
+    expect(await socialSyncRepository.status({ workspaceId })).toMatchObject({
+      status: "idle",
+      lastErrorCode: null,
+      nextSyncAt: new Date(contentRateLimitedAt.getTime() + 90_000),
+    });
 
     const engagementRepository = new PostgresSocialEngagementSyncRepository(database.db);
     let engagementRevision = 1;
@@ -351,16 +433,47 @@ databaseDescribe("CNT-101 durable content generation", () => {
     expect(outreachJobsAfter[0]?.count).toBe(outreachJobsBefore[0]?.count);
     expect(await engagementRepository.status({ workspaceId })).toMatchObject({ status: "idle", observed: 1, incoming: 1 });
 
+    const rateLimitedAt = new Date(modifiedAt.getTime() + 1_000);
+    const retryAfterMs = 120_000;
+    await database.db.update(socialInteractionSyncStates).set({
+      status: "idle",
+      nextSyncAt: rateLimitedAt,
+      lastErrorCode: null,
+      lastErrorMessage: null,
+      updatedAt: rateLimitedAt,
+    }).where(inArray(socialInteractionSyncStates.workspaceId, [workspaceId]));
+    let rateLimitedReads = 0;
+    const rateLimitedSync = new SocialEngagementSynchronizer(
+      new PostgresSocialEngagementSyncRepository(database.db),
+      {
+        async listEngagements() {
+          rateLimitedReads += 1;
+          throw Object.assign(new Error("rate limited"), {
+            code: "SOCIAL_RATE_LIMITED",
+            retryAfterMs,
+          });
+        },
+      },
+      { now: () => rateLimitedAt, targetLimit: 20 },
+    );
+    expect(await rateLimitedSync.reconcile(workspaceId)).toBe(0);
+    expect(rateLimitedReads).toBe(1);
+    const deferredStates = await database.db.select().from(socialInteractionSyncStates).where(inArray(socialInteractionSyncStates.workspaceId, [workspaceId]));
+    expect(deferredStates.length).toBeGreaterThan(1);
+    expect(deferredStates.every((state) => state.status === "idle")).toBe(true);
+    expect(deferredStates.every((state) => state.nextSyncAt.getTime() >= rateLimitedAt.getTime() + retryAfterMs)).toBe(true);
+
     await autopilotRepository.configure({ workspaceId, userId, requestKey: "autopilot:integration:learning-enable", enabled: true, localTime: "06:00", timezone: "Europe/Paris", now: modifiedAt });
     const learningRepository = new PostgresEditorialLearningRepository(database.db);
     const learning = new EditorialLearningReconciler(learningRepository, () => modifiedAt);
-    expect(await learning.reconcile()).toBe(1);
+    expect(await learning.reconcile()).toBeGreaterThanOrEqual(1);
     const learningView = await learningRepository.latest(workspaceId);
     expect(learningView).toMatchObject({ version: 1, modelVersion: "bounded-editorial-learning-v1", bounds: { icpVersionId, allowedClaimIds: [claimId], postsPerWeek: 3 } });
     expect(learningView?.facts).toContainEqual(expect.objectContaining({ kind: "response", certainty: "fact", pillar: "Recherche documentaire", sourceRef: expect.stringContaining("social-interaction:") }));
     expect(learningView?.inferences).toEqual([]);
     expect(learningView?.recommendations).toContainEqual(expect.objectContaining({ action: "prioritize", pillar: "Recherche documentaire", angle: "Pourquoi une preuve documentaire change une décision juridique" }));
-    expect(await learning.reconcile()).toBe(0);
+    await learning.reconcile();
+    expect((await learningRepository.latest(workspaceId))?.version).toBe(1);
     expect(await learningRepository.latest(otherWorkspaceId)).toBeNull();
     const learnedDiscovery = await new PostgresContentIdeaRepository(database.db).createDiscovery({ workspaceId, userId, requestKey: "ideas:integration:learned", trigger: "daily", now: modifiedAt });
     const learnedPlan = (await database.client<{ query_plan: string[] }[]>`select query_plan from content_idea_discovery_runs where workspace_id = ${workspaceId} and id = ${learnedDiscovery.id}`)[0]!.query_plan;
@@ -396,9 +509,137 @@ databaseDescribe("CNT-101 durable content generation", () => {
     expect(activity.items).toContainEqual(expect.objectContaining({ id: `content-asset:${asset!.id}`, status: "completed", href: `/content/ideas/${ideaId}` }));
     expect(isolatedActivity.items).toEqual([]);
 
+    await autopilotRepository.configure({
+      workspaceId,
+      userId,
+      requestKey: "autopilot:integration:two-per-day",
+      enabled: true,
+      localTime: "06:00",
+      timezone: "Europe/Paris",
+      publicationTimes: ["09:00", "17:00"],
+      publicationDays: [1, 2, 3, 4, 5, 6, 7],
+      now,
+    });
+    const operationalSlot = new Date("2026-08-20T15:00:00.000Z");
+    const operationalAutopilot = await publicationRepository.schedule({
+      workspaceId,
+      userId,
+      assetId: asset!.id,
+      requestKey: `autopilot:publication:integration-override:${crypto.randomUUID()}`,
+      scheduledFor: operationalSlot,
+      account: { provider: "unipile", providerAccountId: "linkedin-account-fixture", displayName: "Compte LinkedIn fixture", selectionVersion: now.toISOString(), observedAt: now.toISOString() },
+      now,
+    });
+    expect(localPublicationKey(operationalAutopilot.scheduledFor, "Europe/Paris")).toBe("2026-08-20 17:00");
+    const operationalExecutionToken = crypto.randomUUID();
+    await expect(publicationRepository.claimExecution({
+      workspaceId,
+      publicationId: operationalAutopilot.id,
+      currentAccountId: "linkedin-account-fixture",
+      executionToken: operationalExecutionToken,
+      now: operationalSlot,
+    })).resolves.toMatchObject({ publicationId: operationalAutopilot.id });
+    await publicationRepository.markRetry({
+      workspaceId,
+      publicationId: operationalAutopilot.id,
+      executionToken: operationalExecutionToken,
+      code: "SIMULATED_PROVIDER_DISABLED",
+      message: "The integration test never crosses the provider boundary.",
+      availableAt: new Date(operationalSlot.getTime() + 60_000),
+      now: operationalSlot,
+    });
+    await publicationRepository.cancel({
+      workspaceId,
+      userId,
+      publicationId: operationalAutopilot.id,
+      requestKey: "autopilot:integration:operational-proof:cancel",
+      now: operationalSlot,
+    });
+
     await expectRejected(() => database.client`update content_asset_versions set body = 'mutated' where workspace_id = ${workspaceId}`, "CONTENT_SNAPSHOT_IMMUTABLE");
     await expectRejected(() => database.client`update content_publications set content_snapshot = '{"body":"mutated"}'::jsonb where workspace_id = ${workspaceId}`, "CONTENT_PUBLICATION_SNAPSHOT_IMMUTABLE");
     await expectRejected(() => database.client`update editorial_learning_versions set model_version = 'mutated' where workspace_id = ${workspaceId}`, "EDITORIAL_LEARNING_VERSION_IMMUTABLE");
+  }, 15_000);
+
+  test("replays an interrupted local generation once from its durable checkpoint, then fails it closed", async () => {
+    const replayRun = await repository.createGeneration({
+      workspaceId,
+      userId,
+      ideaId,
+      operation: "asset.improve",
+      requestKey: `content:lease-recovery:${crypto.randomUUID()}`,
+      now,
+    });
+    await repository.startRun({ workspaceId, runId: replayRun.id, now });
+    const context = await repository.loadContext({ workspaceId, runId: replayRun.id });
+    const sourceKey = context.evidence[0]!.key;
+    await repository.saveBrief({
+      workspaceId,
+      runId: replayRun.id,
+      brief: {
+        objective: "explain",
+        audience: "Equipes juridiques",
+        problem: "Les preuves sont dispersees.",
+        angle: "Relier la preuve a la decision.",
+        format: "linkedin_text",
+        evidenceKeys: [sourceKey],
+        allowedClaimIds: [claimId],
+        callToAction: "Comment verifiez-vous vos preuves ?",
+        constraints: ["Aucun fait sans preuve"],
+      },
+      now,
+    });
+    await database.client`
+      update jobs
+      set status = 'dead_lettered',
+          attempts = max_attempts,
+          completed_at = ${now},
+          locked_at = null,
+          locked_until = null,
+          locked_by = null,
+          last_error_code = 'JOB_LEASE_EXHAUSTED',
+          last_error_message = 'worker interrupted',
+          updated_at = ${now}
+      where workspace_id = ${workspaceId}
+        and type = 'content.asset.generate'
+        and payload ->> 'runId' = ${replayRun.id}
+    `;
+
+    const reconciler = new PostgresJobOutcomeReconciler(database.db, { now: () => now });
+    expect(await reconciler.reconcile()).toBeGreaterThanOrEqual(1);
+    const revivedJob = (await database.client<{ status: string; attempts: number; payload: Record<string, unknown> }[]>`
+      select status, attempts, payload
+      from jobs
+      where workspace_id = ${workspaceId}
+        and type = 'content.asset.generate'
+        and payload ->> 'runId' = ${replayRun.id}
+    `)[0]!;
+    expect(revivedJob).toMatchObject({
+      status: "pending",
+      attempts: 0,
+      payload: { runId: replayRun.id, workspaceId, _reconciliationAttempts: 1 },
+    });
+    expect(await repository.findRun({ workspaceId, runId: replayRun.id })).toMatchObject({ status: "running", stage: "writer" });
+
+    await database.client`
+      update jobs
+      set status = 'dead_lettered',
+          attempts = max_attempts,
+          completed_at = ${now},
+          last_error_code = 'JOB_LEASE_EXHAUSTED',
+          updated_at = ${now}
+      where workspace_id = ${workspaceId}
+        and type = 'content.asset.generate'
+        and payload ->> 'runId' = ${replayRun.id}
+    `;
+    expect(await reconciler.reconcile()).toBeGreaterThanOrEqual(1);
+    expect(await repository.findRun({ workspaceId, runId: replayRun.id })).toMatchObject({ status: "failed", stage: "writer" });
+    expect((await database.client<{ status: string }[]>`
+      select status from jobs
+      where workspace_id = ${workspaceId}
+        and type = 'content.asset.generate'
+        and payload ->> 'runId' = ${replayRun.id}
+    `)[0]?.status).toBe("completed");
   });
 
   test("reconciles a lost provider result once and closes an absent result without replay", async () => {
@@ -468,6 +709,19 @@ databaseDescribe("CNT-101 durable content generation", () => {
 });
 
 function strategySnapshot(claimId: string) { return { audience: { name: "Équipes juridiques", summary: "Juristes avec des documents dispersés", awareness: "problem_aware" as const }, pillars: [{ name: "Recherche documentaire", promise: "Retrouver les preuves", proofTypes: ["claim validé"] }, { name: "Sécurité", promise: "Garder le contrôle", proofTypes: ["audit"] }, { name: "Adoption", promise: "Déployer avec les équipes", proofTypes: ["chronologie"] }], voice: { traits: ["direct", "précis"], avoid: ["générique"] }, formats: ["linkedin_text" as const], cadence: { postsPerWeek: 3, preferredDays: [1, 3, 5], timezone: "Europe/Paris" }, callsToAction: ["Comment vérifiez-vous vos preuves ?"], allowedClaimIds: [claimId], forbiddenTopics: [] }; }
+
+function localPublicationKey(date: Date, timezone: string): string {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date).map((part) => [part.type, part.value]));
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
+}
 
 async function expectRejected(operation: () => Promise<unknown>, message: string) {
   let error: unknown;

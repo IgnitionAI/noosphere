@@ -8,20 +8,21 @@ import {
 } from "@outbound/interface/http/request-context";
 import type {
   ActivityWorkspacePage,
+  ActivityInteractionType,
   CampaignWorkspaceView,
   ConversationWorkspacePage,
   ConversationWorkspaceDetail,
   SetupReadinessView,
   WorkspaceOperationalSummary,
 } from "@outbound/application/workspaces/operational-views";
-import { noosphereLenses, type NoosphereLens } from "@outbound/application/workspaces/operational-views";
+import { activityInteractionTypes, noosphereLenses, type NoosphereLens } from "@outbound/application/workspaces/operational-views";
 
 const campaignViewPath = /^\/api\/v1\/campaigns\/([^/]+)\/workspace-view$/;
 const conversationViewPath = /^\/api\/v1\/conversations\/([^/]+)$/;
 
 export type OperationalViewsPort = {
   getSummary(workspaceId: string, input?: { attentionOffset?: number; attentionLimit?: number }): Promise<WorkspaceOperationalSummary>;
-  getActivity(input: { workspaceId: string; lens: NoosphereLens; offset?: number; limit?: number }): Promise<ActivityWorkspacePage>;
+  getActivity(input: { workspaceId: string; lens: NoosphereLens; interactionType?: ActivityInteractionType; offset?: number; limit?: number }): Promise<ActivityWorkspacePage>;
   getSetupReadiness(workspaceId: string): Promise<SetupReadinessView>;
   getCampaignView(workspaceId: string, campaignId: string): Promise<CampaignWorkspaceView | null>;
   listConversations(input: { workspaceId: string; channel?: string; scope?: string; source?: string; search?: string; period?: string; read?: string; campaignId?: string; page: number; pageSize: number }): Promise<ConversationWorkspacePage>;
@@ -48,9 +49,17 @@ export function createOperationalViewHttpHandler(input: {
       }
       if (url.pathname === "/api/v1/activity") {
         const lens = z.enum(noosphereLenses).default("symbiosis").parse(url.searchParams.get("lens") || undefined);
+        const interactionType = z.enum(activityInteractionTypes).optional().parse(url.searchParams.get("interactionType") || undefined);
+        if (interactionType && lens !== "inbound") return problem(422, "VALIDATION_FAILED", "Interaction type is only available for the inbound lens");
         const offset = parseCursor(url.searchParams.get("cursor"));
         const limit = parsePositiveInt(url.searchParams.get("limit"), 25, 100);
-        return Response.json(await views.getActivity({ workspaceId: context.workspaceId, lens, offset, limit }));
+        return Response.json(await views.getActivity({
+          workspaceId: context.workspaceId,
+          lens,
+          offset,
+          limit,
+          ...(interactionType ? { interactionType } : {}),
+        }));
       }
       if (url.pathname === "/api/v1/workspace/setup-readiness") {
         return Response.json(await views.getSetupReadiness(context.workspaceId));

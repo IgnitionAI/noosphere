@@ -17,3 +17,9 @@ services:
   web:
     ports:
       - "127.0.0.1:${BENCHMARK_WEB_PORT:-63000}:3000"
+
+  worker:
+    environment:
+      # The local benchmark stack exercises the complete durable pipeline while
+      # keeping autonomous provider effects behind an explicit canary opt-in.
+      WORKER_EXCLUDED_JOB_TYPES: ${BENCHMARK_WORKER_EXCLUDED_JOB_TYPES:-prospect.decision.execute,outreach.dispatch,inbound.reply.send,content.publication.publish}
