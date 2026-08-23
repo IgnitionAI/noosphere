@@ -1,7 +1,7 @@
 # Prospect 360 — protocole de capacité et canary shadow
 
 **Date :** 23 août 2026
-**Statut :** protocole implémenté, mesure VPS 4 vCPU / 16 Gio à exécuter
+**Statut :** protocole implémenté ; mesure x86_64 2 vCPU / 8 Gio exécutée et insuffisante ; qualification 4 vCPU / 16 Gio à exécuter
 **Portée :** assemblage de contexte, journal, backfill et worker mémoire ; aucun envoi provider
 
 ## Ce que le benchmark prouve
@@ -127,9 +127,11 @@ court-circuiterait la capture transactionnelle et le worker mesurés.
 | Lecture inter-workspace | 0 |
 | Envoi provider pendant le benchmark | 0 |
 
-Ces seuils restent des objectifs tant qu'un rapport du VPS 4 vCPU / 16 Gio
-n'est pas archivé. Aucun document produit ne doit les présenter comme acquis
-avant cette mesure.
+Ces seuils restent des objectifs pour le profil de production tant qu'un
+rapport du VPS 4 vCPU / 16 Gio n'est pas archivé. Les rapports 2 vCPU / 8 Gio
+du 23 août 2026 sont des preuves de dimensionnement négatives : ils terminent
+sans erreur mais dépassent le p95 cible sous concurrence. Aucun document ne
+doit présenter les seuils comme acquis avant la mesure finale.
 
 ## Vérification des index avant la mesure
 

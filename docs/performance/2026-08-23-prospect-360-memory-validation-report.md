@@ -1,9 +1,9 @@
 # Prospect 360 — rapport de validation local
 
 **Date :** 23 août 2026
-**Révision validée :** `f659e59` (`dev`)
-**Portée :** MEM-001 à MEM-007, sauvegarde/restauration/purge locale incluses, hors charge VPS et hors effet provider réel
-**Décision locale :** code-side ready derrière feature flags ; activation de production non encore approuvée
+**Révision de base :** `21da07c` (`dev`), complétée par les scripts et preuves de ce lot
+**Portée :** MEM-001 à MEM-007, sauvegarde/restauration/purge, benchmark VPS isolé, shadow IgnitionAI et corpus Setter sans effet provider
+**Décision :** observabilité et dry-run qualifiés ; activation automatique toujours conditionnée aux gates humains et au benchmark du VPS cible
 
 ## Résultat synthétique
 
@@ -17,9 +17,10 @@ Quitter un drawer ou une page arrête uniquement son polling navigateur. Le job,
 son lease, son watermark et son résultat restent en base. Les surfaces Prospect
 et Conversation reprennent l'observation du même état serveur.
 
-Le code ne doit toutefois pas être présenté comme qualifié pour production tant
-que les gates de qualité et de capacité ci-dessous n'ont pas été exécutés sur
-des données représentatives et sur le profil VPS cible.
+Le shadow sur données réelles et un corpus Setter synthétique adversarial ont
+désormais été exécutés. Ils ne remplacent ni une revue éditoriale humaine, ni
+le benchmark de la machine de production retenue, ni un canary provider
+explicitement autorisé.
 
 ## Preuves exécutées
 
@@ -163,7 +164,7 @@ d'inférence déjà parti, et laissé les trois compteurs d'effet provider à z�
 La preuve est archivée dans
 `docs/performance/evidence/2026-08-23-prospect-memory-purge-restored-local.json`.
 
-## Diagnostic de capacité local
+## Diagnostics de capacité
 
 La fixture transactionnelle a produit trois contacts dont les deltas vérifiés
 sont exactement 0, 20 et 200. Après reconstruction explicite des images et
@@ -187,37 +188,112 @@ La preuve courante est archivée dans
 Elle invalide toute affirmation selon laquelle le SLO chaud serait déjà
 atteint pour un delta de 20 ou 200 événements.
 
-Cette passe ne qualifie pas le produit : Docker Desktop était limité à environ
+Cette passe locale ne qualifie pas le produit : Docker Desktop était limité à environ
 6,2 Gio sur Apple Silicon et l'hôte a ensuite atteint 0,25 % de CPU idle,
 125 Mio libres et une forte compression mémoire. Les passes suivantes sont
 classées diagnostics invalides, pas régressions produit. La qualification
-officielle reste à exécuter sur le VPS x86_64 4 vCPU / 16 Gio, isolé et au
-repos. Aucun chiffre local n'est présenté comme un SLO acquis.
+officielle devait donc être répétée sur un hôte x86_64 isolé.
 
-## Gates exécutés mais non fermés
+### VPS x86_64 isolé effectivement disponible : 2 vCPU / 8 Gio
 
-Les évaluateurs ont été exécutés sur les données locales disponibles. Ils
-échouent ou restent non probants de manière explicite ; aucun corpus synthétique
-n'est compté comme une validation réelle :
+Le dépôt a été cloné dans `/opt/noosphere-benchmark` à la révision `21da07c`,
+dans un projet Compose distinct et sans aucune mutation du déploiement présent
+sur la machine. Tous les effets provider, schedulers, outbox et workers
+d'envoi ont été désactivés. L'hôte réellement fourni possède 2 vCPU et 8 Gio,
+et non les 4 vCPU / 16 Gio visés par le protocole.
 
-1. **Shadow réel** : `0 / 1 000` contextes observés sur `ignition-ai`. Gate
-   non atteint, sans violation d'effet détectée parce qu'aucun échantillon
-   n'existe encore. Rapport :
-   `docs/performance/evidence/2026-08-23-prospect-memory-shadow-ignition-ai-current.json`.
-2. **Corpus qualité Setter** : `1 / 100` label fourni, mais aucune commande
-   `dry_run` durable correspondante ; `0` cas valide. Gate non atteint. Rapport :
-   `docs/performance/evidence/2026-08-23-prospect-memory-setter-quality-ignition-ai-current.json`.
-3. **Compréhension opérateur** : le fichier d'exemple passe les cinq assertions
+Passe chaude, 1 000 lectures par delta et 100 assembleurs concurrents :
+
+| Delta | p95 | Erreurs | Verdict chaud `< 300 ms` |
+|---:|---:|---:|---|
+| 0 | 608,05 ms | 0 | non atteint |
+| 20 | 646,95 ms | 0 | non atteint |
+| 200 | 1 244,88 ms | 0 | non atteint |
+
+Passe froide contrôlée :
+
+| Delta | p95 | Erreurs | Verdict froid `< 750 ms` |
+|---:|---:|---:|---|
+| 0 | 706,59 ms | 0 | atteint |
+| 20 | 1 156,88 ms | 0 | non atteint |
+| 200 | 950,16 ms | 0 | non atteint |
+
+Les lectures restent fonctionnelles et sans erreur, mais 2 vCPU / 8 Gio ne
+respecte pas le SLO sous cette concurrence. La recommandation de déploiement
+reste donc **4 vCPU / 16 Gio minimum**, à requalifier sur la machine finale.
+Preuves :
+
+- `docs/performance/evidence/2026-08-23-prospect-memory-capacity-vps-2vcpu-8g-hot.json` ;
+- `docs/performance/evidence/2026-08-23-prospect-memory-capacity-vps-2vcpu-8g-cold.json` ;
+- `docs/performance/evidence/2026-08-23-prospect-memory-vps-fixture.json`.
+
+## Shadow réel IgnitionAI
+
+Le script `bun run run:prospect-memory-shadow-corpus` a activé temporairement
+le mode shadow sur le workspace `ignition-ai`, exécuté le backfill de façon
+transactionnelle, assemblé 1 000 contextes Setter, puis restauré la policy
+initiale. Il n'a appelé aucun modèle et n'a produit aucun effet provider.
+
+Résultat :
+
+- 1 000 contextes mesurables sur 1 000 ;
+- 0 contexte invalide ;
+- 0 contexte capable de produire automatiquement un effet ;
+- 6 728 sources critiques visibles uniquement grâce à Prospect 360 ;
+- 992 contextes `fresh`, 8 `budget_blocked` ;
+- gate d'observabilité atteint ;
+- qualité sémantique explicitement `not_measured`.
+
+La classification utilisée pour constituer cet échantillon est une sonde
+lexicale déterministe. Elle prouve la couverture et l'absence d'effet, pas la
+justesse d'une synthèse par modèle. Preuves :
+
+- `docs/performance/evidence/2026-08-23-prospect-memory-shadow-corpus-ignition-ai.json` ;
+- `docs/performance/evidence/2026-08-23-prospect-memory-shadow-ignition-ai-real.json`.
+
+## Corpus qualité Setter
+
+Le script `bun run run:prospect-memory-setter-corpus` a créé un workspace
+synthétique séparé et exécuté 100 commandes Setter via le vrai processeur de
+jobs. Chaque conversation place un engagement au-delà des trente derniers
+messages. Les cas couvrent rappel d'engagement, objection résolue, besoin
+confirmé, `doNotRepeat` et frontière rendez-vous, en français et en anglais.
+
+Le modèle réellement invoqué est `codex-cli / gpt-5.6-luna / xhigh`. Chaque
+appel utilise un processus Codex éphémère et son propre contexte reconstruit.
+Résultat en 351 206 ms :
+
+- 100 commandes `dry_run` générées sur 100 ;
+- 100 `ai_run` et 100 receipts mémoire résolubles en PostgreSQL ;
+- rappel exact du marqueur d'engagement : 100 % ;
+- 0 remise inventée ou rendez-vous prétendument réservé ;
+- 0 répétition injustifiée détectée par l'oracle borné ;
+- 0 message, réservation ou appel provider.
+
+Le gate automatique passe. La revue éditoriale humaine reste
+`not_measured` : l'oracle automatique n'est pas présenté comme un humain.
+Preuves :
+
+- `docs/performance/evidence/2026-08-23-prospect-memory-setter-corpus.json` ;
+- `docs/performance/evidence/2026-08-23-prospect-memory-setter-review.json`.
+
+## Gates encore ouverts
+
+Les gates suivants restent explicitement ouverts :
+
+1. **Revue éditoriale Setter** : un opérateur doit encore étiqueter le corpus
+   de 100 réponses ; aucun jugement automatique ne sera compté comme humain.
+2. **Compréhension opérateur** : le fichier d'exemple passe les cinq assertions
    attendues, mais il s'agit d'une fixture documentaire, pas d'une session
    opérateur observée. Il valide l'évaluateur, pas la compréhension humaine.
    Rapport :
    `docs/performance/evidence/2026-08-23-prospect-memory-operator-example-current.json`.
-4. **VPS 4 vCPU / 16 Gio** : chaud/froid, deltas 0/20/200, 100 assembleurs
+3. **VPS 4 vCPU / 16 Gio** : chaud/froid, deltas 0/20/200, 100 assembleurs
    concurrents, 10 événements/s + 5/s de backfill, pointe 100/s pendant cinq
    minutes.
-5. **Setter dry-run borné**, puis canary réel explicitement autorisé sur un
-   workspace et un ensemble de conversations nommés.
-6. **Rollback live** vers l'assembleur historique après activation limitée.
+4. **Canary réel** explicitement autorisé sur un workspace, un compte et un
+   ensemble de conversations nommés.
+5. **Rollback live** vers l'assembleur historique après activation limitée.
    Le rollback transactionnel local et le fallback de code sont prouvés ; la
    manœuvre sur un environnement déployé reste à exécuter.
 
@@ -234,14 +310,10 @@ requiert une autorisation distincte et bornée.
 
 ## Prochain protocole
 
-1. déployer la fixture expurgée et déjà vérifiée sur le VPS cible ;
-2. exécuter les passes VPS chaude et froide décrites dans le protocole de
-   capacité ;
-3. laisser le shadow collecter le corpus réel ;
-4. calculer les gates de qualité ;
-5. exécuter le test opérateur ;
-6. tester le rollback sur l'environnement déployé ;
-7. seulement après réussite, demander l'autorisation du canary réel.
+1. exécuter le test opérateur et la revue éditoriale du corpus ;
+2. répéter le benchmark sur le VPS 4 vCPU / 16 Gio retenu ;
+3. tester le rollback sur l'environnement déployé ;
+4. seulement après réussite, demander l'autorisation du canary réel.
 
 ## Commandes des gates manuels
 

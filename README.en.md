@@ -14,6 +14,19 @@ The normal experience has three steps:
 
 Technical details remain observable without taking over the product. Exceptions are localized in “Attention”, and deterministic policy governs every external effect.
 
+## Verified status on 23 August 2026
+
+| Gate | Result | Actual scope |
+|---|---|---|
+| Prospect 360 shadow | passed | 1,000 IgnitionAI workspace contexts, zero effect-capable context |
+| Setter corpus | automatic gate passed | 100/100 Codex Luna dry-runs, resolvable receipts, no sends |
+| Human editorial review | open | the review artifact exists but is not auto-labelled |
+| 2-vCPU / 8-GiB VPS | below the concurrent SLO | zero errors, memory-view p95 above target |
+| Recommended VPS | 4 vCPU / 16 GiB minimum | final measurement still required on that profile |
+| Real provider canary | not executed | requires explicit, bounded authorization |
+
+See the [Prospect 360 validation report](docs/performance/2026-08-23-prospect-360-memory-validation-report.md) for exact evidence. A shadow or dry-run result is never presented as proof of a real send.
+
 ## Capabilities
 
 ### Outbound
@@ -78,6 +91,16 @@ flowchart TB
 
 The model proposes; policy authorizes. Before every effect, the runtime rechecks workspace, account health, quotas, sending window, suppression and idempotency. A command is considered sent only when its durable state is `sent` and a provider identifier has been recorded.
 
+### Agent and context lifetimes
+
+- repositories, PostgreSQL pools and model routers are reusable and hold no business memory;
+- every job rebuilds its tenant-scoped context from PostgreSQL;
+- every Codex invocation starts an isolated `codex exec --ephemeral` process and temporary directory;
+- output, model, prompt, `ai_run`, memory receipt and decision are persisted;
+- closing a page or drawer stops browser polling only and never cancels the server job.
+
+There is no singleton “agent with memory”. Durable memory belongs to Prospect 360, not to a model process.
+
 ## Local setup
 
 Requirements:
@@ -115,6 +138,20 @@ Copy `.env.example` and configure PostgreSQL, Better Auth, MinIO and the owner c
 
 Never commit `.env`, API keys, LinkedIn cookies, OAuth tokens or webhook secrets.
 
+| Block | Main variables | Required |
+|---|---|---|
+| PostgreSQL | `DATABASE_URL` or `POSTGRES_*` | yes |
+| Auth | `BETTER_AUTH_URL`, `BETTER_AUTH_SECRET`, trusted origins | yes |
+| Storage | `S3_ENDPOINT`, bucket and credentials | yes |
+| Crawler | `CRAWLER_SERVICE_URL`, `CRAWLER_API_KEY` | yes |
+| AI | `AI_PROVIDER` and the selected Kimi, Codex or OpenAI runtime | yes |
+| Embeddings | `OPENAI_API_KEY`, `OPENAI_EMBEDDING_MODEL` | for knowledge search |
+| Channels | Unipile credentials and healthy account IDs | only for enabled channels |
+| Documents | `DOCUMENT_EXTRACTOR=lightweight` | standard value |
+| Docling | advanced-profile URL and key | no |
+
+For Codex, initialize the private Docker authentication volume as documented in the [provider runbook](docs/runbooks/provider-configuration.md). Models and fallbacks can then be selected per workspace and capability in the UI.
+
 ## Tests and evidence
 
 ```bash
@@ -136,6 +173,12 @@ bun run benchmark:capacity
 bun run evaluate:prospect-memory-shadow
 bun run evaluate:prospect-memory-setter
 bun run evaluate:prospect-memory-operator
+
+# Reproducible corpus with no real prospect data
+bun run run:prospect-memory-setter-corpus
+
+# Tenant-scoped shadow: run only on an explicitly selected workspace
+bun run run:prospect-memory-shadow-corpus
 ```
 
 A green suite is not a live proof. Read the [Prospect 360 validation report](docs/performance/2026-08-23-prospect-360-memory-validation-report.md) for executed measurements, missed thresholds and open production gates.
@@ -143,6 +186,18 @@ A green suite is not a live proof. Read the [Prospect 360 validation report](doc
 ## VPS deployment
 
 The standard deployment uses `compose.infrastructure.yml` and `compose.production.yml` for the API, web app, crawler, PostgreSQL, MinIO and specialized workers. Follow the [VPS production runbook](docs/runbooks/vps-production.md) for TLS, migrations, backups, restores and canaries.
+
+Current recommendation: **x86_64, 4 vCPU, 16 GiB RAM and at least 100 GiB SSD/NVMe**. The isolated 2-vCPU / 8-GiB benchmark completed without errors but missed the p95 targets under 100 concurrent Prospect 360 assemblies, so that smaller profile is not recommended for the complete platform.
+
+```bash
+cp deploy/.env.production.example .env
+chmod 600 .env
+ENV_FILE=.env bash deploy/validate-production-env.sh
+docker compose --env-file .env \
+  -f compose.infrastructure.yml -f compose.production.yml up -d
+```
+
+The standard deployment does not start Docling. `documents-advanced` remains an optional profile.
 
 Do not run a real LinkedIn, email or WhatsApp canary without explicit authorization bounded to the relevant account, workspace and content.
 

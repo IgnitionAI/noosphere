@@ -2,7 +2,7 @@
 
 **Open-source growth intelligence: discover the right market, run outbound, publish inbound content, and turn conversations into calls.**
 
-[Français](README.fr.md) · [English](README.en.md) · [Architecture](docs/architecture/ARCHITECTURE.md) · [Production runbook](docs/runbooks/vps-production.md)
+[Documentation française](README.fr.md) · [English documentation](README.en.md) · [Architecture](docs/architecture/ARCHITECTURE.md) · [Production runbook](docs/runbooks/vps-production.md)
 
 Noosphere brings the GTM loop into one multi-workspace application:
 
@@ -40,6 +40,13 @@ bun run dev
 
 Open [http://localhost:3000](http://localhost:3000). The production-like Compose stack and VPS procedure are documented in the [production runbook](docs/runbooks/vps-production.md).
 
+For production, start from the tracked, secret-free template:
+
+```bash
+cp deploy/.env.production.example .env
+ENV_FILE=.env bash deploy/validate-production-env.sh
+```
+
 ## Verification
 
 ```bash
@@ -48,6 +55,8 @@ bun run test:integration
 ```
 
 The repository also contains effect-free capacity, shadow, Setter-quality and operator-comprehension gates. Their current evidence and remaining production gates are recorded in the [Prospect 360 validation report](docs/performance/2026-08-23-prospect-360-memory-validation-report.md).
+
+Measured on 23 August 2026: the real-data shadow gate passed on 1,000 IgnitionAI contexts; 100/100 synthetic Codex Setter dry-runs were generated with zero provider effects and resolvable memory receipts. An isolated 2-vCPU/8-GiB VPS remained functional but missed the concurrent-memory p95 target, so the current deployment recommendation is **4 vCPU / 16 GiB minimum**, pending measurement on that final profile.
 
 ## License
 

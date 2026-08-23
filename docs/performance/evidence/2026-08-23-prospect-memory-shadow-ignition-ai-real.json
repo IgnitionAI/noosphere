@@ -1,0 +1,34 @@
+{
+  "generatedAt": "2026-08-23T19:06:20.397Z",
+  "workspaceSlug": "ignition-ai",
+  "period": {
+    "since": null,
+    "until": null
+  },
+  "schemaVersion": 1,
+  "minimumContextCount": 1000,
+  "contextCount": 1000,
+  "measurableContextCount": 1000,
+  "invalidContextCount": 0,
+  "automaticActionViolationCount": 0,
+  "contextsWithMemoryOnlyCriticalSources": 1000,
+  "criticalSourceCount": 6728,
+  "legacyCoveredCriticalSourceCount": 0,
+  "memoryOnlyCriticalSourceCount": 6728,
+  "memoryOnlyCriticalSourceRate": 1,
+  "capabilityCounts": {
+    "setter_campaign": 1000
+  },
+  "memoryStatusCounts": {
+    "fresh": 992,
+    "budget_blocked": 8
+  },
+  "observabilityGatePassed": true,
+  "semanticQualityGate": "not_measured",
+  "firstObservedAt": "2026-08-23T19:06:06.863Z",
+  "lastObservedAt": "2026-08-23T19:06:10.966Z",
+  "interpretation": {
+    "observabilityGate": "Proves sample size, measurable source coverage and zero effect-capable shadow context.",
+    "semanticQualityGate": "Requires a separately labelled corpus; this report never claims semantic quality."
+  }
+}

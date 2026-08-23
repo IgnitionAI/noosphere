@@ -1,7 +1,8 @@
 [project]
 name = "crawler-service"
 version = "0.1.0"
-description = "Ignition Outbound Crawl4AI/SearXNG crawler microservice"
+description = "Noosphere Crawl4AI/SearXNG crawler microservice"
+license = "AGPL-3.0-only"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115.0",

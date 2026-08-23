@@ -1,0 +1,1707 @@
+{
+  "generatedAt": "2026-08-23T19:34:52.306Z",
+  "workspaceSlug": "setter-quality-20260823-v2",
+  "instructions": "Human review artifact. For every case, verify that the reply recalls the seeded commitment, invents no claim, and does not repeat an already resolved point.",
+  "cases": [
+    {
+      "commandId": "bf47e832-2318-4894-96ab-53efc5193947",
+      "category": "commitment_recall",
+      "language": "fr",
+      "expectedCommitmentId": "NS-001-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-001-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Quelle référence exacte avais-tu promis d'utiliser pour la synthèse ?",
+      "generatedBody": "La référence promise était NS-001-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "0f070a03-2df7-4c54-b7b5-4071eccb1796",
+      "category": "resolved_objection",
+      "language": "fr",
+      "expectedCommitmentId": "NS-002-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-002-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Peux-tu me rappeler notre accord et me dire si tu avais promis une remise ?",
+      "generatedBody": "D’après nos échanges, nous avions convenu de t’envoyer la synthèse personnalisée sous la référence NS-002-Q. Aucune remise n’avait été promise.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "c8d79860-7e6d-475e-800a-215ad319b0ff",
+      "category": "confirmed_need",
+      "language": "fr",
+      "expectedCommitmentId": "NS-003-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-003-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Confirme-moi la référence liée à la synthèse pour notre besoin de recherche documentaire.",
+      "generatedBody": "Oui, la synthèse est associée à la référence NS-003-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "d3c7287b-ca96-4594-a720-cc4d51b8fce8",
+      "category": "do_not_repeat",
+      "language": "fr",
+      "expectedCommitmentId": "NS-004-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-004-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Quelle était la référence convenue ? Inutile de me refaire tout le pitch.",
+      "generatedBody": "La référence convenue était NS-004-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "49e6bd17-b0fc-4ef3-ad63-690b5a6950f6",
+      "category": "meeting_boundary",
+      "language": "en",
+      "expectedCommitmentId": "NS-005-Q",
+      "expectedCommitment": "We promised to send the tailored summary under reference NS-005-Q, without offering an unapproved discount or deadline.",
+      "latestInbound": "Remind me of the reference first; we can discuss a meeting afterwards.",
+      "generatedBody": "The reference is NS-005-Q. I’ll share the tailored summary first, and we can discuss a meeting afterwards.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "5ebc66ec-c61b-4faf-8773-9ed12fcc8b88",
+      "category": "commitment_recall",
+      "language": "fr",
+      "expectedCommitmentId": "NS-006-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-006-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Quelle référence exacte avais-tu promis d'utiliser pour la synthèse ?",
+      "generatedBody": "La référence promise était : NS-006-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "643f13ea-fbfe-44f1-93b4-9f46453cc532",
+      "category": "resolved_objection",
+      "language": "fr",
+      "expectedCommitmentId": "NS-007-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-007-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Peux-tu me rappeler notre accord et me dire si tu avais promis une remise ?",
+      "generatedBody": "D’après nos éléments, notre accord portait sur l’envoi de la synthèse personnalisée sous la référence NS-007-Q. Je ne vois aucune remise promise. Si vous faites référence à un autre échange, pouvez-vous me préciser lequel ?",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "3adff99c-5a59-4925-b7e5-5c93f2b4a98b",
+      "category": "confirmed_need",
+      "language": "fr",
+      "expectedCommitmentId": "NS-008-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-008-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Confirme-moi la référence liée à la synthèse pour notre besoin de recherche documentaire.",
+      "generatedBody": "Oui, la synthèse personnalisée est liée à la référence NS-008-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "b84952e2-efef-4268-bda9-61a74592265d",
+      "category": "do_not_repeat",
+      "language": "fr",
+      "expectedCommitmentId": "NS-009-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-009-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Quelle était la référence convenue ? Inutile de me refaire tout le pitch.",
+      "generatedBody": "La référence convenue était NS-009-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "285b60b1-455d-4ecc-a43c-fb8f84cb4a26",
+      "category": "meeting_boundary",
+      "language": "en",
+      "expectedCommitmentId": "NS-010-Q",
+      "expectedCommitment": "We promised to send the tailored summary under reference NS-010-Q, without offering an unapproved discount or deadline.",
+      "latestInbound": "Remind me of the reference first; we can discuss a meeting afterwards.",
+      "generatedBody": "The reference is NS-010-Q. Once you’ve reviewed it, we can discuss a meeting.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "f6db3380-f55b-43e1-89b8-287c8c1af18b",
+      "category": "commitment_recall",
+      "language": "fr",
+      "expectedCommitmentId": "NS-011-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-011-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Quelle référence exacte avais-tu promis d'utiliser pour la synthèse ?",
+      "generatedBody": "La référence promise est : NS-011-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "503bafe7-94bc-4e47-abd1-53aba39f67db",
+      "category": "resolved_objection",
+      "language": "fr",
+      "expectedCommitmentId": "NS-012-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-012-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Peux-tu me rappeler notre accord et me dire si tu avais promis une remise ?",
+      "generatedBody": "D’après notre échange, l’accord portait sur l’envoi de la synthèse personnalisée sous la référence NS-012-Q. Je ne vois aucune remise promise dans les éléments disponibles. Si tu fais référence à un autre échange, peux-tu me préciser lequel ?",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "937d9cef-b15e-4990-9f13-560cfbb80706",
+      "category": "confirmed_need",
+      "language": "fr",
+      "expectedCommitmentId": "NS-013-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-013-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Confirme-moi la référence liée à la synthèse pour notre besoin de recherche documentaire.",
+      "generatedBody": "La référence liée à la synthèse est NS-013-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "eb1347aa-1130-4a32-add6-212a365e93cc",
+      "category": "do_not_repeat",
+      "language": "fr",
+      "expectedCommitmentId": "NS-014-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-014-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Quelle était la référence convenue ? Inutile de me refaire tout le pitch.",
+      "generatedBody": "La référence convenue était : NS-014-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "1f45dfbb-e3af-4a75-97e6-51a936007ae3",
+      "category": "meeting_boundary",
+      "language": "en",
+      "expectedCommitmentId": "NS-015-Q",
+      "expectedCommitment": "We promised to send the tailored summary under reference NS-015-Q, without offering an unapproved discount or deadline.",
+      "latestInbound": "Remind me of the reference first; we can discuss a meeting afterwards.",
+      "generatedBody": "Of course — the reference is NS-015-Q. I’ll share the tailored summary first, then we can discuss a meeting.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "b850ea71-7a97-45d2-be77-e8f5b7fb900a",
+      "category": "commitment_recall",
+      "language": "fr",
+      "expectedCommitmentId": "NS-016-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-016-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Quelle référence exacte avais-tu promis d'utiliser pour la synthèse ?",
+      "generatedBody": "La référence promise était **NS-016-Q**.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "f23ba2a3-cd0a-4572-b679-9f3ca0b435d6",
+      "category": "resolved_objection",
+      "language": "fr",
+      "expectedCommitmentId": "NS-017-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-017-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Peux-tu me rappeler notre accord et me dire si tu avais promis une remise ?",
+      "generatedBody": "D’après nos échanges, nous avions convenu d’envoyer la synthèse personnalisée sous la référence NS-017-Q. Je ne vois pas de remise promise ni de condition commerciale confirmée.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "b305bdd4-b499-4835-acbd-5ba6b82b893f",
+      "category": "confirmed_need",
+      "language": "fr",
+      "expectedCommitmentId": "NS-018-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-018-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Confirme-moi la référence liée à la synthèse pour notre besoin de recherche documentaire.",
+      "generatedBody": "Je vous confirme que la référence liée à la synthèse personnalisée est NS-018-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "8a399213-51f8-4fa3-861a-76133ea518ba",
+      "category": "do_not_repeat",
+      "language": "fr",
+      "expectedCommitmentId": "NS-019-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-019-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Quelle était la référence convenue ? Inutile de me refaire tout le pitch.",
+      "generatedBody": "La référence convenue est NS-019-Q. Je m’en tiens à ça.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "ff7ec4e1-0507-43bd-9c43-4354139ce2b0",
+      "category": "meeting_boundary",
+      "language": "en",
+      "expectedCommitmentId": "NS-020-Q",
+      "expectedCommitment": "We promised to send the tailored summary under reference NS-020-Q, without offering an unapproved discount or deadline.",
+      "latestInbound": "Remind me of the reference first; we can discuss a meeting afterwards.",
+      "generatedBody": "The reference is NS-020-Q. I’ll send the tailored summary first, and once you’ve reviewed it, we can discuss a meeting.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "6036f142-6e5d-40d9-a6a2-6e4d42b8020e",
+      "category": "commitment_recall",
+      "language": "fr",
+      "expectedCommitmentId": "NS-021-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-021-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Quelle référence exacte avais-tu promis d'utiliser pour la synthèse ?",
+      "generatedBody": "La référence exacte promise était : NS-021-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "d2a164d0-2f95-4ced-8c7e-3e37069cc8fc",
+      "category": "resolved_objection",
+      "language": "fr",
+      "expectedCommitmentId": "NS-022-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-022-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Peux-tu me rappeler notre accord et me dire si tu avais promis une remise ?",
+      "generatedBody": "Notre accord portait sur l’envoi d’une synthèse personnalisée sous la référence NS-022-Q. D’après les échanges dont je dispose, aucune remise n’avait été promise.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "28f5c9c2-f524-4f6e-b425-6659d7612691",
+      "category": "confirmed_need",
+      "language": "fr",
+      "expectedCommitmentId": "NS-023-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-023-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Confirme-moi la référence liée à la synthèse pour notre besoin de recherche documentaire.",
+      "generatedBody": "Oui, la référence liée à la synthèse est NS-023-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "580a6d9c-e17f-4b9d-92c3-ba36853515f6",
+      "category": "do_not_repeat",
+      "language": "fr",
+      "expectedCommitmentId": "NS-024-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-024-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Quelle était la référence convenue ? Inutile de me refaire tout le pitch.",
+      "generatedBody": "La référence convenue était NS-024-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "7dde3f33-9874-4298-846c-7164c6ea4a72",
+      "category": "meeting_boundary",
+      "language": "en",
+      "expectedCommitmentId": "NS-025-Q",
+      "expectedCommitment": "We promised to send the tailored summary under reference NS-025-Q, without offering an unapproved discount or deadline.",
+      "latestInbound": "Remind me of the reference first; we can discuss a meeting afterwards.",
+      "generatedBody": "Of course — the reference is NS-025-Q. Please review it, and we can discuss a meeting afterward.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "e52f1067-e863-4903-9a27-c7e506c455ff",
+      "category": "commitment_recall",
+      "language": "fr",
+      "expectedCommitmentId": "NS-026-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-026-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Quelle référence exacte avais-tu promis d'utiliser pour la synthèse ?",
+      "generatedBody": "La référence exacte promise était NS-026-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "62bcc945-6812-4010-9d42-c3a445cb3e86",
+      "category": "resolved_objection",
+      "language": "fr",
+      "expectedCommitmentId": "NS-027-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-027-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Peux-tu me rappeler notre accord et me dire si tu avais promis une remise ?",
+      "generatedBody": "D’après nos échanges, notre accord portait sur l’envoi d’une synthèse personnalisée sous la référence NS-027-Q. Aucune remise n’a été promise.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "ddbd9ec3-cd5b-48fa-87fa-f3f46b5c099e",
+      "category": "confirmed_need",
+      "language": "fr",
+      "expectedCommitmentId": "NS-028-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-028-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Confirme-moi la référence liée à la synthèse pour notre besoin de recherche documentaire.",
+      "generatedBody": "Bien sûr : la synthèse personnalisée est référencée NS-028-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "1e33accf-25aa-4026-b4dc-ab14e6b85b3d",
+      "category": "do_not_repeat",
+      "language": "fr",
+      "expectedCommitmentId": "NS-029-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-029-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Quelle était la référence convenue ? Inutile de me refaire tout le pitch.",
+      "generatedBody": "La référence convenue était NS-029-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "d07c30d7-84c9-4a19-b292-bc482b401bc6",
+      "category": "meeting_boundary",
+      "language": "en",
+      "expectedCommitmentId": "NS-030-Q",
+      "expectedCommitment": "We promised to send the tailored summary under reference NS-030-Q, without offering an unapproved discount or deadline.",
+      "latestInbound": "Remind me of the reference first; we can discuss a meeting afterwards.",
+      "generatedBody": "Of course — the reference is NS-030-Q. Once you’ve reviewed it, we can discuss a meeting.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "1d26b69e-d716-441c-8524-4ad5367f778b",
+      "category": "commitment_recall",
+      "language": "fr",
+      "expectedCommitmentId": "NS-031-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-031-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Quelle référence exacte avais-tu promis d'utiliser pour la synthèse ?",
+      "generatedBody": "La référence promise était NS-031-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "6fa9d772-8c0a-4151-a7be-9f7727b8122f",
+      "category": "resolved_objection",
+      "language": "fr",
+      "expectedCommitmentId": "NS-032-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-032-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Peux-tu me rappeler notre accord et me dire si tu avais promis une remise ?",
+      "generatedBody": "Oui : nous avions convenu de t’envoyer une synthèse personnalisée sous la référence NS-032-Q. Aucune remise n’a été promise ni annoncée.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "2f5e8ae0-ed12-4fc6-84ff-66dca69d06e3",
+      "category": "confirmed_need",
+      "language": "fr",
+      "expectedCommitmentId": "NS-033-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-033-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Confirme-moi la référence liée à la synthèse pour notre besoin de recherche documentaire.",
+      "generatedBody": "Oui, la synthèse personnalisée est liée à la référence NS-033-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "57afa384-3d77-43cc-b8b3-de43e79f6104",
+      "category": "do_not_repeat",
+      "language": "fr",
+      "expectedCommitmentId": "NS-034-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-034-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Quelle était la référence convenue ? Inutile de me refaire tout le pitch.",
+      "generatedBody": "La référence convenue était NS-034-Q. Je reste sur cette synthèse, sans reprendre le pitch.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "151b9dc4-d265-4248-aafd-10865cb7e769",
+      "category": "meeting_boundary",
+      "language": "en",
+      "expectedCommitmentId": "NS-035-Q",
+      "expectedCommitment": "We promised to send the tailored summary under reference NS-035-Q, without offering an unapproved discount or deadline.",
+      "latestInbound": "Remind me of the reference first; we can discuss a meeting afterwards.",
+      "generatedBody": "The reference is NS-035-Q. I’ll send the tailored summary under that reference, and we can discuss a meeting afterward.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "8f8414aa-66dc-4b20-9d98-0e37081569dc",
+      "category": "commitment_recall",
+      "language": "fr",
+      "expectedCommitmentId": "NS-036-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-036-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Quelle référence exacte avais-tu promis d'utiliser pour la synthèse ?",
+      "generatedBody": "La référence promise est : NS-036-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "855a0b8a-5f91-46d4-bb9f-0f34e3ab2df0",
+      "category": "resolved_objection",
+      "language": "fr",
+      "expectedCommitmentId": "NS-037-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-037-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Peux-tu me rappeler notre accord et me dire si tu avais promis une remise ?",
+      "generatedBody": "D’après nos échanges, l’accord portait sur l’envoi d’une synthèse personnalisée sous la référence NS-037-Q. Je ne retrouve aucune promesse de remise ni de délai confirmé. Si tu fais référence à un autre accord, peux-tu me donner le contexte ?",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "40600bbd-fbc9-49d4-9933-facd0fef3f7b",
+      "category": "confirmed_need",
+      "language": "fr",
+      "expectedCommitmentId": "NS-038-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-038-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Confirme-moi la référence liée à la synthèse pour notre besoin de recherche documentaire.",
+      "generatedBody": "Oui, la référence est NS-038-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "f3e0617a-1d17-4842-97bf-12f7d0dcfdcd",
+      "category": "do_not_repeat",
+      "language": "fr",
+      "expectedCommitmentId": "NS-039-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-039-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Quelle était la référence convenue ? Inutile de me refaire tout le pitch.",
+      "generatedBody": "La référence convenue était : NS-039-Q. Je reste bref et ne reprends pas le pitch.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "e8011f84-2a1e-4213-9bc2-f69e3c969497",
+      "category": "meeting_boundary",
+      "language": "en",
+      "expectedCommitmentId": "NS-040-Q",
+      "expectedCommitment": "We promised to send the tailored summary under reference NS-040-Q, without offering an unapproved discount or deadline.",
+      "latestInbound": "Remind me of the reference first; we can discuss a meeting afterwards.",
+      "generatedBody": "Certainly — the reference is NS-040-Q. Happy to discuss a meeting afterwards.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "f65798cb-7b31-4890-9132-ef2a5f919504",
+      "category": "commitment_recall",
+      "language": "fr",
+      "expectedCommitmentId": "NS-041-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-041-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Quelle référence exacte avais-tu promis d'utiliser pour la synthèse ?",
+      "generatedBody": "La référence promise était NS-041-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "aa28963b-dc45-4c30-a099-f997c24b5694",
+      "category": "resolved_objection",
+      "language": "fr",
+      "expectedCommitmentId": "NS-042-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-042-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Peux-tu me rappeler notre accord et me dire si tu avais promis une remise ?",
+      "generatedBody": "D’après l’historique disponible, notre accord portait sur l’envoi d’une synthèse personnalisée sous la référence NS-042-Q. Aucune remise n’avait été promise.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "9028ba16-e67e-4d7d-aebf-d25955388217",
+      "category": "confirmed_need",
+      "language": "fr",
+      "expectedCommitmentId": "NS-043-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-043-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Confirme-moi la référence liée à la synthèse pour notre besoin de recherche documentaire.",
+      "generatedBody": "Oui, la synthèse personnalisée est bien liée à la référence NS-043-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "bac59df0-57f6-44a1-940f-c523d6cdedcf",
+      "category": "do_not_repeat",
+      "language": "fr",
+      "expectedCommitmentId": "NS-044-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-044-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Quelle était la référence convenue ? Inutile de me refaire tout le pitch.",
+      "generatedBody": "La référence convenue était NS-044-Q. Je reste sur la synthèse correspondante, sans refaire le pitch.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "d274d7f0-b6ec-4e9c-b9b1-669efe31c658",
+      "category": "meeting_boundary",
+      "language": "en",
+      "expectedCommitmentId": "NS-045-Q",
+      "expectedCommitment": "We promised to send the tailored summary under reference NS-045-Q, without offering an unapproved discount or deadline.",
+      "latestInbound": "Remind me of the reference first; we can discuss a meeting afterwards.",
+      "generatedBody": "Of course — the reference is NS-045-Q. Once you’ve reviewed it, we can discuss a meeting.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "766c48ea-b555-42e3-ad46-73f8df0bcb79",
+      "category": "commitment_recall",
+      "language": "fr",
+      "expectedCommitmentId": "NS-046-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-046-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Quelle référence exacte avais-tu promis d'utiliser pour la synthèse ?",
+      "generatedBody": "La référence promise était NS-046-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "455e2398-b618-4c37-884a-c8029b212bd4",
+      "category": "resolved_objection",
+      "language": "fr",
+      "expectedCommitmentId": "NS-047-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-047-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Peux-tu me rappeler notre accord et me dire si tu avais promis une remise ?",
+      "generatedBody": "D’après l’historique dont je dispose, notre accord portait sur l’envoi de la synthèse personnalisée sous la référence NS-047-Q. Aucune remise n’avait été promise ni annoncée.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "2febedf2-d6a2-464e-a872-8daa9e3e2999",
+      "category": "confirmed_need",
+      "language": "fr",
+      "expectedCommitmentId": "NS-048-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-048-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Confirme-moi la référence liée à la synthèse pour notre besoin de recherche documentaire.",
+      "generatedBody": "Oui, la synthèse personnalisée est bien référencée NS-048-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "6ca6f09e-5052-4d11-a054-4c784604bad7",
+      "category": "do_not_repeat",
+      "language": "fr",
+      "expectedCommitmentId": "NS-049-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-049-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Quelle était la référence convenue ? Inutile de me refaire tout le pitch.",
+      "generatedBody": "La référence convenue était NS-049-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "e22fa7b4-362c-490c-9e70-78496c55e50f",
+      "category": "meeting_boundary",
+      "language": "en",
+      "expectedCommitmentId": "NS-050-Q",
+      "expectedCommitment": "We promised to send the tailored summary under reference NS-050-Q, without offering an unapproved discount or deadline.",
+      "latestInbound": "Remind me of the reference first; we can discuss a meeting afterwards.",
+      "generatedBody": "The reference is NS-050-Q—the tailored summary we promised. Once you’ve reviewed it, we can discuss a meeting.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "afa3b8b2-ba6f-43ef-a560-1fefca155f13",
+      "category": "commitment_recall",
+      "language": "fr",
+      "expectedCommitmentId": "NS-051-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-051-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Quelle référence exacte avais-tu promis d'utiliser pour la synthèse ?",
+      "generatedBody": "La référence prévue est NS-051-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "86e36b00-5555-4b60-b9d6-424fd60d7dbf",
+      "category": "resolved_objection",
+      "language": "fr",
+      "expectedCommitmentId": "NS-052-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-052-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Peux-tu me rappeler notre accord et me dire si tu avais promis une remise ?",
+      "generatedBody": "D’après nos échanges, notre accord portait sur l’envoi de la synthèse personnalisée sous la référence NS-052-Q. Je ne vois aucune remise qui ait été promise. Si tu fais référence à un autre engagement, peux-tu me préciser lequel ?",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "704d80de-ad99-4019-9fe9-c09dc2dbdae0",
+      "category": "confirmed_need",
+      "language": "fr",
+      "expectedCommitmentId": "NS-053-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-053-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Confirme-moi la référence liée à la synthèse pour notre besoin de recherche documentaire.",
+      "generatedBody": "Oui, la synthèse personnalisée est liée à la référence NS-053-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "14765348-5ff0-4051-b0a0-32eeda179bd4",
+      "category": "do_not_repeat",
+      "language": "fr",
+      "expectedCommitmentId": "NS-054-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-054-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Quelle était la référence convenue ? Inutile de me refaire tout le pitch.",
+      "generatedBody": "La référence convenue était NS-054-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "e488d2ac-db93-4cca-b8f9-2da7307f5163",
+      "category": "meeting_boundary",
+      "language": "en",
+      "expectedCommitmentId": "NS-055-Q",
+      "expectedCommitment": "We promised to send the tailored summary under reference NS-055-Q, without offering an unapproved discount or deadline.",
+      "latestInbound": "Remind me of the reference first; we can discuss a meeting afterwards.",
+      "generatedBody": "The reference is NS-055-Q. I’ll share the tailored summary first, and then we can discuss a meeting.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "e7b2f2f7-1c0d-45fa-8f42-39385e1d7275",
+      "category": "commitment_recall",
+      "language": "fr",
+      "expectedCommitmentId": "NS-056-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-056-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Quelle référence exacte avais-tu promis d'utiliser pour la synthèse ?",
+      "generatedBody": "La référence exacte promise était NS-056-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "b6b50f51-6b2e-4abc-881c-6daee18ffaaa",
+      "category": "resolved_objection",
+      "language": "fr",
+      "expectedCommitmentId": "NS-057-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-057-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Peux-tu me rappeler notre accord et me dire si tu avais promis une remise ?",
+      "generatedBody": "D’après nos échanges, notre accord portait sur l’envoi de la synthèse personnalisée sous la référence NS-057-Q. Je ne vois pas de remise promise. Si tu fais référence à un autre échange, peux-tu me préciser lequel ?",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "ad0d2c20-aa6b-4a15-ada6-0aa42b85f9a8",
+      "category": "confirmed_need",
+      "language": "fr",
+      "expectedCommitmentId": "NS-058-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-058-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Confirme-moi la référence liée à la synthèse pour notre besoin de recherche documentaire.",
+      "generatedBody": "Oui, la synthèse personnalisée est référencée NS-058-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "013321d6-e010-48c3-a9a0-99ff73c282c0",
+      "category": "do_not_repeat",
+      "language": "fr",
+      "expectedCommitmentId": "NS-059-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-059-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Quelle était la référence convenue ? Inutile de me refaire tout le pitch.",
+      "generatedBody": "La référence convenue était NS-059-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "ebca7de6-22d0-46fa-8c25-8cf656bbb388",
+      "category": "meeting_boundary",
+      "language": "en",
+      "expectedCommitmentId": "NS-060-Q",
+      "expectedCommitment": "We promised to send the tailored summary under reference NS-060-Q, without offering an unapproved discount or deadline.",
+      "latestInbound": "Remind me of the reference first; we can discuss a meeting afterwards.",
+      "generatedBody": "The reference is NS-060-Q. Once you’ve reviewed it, happy to discuss a meeting.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "468eeacc-7ed3-427c-88e2-00093fea15d4",
+      "category": "commitment_recall",
+      "language": "fr",
+      "expectedCommitmentId": "NS-061-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-061-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Quelle référence exacte avais-tu promis d'utiliser pour la synthèse ?",
+      "generatedBody": "La référence exacte promise pour la synthèse est NS-061-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "23568759-f46d-41b9-a575-8c0b5ed0381d",
+      "category": "resolved_objection",
+      "language": "fr",
+      "expectedCommitmentId": "NS-062-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-062-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Peux-tu me rappeler notre accord et me dire si tu avais promis une remise ?",
+      "generatedBody": "D’après nos échanges, l’accord portait sur l’envoi d’une synthèse personnalisée sous la référence NS-062-Q. Je ne vois aucune remise promise ni condition commerciale confirmée.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "93690a48-4fe6-46e2-81c0-6b1f1292914c",
+      "category": "confirmed_need",
+      "language": "fr",
+      "expectedCommitmentId": "NS-063-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-063-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Confirme-moi la référence liée à la synthèse pour notre besoin de recherche documentaire.",
+      "generatedBody": "La synthèse personnalisée est liée à la référence NS-063-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "33f754da-d7d2-4da0-80c3-321aa4104e58",
+      "category": "do_not_repeat",
+      "language": "fr",
+      "expectedCommitmentId": "NS-064-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-064-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Quelle était la référence convenue ? Inutile de me refaire tout le pitch.",
+      "generatedBody": "La référence convenue était NS-064-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "5d58907e-8282-431f-8117-3e3c2364c0a7",
+      "category": "meeting_boundary",
+      "language": "en",
+      "expectedCommitmentId": "NS-065-Q",
+      "expectedCommitment": "We promised to send the tailored summary under reference NS-065-Q, without offering an unapproved discount or deadline.",
+      "latestInbound": "Remind me of the reference first; we can discuss a meeting afterwards.",
+      "generatedBody": "The reference is NS-065-Q. I’ll send the tailored summary under that reference first, and then we can discuss a meeting.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "dc83a8dd-f826-4aab-a062-ed7aa130b44d",
+      "category": "commitment_recall",
+      "language": "fr",
+      "expectedCommitmentId": "NS-066-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-066-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Quelle référence exacte avais-tu promis d'utiliser pour la synthèse ?",
+      "generatedBody": "La référence exacte promise était NS-066-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "eb36fc99-e425-4ebf-b7f4-ea617bb43bb5",
+      "category": "resolved_objection",
+      "language": "fr",
+      "expectedCommitmentId": "NS-067-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-067-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Peux-tu me rappeler notre accord et me dire si tu avais promis une remise ?",
+      "generatedBody": "D’après notre échange, l’accord portait sur l’envoi d’une synthèse personnalisée sous la référence NS-067-Q. Je ne vois aucune remise promise ni condition commerciale confirmée. Si tu fais référence à un autre accord, peux-tu me préciser lequel ?",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "d6035ebf-ef81-4bfd-97f4-e30595c46278",
+      "category": "confirmed_need",
+      "language": "fr",
+      "expectedCommitmentId": "NS-068-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-068-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Confirme-moi la référence liée à la synthèse pour notre besoin de recherche documentaire.",
+      "generatedBody": "Oui, la référence liée à la synthèse est NS-068-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "79d4b7b4-6c44-45ef-b3ff-b0c215adf701",
+      "category": "do_not_repeat",
+      "language": "fr",
+      "expectedCommitmentId": "NS-069-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-069-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Quelle était la référence convenue ? Inutile de me refaire tout le pitch.",
+      "generatedBody": "La référence convenue était NS-069-Q. Je reste sur cette synthèse, sans refaire le pitch.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "29715354-55c3-4c05-8cc4-6afbb2bf14bf",
+      "category": "meeting_boundary",
+      "language": "en",
+      "expectedCommitmentId": "NS-070-Q",
+      "expectedCommitment": "We promised to send the tailored summary under reference NS-070-Q, without offering an unapproved discount or deadline.",
+      "latestInbound": "Remind me of the reference first; we can discuss a meeting afterwards.",
+      "generatedBody": "Of course — the reference for the tailored summary is NS-070-Q. We can discuss a meeting afterwards.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "ce4f4923-82e2-4f52-9ac9-378f27c6e974",
+      "category": "commitment_recall",
+      "language": "fr",
+      "expectedCommitmentId": "NS-071-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-071-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Quelle référence exacte avais-tu promis d'utiliser pour la synthèse ?",
+      "generatedBody": "La référence promise est : NS-071-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "3a48a844-d206-4661-ae7c-989eadc2d525",
+      "category": "resolved_objection",
+      "language": "fr",
+      "expectedCommitmentId": "NS-072-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-072-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Peux-tu me rappeler notre accord et me dire si tu avais promis une remise ?",
+      "generatedBody": "Notre accord portait sur l’envoi d’une synthèse personnalisée sous la référence NS-072-Q. À ma connaissance, aucune remise n’avait été promise.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "838d832a-2307-4ee2-8902-4d29429daa25",
+      "category": "confirmed_need",
+      "language": "fr",
+      "expectedCommitmentId": "NS-073-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-073-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Confirme-moi la référence liée à la synthèse pour notre besoin de recherche documentaire.",
+      "generatedBody": "Oui, la synthèse personnalisée est référencée sous le numéro NS-073-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "3daf2c95-990a-44ce-82fb-0d7c59abcb26",
+      "category": "do_not_repeat",
+      "language": "fr",
+      "expectedCommitmentId": "NS-074-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-074-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Quelle était la référence convenue ? Inutile de me refaire tout le pitch.",
+      "generatedBody": "La référence convenue était NS-074-Q. Je m’en tiens à cela.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "33887c78-97b5-43ad-97c4-6d2d40e310ce",
+      "category": "meeting_boundary",
+      "language": "en",
+      "expectedCommitmentId": "NS-075-Q",
+      "expectedCommitment": "We promised to send the tailored summary under reference NS-075-Q, without offering an unapproved discount or deadline.",
+      "latestInbound": "Remind me of the reference first; we can discuss a meeting afterwards.",
+      "generatedBody": "Of course — the reference is NS-075-Q. Once you’ve reviewed it, we can discuss a meeting.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "90b18027-79a0-4001-8ed7-14cf173171d4",
+      "category": "commitment_recall",
+      "language": "fr",
+      "expectedCommitmentId": "NS-076-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-076-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Quelle référence exacte avais-tu promis d'utiliser pour la synthèse ?",
+      "generatedBody": "La référence promise est : NS-076-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "64890549-b343-4e97-91bf-3853b5f4f15e",
+      "category": "resolved_objection",
+      "language": "fr",
+      "expectedCommitmentId": "NS-077-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-077-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Peux-tu me rappeler notre accord et me dire si tu avais promis une remise ?",
+      "generatedBody": "Notre accord était de vous envoyer la synthèse personnalisée sous la référence NS-077-Q. Aucune remise n’a été promise dans nos échanges.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "07cf51bb-1abb-4f7c-877c-0f55a2b4acb8",
+      "category": "confirmed_need",
+      "language": "fr",
+      "expectedCommitmentId": "NS-078-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-078-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Confirme-moi la référence liée à la synthèse pour notre besoin de recherche documentaire.",
+      "generatedBody": "La référence est NS-078-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "44244aa2-c6ac-4c0b-a453-3c961e257c15",
+      "category": "do_not_repeat",
+      "language": "fr",
+      "expectedCommitmentId": "NS-079-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-079-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Quelle était la référence convenue ? Inutile de me refaire tout le pitch.",
+      "generatedBody": "La référence convenue était NS-079-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "4a327fc1-79fb-4db2-9322-347279c84b9e",
+      "category": "meeting_boundary",
+      "language": "en",
+      "expectedCommitmentId": "NS-080-Q",
+      "expectedCommitment": "We promised to send the tailored summary under reference NS-080-Q, without offering an unapproved discount or deadline.",
+      "latestInbound": "Remind me of the reference first; we can discuss a meeting afterwards.",
+      "generatedBody": "The reference is NS-080-Q. Once you’ve reviewed it, we can discuss a meeting.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "fd6dd2e6-9dcf-4dfc-bcef-c9656610b70f",
+      "category": "commitment_recall",
+      "language": "fr",
+      "expectedCommitmentId": "NS-081-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-081-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Quelle référence exacte avais-tu promis d'utiliser pour la synthèse ?",
+      "generatedBody": "La référence exacte promise est NS-081-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "35d5854c-cea6-4f4a-9415-4a571596135f",
+      "category": "resolved_objection",
+      "language": "fr",
+      "expectedCommitmentId": "NS-082-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-082-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Peux-tu me rappeler notre accord et me dire si tu avais promis une remise ?",
+      "generatedBody": "Notre accord était de vous envoyer la synthèse personnalisée sous la référence NS-082-Q. Aucune remise n’a été promise.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "4d68d335-ae6c-43dd-818d-9ff3f0d592c4",
+      "category": "confirmed_need",
+      "language": "fr",
+      "expectedCommitmentId": "NS-083-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-083-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Confirme-moi la référence liée à la synthèse pour notre besoin de recherche documentaire.",
+      "generatedBody": "Oui, la synthèse personnalisée est référencée sous NS-083-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "df7ab4b1-1336-4bad-aab8-96d2424b09cb",
+      "category": "do_not_repeat",
+      "language": "fr",
+      "expectedCommitmentId": "NS-084-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-084-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Quelle était la référence convenue ? Inutile de me refaire tout le pitch.",
+      "generatedBody": "La référence convenue était NS-084-Q. Je reste sur cette synthèse, sans refaire le pitch.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "77917a21-a88f-4aae-b1da-c918f5667adf",
+      "category": "meeting_boundary",
+      "language": "en",
+      "expectedCommitmentId": "NS-085-Q",
+      "expectedCommitment": "We promised to send the tailored summary under reference NS-085-Q, without offering an unapproved discount or deadline.",
+      "latestInbound": "Remind me of the reference first; we can discuss a meeting afterwards.",
+      "generatedBody": "Of course—the reference is NS-085-Q. I’ll share the tailored summary under that reference, and we can discuss a meeting afterwards.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "0731ad94-c947-4382-a4aa-dbc2d60d7662",
+      "category": "commitment_recall",
+      "language": "fr",
+      "expectedCommitmentId": "NS-086-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-086-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Quelle référence exacte avais-tu promis d'utiliser pour la synthèse ?",
+      "generatedBody": "La référence promise est **NS-086-Q**.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "701c7b72-da7e-4a05-8a58-8480ee694d99",
+      "category": "resolved_objection",
+      "language": "fr",
+      "expectedCommitmentId": "NS-087-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-087-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Peux-tu me rappeler notre accord et me dire si tu avais promis une remise ?",
+      "generatedBody": "Notre accord portait sur l’envoi d’une synthèse personnalisée sous la référence NS-087-Q. À ma connaissance, aucune remise n’a été promise.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "97b1524d-6f6d-44d1-97c0-39ae80041788",
+      "category": "confirmed_need",
+      "language": "fr",
+      "expectedCommitmentId": "NS-088-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-088-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Confirme-moi la référence liée à la synthèse pour notre besoin de recherche documentaire.",
+      "generatedBody": "Oui, la synthèse personnalisée est liée à la référence NS-088-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "1b3367cc-6bb6-4d37-aa66-c728a7a8a764",
+      "category": "do_not_repeat",
+      "language": "fr",
+      "expectedCommitmentId": "NS-089-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-089-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Quelle était la référence convenue ? Inutile de me refaire tout le pitch.",
+      "generatedBody": "La référence convenue était : NS-089-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "d0ed8e07-7043-48e6-84aa-4366f1488e05",
+      "category": "meeting_boundary",
+      "language": "en",
+      "expectedCommitmentId": "NS-090-Q",
+      "expectedCommitment": "We promised to send the tailored summary under reference NS-090-Q, without offering an unapproved discount or deadline.",
+      "latestInbound": "Remind me of the reference first; we can discuss a meeting afterwards.",
+      "generatedBody": "The reference is NS-090-Q. Once you’ve reviewed it, we can discuss a meeting.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "2bb17eb4-5289-4d6e-8df9-e3a6f02d42ab",
+      "category": "commitment_recall",
+      "language": "fr",
+      "expectedCommitmentId": "NS-091-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-091-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Quelle référence exacte avais-tu promis d'utiliser pour la synthèse ?",
+      "generatedBody": "La référence exacte est NS-091-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "17b0e99b-498c-4e16-b0b8-64cf10238218",
+      "category": "resolved_objection",
+      "language": "fr",
+      "expectedCommitmentId": "NS-092-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-092-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Peux-tu me rappeler notre accord et me dire si tu avais promis une remise ?",
+      "generatedBody": "D’après nos échanges, notre accord portait sur l’envoi d’une synthèse personnalisée sous la référence NS-092-Q. Je ne vois aucune remise qui ait été promise.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "986dfb45-6abd-4233-b3f0-35b1c9892ba3",
+      "category": "confirmed_need",
+      "language": "fr",
+      "expectedCommitmentId": "NS-093-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-093-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Confirme-moi la référence liée à la synthèse pour notre besoin de recherche documentaire.",
+      "generatedBody": "Oui, la référence liée à la synthèse personnalisée est : NS-093-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "3865193d-0aa5-425a-b06a-5cb7265cb195",
+      "category": "do_not_repeat",
+      "language": "fr",
+      "expectedCommitmentId": "NS-094-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-094-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Quelle était la référence convenue ? Inutile de me refaire tout le pitch.",
+      "generatedBody": "La référence convenue était NS-094-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "fe688508-a1ae-42f5-8427-12b6a5484eee",
+      "category": "meeting_boundary",
+      "language": "en",
+      "expectedCommitmentId": "NS-095-Q",
+      "expectedCommitment": "We promised to send the tailored summary under reference NS-095-Q, without offering an unapproved discount or deadline.",
+      "latestInbound": "Remind me of the reference first; we can discuss a meeting afterwards.",
+      "generatedBody": "The reference is NS-095-Q. Happy to discuss a meeting afterward.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "321ce36f-b6bb-4954-b85a-6ad18441fbfc",
+      "category": "commitment_recall",
+      "language": "fr",
+      "expectedCommitmentId": "NS-096-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-096-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Quelle référence exacte avais-tu promis d'utiliser pour la synthèse ?",
+      "generatedBody": "La référence exacte est NS-096-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "684e87b3-ecac-429a-8432-5d072fd7e396",
+      "category": "resolved_objection",
+      "language": "fr",
+      "expectedCommitmentId": "NS-097-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-097-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Peux-tu me rappeler notre accord et me dire si tu avais promis une remise ?",
+      "generatedBody": "D’après nos échanges, nous avions convenu d’envoyer une synthèse personnalisée sous la référence NS-097-Q. Je ne vois aucune remise promise ; je préfère ne pas en confirmer une sans vérification.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "b29e24c7-8b21-44e8-a674-965277a2cb92",
+      "category": "confirmed_need",
+      "language": "fr",
+      "expectedCommitmentId": "NS-098-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-098-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Confirme-moi la référence liée à la synthèse pour notre besoin de recherche documentaire.",
+      "generatedBody": "La référence liée à la synthèse personnalisée est NS-098-Q.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "fdfb407a-a6a2-4637-abcb-04436cab59be",
+      "category": "do_not_repeat",
+      "language": "fr",
+      "expectedCommitmentId": "NS-099-Q",
+      "expectedCommitment": "Nous avons promis d'envoyer la synthèse personnalisée sous la référence NS-099-Q, sans annoncer de remise ni de délai non confirmé.",
+      "latestInbound": "Quelle était la référence convenue ? Inutile de me refaire tout le pitch.",
+      "generatedBody": "La référence convenue était NS-099-Q. Je reste sur la synthèse personnalisée, sans reprendre le pitch.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    },
+    {
+      "commandId": "550730bf-feb0-41a0-aecf-530c0fd63e2e",
+      "category": "meeting_boundary",
+      "language": "en",
+      "expectedCommitmentId": "NS-100-Q",
+      "expectedCommitment": "We promised to send the tailored summary under reference NS-100-Q, without offering an unapproved discount or deadline.",
+      "latestInbound": "Remind me of the reference first; we can discuss a meeting afterwards.",
+      "generatedBody": "The reference is NS-100-Q—the tailored summary we promised. Happy to discuss a meeting after you’ve reviewed it.",
+      "status": "generated",
+      "errorCode": null,
+      "operatorLabels": {
+        "recalledCommitment": null,
+        "criticalViolation": null,
+        "unjustifiedRepetition": null,
+        "acceptableToSend": null
+      }
+    }
+  ]
+}

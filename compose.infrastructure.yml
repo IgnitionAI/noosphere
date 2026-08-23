@@ -93,7 +93,10 @@ services:
     profiles: [documents-advanced]
     image: ${DOCLING_IMAGE:-ghcr.io/docling-project/docling-serve-cpu:v1.21.0}
     environment:
-      DOCLING_SERVE_API_KEY: ${DOCLING_API_KEY:?DOCLING_API_KEY is required}
+      # Optional profile: validation requires a key only when the workspace
+      # selects DOCUMENT_EXTRACTOR=docling. Keeping interpolation optional lets
+      # the standard lightweight stack parse and start without Docling.
+      DOCLING_SERVE_API_KEY: ${DOCLING_API_KEY:-}
       DOCLING_SERVE_ENABLE_UI: "0"
       DOCLING_SERVE_ENG_KIND: local
       DOCLING_SERVE_ENG_LOC_NUM_WORKERS: 1

@@ -1,0 +1,463 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-23T18:37:38.305Z",
+  "topology": "standard_without_docling_or_proxy",
+  "workspaceSlug": "prospect-memory-benchmark",
+  "runtime": {
+    "bun": "1.3.4",
+    "platform": "linux",
+    "architecture": "x64",
+    "docker": "CPUs=2 Memory=8326623232"
+  },
+  "configuration": {
+    "requestCount": 1000,
+    "concurrency": 20,
+    "ssrRequestCount": 200,
+    "ssrConcurrency": 5,
+    "memoryRequestCount": 1000,
+    "memoryConcurrency": 100,
+    "resourceSamplingEnabled": true,
+    "continuousResourceSampling": true,
+    "memoryTargets": [
+      {
+        "delta": "0",
+        "observedPendingEventCount": 0
+      },
+      {
+        "delta": "20",
+        "observedPendingEventCount": 20
+      },
+      {
+        "delta": "200",
+        "observedPendingEventCount": 200
+      }
+    ],
+    "memorySkippedReason": null
+  },
+  "scenarios": [
+    {
+      "name": "health_ready",
+      "target": "http://127.0.0.1:63101/health/ready",
+      "requests": 1000,
+      "concurrency": 20,
+      "durationMs": 509.55,
+      "throughputPerSecond": 1962.52,
+      "errors": 0,
+      "latencyMs": {
+        "p50": 5.86,
+        "p95": 37.74,
+        "p99": 53.12,
+        "max": 210.41
+      },
+      "resourcePeaks": {
+        "web": {
+          "cpuPercent": 0.37,
+          "memoryMiB": 120.9
+        },
+        "decision-worker": {
+          "cpuPercent": 1.92,
+          "memoryMiB": 185.5
+        },
+        "api": {
+          "cpuPercent": 0.28,
+          "memoryMiB": 224.8
+        },
+        "setter-worker": {
+          "cpuPercent": 4.52,
+          "memoryMiB": 185.2
+        },
+        "worker": {
+          "cpuPercent": 1.62,
+          "memoryMiB": 181.9
+        },
+        "crawler": {
+          "cpuPercent": 8.13,
+          "memoryMiB": 148.2
+        },
+        "database": {
+          "cpuPercent": 0.64,
+          "memoryMiB": 171.8
+        },
+        "minio": {
+          "cpuPercent": 2.52,
+          "memoryMiB": 282.9
+        },
+        "searxng": {
+          "cpuPercent": 0,
+          "memoryMiB": 162.4
+        }
+      }
+    },
+    {
+      "name": "operational_read_mix",
+      "target": "http://127.0.0.1:63101/mixed",
+      "requests": 1000,
+      "concurrency": 20,
+      "durationMs": 9059.14,
+      "throughputPerSecond": 110.39,
+      "errors": 0,
+      "latencyMs": {
+        "p50": 163.31,
+        "p95": 315.59,
+        "p99": 421.24,
+        "max": 513.58
+      },
+      "resourcePeaks": {
+        "web": {
+          "cpuPercent": 0.3,
+          "memoryMiB": 122.6
+        },
+        "decision-worker": {
+          "cpuPercent": 1.34,
+          "memoryMiB": 185.3
+        },
+        "api": {
+          "cpuPercent": 96.3,
+          "memoryMiB": 283.9
+        },
+        "setter-worker": {
+          "cpuPercent": 4.05,
+          "memoryMiB": 188.1
+        },
+        "worker": {
+          "cpuPercent": 1.2,
+          "memoryMiB": 181.6
+        },
+        "crawler": {
+          "cpuPercent": 34.56,
+          "memoryMiB": 382
+        },
+        "database": {
+          "cpuPercent": 66.2,
+          "memoryMiB": 203.4
+        },
+        "minio": {
+          "cpuPercent": 0.09,
+          "memoryMiB": 283
+        },
+        "searxng": {
+          "cpuPercent": 0,
+          "memoryMiB": 162.4
+        }
+      }
+    },
+    {
+      "name": "prospect_memory_view_delta_0",
+      "target": "http://127.0.0.1:63101/api/v1/prospects/6175e982-87eb-49c1-8c47-b9ae1025d460/memory-view?capability=call_preparation",
+      "requests": 1000,
+      "concurrency": 100,
+      "durationMs": 4353.12,
+      "throughputPerSecond": 229.72,
+      "errors": 0,
+      "latencyMs": {
+        "p50": 414.63,
+        "p95": 608.05,
+        "p99": 666.64,
+        "max": 693.7
+      },
+      "resourcePeaks": {
+        "web": {
+          "cpuPercent": 7.81,
+          "memoryMiB": 136.5
+        },
+        "decision-worker": {
+          "cpuPercent": 1.11,
+          "memoryMiB": 185.3
+        },
+        "api": {
+          "cpuPercent": 81.95,
+          "memoryMiB": 286.9
+        },
+        "setter-worker": {
+          "cpuPercent": 3.51,
+          "memoryMiB": 185
+        },
+        "worker": {
+          "cpuPercent": 1.15,
+          "memoryMiB": 181.5
+        },
+        "crawler": {
+          "cpuPercent": 0.18,
+          "memoryMiB": 382
+        },
+        "database": {
+          "cpuPercent": 75.68,
+          "memoryMiB": 216
+        },
+        "minio": {
+          "cpuPercent": 0.12,
+          "memoryMiB": 283
+        },
+        "searxng": {
+          "cpuPercent": 8.55,
+          "memoryMiB": 162.4
+        }
+      }
+    },
+    {
+      "name": "prospect_memory_view_delta_20",
+      "target": "http://127.0.0.1:63101/api/v1/prospects/77f37f23-c32c-4e8f-8668-51b8cce36382/memory-view?capability=call_preparation",
+      "requests": 1000,
+      "concurrency": 100,
+      "durationMs": 4613.27,
+      "throughputPerSecond": 216.77,
+      "errors": 0,
+      "latencyMs": {
+        "p50": 440.07,
+        "p95": 646.95,
+        "p99": 681.26,
+        "max": 710.99
+      },
+      "resourcePeaks": {
+        "web": {
+          "cpuPercent": 0.34,
+          "memoryMiB": 130.4
+        },
+        "decision-worker": {
+          "cpuPercent": 1.01,
+          "memoryMiB": 185.5
+        },
+        "api": {
+          "cpuPercent": 82.18,
+          "memoryMiB": 261.4
+        },
+        "setter-worker": {
+          "cpuPercent": 3.51,
+          "memoryMiB": 187.1
+        },
+        "worker": {
+          "cpuPercent": 0.95,
+          "memoryMiB": 181.8
+        },
+        "crawler": {
+          "cpuPercent": 0.19,
+          "memoryMiB": 382
+        },
+        "database": {
+          "cpuPercent": 78.95,
+          "memoryMiB": 219.7
+        },
+        "minio": {
+          "cpuPercent": 0.06,
+          "memoryMiB": 283
+        },
+        "searxng": {
+          "cpuPercent": 0,
+          "memoryMiB": 162.4
+        }
+      }
+    },
+    {
+      "name": "prospect_memory_view_delta_200",
+      "target": "http://127.0.0.1:63101/api/v1/prospects/147340b1-4c0a-416d-a343-9d2686b4043b/memory-view?capability=call_preparation",
+      "requests": 1000,
+      "concurrency": 100,
+      "durationMs": 9354.43,
+      "throughputPerSecond": 106.9,
+      "errors": 0,
+      "latencyMs": {
+        "p50": 877.03,
+        "p95": 1244.88,
+        "p99": 1319.31,
+        "max": 1361.91
+      },
+      "resourcePeaks": {
+        "web": {
+          "cpuPercent": 8.46,
+          "memoryMiB": 124.4
+        },
+        "decision-worker": {
+          "cpuPercent": 1.41,
+          "memoryMiB": 185.9
+        },
+        "api": {
+          "cpuPercent": 107.35,
+          "memoryMiB": 338
+        },
+        "setter-worker": {
+          "cpuPercent": 4.29,
+          "memoryMiB": 187.1
+        },
+        "worker": {
+          "cpuPercent": 2.29,
+          "memoryMiB": 182.2
+        },
+        "crawler": {
+          "cpuPercent": 0.19,
+          "memoryMiB": 382
+        },
+        "database": {
+          "cpuPercent": 62.25,
+          "memoryMiB": 249.2
+        },
+        "minio": {
+          "cpuPercent": 2.33,
+          "memoryMiB": 283.1
+        },
+        "searxng": {
+          "cpuPercent": 12.46,
+          "memoryMiB": 162.5
+        }
+      }
+    },
+    {
+      "name": "today_ssr",
+      "target": "http://127.0.0.1:63100/w/prospect-memory-benchmark",
+      "requests": 200,
+      "concurrency": 5,
+      "durationMs": 10370.32,
+      "throughputPerSecond": 19.29,
+      "errors": 0,
+      "latencyMs": {
+        "p50": 255.31,
+        "p95": 379.06,
+        "p99": 515.19,
+        "max": 515.58
+      },
+      "resourcePeaks": {
+        "web": {
+          "cpuPercent": 107.96,
+          "memoryMiB": 236.5
+        },
+        "decision-worker": {
+          "cpuPercent": 1.01,
+          "memoryMiB": 185.6
+        },
+        "api": {
+          "cpuPercent": 64.6,
+          "memoryMiB": 298.6
+        },
+        "setter-worker": {
+          "cpuPercent": 3.53,
+          "memoryMiB": 185.4
+        },
+        "worker": {
+          "cpuPercent": 1.19,
+          "memoryMiB": 182
+        },
+        "crawler": {
+          "cpuPercent": 0.2,
+          "memoryMiB": 382
+        },
+        "database": {
+          "cpuPercent": 34.44,
+          "memoryMiB": 250.5
+        },
+        "minio": {
+          "cpuPercent": 2.94,
+          "memoryMiB": 283.1
+        },
+        "searxng": {
+          "cpuPercent": 10.87,
+          "memoryMiB": 162.5
+        }
+      }
+    },
+    {
+      "name": "prospects_ssr",
+      "target": "http://127.0.0.1:63100/w/prospect-memory-benchmark/prospects?campaignScope=outside_campaign",
+      "requests": 200,
+      "concurrency": 5,
+      "durationMs": 11046.56,
+      "throughputPerSecond": 18.11,
+      "errors": 0,
+      "latencyMs": {
+        "p50": 257.1,
+        "p95": 459.65,
+        "p99": 509.83,
+        "max": 527.59
+      },
+      "resourcePeaks": {
+        "web": {
+          "cpuPercent": 98.26,
+          "memoryMiB": 278
+        },
+        "decision-worker": {
+          "cpuPercent": 0.92,
+          "memoryMiB": 185.5
+        },
+        "api": {
+          "cpuPercent": 60.79,
+          "memoryMiB": 263.5
+        },
+        "setter-worker": {
+          "cpuPercent": 3.75,
+          "memoryMiB": 185.2
+        },
+        "worker": {
+          "cpuPercent": 1.08,
+          "memoryMiB": 181.9
+        },
+        "crawler": {
+          "cpuPercent": 22.46,
+          "memoryMiB": 404.1
+        },
+        "database": {
+          "cpuPercent": 32.09,
+          "memoryMiB": 223.3
+        },
+        "minio": {
+          "cpuPercent": 2.48,
+          "memoryMiB": 283.1
+        },
+        "searxng": {
+          "cpuPercent": 0,
+          "memoryMiB": 162.5
+        }
+      }
+    }
+  ],
+  "crawler": {
+    "name": "crawler_four_public_domains",
+    "skipped": false,
+    "skipReason": null,
+    "targets": [
+      "https://example.com/",
+      "https://www.iana.org/help/example-domains",
+      "https://www.rfc-editor.org/rfc/rfc2606",
+      "https://httpbin.org/html"
+    ],
+    "durationMs": 5546.24,
+    "completed": 4,
+    "errors": [],
+    "pagesProduced": 4,
+    "resourcePeaks": {
+      "web": {
+        "cpuPercent": 0.38,
+        "memoryMiB": 120.6
+      },
+      "decision-worker": {
+        "cpuPercent": 1.72,
+        "memoryMiB": 185.5
+      },
+      "api": {
+        "cpuPercent": 0.51,
+        "memoryMiB": 222.6
+      },
+      "setter-worker": {
+        "cpuPercent": 3.94,
+        "memoryMiB": 185.9
+      },
+      "worker": {
+        "cpuPercent": 1.17,
+        "memoryMiB": 181.7
+      },
+      "crawler": {
+        "cpuPercent": 172.85,
+        "memoryMiB": 1024
+      },
+      "database": {
+        "cpuPercent": 7.37,
+        "memoryMiB": 171.8
+      },
+      "minio": {
+        "cpuPercent": 0.06,
+        "memoryMiB": 282.9
+      },
+      "searxng": {
+        "cpuPercent": 9.87,
+        "memoryMiB": 162.4
+      }
+    }
+  }
+}

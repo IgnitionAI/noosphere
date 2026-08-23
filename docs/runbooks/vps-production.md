@@ -31,8 +31,22 @@ docker compose --env-file .env \
   build
 docker compose --env-file .env \
   -f compose.infrastructure.yml -f compose.production.yml \
-  up -d database minio searxng crawler minio-init migrate api web worker decision-worker proxy
+  up -d database minio searxng crawler minio-init migrate api web worker decision-worker setter-worker memory-worker proxy
 ```
+
+Si `AI_PROVIDER=codex-cli`, initialiser une fois le volume d'authentification
+avant de démarrer les workers (puis relancer la commande `up -d` ci-dessus) :
+
+```bash
+docker compose --env-file .env \
+  -f compose.infrastructure.yml -f compose.production.yml \
+  --profile codex-auth run --rm codex-auth
+```
+
+Les workers `setter-worker` et `memory-worker` sont obligatoires pour les jobs
+Setter durables et Prospect 360. Leur absence ne casse pas la page web, mais
+laisse les jobs en file ; le healthcheck de déploiement doit donc vérifier leur
+présence en plus de l'API et du web.
 
 L’extracteur documentaire standard ne dépend pas de Docling. Pour activer
 l’OCR et les tableaux complexes, définir `DOCUMENT_EXTRACTOR=docling`, fournir

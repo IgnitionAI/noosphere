@@ -28,6 +28,8 @@
     "verify:prospect-memory-backup": "bun scripts/verify-prospect-memory-backup-restore.ts",
     "verify:prospect-memory-purge": "bun scripts/verify-prospect-memory-purge-restored.ts",
     "benchmark:capacity": "bun scripts/benchmark-local-capacity.ts",
+    "run:prospect-memory-shadow-corpus": "bun scripts/run-prospect-memory-shadow-corpus.ts",
+    "run:prospect-memory-setter-corpus": "bun scripts/run-prospect-memory-setter-corpus.ts",
     "evaluate:prospect-memory-shadow": "bun scripts/evaluate-prospect-memory-shadow.ts",
     "evaluate:prospect-memory-setter": "bun scripts/evaluate-prospect-memory-setter-quality.ts",
     "evaluate:prospect-memory-operator": "bun scripts/evaluate-prospect-memory-operator.ts",

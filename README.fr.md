@@ -14,6 +14,19 @@ L’expérience normale tient en trois étapes :
 
 Les détails techniques restent observables sans envahir l’expérience. Les exceptions sont localisées dans « À traiter » et chaque effet externe reste gouverné par une policy déterministe.
 
+## État vérifié au 23 août 2026
+
+| Gate | Résultat | Portée réelle |
+|---|---|---|
+| Shadow Prospect 360 | atteint | 1 000 contextes du workspace IgnitionAI, 0 effet automatique |
+| Corpus Setter | gate automatique atteint | 100/100 dry-runs Codex Luna, receipts résolubles, aucun envoi |
+| Revue éditoriale humaine | ouverte | le fichier de revue existe, mais n’est pas auto-étiqueté |
+| VPS 2 vCPU / 8 Gio | insuffisant pour le SLO concurrent | fonctionnement sans erreur, p95 mémoire hors cible |
+| VPS recommandé | 4 vCPU / 16 Gio minimum | mesure finale encore à rejouer sur ce profil |
+| Canary provider réel | non exécuté | exige une autorisation explicite et bornée |
+
+Le détail et les fichiers de preuve sont dans le [rapport de validation Prospect 360](docs/performance/2026-08-23-prospect-360-memory-validation-report.md). Une preuve shadow ou dry-run ne constitue jamais une preuve d’envoi réel.
+
 ## Capacités
 
 ### Outbound
@@ -78,6 +91,16 @@ flowchart TB
 
 Le modèle propose ; la policy autorise. Avant chaque effet, le runtime revérifie workspace, compte, quota, horaire, suppression et idempotence. Une commande n’est considérée envoyée que lorsque son état durable est `sent` et qu’un identifiant provider est enregistré.
 
+### Durée de vie des agents et du contexte
+
+- les repositories, pools PostgreSQL et routeurs de modèles sont réutilisables et sans état métier ;
+- chaque job relit son contexte depuis PostgreSQL et reçoit un bundle tenant-scoped ;
+- chaque appel Codex utilise un processus `codex exec --ephemeral` et un répertoire temporaire isolé ;
+- le résultat, le modèle, le prompt, l’`ai_run`, le receipt mémoire et la décision sont persistés ;
+- fermer une page ou un drawer arrête seulement le polling du navigateur, jamais le job serveur.
+
+Il n’existe donc aucun singleton « agent avec mémoire ». La mémoire durable appartient au Prospect 360, pas au processus modèle.
+
 ## Installation locale
 
 Prérequis :
@@ -115,6 +138,20 @@ Copiez `.env.example` et configurez au minimum PostgreSQL, Better Auth, MinIO et
 
 Ne commitez jamais `.env`, clés API, cookies LinkedIn, jetons OAuth ou secrets de webhook.
 
+| Bloc | Variables principales | Obligatoire |
+|---|---|---|
+| PostgreSQL | `DATABASE_URL` ou `POSTGRES_*` | oui |
+| Auth | `BETTER_AUTH_URL`, `BETTER_AUTH_SECRET`, origines | oui |
+| Stockage | `S3_ENDPOINT`, bucket et identifiants | oui |
+| Crawler | `CRAWLER_SERVICE_URL`, `CRAWLER_API_KEY` | oui |
+| IA | `AI_PROVIDER` puis Kimi, Codex ou OpenAI selon la route | oui |
+| Embeddings | `OPENAI_API_KEY`, `OPENAI_EMBEDDING_MODEL` | pour la connaissance |
+| Canaux | Unipile et IDs de comptes sains | seulement pour les canaux activés |
+| Documents | `DOCUMENT_EXTRACTOR=lightweight` | valeur standard |
+| Docling | URL et clé du profil `documents-advanced` | non |
+
+Pour Codex, exécutez l’authentification dans le volume privé décrit par le [runbook providers](docs/runbooks/provider-configuration.md). Les modèles et fallbacks se choisissent ensuite par workspace et par capacité dans l’interface.
+
 ## Tests et preuves
 
 ```bash
@@ -136,6 +173,12 @@ bun run benchmark:capacity
 bun run evaluate:prospect-memory-shadow
 bun run evaluate:prospect-memory-setter
 bun run evaluate:prospect-memory-operator
+
+# Corpus reproductible et sans donnée prospect réelle
+bun run run:prospect-memory-setter-corpus
+
+# Shadow tenant-scoped : à exécuter seulement sur un workspace explicitement choisi
+bun run run:prospect-memory-shadow-corpus
 ```
 
 Une suite verte ne remplace pas une preuve live. Consultez le [rapport de validation Prospect 360](docs/performance/2026-08-23-prospect-360-memory-validation-report.md) pour connaître les mesures réellement exécutées, les seuils non atteints et les gates encore ouverts.
@@ -143,6 +186,18 @@ Une suite verte ne remplace pas une preuve live. Consultez le [rapport de valida
 ## Déploiement VPS
 
 Le déploiement standard utilise `compose.infrastructure.yml` et `compose.production.yml`. Il comprend API, web, crawler, PostgreSQL, MinIO et workers spécialisés. Suivez le [runbook VPS](docs/runbooks/vps-production.md) pour TLS, migrations, sauvegardes, restauration et canary.
+
+Profil recommandé à ce stade : **x86_64, 4 vCPU, 16 Gio de RAM, SSD/NVMe 100 Gio ou plus**. Le benchmark isolé 2 vCPU / 8 Gio a terminé sans erreur, mais a dépassé les seuils p95 sous 100 assemblages Prospect 360 concurrents ; ce profil n’est donc pas recommandé pour l’ensemble de la plateforme.
+
+```bash
+cp deploy/.env.production.example .env
+chmod 600 .env
+ENV_FILE=.env bash deploy/validate-production-env.sh
+docker compose --env-file .env \
+  -f compose.infrastructure.yml -f compose.production.yml up -d
+```
+
+Le déploiement standard ne démarre pas Docling. Le profil `documents-advanced` est optionnel.
 
 Ne lancez pas de canary LinkedIn, email ou WhatsApp réel sans autorisation explicite et bornée au compte, au workspace et au contenu concernés.
 
