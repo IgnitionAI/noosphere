@@ -277,16 +277,51 @@ Preuves :
 - `docs/performance/evidence/2026-08-23-prospect-memory-setter-corpus.json` ;
 - `docs/performance/evidence/2026-08-23-prospect-memory-setter-review.json`.
 
+## Parcours technique avec rôle Operator
+
+Le parcours réel de l'interface a été exécuté avec un compte possédant le rôle
+`Operator` sur un workspace synthétique. Depuis la conversation, l'opérateur a
+lancé le Setter en `dry_run`, fermé le drawer puis navigué pendant que le job
+était encore actif. Le job a continué côté serveur. Après réouverture, le
+résultat durable était visible et rappelait exactement l'engagement
+`NS-001-Q`, situé au-delà des trente derniers messages.
+
+Le contrôle PostgreSQL confirme :
+
+- commande `generated`, jamais `sent` ;
+- 36 messages avant et après le parcours ;
+- 0 tentative d'outreach et 0 identifiant de requête provider ;
+- receipt mémoire et `ai_run` résolubles ;
+- `codex-cli / gpt-5.6-luna / xhigh`, instancié de manière transiente pour le
+  job ;
+- aucune erreur console pendant le parcours observé.
+
+Ce parcours a également révélé un défaut de production : la lecture du budget
+sémantique interpolait directement un objet `Date` dans `postgres-js`. Le job
+de rafraîchissement pouvait donc passer en retry avant l'appel modèle. La borne
+temporelle utilise désormais l'opérateur Drizzle typé `gte`, avec un test
+d'intégration dédié. La suite d'intégration passe avec 153 tests et 0 échec.
+
+Cette preuve valide le parcours technique, la durabilité du job et l'absence
+d'effet provider. Elle ne prétend pas mesurer la compréhension d'un humain.
+Preuve :
+
+- `docs/performance/evidence/2026-08-23-prospect-memory-operator-role-qa.json`.
+
 ## Gates encore ouverts
 
 Les gates suivants restent explicitement ouverts :
 
 1. **Revue éditoriale Setter** : un opérateur doit encore étiqueter le corpus
    de 100 réponses ; aucun jugement automatique ne sera compté comme humain.
-2. **Compréhension opérateur** : le fichier d'exemple passe les cinq assertions
-   attendues, mais il s'agit d'une fixture documentaire, pas d'une session
-   opérateur observée. Il valide l'évaluateur, pas la compréhension humaine.
-   Rapport :
+2. **Compréhension opérateur** : le parcours technique avec un vrai rôle
+   `Operator` passe, y compris fermeture du drawer et réouverture du résultat.
+   Le fichier d'exemple passe aussi les cinq assertions attendues. En revanche,
+   aucune session où un humain explique ce qu'il comprend n'a encore été
+   observée : le gate de compréhension humaine reste donc `not_measured`.
+   Rapports :
+   `docs/performance/evidence/2026-08-23-prospect-memory-operator-role-qa.json`
+   et
    `docs/performance/evidence/2026-08-23-prospect-memory-operator-example-current.json`.
 3. **VPS 4 vCPU / 16 Gio** : chaud/froid, deltas 0/20/200, 100 assembleurs
    concurrents, 10 événements/s + 5/s de backfill, pointe 100/s pendant cinq
@@ -310,7 +345,8 @@ requiert une autorisation distincte et bornée.
 
 ## Prochain protocole
 
-1. exécuter le test opérateur et la revue éditoriale du corpus ;
+1. exécuter la session de compréhension humaine et la revue éditoriale du
+   corpus ;
 2. répéter le benchmark sur le VPS 4 vCPU / 16 Gio retenu ;
 3. tester le rollback sur l'environnement déployé ;
 4. seulement après réussite, demander l'autorisation du canary réel.

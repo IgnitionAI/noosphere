@@ -8,7 +8,7 @@ import {
   type ProspectMemorySnapshot,
 } from "@outbound/domain/prospect-memory/prospect-memory";
 import { createDatabase } from "@outbound/infrastructure/database/client";
-import { authUsers, contacts, jobs, prospectMemoryEvents, workspaceProspectMemorySettings, workspaces } from "@outbound/infrastructure/database/schema";
+import { aiRuns, authUsers, contacts, jobs, prospectMemoryEvents, workspaceProspectMemorySettings, workspaces } from "@outbound/infrastructure/database/schema";
 import {
   PostgresContextReceiptRecorder,
   PostgresProspectMemoryEventRepository,
@@ -16,6 +16,7 @@ import {
   PostgresProspectMemorySnapshotRepository,
 } from "@outbound/infrastructure/prospect-memory/postgres-prospect-memory-repository";
 import { captureProspectMemoryMutation } from "@outbound/infrastructure/prospect-memory/capture-prospect-memory-mutation";
+import { PostgresProspectMemorySemanticBudgetReader } from "@outbound/infrastructure/prospect-memory/postgres-prospect-memory-state-reader";
 import {
   ProspectMemoryBackfillJobProcessor,
   ProspectMemoryBackfillScheduler,
@@ -64,6 +65,7 @@ databaseDescribe("MEM-002 prospect memory persistence", () => {
     await database.client`delete from prospect_memory_snapshots where workspace_id in (${workspaceA}, ${workspaceB})`;
     await database.client`delete from prospect_memory_events where workspace_id in (${workspaceA}, ${workspaceB})`;
     await database.client`delete from jobs where workspace_id in (${workspaceA}, ${workspaceB})`;
+    await database.client`delete from ai_runs where workspace_id in (${workspaceA}, ${workspaceB})`;
     await database.client`delete from workspace_prospect_memory_settings where workspace_id in (${workspaceA}, ${workspaceB})`;
     await database.client`delete from contacts where workspace_id in (${workspaceA}, ${workspaceB})`;
     await database.client`delete from workspaces where id in (${workspaceA}, ${workspaceB})`;
@@ -334,6 +336,42 @@ databaseDescribe("MEM-002 prospect memory persistence", () => {
         and column_name in ('context', 'payload', 'content', 'messages')
     `;
     expect(rows[0]?.payload_column_count).toBe(0);
+  });
+
+  test("reads the semantic refresh budget with a typed timestamp boundary", async () => {
+    await database.db.insert(aiRuns).values([
+      {
+        id: crypto.randomUUID(),
+        workspaceId: workspaceA,
+        purpose: "prospect_memory",
+        provider: "codex-cli",
+        model: "gpt-5.6-luna",
+        promptVersion: "prospect-memory-v1",
+        inputHash: "a".repeat(64),
+        status: "completed",
+        cost: "1.250000",
+        createdAt: observedAt,
+      },
+      {
+        id: crypto.randomUUID(),
+        workspaceId: workspaceA,
+        purpose: "prospect_memory",
+        provider: "codex-cli",
+        model: "gpt-5.6-luna",
+        promptVersion: "prospect-memory-v1",
+        inputHash: "b".repeat(64),
+        status: "completed",
+        cost: "9.000000",
+        createdAt: new Date("2026-08-22T08:00:00.000Z"),
+      },
+    ]);
+
+    const usage = await new PostgresProspectMemorySemanticBudgetReader(database.db).readUsage({
+      workspaceId: workspaceA,
+      since: new Date("2026-08-23T08:59:00.000Z"),
+    });
+
+    expect(usage).toEqual({ refreshes: 1, costUsd: 1.25 });
   });
 
   test("activates shadow atomically and rolls back to disabled without losing reviewed provider policy", async () => {

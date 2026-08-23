@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, sql } from "drizzle-orm";
 import type { ContentHasher } from "@outbound/application/shared/ports";
 import type {
   ProspectMemoryAuthoritativeStateReader,
@@ -193,7 +193,7 @@ export class PostgresProspectMemorySemanticBudgetReader implements ProspectMemor
     }).from(aiRuns).where(and(
       eq(aiRuns.workspaceId, input.workspaceId),
       eq(aiRuns.purpose, "prospect_memory"),
-      sql`${aiRuns.createdAt} >= ${input.since}`,
+      gte(aiRuns.createdAt, input.since),
     ));
     return {
       refreshes: rows[0]?.refreshes ?? 0,
