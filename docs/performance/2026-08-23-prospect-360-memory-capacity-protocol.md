@@ -82,12 +82,21 @@ concurrence de 100 ont donné :
 | 20 | 180,59 ms | 0 |
 | 200 | 488,74 ms | 0 |
 
+La passe complète rejouée après le commit `f659e59`, reconstruction des images
+et recréation explicite des conteneurs a donné :
+
+| Delta | p95 local | Erreurs |
+|---:|---:|---:|
+| 0 | 265,70 ms | 0 |
+| 20 | 372,36 ms | 0 |
+| 200 | 669,25 ms | 0 |
+
 Le rapport est conservé dans
-`docs/performance/evidence/2026-08-23-prospect-memory-capacity-local-warm.json`.
+`docs/performance/evidence/2026-08-23-prospect-memory-capacity-local-current.json`.
 Il s'agit d'un diagnostic, non d'une qualification : Docker Desktop tournait
-sur ARM64 avec environ 6,2 Gio, puis l'hôte a atteint 0,25 % de CPU idle et
-125 Mio libres. Les rapports `optimized` et `memory-focused` produits pendant
-cette saturation doivent être lus uniquement comme traces de diagnostic.
+sur ARM64 avec 6 vCPU et environ 6,2 Gio. Les deltas 20 et 200 n'atteignent pas
+le seuil chaud de 300 ms ; seul un benchmark x86_64 sur le VPS cible permettra
+de distinguer la limite de l'hôte local d'une optimisation serveur nécessaire.
 
 ## Charge d'ingestion et rattrapage
 

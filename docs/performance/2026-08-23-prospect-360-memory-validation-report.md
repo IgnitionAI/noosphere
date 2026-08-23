@@ -1,7 +1,7 @@
 # Prospect 360 — rapport de validation local
 
 **Date :** 23 août 2026
-**Révision de départ :** `ecf0682` (`dev`)
+**Révision validée :** `f659e59` (`dev`)
 **Portée :** MEM-001 à MEM-007, sauvegarde/restauration/purge locale incluses, hors charge VPS et hors effet provider réel
 **Décision locale :** code-side ready derrière feature flags ; activation de production non encore approuvée
 
@@ -51,9 +51,9 @@ bun run test:integration
 Résultat final après durcissement des profils provider et ajout du Setter
 dry-run durable :
 
-- 151 tests réussis sur 43 fichiers ;
+- 152 tests réussis sur 43 fichiers ;
 - 0 échec ;
-- 1 288 assertions ;
+- 1 289 assertions ;
 - migrations `0089` à `0092` rejouées dans la base d'intégration isolée.
 
 Les scénarios mémoire prouvent notamment :
@@ -166,10 +166,26 @@ La preuve est archivée dans
 ## Diagnostic de capacité local
 
 La fixture transactionnelle a produit trois contacts dont les deltas vérifiés
-sont exactement 0, 20 et 200. Une première passe locale à chaud, 1 000 requêtes
-et concurrence 100, a observé zéro erreur avec des p95 respectifs de 145,57 ms,
-180,59 ms et 488,74 ms. Le scénario 200 est donc sous l'objectif froid de
-750 ms, mais au-dessus de l'objectif chaud de 300 ms.
+sont exactement 0, 20 et 200. Après reconstruction explicite des images et
+recréation des conteneurs API/web/workers, une nouvelle passe complète a
+exécuté 1 000 requêtes par delta avec une concurrence de 100, sampling Docker
+continu et crawler actif :
+
+| Delta | p95 | Erreurs | Verdict chaud `< 300 ms` |
+|---:|---:|---:|---|
+| 0 | 265,70 ms | 0 | atteint |
+| 20 | 372,36 ms | 0 | non atteint |
+| 200 | 669,25 ms | 0 | non atteint |
+
+Le mix de lectures opérationnelles a tenu 218,32 requêtes/s avec un p95 de
+180,95 ms et zéro erreur. Les 200 SSR « Aujourd’hui » et « Prospects » ont
+également terminé sans erreur. Le crawler a lu quatre domaines publics sur
+quatre et produit quatre pages.
+
+La preuve courante est archivée dans
+`docs/performance/evidence/2026-08-23-prospect-memory-capacity-local-current.json`.
+Elle invalide toute affirmation selon laquelle le SLO chaud serait déjà
+atteint pour un delta de 20 ou 200 événements.
 
 Cette passe ne qualifie pas le produit : Docker Desktop était limité à environ
 6,2 Gio sur Apple Silicon et l'hôte a ensuite atteint 0,25 % de CPU idle,
@@ -178,21 +194,24 @@ classées diagnostics invalides, pas régressions produit. La qualification
 officielle reste à exécuter sur le VPS x86_64 4 vCPU / 16 Gio, isolé et au
 repos. Aucun chiffre local n'est présenté comme un SLO acquis.
 
-## Gates non encore exécutés
+## Gates exécutés mais non fermés
 
-Ces éléments nécessitent un environnement, des données ou une autorisation qui
-ne peuvent pas être remplacés honnêtement par un test local synthétique :
+Les évaluateurs ont été exécutés sur les données locales disponibles. Ils
+échouent ou restent non probants de manière explicite ; aucun corpus synthétique
+n'est compté comme une validation réelle :
 
-1. **Shadow réel** sur 1 000 contextes, ou l'intégralité disponible si elle est
-   inférieure, avec zéro régression critique. L'agrégateur PII-free est livré,
-   mais il doit encore être exécuté après collecte du corpus réel.
-2. **Corpus qualité Setter** : zéro violation critique, rappel des engagements
-   sémantiques supérieur ou égal à 98 %, répétition injustifiée inférieure à
-   1 %. L'évaluateur PII-free est livré et refuse tout cas sans commande
-   `dry_run`, `aiRunId` ou `memoryReceiptId` durable.
-3. **Compréhension opérateur** supérieure ou égale à 90 % sur les états
-   mémoire, préparation et envoi, sans aucune erreur sur les frontières
-   d'effet. Le questionnaire et l'évaluateur fail-closed sont livrés.
+1. **Shadow réel** : `0 / 1 000` contextes observés sur `ignition-ai`. Gate
+   non atteint, sans violation d'effet détectée parce qu'aucun échantillon
+   n'existe encore. Rapport :
+   `docs/performance/evidence/2026-08-23-prospect-memory-shadow-ignition-ai-current.json`.
+2. **Corpus qualité Setter** : `1 / 100` label fourni, mais aucune commande
+   `dry_run` durable correspondante ; `0` cas valide. Gate non atteint. Rapport :
+   `docs/performance/evidence/2026-08-23-prospect-memory-setter-quality-ignition-ai-current.json`.
+3. **Compréhension opérateur** : le fichier d'exemple passe les cinq assertions
+   attendues, mais il s'agit d'une fixture documentaire, pas d'une session
+   opérateur observée. Il valide l'évaluateur, pas la compréhension humaine.
+   Rapport :
+   `docs/performance/evidence/2026-08-23-prospect-memory-operator-example-current.json`.
 4. **VPS 4 vCPU / 16 Gio** : chaud/froid, deltas 0/20/200, 100 assembleurs
    concurrents, 10 événements/s + 5/s de backfill, pointe 100/s pendant cinq
    minutes.
