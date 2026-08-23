@@ -20,21 +20,23 @@ export class V3SourcingValidator {
     for (const hypothesis of hypotheses) {
       const hypothesisId = text(hypothesis.hypothesisId);
       if (!hypothesisId) continue;
-      const organizationType = text(hypothesis.organizationType);
+      const organizationType = boundedText(hypothesis.organizationType, 300);
       const context = contexts.find((candidate) => text(candidate.hypothesisId) === hypothesisId);
       const jobTitles = unique([
         ...strings(context?.economicBuyers),
         ...strings(context?.sponsors),
         ...strings(context?.users),
-      ]).slice(0, 8);
-      const keywords = unique([organizationType, ...jobTitles.slice(0, 3)]).join(" ").trim();
+      ]).map((value) => truncateAtWord(value, 300)).slice(0, 8);
+      const keywords = fitSearchKeywords([organizationType, ...jobTitles.slice(0, 3)], 500);
       const accountQuery = {
         naceCodes: [],
         industries: organizationType ? [organizationType] : [],
         companySizes: [],
-        geographies: [input.brief.geography],
+        geographies: [truncateAtWord(input.brief.geography, 200)],
         jobTitles,
-        triggerSignals: strings(context?.purchaseTriggers).slice(0, 10),
+        triggerSignals: strings(context?.purchaseTriggers)
+          .map((value) => truncateAtWord(value, 1_000))
+          .slice(0, 10),
         exclusions: [],
         searchKeywords: keywords ? [keywords] : [],
       };
@@ -146,6 +148,33 @@ function strings(value: unknown): string[] {
 
 function text(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function boundedText(value: unknown, maximum: number): string {
+  return truncateAtWord(text(value), maximum);
+}
+
+function truncateAtWord(value: string, maximum: number): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maximum) return normalized;
+  const candidate = normalized.slice(0, maximum + 1);
+  const boundary = candidate.lastIndexOf(" ");
+  return (boundary >= Math.floor(maximum * 0.6)
+    ? candidate.slice(0, boundary)
+    : normalized.slice(0, maximum)).trim();
+}
+
+function fitSearchKeywords(values: readonly string[], maximum: number): string {
+  const terms = unique(values).map((value) => value.replace(/\s+/g, " ").trim());
+  let result = "";
+  for (const term of terms) {
+    const remaining = maximum - result.length - (result ? 1 : 0);
+    if (remaining <= 0) break;
+    const fitted = truncateAtWord(term, remaining);
+    if (!fitted) continue;
+    result = result ? `${result} ${fitted}` : fitted;
+  }
+  return result;
 }
 
 function unique(values: readonly string[]): string[] {

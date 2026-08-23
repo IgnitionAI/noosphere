@@ -1,9 +1,15 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { resolve } from "node:path";
+import { eq } from "drizzle-orm";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { PROSPECT_DECISION_JOB_TYPE } from "@outbound/application/campaigns/prospect-decision";
 import { createDatabase } from "@outbound/infrastructure/database/client";
-import { contacts, workspaces } from "@outbound/infrastructure/database/schema";
+import {
+  contacts,
+  prospectMemoryEvents,
+  workspaceProspectMemorySettings,
+  workspaces,
+} from "@outbound/infrastructure/database/schema";
 import { PostgresJobQueue } from "@outbound/infrastructure/jobs/postgres-job-queue";
 import { PostgresProspectDecisionScheduler } from "@outbound/infrastructure/campaigns/postgres-prospect-decision-scheduler";
 
@@ -14,7 +20,8 @@ databaseDescribe("AI-150 durable prospect decisions", () => {
   if (!databaseUrl) return;
   const database = createDatabase(databaseUrl);
   const queue = new PostgresJobQueue(database.client);
-  const scheduler = new PostgresProspectDecisionScheduler(database.db);
+  const fixedNow = new Date("2026-08-13T09:00:00.000Z");
+  const scheduler = new PostgresProspectDecisionScheduler(database.db, { now: () => fixedNow });
   const workspaceA = crypto.randomUUID();
   const workspaceB = crypto.randomUUID();
   const contactA = crypto.randomUUID();
@@ -32,11 +39,18 @@ databaseDescribe("AI-150 durable prospect decisions", () => {
       { id: contactA, workspaceId: workspaceA, firstName: "Ada", lastName: "Martin" },
       { id: contactB, workspaceId: workspaceB, firstName: "Grace", lastName: "Durand" },
     ]);
+    await database.db.insert(workspaceProspectMemorySettings).values({
+      workspaceId: workspaceA,
+      captureEnabled: true,
+      shadowEnabled: true,
+    });
   });
 
   afterAll(async () => {
     await database.client`delete from prospect_decisions where workspace_id in (${workspaceA}, ${workspaceB})`;
+    await database.client`delete from prospect_memory_events where workspace_id in (${workspaceA}, ${workspaceB})`;
     await database.client`delete from jobs where workspace_id in (${workspaceA}, ${workspaceB})`;
+    await database.client`delete from workspace_prospect_memory_settings where workspace_id in (${workspaceA}, ${workspaceB})`;
     await database.client`delete from outbox_events where workspace_id in (${workspaceA}, ${workspaceB})`;
     await database.client`delete from contacts where workspace_id in (${workspaceA}, ${workspaceB})`;
     await database.client`delete from workspaces where id in (${workspaceA}, ${workspaceB})`;
@@ -85,6 +99,11 @@ databaseDescribe("AI-150 durable prospect decisions", () => {
     expect(replay.decision.dueAt).toEqual(revisedDueAt);
     expect(otherWorkspace).toMatchObject({ created: true });
     expect(otherWorkspace.decision.id).not.toBe(first.decision.id);
+    const capturedTransitions = await database.db
+      .select({ id: prospectMemoryEvents.id })
+      .from(prospectMemoryEvents)
+      .where(eq(prospectMemoryEvents.sourceId, first.decision.id));
+    expect(capturedTransitions).toHaveLength(2);
 
     const tooEarly = await queue.lease({
       workerId: "decision-worker-early",

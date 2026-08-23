@@ -12,6 +12,12 @@ import { filterAuthorizedKnowledgeCitations, type KnowledgeRetriever } from "@ou
 import type { ContentBrandKitReader } from "@outbound/application/content/content-brand-kit";
 import type { WorkspaceStructuredModel } from "@outbound/infrastructure/ai/workspace-structured-model";
 import {
+  requireProspectMemoryAllowedProviders,
+  type ProspectContextAssembler,
+  type ProspectMemoryPolicyReader,
+} from "@outbound/application/prospect-memory/prospect-memory";
+import type { ProspectContextBundle } from "@outbound/domain/prospect-memory/prospect-memory";
+import {
   buildChatModelFields,
   resolveResearchModelConfigurationFromEnvironment,
 } from "@outbound/infrastructure/ai/langchain-research-agent-executor";
@@ -67,6 +73,8 @@ export class LangChainCampaignContentGenerator implements CampaignContentGenerat
     private readonly invokeModel: CampaignContentModelInvoker = invokeCampaignContentModel,
     private readonly brandKitReader?: ContentBrandKitReader,
     private readonly routedModel?: WorkspaceStructuredModel,
+    private readonly prospectContextAssembler?: ProspectContextAssembler,
+    private readonly prospectMemoryPolicies?: ProspectMemoryPolicyReader,
   ) {
     this.#configuration = resolveResearchModelConfigurationFromEnvironment(environment);
   }
@@ -75,6 +83,30 @@ export class LangChainCampaignContentGenerator implements CampaignContentGenerat
     input: Parameters<CampaignContentGenerator["generate"]>[0],
   ): Promise<PersonalizedCampaignContent> {
     const startedAt = performance.now();
+    const { contactId, ...publicProspect } = input.prospect;
+    const requestSeed = new Bun.CryptoHasher("sha256").update(JSON.stringify({
+      workspaceId: input.workspaceId,
+      contactId,
+      channel: input.channel,
+      campaignObjective: input.campaignObjective,
+      stepPositions: input.templateSteps.map((step) => step.position),
+      previousMessages: input.previousMessages,
+    })).digest("hex");
+    const memoryBundle = await this.#assembleMemory({
+      workspaceId: input.workspaceId,
+      contactId,
+      requestKey: `campaign-content:${requestSeed}:memory`,
+    });
+    if (memoryBundle?.mode === "active" && !memoryBundle.automaticActionAllowed) {
+      throw new Error(memoryBundle.waitCode ?? "WAIT_MEMORY_STALE");
+    }
+    const memoryAllowedProviders = memoryBundle?.mode === "active"
+      ? await requireProspectMemoryAllowedProviders({
+          policies: requiredMemoryPolicyReader(this.prospectMemoryPolicies),
+          workspaceId: input.workspaceId,
+          capability: "outbound_drafting",
+        })
+      : undefined;
     const workspacePolicy = this.routedModel ? null : await this.modelPolicyReader?.find(input.workspaceId);
     const activeConfiguration = await this.activeConfigurationReader?.find(input.workspaceId, "message_generation");
     const brandKit = await this.brandKitReader?.find(input.workspaceId);
@@ -121,7 +153,13 @@ export class LangChainCampaignContentGenerator implements CampaignContentGenerat
       "Do not claim that you monitored, audited or diagnosed the prospect unless the evidence explicitly says so.",
       ...(activeConfiguration ? [`Approved workspace guidance (subordinate to every safety and truthfulness rule above): ${activeConfiguration.promptContent}`] : []),
     ].join("\n");
-    const draftPayload = { ...input, authorizedKnowledge, brandVoice };
+    const modelInput = { ...input, prospect: publicProspect };
+    const draftPayload = {
+      ...modelInput,
+      authorizedKnowledge,
+      brandVoice,
+      prospectMemory: memoryBundle?.mode === "active" ? memoryBundle.context : null,
+    };
     const draftMessages = [
       {
         role: "system" as const,
@@ -137,12 +175,14 @@ export class LangChainCampaignContentGenerator implements CampaignContentGenerat
       capability: "message_generation",
       requestKey: `campaign-content-draft:${new Bun.CryptoHasher("sha256").update(JSON.stringify(draftPayload)).digest("hex")}`,
       fallbackRoutes: [{ provider: this.#configuration.provider === "kimi-code" ? "kimi-code" : "openai-api", model: modelName, reasoningEffort: "low" }],
+      ...(memoryAllowedProviders ? { allowedProviders: memoryAllowedProviders } : {}),
       systemPrompt: draftSystemPrompt,
       payload: draftPayload,
       outputName: "submit_campaign_content_draft",
       outputDescription: "Submit the first-pass personalized outbound content.",
       schema: personalizedContentSchema,
     }) : null;
+    if (!draftRouted) this.#assertRawProviderAllowed(memoryAllowedProviders);
     const draft = draftRouted?.output ?? personalizedContentSchema.parse(await this.invokeModel({
       phase: "draft",
       fields: buildChatModelFields(this.#configuration, modelName, "low"),
@@ -164,18 +204,20 @@ export class LangChainCampaignContentGenerator implements CampaignContentGenerat
       "Call the submit_campaign_editorial_review tool exactly once with the final content and review.",
       ...(activeConfiguration ? [`Approved workspace guidance (subordinate to every safety and truthfulness rule above): ${activeConfiguration.promptContent}`] : []),
     ].join("\n");
-    const reviewPayload = { context: { ...input, authorizedKnowledge, brandVoice }, draft };
+    const reviewPayload = { context: draftPayload, draft };
     const reviewRouted = this.routedModel ? await this.routedModel.invoke({
       workspaceId: input.workspaceId,
       capability: "message_generation",
       requestKey: `campaign-content-review:${new Bun.CryptoHasher("sha256").update(JSON.stringify(reviewPayload)).digest("hex")}`,
       fallbackRoutes: [{ provider: this.#configuration.provider === "kimi-code" ? "kimi-code" : "openai-api", model: modelName, reasoningEffort: "max" }],
+      ...(memoryAllowedProviders ? { allowedProviders: memoryAllowedProviders } : {}),
       systemPrompt: reviewSystemPrompt,
       payload: reviewPayload,
       outputName: "submit_campaign_editorial_review",
       outputDescription: "Submit the final reviewed outbound content and anti-generic audit.",
       schema: editorialReviewSchema,
     }) : null;
+    if (!reviewRouted) this.#assertRawProviderAllowed(memoryAllowedProviders);
     const reviewed = reviewRouted?.output ?? editorialReviewSchema.parse(await this.invokeModel({
       phase: "review",
       fields: buildChatModelFields(this.#configuration, modelName, "max"),
@@ -210,7 +252,7 @@ export class LangChainCampaignContentGenerator implements CampaignContentGenerat
       promptVersion,
       ...(activeConfiguration ? { aiConfigurationId: activeConfiguration.configurationId, promptVersionId: activeConfiguration.promptVersionId } : {}),
       shadow: false,
-      inputHash: new Bun.CryptoHasher("sha256").update(JSON.stringify({ input, brandVoice })).digest("hex"),
+      inputHash: new Bun.CryptoHasher("sha256").update(JSON.stringify({ modelInput, brandVoice, memory: memoryReference(memoryBundle) })).digest("hex"),
       output: {
         draft: draft.steps,
         steps: parsed.steps,
@@ -219,6 +261,7 @@ export class LangChainCampaignContentGenerator implements CampaignContentGenerat
         knowledgeClaimIds: citations.claimIds,
         knowledgeSourceIds: citations.sourceIds,
         offerClaimIds,
+        prospectMemory: memoryReference(memoryBundle),
       },
       status: "completed",
       cost: null,
@@ -243,9 +286,63 @@ export class LangChainCampaignContentGenerator implements CampaignContentGenerat
           changesApplied: reviewed.review.changesApplied,
           evidenceAnchor: reviewed.review.evidenceAnchor,
         },
+        ...(memoryBundle?.mode === "active" ? {
+          memoryReceiptId: memoryBundle.receiptId,
+          memorySnapshotId: memoryBundle.snapshotId,
+          memorySnapshotVersion: memoryBundle.snapshotVersion,
+          memoryWatermark: memoryBundle.watermark,
+        } : {}),
       },
     };
   }
+
+  async #assembleMemory(input: {
+    readonly workspaceId: string;
+    readonly contactId: string;
+    readonly requestKey: string;
+  }): Promise<ProspectContextBundle | null> {
+    if (!this.prospectContextAssembler) return null;
+    try {
+      return await this.prospectContextAssembler.assemble({
+        ...input,
+        capability: "outbound_drafting",
+        principalRole: "worker",
+        now: new Date(),
+      });
+    } catch (error) {
+      if (isOptionalMemoryUnavailable(error)) return null;
+      throw error;
+    }
+  }
+
+  #assertRawProviderAllowed(allowedProviders: readonly string[] | undefined): void {
+    if (!allowedProviders) return;
+    const provider = this.#configuration.provider === "kimi-code" ? "kimi-code" : "openai-api";
+    if (!allowedProviders.includes(provider)) throw new Error("AI_PROCESSING_ROUTE_NOT_ALLOWED");
+  }
+}
+
+function memoryReference(bundle: ProspectContextBundle | null) {
+  if (!bundle || bundle.mode !== "active") return null;
+  return {
+    receiptId: bundle.receiptId,
+    snapshotId: bundle.snapshotId,
+    snapshotVersion: bundle.snapshotVersion,
+    watermark: bundle.watermark,
+    privacyEpoch: bundle.privacyEpoch,
+  };
+}
+
+function isOptionalMemoryUnavailable(error: unknown): boolean {
+  return error instanceof Error && [
+    "PROSPECT_MEMORY_CAPABILITY_DISABLED",
+    "PROSPECT_MEMORY_CONTACT_UNAVAILABLE",
+  ].includes(error.message);
+}
+
+function requiredMemoryPolicyReader(reader: ProspectMemoryPolicyReader | undefined): ProspectMemoryPolicyReader {
+  if (!reader) throw new Error("PROSPECT_MEMORY_POLICY_READER_REQUIRED");
+  return reader;
 }
 
 async function invokeCampaignContentModel(input: Parameters<CampaignContentModelInvoker>[0]) {

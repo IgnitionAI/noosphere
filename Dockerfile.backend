@@ -23,7 +23,7 @@ WORKDIR /app
 ENV NODE_ENV=production
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ffmpeg fonts-dejavu-core nodejs poppler-utils \
+  && apt-get install -y --no-install-recommends ca-certificates ffmpeg fonts-dejavu-core nodejs poppler-utils \
   && rm -rf /var/lib/apt/lists/*
 
 COPY --from=codex-cli /usr/local/lib/node_modules/@openai /usr/local/lib/node_modules/@openai

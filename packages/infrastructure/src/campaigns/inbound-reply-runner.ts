@@ -9,6 +9,8 @@ import type { ProspectingChannel } from "@outbound/domain/campaigns/prospecting-
 import { resolveCampaignAutopilotPolicy } from "@outbound/domain/campaigns/campaign-autopilot-policy";
 import { normalizeEmail, normalizePhone } from "@outbound/domain/crm/normalization";
 import type { Database } from "@outbound/infrastructure/database/client";
+import { captureProspectMemoryMutation } from "@outbound/infrastructure/prospect-memory/capture-prospect-memory-mutation";
+import { captureProspectDecisionMutation } from "@outbound/infrastructure/prospect-memory/capture-prospect-decision-mutation";
 import {
   CalendarIntegrationError,
   type CalendarSchedulingContext,
@@ -304,18 +306,42 @@ export class InboundReplyJobProcessor {
   }
 
   async #captureContactEmail(workspaceId: string, contactId: string, email: string): Promise<void> {
-    await this.database.insert(contactIdentities).values({
-      id: crypto.randomUUID(),
-      workspaceId,
-      contactId,
-      type: "email",
-      value: email,
-      normalizedValue: email,
-      verificationStatus: "unknown",
-      source: "provider",
-      createdAt: this.clock.now(),
-      updatedAt: this.clock.now(),
-    }).onConflictDoNothing();
+    const now = this.clock.now();
+    await this.database.transaction(async (tx) => {
+      const [identity] = await tx.insert(contactIdentities).values({
+        id: crypto.randomUUID(),
+        workspaceId,
+        contactId,
+        type: "email",
+        value: email,
+        normalizedValue: email,
+        verificationStatus: "unknown",
+        source: "provider",
+        createdAt: now,
+        updatedAt: now,
+      }).onConflictDoNothing().returning({
+        id: contactIdentities.id,
+        type: contactIdentities.type,
+        verificationStatus: contactIdentities.verificationStatus,
+        updatedAt: contactIdentities.updatedAt,
+      });
+      if (!identity) return;
+      await captureProspectMemoryMutation(tx, {
+        workspaceId,
+        sourceContactId: contactId,
+        sourceKind: "contact_identity",
+        sourceId: identity.id,
+        sourceVersion: identity.updatedAt.getTime(),
+        kind: "identity_linked",
+        occurredAt: identity.updatedAt,
+        observedAt: identity.updatedAt,
+        payload: {
+          identityType: identity.type,
+          verificationStatus: identity.verificationStatus,
+        },
+        correlationId: `inbound-email:${contactId}`,
+      });
+    });
   }
 
   async #event(input: { workspaceId: string; integrationEventId: string }) {
@@ -456,6 +482,23 @@ export class InboundReplyJobProcessor {
         .limit(1);
       const persistedMessageId = insertedMessage?.id ?? existingMessage?.id;
       if (!persistedMessageId) throw new Error("INBOUND_MESSAGE_PERSIST_FAILED");
+      if (insertedMessage) await captureProspectMemoryMutation(tx, {
+        workspaceId: input.workspaceId,
+        sourceContactId: input.matched.contactId,
+        sourceKind: "message",
+        sourceId: insertedMessage.id,
+        sourceVersion: 1,
+        kind: "message_received",
+        occurredAt: input.incoming.occurredAt,
+        observedAt: now,
+        payload: {
+          conversationId: persistedConversationId,
+          channel: input.incoming.channel,
+          direction: "inbound",
+          senderType: "prospect",
+        },
+        correlationId: input.integrationEventId,
+      });
       await tx
         .update(campaignEnrollments)
         .set({ status: "cancelled", completedAt: now })
@@ -491,7 +534,11 @@ export class InboundReplyJobProcessor {
     outgoing: NormalizedInbound;
   }) {
     const [conversation] = await this.database
-      .select({ id: conversations.id })
+      .select({
+        id: conversations.id,
+        contactId: conversations.contactId,
+        channel: conversations.channel,
+      })
       .from(conversations)
       .where(and(
         eq(conversations.workspaceId, input.workspaceId),
@@ -523,8 +570,9 @@ export class InboundReplyJobProcessor {
     }
     const now = this.clock.now();
     await this.database.transaction(async (tx) => {
-      await tx.insert(messages).values({
-        id: crypto.randomUUID(),
+      const messageId = crypto.randomUUID();
+      const [insertedMessage] = await tx.insert(messages).values({
+        id: messageId,
         workspaceId: input.workspaceId,
         conversationId: conversation.id,
         providerMessageId: input.outgoing.messageId,
@@ -533,7 +581,24 @@ export class InboundReplyJobProcessor {
         body: input.outgoing.body,
         sentAt: input.outgoing.occurredAt,
         createdAt: now,
-      }).onConflictDoNothing();
+      }).onConflictDoNothing().returning({ id: messages.id });
+      if (insertedMessage) await captureProspectMemoryMutation(tx, {
+        workspaceId: input.workspaceId,
+        sourceContactId: conversation.contactId,
+        sourceKind: "message",
+        sourceId: insertedMessage.id,
+        sourceVersion: 1,
+        kind: "message_sent",
+        occurredAt: input.outgoing.occurredAt,
+        observedAt: now,
+        payload: {
+          conversationId: conversation.id,
+          channel: conversation.channel,
+          direction: "outbound",
+          senderType: "human",
+        },
+        correlationId: input.integrationEventId,
+      });
       await tx
         .update(automatedReplies)
         .set({
@@ -663,7 +728,7 @@ export class InboundReplyJobProcessor {
             createdAt: now,
             updatedAt: now,
           }).onConflictDoNothing();
-          await tx.insert(prospectDecisions).values({
+          const [insertedDecision] = await tx.insert(prospectDecisions).values({
             id: decisionId,
             workspaceId: input.workspaceId,
             contactId: input.contactId,
@@ -681,7 +746,14 @@ export class InboundReplyJobProcessor {
             payload: { inboundMessageId: input.messageId },
             createdAt: now,
             updatedAt: now,
-          }).onConflictDoNothing();
+          }).onConflictDoNothing().returning();
+          if (insertedDecision) {
+            await captureProspectDecisionMutation(
+              tx,
+              insertedDecision,
+              `conversation:${input.conversationId}`,
+            );
+          }
         }
       }
       if (input.decision.action === "stop") {

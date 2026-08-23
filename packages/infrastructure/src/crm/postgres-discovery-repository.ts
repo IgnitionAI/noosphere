@@ -20,6 +20,7 @@ import {
   sourcingFrontiers,
   dailySourcingCycles,
 } from "@outbound/infrastructure/database/schema";
+import { captureProspectMemoryMutation } from "@outbound/infrastructure/prospect-memory/capture-prospect-memory-mutation";
 
 export class PostgresDiscoveryRepository {
   constructor(private readonly db: Database) {}
@@ -691,7 +692,7 @@ export class PostgresDiscoveryRepository {
             eq(prospectDiscoveryCandidates.id, input.candidateId),
           ),
         );
-      await tx
+      const importedProspects = await tx
         .update(campaignProspects)
         .set({ contactId: input.contactId, state: "imported", updatedAt: new Date() })
         .where(
@@ -699,7 +700,27 @@ export class PostgresDiscoveryRepository {
             eq(campaignProspects.workspaceId, input.workspaceId),
             eq(campaignProspects.candidateId, input.candidateId),
           ),
-        );
+        )
+        .returning({
+          id: campaignProspects.id,
+          campaignId: campaignProspects.campaignId,
+          state: campaignProspects.state,
+          updatedAt: campaignProspects.updatedAt,
+        });
+      for (const prospect of importedProspects) {
+        await captureProspectMemoryMutation(tx, {
+          workspaceId: input.workspaceId,
+          sourceContactId: input.contactId,
+          sourceKind: "campaign_prospect",
+          sourceId: prospect.id,
+          sourceVersion: prospect.updatedAt.getTime(),
+          kind: "campaign_changed",
+          occurredAt: prospect.updatedAt,
+          observedAt: prospect.updatedAt,
+          payload: { campaignId: prospect.campaignId, state: prospect.state },
+          correlationId: `prospect-import:${input.candidateId}`,
+        });
+      }
     });
   }
 }

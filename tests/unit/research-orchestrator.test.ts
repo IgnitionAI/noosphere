@@ -105,7 +105,7 @@ const brief = {
 };
 
 describe("ResearchOrchestrator", () => {
-  test("recognizes both stage and global budget exhaustion as partial-report outcomes", () => {
+  test("classifies stage and global budget exhaustion without confusing provider quota", () => {
     expect(isBudgetExhaustion("RESEARCH_BUDGET_EXHAUSTED")).toBe(true);
     expect(isBudgetExhaustion("RESEARCH_GLOBAL_DEADLINE_EXHAUSTED")).toBe(true);
     expect(isBudgetExhaustion("MODEL_PROVIDER_QUOTA_EXHAUSTED")).toBe(false);
@@ -250,12 +250,12 @@ describe("ResearchOrchestrator", () => {
     expect(backend.aiRuns).toHaveLength(10);
   });
 
-  test("budget exhaustion returns a useful partial V3 report instead of interrupted", async () => {
+  test("a stage time budget exhaustion retries the checkpoint instead of publishing a partial ICP", async () => {
     const backend = new InMemoryResearchBackend();
     const ids = new CryptoIdGenerator();
     const clock = new MutableClock(new Date("2026-08-02T10:00:00.000Z"));
     const agents = new FakeAgents();
-    agents.budgetOnce = "buying_context";
+    agents.budgetOnce = "product_truth";
     const workspaceId = crypto.randomUUID();
     const run = await new CreateProductResearchRun(backend, ids, clock).execute({
       workspaceId,
@@ -275,31 +275,44 @@ describe("ResearchOrchestrator", () => {
       new Sha256ContentHasher(),
     );
 
-    for (let index = 0; index < 6; index += 1) {
-      const [job] = await backend.lease({
-        workerId: "worker-partial",
-        types: ["research.stage.execute"],
-        limit: 1,
-        leaseMs: 30_000,
-        now: clock.now(),
-      });
-      expect(job).toBeDefined();
-      await orchestrator.process(job!);
-    }
+    const [firstAttempt] = await backend.lease({
+      workerId: "worker-budget-retry",
+      types: ["research.stage.execute"],
+      limit: 1,
+      leaseMs: 30_000,
+      now: clock.now(),
+    });
+    expect(await orchestrator.process(firstAttempt!)).toEqual({
+      outcome: "retry_scheduled",
+      stage: "product_truth",
+    });
 
-    const partial = await backend.findById(workspaceId, run.snapshot.id);
-    const report = await backend.getReport(workspaceId, run.snapshot.id);
-    expect(partial?.snapshot.status).toBe("partial");
-    expect(report.stageOutputs.objective_ranking).toMatchObject({
-      status: "partial",
-      missingStages: expect.arrayContaining(["buying_context", "objective_ranking"]),
+    const retrying = await backend.findById(workspaceId, run.snapshot.id);
+    expect(retrying?.snapshot).toMatchObject({
+      status: "running",
+      activeStage: "product_truth",
+      completedStages: [],
     });
-    expect(report.proposals).not.toHaveLength(0);
-    expect(report.proposals[0]).toMatchObject({
-      rank: 1,
-      criteria: { state: "insufficient" },
+
+    clock.advance(5_000);
+    const [secondAttempt] = await backend.lease({
+      workerId: "worker-budget-retry",
+      types: ["research.stage.execute"],
+      limit: 1,
+      leaseMs: 30_000,
+      now: clock.now(),
     });
-    expect(backend.publishedVersions).toHaveLength(0);
+    expect(await orchestrator.process(secondAttempt!)).toMatchObject({
+      outcome: "completed",
+      stage: "product_truth",
+      nextStage: "problem_mapping",
+    });
+
+    const resumed = await backend.findById(workspaceId, run.snapshot.id);
+    expect(resumed?.snapshot.status).not.toBe("partial");
+    expect(resumed?.snapshot.completedStages).toEqual(["product_truth"]);
+    expect(agents.calls.get("product_truth")).toBe(2);
+    expect(backend.inspectCheckpoints().filter((item) => item.stage === "product_truth")).toHaveLength(2);
   });
 
   test("runs all stages, persists checkpoints and never re-executes a completed stage", async () => {

@@ -62,6 +62,42 @@ describe("ModelRouter", () => {
     expect(result.fallbackReason).toBe("AI_PROVIDER_QUOTA_EXHAUSTED");
   });
 
+  test("reserves part of the total deadline for a fallback route", async () => {
+    const startedAt = new Date("2026-08-22T20:00:00.000Z");
+    let current = startedAt;
+    const deadlines: Date[] = [];
+    const kimi = fakeGateway("kimi-code", async (request) => {
+      deadlines.push(request.deadlineAt);
+      current = new Date(startedAt.getTime() + 20_000);
+      throw new ModelGatewayError(
+        "AI_PROVIDER_TIMEOUT",
+        "kimi-code",
+        "first route timed out",
+        true,
+        true,
+      );
+    });
+    const codex = fakeGateway("codex-cli", async (request) => {
+      deadlines.push(request.deadlineAt);
+      return { body: "fallback:ok" };
+    });
+
+    const result = await new ModelRouter([kimi, codex], () => current).invokeStructured({
+      ...baseRequest,
+      deadlineAt: new Date(startedAt.getTime() + 60_000),
+      routes: [
+        { provider: "kimi-code", model: "k3", reasoningEffort: "max" },
+        { provider: "codex-cli", model: "gpt-5.6-luna", reasoningEffort: "xhigh" },
+      ],
+    });
+
+    expect(result.output).toEqual({ body: "fallback:ok" });
+    expect(deadlines).toEqual([
+      new Date(startedAt.getTime() + 30_000),
+      new Date(startedAt.getTime() + 60_000),
+    ]);
+  });
+
   test("does not fall back after an application-level non-fallback error", async () => {
     let codexCalls = 0;
     const kimi = fakeGateway("kimi-code", async () => {

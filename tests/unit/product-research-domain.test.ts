@@ -116,7 +116,7 @@ describe("ProductResearchRun", () => {
     expect(run.snapshot.status).toBe("partial");
   });
 
-  test("V3 budget exhaustion terminates as a reportable partial run", () => {
+  test("an incomplete V3 safety stop remains resumable from its last durable checkpoint", () => {
     const now = new Date("2026-08-02T10:00:00.000Z");
     const run = ProductResearchRun.create({
       id: crypto.randomUUID(),
@@ -129,7 +129,7 @@ describe("ProductResearchRun", () => {
     run.completeStage("product_truth", now);
     run.beginStage("problem_mapping", now);
 
-    run.finishPartial("problem_mapping", "RESEARCH_BUDGET_EXHAUSTED", now);
+    run.finishPartial("problem_mapping", "RESEARCH_GLOBAL_DEADLINE_EXHAUSTED", now);
 
     expect(run.snapshot).toMatchObject({
       status: "partial",
@@ -140,6 +140,15 @@ describe("ProductResearchRun", () => {
       type: "ProductResearchCompleted",
       outcome: "partial",
     });
+
+    const resumedAt = new Date(now.getTime() + 60_000);
+    run.resume(resumedAt);
+    expect(run.snapshot).toMatchObject({
+      status: "queued",
+      activeStage: null,
+      completedStages: ["product_truth"],
+    });
+    expect(run.nextStage()).toBe("problem_mapping");
   });
 
   test("only the final V3 stage may declare a partial outcome", () => {

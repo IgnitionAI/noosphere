@@ -18,6 +18,7 @@ import {
 } from "@outbound/infrastructure/database/schema";
 import { normalizeInboundWebhook } from "./inbound-reply-runner";
 import { normalizeEmail, normalizePhone } from "@outbound/domain/crm/normalization";
+import { captureProspectDecisionMutation } from "@outbound/infrastructure/prospect-memory/capture-prospect-decision-mutation";
 
 export class UnipileWebhookIngestor {
   constructor(
@@ -99,7 +100,7 @@ export class UnipileWebhookIngestor {
             eq(outreachActions.contactId, match.contactId),
             inArray(outreachActions.status, ["scheduled", "awaiting_approval", "executing"]),
           ));
-          await tx.update(prospectDecisions).set({
+          const invalidatedDecisions = await tx.update(prospectDecisions).set({
             status: "cancelled",
             invalidatedAt: now,
             completedAt: now,
@@ -110,7 +111,14 @@ export class UnipileWebhookIngestor {
             eq(prospectDecisions.workspaceId, workspaceId),
             eq(prospectDecisions.contactId, match.contactId),
             inArray(prospectDecisions.status, ["pending", "running", "awaiting_approval"]),
-          ));
+          )).returning();
+          for (const invalidatedDecision of invalidatedDecisions) {
+            await captureProspectDecisionMutation(
+              tx,
+              invalidatedDecision,
+              `unipile-event:${eventId}`,
+            );
+          }
           await tx.update(approvalItems).set({
             status: "invalidated",
             invalidationReason: "prospect_replied",

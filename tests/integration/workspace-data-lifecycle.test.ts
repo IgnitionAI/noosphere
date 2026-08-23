@@ -11,11 +11,15 @@ import {
   contacts,
   jobs,
   outboxEvents,
+  prospectMemoryContextReceipts,
+  prospectMemoryEvents,
+  prospectMemorySnapshots,
   workspaceInvitations,
   workspaceExports,
   workspaces,
 } from "@outbound/infrastructure/database/schema";
 import { PostgresJobQueue } from "@outbound/infrastructure/jobs/postgres-job-queue";
+import { defaultWorkspaceDataPolicy } from "@outbound/domain/workspaces/workspace-data-policy";
 import { PostgresWorkspaceDataLifecycle } from "@outbound/infrastructure/workspaces/postgres-workspace-data-lifecycle";
 import {
   PostgresWorkspaceExportSnapshot,
@@ -24,6 +28,8 @@ import {
   type WorkspaceArchiveStorage,
 } from "@outbound/infrastructure/workspaces/workspace-data-export";
 import { suppressionFingerprint } from "@outbound/infrastructure/crm/suppression-fingerprint";
+import { PostgresProspectMemorySnapshotRepository } from "@outbound/infrastructure/prospect-memory/postgres-prospect-memory-repository";
+import type { ProspectMemorySnapshot } from "@outbound/domain/prospect-memory/prospect-memory";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const databaseDescribe = databaseUrl ? describe : describe.skip;
@@ -77,8 +83,9 @@ databaseDescribe("F-053 workspace settings and data lifecycle", () => {
     expect(profile).toMatchObject({ name: "F-053 Renommé", slug: `f053-${workspaceId}` });
     await service.updateSendingPreferences({ workspaceId, actorUserId: ownerId, sending: { timezone: "Europe/Madrid", activeDays: [1, 2, 3, 4], windowStart: "08:30", windowEnd: "18:30" } });
     await service.updateChannelLimits({ workspaceId, actorUserId: ownerId, channelLimits: { linkedin: 25, email: 80, whatsapp: 35 } });
-    await expect(service.updateRetentionPolicy({ workspaceId, actorUserId: ownerId, retention: { invitationsDays: 90, jobsDays: 60, auditDays: 365 }, confirmation: "" })).rejects.toThrow("TYPED_CONFIRMATION_REQUIRED");
-    await service.updateRetentionPolicy({ workspaceId, actorUserId: ownerId, retention: { invitationsDays: 90, jobsDays: 60, auditDays: 365 }, confirmation: "MODIFIER LA RÉTENTION" });
+    const reducedRetention = { ...defaultWorkspaceDataPolicy().retention, jobsDays: 60 };
+    await expect(service.updateRetentionPolicy({ workspaceId, actorUserId: ownerId, retention: reducedRetention, confirmation: "" })).rejects.toThrow("TYPED_CONFIRMATION_REQUIRED");
+    await service.updateRetentionPolicy({ workspaceId, actorUserId: ownerId, retention: reducedRetention, confirmation: "MODIFIER LA RÉTENTION" });
     expect(await service.getPolicy(workspaceId)).toMatchObject({ sending: { timezone: "Europe/Madrid" }, channelLimits: { email: 80 }, retention: { jobsDays: 60 } });
     const purgeJobs = await database.db.select().from(jobs).where(and(eq(jobs.workspaceId, workspaceId), eq(jobs.type, "workspace.retention.purge")));
     expect(purgeJobs).toHaveLength(1);
@@ -144,6 +151,119 @@ databaseDescribe("F-053 workspace settings and data lifecycle", () => {
     const oldJobId = crypto.randomUUID();
     const oldEventId = crypto.randomUUID();
     const oldAuditId = crypto.randomUUID();
+    const memoryContactId = crypto.randomUUID();
+    const memorySnapshotId = crypto.randomUUID();
+    const memoryReceiptId = crypto.randomUUID();
+    const inFlightMemoryJobId = crypto.randomUUID();
+    await database.db.insert(contacts).values({
+      id: memoryContactId,
+      workspaceId,
+      firstName: "Mémoire",
+      lastName: "Expirée",
+      source: "manual",
+    });
+    const [memoryEvent] = await database.db.insert(prospectMemoryEvents).values({
+      workspaceId,
+      sourceContactId: memoryContactId,
+      canonicalContactId: memoryContactId,
+      sourceKind: "contact",
+      sourceId: `retention-fixture:${memoryContactId}`,
+      sourceVersion: 1,
+      kind: "contact_updated",
+      occurredAt: old,
+      observedAt: old,
+      validFrom: old,
+      payload: { firstName: "Mémoire", lastName: "Expirée" },
+      createdAt: old,
+    }).returning({ id: prospectMemoryEvents.id, sequenceId: prospectMemoryEvents.sequenceId });
+    expect(memoryEvent).toBeDefined();
+    await database.db.insert(prospectMemorySnapshots).values({
+      id: memorySnapshotId,
+      workspaceId,
+      contactId: memoryContactId,
+      version: 1,
+      watermark: memoryEvent!.sequenceId,
+      firstSequenceId: memoryEvent!.sequenceId,
+      privacyEpoch: 0,
+      status: "fresh",
+      currentState: {
+        displayName: "Mémoire Expirée",
+        companyName: null,
+        jobTitle: null,
+        locale: "fr",
+        availableChannels: [],
+        suppressed: false,
+        anonymized: false,
+        activeCampaignIds: [],
+        activeDecisionId: null,
+      },
+      commercialState: {
+        confirmedNeeds: [],
+        objections: [],
+        commitments: [],
+        topicsCovered: [],
+        doNotRepeat: [],
+        openQuestions: [],
+      },
+      assertions: [],
+      relationshipSummary: "Fixture de rétention",
+      contradictions: [],
+      missingInformation: [],
+      promptVersion: "retention-test-v1",
+      policyVersion: "retention-test-v1",
+      schemaVersion: 1,
+      rendererVersion: 1,
+      contentHash: "a".repeat(64),
+      generatedAt: old,
+      createdAt: old,
+    });
+    await database.db.insert(prospectMemoryContextReceipts).values({
+      id: memoryReceiptId,
+      workspaceId,
+      contactId: memoryContactId,
+      requestKey: `retention-fixture:${memoryContactId}`,
+      capability: "call_preparation",
+      snapshotId: memorySnapshotId,
+      snapshotVersion: 1,
+      watermark: memoryEvent!.sequenceId,
+      privacyEpoch: 0,
+      rendererVersion: 1,
+      sourceEventIds: [memoryEvent!.id],
+      sourceHashes: ["a".repeat(64)],
+      excludedSourceEventIds: [],
+      normalizedRetrievalQueries: [],
+      estimatedInputTokens: 0,
+      contextHash: "b".repeat(64),
+      createdAt: old,
+    });
+    await database.db.insert(jobs).values({
+      id: inFlightMemoryJobId,
+      workspaceId,
+      type: "prospect.memory.refresh",
+      payload: {
+        workspaceId,
+        contactId: memoryContactId,
+        targetSequenceId: memoryEvent!.sequenceId,
+        privacyEpoch: 0,
+      },
+      idempotencyKey: `retention-fixture:${memoryContactId}`,
+      correlationId: `retention-fixture:${memoryContactId}`,
+      status: "running",
+      attempts: 1,
+      maxAttempts: 5,
+      availableAt: old,
+      lockedAt: now,
+      lockedUntil: new Date(now.getTime() + 60_000),
+      lockedBy: "memory-worker-retention-fixture",
+      createdAt: old,
+      updatedAt: now,
+    });
+    const providerEffectsBefore = await database.client<{ messages: number; outreach_attempts: number; publication_attempts: number }[]>`
+      select
+        (select count(*)::int from messages where workspace_id = ${workspaceId}) as messages,
+        (select count(*)::int from outreach_attempts where workspace_id = ${workspaceId}) as outreach_attempts,
+        (select count(*)::int from content_publication_attempts where workspace_id = ${workspaceId}) as publication_attempts
+    `;
     await database.db.insert(workspaceInvitations).values({ id: invitationId, workspaceId, email: "expired@example.com", proposedRole: "viewer", status: "expired", expiresAt: old, invitedBy: ownerId, createdAt: old, updatedAt: old });
     await database.db.insert(jobs).values({ id: oldJobId, workspaceId, type: "fixture.completed", payload: {}, idempotencyKey: oldJobId, correlationId: oldJobId, status: "completed", maxAttempts: 1, availableAt: old, completedAt: old, createdAt: old, updatedAt: old });
     await database.db.insert(outboxEvents).values({ id: oldEventId, workspaceId, aggregateType: "Fixture", aggregateId: oldEventId, eventType: "FixtureOld", payload: {}, publishedAt: old, createdAt: old });
@@ -155,6 +275,65 @@ databaseDescribe("F-053 workspace settings and data lifecycle", () => {
     expect(await database.db.select().from(jobs).where(eq(jobs.id, oldJobId))).toHaveLength(0);
     expect(await database.db.select().from(outboxEvents).where(eq(outboxEvents.id, oldEventId))).toHaveLength(0);
     expect(await database.db.select().from(auditLogs).where(eq(auditLogs.id, oldAuditId))).toHaveLength(0);
+    expect(await database.db.select().from(prospectMemoryEvents).where(eq(prospectMemoryEvents.canonicalContactId, memoryContactId))).toHaveLength(0);
+    expect(await database.db.select().from(prospectMemorySnapshots).where(eq(prospectMemorySnapshots.contactId, memoryContactId))).toHaveLength(0);
+    expect(await database.db.select().from(prospectMemoryContextReceipts).where(eq(prospectMemoryContextReceipts.contactId, memoryContactId))).toHaveLength(0);
+    expect(await database.db.select({ privacyEpoch: contacts.privacyEpoch }).from(contacts).where(eq(contacts.id, memoryContactId))).toEqual([{ privacyEpoch: 1 }]);
+    const staleInFlightSnapshot: ProspectMemorySnapshot = {
+      id: crypto.randomUUID(),
+      workspaceId,
+      contactId: memoryContactId,
+      version: 1,
+      watermark: memoryEvent!.sequenceId,
+      firstSequenceId: memoryEvent!.sequenceId,
+      privacyEpoch: 0,
+      status: "fresh",
+      currentState: {
+        displayName: "Mémoire Expirée",
+        companyName: null,
+        jobTitle: null,
+        locale: "fr",
+        availableChannels: [],
+        suppressed: false,
+        anonymized: false,
+        activeCampaignIds: [],
+        activeDecisionId: null,
+      },
+      commercialState: {
+        confirmedNeeds: [],
+        objections: [],
+        commitments: [],
+        topicsCovered: [],
+        doNotRepeat: [],
+        openQuestions: [],
+      },
+      assertions: [],
+      relationshipSummary: "Résultat ancien du job en vol",
+      recommendedTone: null,
+      contradictions: [],
+      missingInformation: [],
+      modelProvider: null,
+      model: null,
+      promptVersion: "retention-test-v1",
+      policyVersion: "retention-test-v1",
+      schemaVersion: 1,
+      rendererVersion: 1,
+      contentHash: "c".repeat(64),
+      generatedAt: now,
+    };
+    expect(await new PostgresProspectMemorySnapshotRepository(database.client).publishIfCurrent({
+      snapshot: staleInFlightSnapshot,
+      expectedVersion: 0,
+      expectedPrivacyEpoch: 0,
+    })).toBe(false);
+    expect(await database.db.select().from(jobs).where(eq(jobs.id, inFlightMemoryJobId))).toMatchObject([{ status: "running", lockedBy: "memory-worker-retention-fixture" }]);
+    const providerEffectsAfter = await database.client<{ messages: number; outreach_attempts: number; publication_attempts: number }[]>`
+      select
+        (select count(*)::int from messages where workspace_id = ${workspaceId}) as messages,
+        (select count(*)::int from outreach_attempts where workspace_id = ${workspaceId}) as outreach_attempts,
+        (select count(*)::int from content_publication_attempts where workspace_id = ${workspaceId}) as publication_attempts
+    `;
+    expect(providerEffectsAfter).toEqual(providerEffectsBefore);
     expect((await service.listAuditLogs({ workspaceId, action: "WorkspaceRetentionPurged", limit: 20 })).data).toHaveLength(1);
   });
 });

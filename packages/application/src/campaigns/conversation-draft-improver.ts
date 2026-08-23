@@ -4,6 +4,11 @@ export interface ConversationDraftImprovement {
     readonly provider: string;
     readonly model: string;
     readonly promptVersion: string;
+    readonly memorySnapshotId?: string | null;
+    readonly memorySnapshotVersion?: number | null;
+    readonly memoryReceiptId?: string | null;
+    readonly memoryWatermark?: number | null;
+    readonly memoryMode?: "shadow" | "active" | "unavailable";
   };
 }
 

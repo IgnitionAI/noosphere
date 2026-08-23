@@ -325,7 +325,16 @@ export class PostgresProspectViewRepository {
             .where(and(eq(replyClassifications.workspaceId, workspaceId), inArray(messages.conversationId, selectedConversationIds)))
             .orderBy(desc(replyClassifications.createdAt)),
           this.db
-            .select({ conversationId: conversationCommands.conversationId, mode: conversationCommands.mode, status: conversationCommands.status, errorCode: conversationCommands.errorCode, createdAt: conversationCommands.createdAt })
+            .select({
+              conversationId: conversationCommands.conversationId,
+              mode: conversationCommands.mode,
+              executionMode: conversationCommands.executionMode,
+              status: conversationCommands.status,
+              generatedBody: conversationCommands.generatedBody,
+              generationMetadata: conversationCommands.generationMetadata,
+              errorCode: conversationCommands.errorCode,
+              createdAt: conversationCommands.createdAt,
+            })
             .from(conversationCommands)
             .where(and(eq(conversationCommands.workspaceId, workspaceId), inArray(conversationCommands.conversationId, selectedConversationIds)))
             .orderBy(desc(conversationCommands.createdAt)),

@@ -2,6 +2,7 @@ import type {
   ChannelObservationSource,
   ChannelStrategyPlanner,
 } from "@outbound/application/campaigns/channel-assessment";
+import { ModelGatewayError } from "@outbound/application/ai/model-gateway";
 import type { JobQueue, LeasedJob } from "@outbound/application/jobs/job-queue";
 import type { Clock } from "@outbound/application/shared/ports";
 import { decideChannelRecommendation } from "@outbound/domain/campaigns/prospecting-plan";
@@ -62,24 +63,34 @@ export class ChannelAssessmentJobProcessor {
       });
       await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const failure = channelAssessmentFailure(error);
       const outcome = await this.queue.retry({
         jobId: job.id,
         workerId: job.lockedBy,
         availableAt: new Date(this.clock.now().getTime() + 30_000 * job.attempts),
-        errorCode: "CHANNEL_ASSESSMENT_FAILED",
-        errorMessage: message,
+        errorCode: failure.errorCode,
+        errorMessage: failure.errorMessage,
       });
       if (outcome === "dead_lettered") {
         await this.#repository.failAssessment({
           ...payload,
-          errorCode: "CHANNEL_ASSESSMENT_FAILED",
-          errorMessage: message,
+          errorCode: failure.errorCode,
+          errorMessage: failure.errorMessage,
           completedAt: this.clock.now(),
         });
       }
     }
   }
+}
+
+export function channelAssessmentFailure(error: unknown): { errorCode: string; errorMessage: string } {
+  if (error instanceof ModelGatewayError) {
+    return { errorCode: error.code, errorMessage: error.message };
+  }
+  return {
+    errorCode: "CHANNEL_ASSESSMENT_FAILED",
+    errorMessage: error instanceof Error ? error.message : String(error),
+  };
 }
 
 function assessmentPayload(value: unknown): { workspaceId: string; assessmentId: string } {

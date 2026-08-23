@@ -12,5 +12,5 @@ export async function requeueJobAction(workspaceSlug: string, jobId: string) {
   } catch (cause) {
     error = cause instanceof OutboundApiError ? cause.code : "UPSTREAM_ERROR";
   }
-  redirect(`/w/${workspaceSlug}/settings/console?${error ? `error=${encodeURIComponent(error)}` : `notice=${encodeURIComponent("Job remis en file.")}`}`);
+  redirect(`/w/${workspaceSlug}/settings/console?${error ? `error=${encodeURIComponent(error)}` : `notice=${encodeURIComponent("État métier réparé et traitement remis en file.")}`}`);
 }

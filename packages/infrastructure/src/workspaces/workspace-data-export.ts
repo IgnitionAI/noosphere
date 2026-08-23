@@ -8,8 +8,12 @@ import type { WorkspaceRetentionPolicy } from "@outbound/domain/workspaces/works
 import type { Database, SqlClient } from "@outbound/infrastructure/database/client";
 import {
   auditLogs,
+  contacts,
   jobs,
   outboxEvents,
+  prospectMemoryContextReceipts,
+  prospectMemoryEvents,
+  prospectMemorySnapshots,
   workspaceExports,
   workspaceInvitations,
 } from "@outbound/infrastructure/database/schema";
@@ -134,13 +138,69 @@ export class WorkspaceRetentionPurgeProcessor {
     const invitationCutoff = daysAgo(this.clock.now(), payload.retention.invitationsDays);
     const jobsCutoff = daysAgo(this.clock.now(), payload.retention.jobsDays);
     const auditCutoff = daysAgo(this.clock.now(), payload.retention.auditDays);
+    const memoryEventsCutoff = daysAgo(this.clock.now(), payload.retention.memoryEventsDays);
+    const memorySnapshotsCutoff = daysAgo(this.clock.now(), payload.retention.memorySnapshotsDays);
+    const memoryReceiptsCutoff = daysAgo(this.clock.now(), payload.retention.memoryReceiptsDays);
     await this.database.transaction(async (tx) => {
       const invitations = await tx.delete(workspaceInvitations).where(and(eq(workspaceInvitations.workspaceId, job.workspaceId), inArray(workspaceInvitations.status, ["accepted", "revoked", "expired"]), lt(workspaceInvitations.updatedAt, invitationCutoff))).returning({ id: workspaceInvitations.id });
       const retainedJobs = await tx.delete(jobs).where(and(eq(jobs.workspaceId, job.workspaceId), inArray(jobs.status, ["completed", "dead_lettered"]), lt(jobs.updatedAt, jobsCutoff))).returning({ id: jobs.id });
       const events = await tx.delete(outboxEvents).where(and(eq(outboxEvents.workspaceId, job.workspaceId), isNotNull(outboxEvents.publishedAt), lt(outboxEvents.createdAt, jobsCutoff))).returning({ id: outboxEvents.id });
+      const expiredMemoryEvents = await tx.delete(prospectMemoryEvents).where(and(
+        eq(prospectMemoryEvents.workspaceId, job.workspaceId),
+        lt(prospectMemoryEvents.observedAt, memoryEventsCutoff),
+      )).returning({ contactId: prospectMemoryEvents.canonicalContactId });
+      const contactsWithExpiredMemory = [...new Set(expiredMemoryEvents.map((entry) => entry.contactId))];
+      const privacyEpochBumps = contactsWithExpiredMemory.length
+        ? await tx.update(contacts).set({
+            privacyEpoch: drizzleSql`${contacts.privacyEpoch} + 1`,
+            updatedAt: this.clock.now(),
+          }).where(and(
+            eq(contacts.workspaceId, job.workspaceId),
+            inArray(contacts.id, contactsWithExpiredMemory),
+          )).returning({ id: contacts.id })
+        : [];
+      const sourceInvalidatedSnapshots = contactsWithExpiredMemory.length
+        ? await tx.delete(prospectMemorySnapshots).where(and(
+            eq(prospectMemorySnapshots.workspaceId, job.workspaceId),
+            inArray(prospectMemorySnapshots.contactId, contactsWithExpiredMemory),
+          )).returning({ id: prospectMemorySnapshots.id })
+        : [];
+      const sourceInvalidatedReceipts = contactsWithExpiredMemory.length
+        ? await tx.delete(prospectMemoryContextReceipts).where(and(
+          eq(prospectMemoryContextReceipts.workspaceId, job.workspaceId),
+          inArray(prospectMemoryContextReceipts.contactId, contactsWithExpiredMemory),
+        )).returning({ id: prospectMemoryContextReceipts.id })
+        : [];
+      const agedSnapshots = await tx.execute<{ id: string }>(drizzleSql`
+        with ranked as (
+          select id, row_number() over (partition by contact_id order by version desc) as version_rank
+          from prospect_memory_snapshots
+          where workspace_id = ${job.workspaceId}
+        )
+        delete from prospect_memory_snapshots snapshot
+        using ranked
+        where snapshot.id = ranked.id
+          and snapshot.workspace_id = ${job.workspaceId}
+          and (ranked.version_rank > 21 or (ranked.version_rank > 1 and snapshot.generated_at < ${memorySnapshotsCutoff.toISOString()}::timestamptz))
+        returning snapshot.id
+      `);
+      const memoryReceipts = await tx.delete(prospectMemoryContextReceipts).where(and(
+        eq(prospectMemoryContextReceipts.workspaceId, job.workspaceId),
+        lt(prospectMemoryContextReceipts.createdAt, memoryReceiptsCutoff),
+      )).returning({ id: prospectMemoryContextReceipts.id });
       await tx.execute(drizzleSql.raw("set local app.retention_purge = 'on'"));
       const audits = await tx.delete(auditLogs).where(and(eq(auditLogs.workspaceId, job.workspaceId), lt(auditLogs.createdAt, auditCutoff))).returning({ id: auditLogs.id });
-      const summary = { invitations: invitations.length, jobs: retainedJobs.length, outboxEvents: events.length, auditLogs: audits.length, retention: payload.retention };
+      const summary = {
+        invitations: invitations.length,
+        jobs: retainedJobs.length,
+        outboxEvents: events.length,
+        auditLogs: audits.length,
+        prospectMemoryEvents: expiredMemoryEvents.length,
+        prospectMemorySnapshots: sourceInvalidatedSnapshots.length + agedSnapshots.length,
+        prospectMemoryReceipts: sourceInvalidatedReceipts.length + memoryReceipts.length,
+        prospectMemoryPrivacyEpochs: privacyEpochBumps.length,
+        retention: payload.retention,
+      };
       const [event] = await tx.insert(outboxEvents).values({ workspaceId: job.workspaceId, aggregateType: "Workspace", aggregateId: job.workspaceId, eventType: "WorkspaceRetentionPurged", payload: summary }).returning({ id: outboxEvents.id });
       if (!event) throw new Error("WORKSPACE_RETENTION_EVENT_FAILED");
       await tx.insert(auditLogs).values({ workspaceId: job.workspaceId, actorUserId: null, action: "WorkspaceRetentionPurged", subjectType: "Workspace", subjectId: job.workspaceId, changes: summary, correlationId: job.correlationId, sourceEventId: event.id });
@@ -157,8 +217,15 @@ function exportPayload(value: unknown): { exportId: string } {
 function retentionPayload(value: unknown): { retention: WorkspaceRetentionPolicy } {
   if (!value || typeof value !== "object" || !("retention" in value) || !value.retention || typeof value.retention !== "object") throw new Error("WORKSPACE_RETENTION_JOB_INVALID");
   const retention = value.retention as Record<string, unknown>;
-  if (![retention.invitationsDays, retention.jobsDays, retention.auditDays].every((entry) => typeof entry === "number" && Number.isInteger(entry))) throw new Error("WORKSPACE_RETENTION_JOB_INVALID");
-  return { retention: { invitationsDays: retention.invitationsDays as number, jobsDays: retention.jobsDays as number, auditDays: retention.auditDays as number } };
+  if (![retention.invitationsDays, retention.jobsDays, retention.auditDays, retention.memoryEventsDays, retention.memorySnapshotsDays, retention.memoryReceiptsDays].every((entry) => typeof entry === "number" && Number.isInteger(entry))) throw new Error("WORKSPACE_RETENTION_JOB_INVALID");
+  return { retention: {
+    invitationsDays: retention.invitationsDays as number,
+    jobsDays: retention.jobsDays as number,
+    auditDays: retention.auditDays as number,
+    memoryEventsDays: retention.memoryEventsDays as number,
+    memorySnapshotsDays: retention.memorySnapshotsDays as number,
+    memoryReceiptsDays: retention.memoryReceiptsDays as number,
+  } };
 }
 
 function daysAgo(now: Date, days: number) {

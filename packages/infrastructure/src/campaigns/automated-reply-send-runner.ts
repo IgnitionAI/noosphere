@@ -4,6 +4,7 @@ import { OutboundDeliveryError } from "@outbound/application/campaigns/outbound-
 import type { JobQueue, LeasedJob } from "@outbound/application/jobs/job-queue";
 import type { Clock } from "@outbound/application/shared/ports";
 import type { Database } from "@outbound/infrastructure/database/client";
+import { captureProspectMemoryMutation } from "@outbound/infrastructure/prospect-memory/capture-prospect-memory-mutation";
 import {
   automatedReplies,
   contactIdentities,
@@ -70,6 +71,7 @@ export class AutomatedReplySendJobProcessor {
       });
       const now = this.clock.now();
       await this.database.transaction(async (tx) => {
+        const messageId = crypto.randomUUID();
         await tx
           .update(automatedReplies)
           .set({
@@ -81,8 +83,8 @@ export class AutomatedReplySendJobProcessor {
             updatedAt: now,
           })
           .where(and(eq(automatedReplies.workspaceId, payload.workspaceId), eq(automatedReplies.id, payload.replyId)));
-        await tx.insert(messages).values({
-          id: crypto.randomUUID(),
+        const [insertedMessage] = await tx.insert(messages).values({
+          id: messageId,
           workspaceId: payload.workspaceId,
           conversationId: reply.conversationId,
           providerMessageId: result.providerRequestId,
@@ -91,7 +93,24 @@ export class AutomatedReplySendJobProcessor {
           body: reply.body,
           sentAt: now,
           createdAt: now,
-        }).onConflictDoNothing();
+        }).onConflictDoNothing().returning({ id: messages.id });
+        if (insertedMessage) await captureProspectMemoryMutation(tx, {
+          workspaceId: payload.workspaceId,
+          sourceContactId: reply.contactId,
+          sourceKind: "message",
+          sourceId: insertedMessage.id,
+          sourceVersion: 1,
+          kind: "message_sent",
+          occurredAt: now,
+          observedAt: now,
+          payload: {
+            conversationId: reply.conversationId,
+            channel: reply.channel,
+            direction: "outbound",
+            senderType: "ai",
+          },
+          correlationId: job.correlationId,
+        });
         await tx
           .update(conversations)
           .set({ lastMessageAt: now, updatedAt: now })

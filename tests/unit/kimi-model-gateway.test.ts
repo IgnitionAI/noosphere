@@ -23,7 +23,7 @@ const request = {
 };
 
 describe("KimiChatModelGateway", () => {
-  test("invokes one forced function and returns normalized provenance", async () => {
+  test("requires the single output function without naming it and returns normalized provenance", async () => {
     let sent: Record<string, unknown> | null = null;
     const gateway = new KimiChatModelGateway({
       apiKey: "secret",
@@ -50,7 +50,7 @@ describe("KimiChatModelGateway", () => {
     });
     const requestBody = sent as Record<string, unknown> | null;
     expect(requestBody?.model).toBe("k3");
-    expect(requestBody?.tool_choice).toEqual({ type: "function", function: { name: "submit_post" } });
+    expect(requestBody?.tool_choice).toBe("required");
   });
 
   test("classifies a quota response as fallbackable and never retryable on Kimi", async () => {
@@ -66,6 +66,28 @@ describe("KimiChatModelGateway", () => {
       fallbackAllowed: true,
       retryableOnProvider: false,
     });
+  });
+
+  test("disables thinking to require structured output from Kimi-for-coding models", async () => {
+    let sent: Record<string, unknown> | null = null;
+    const gateway = new KimiChatModelGateway({
+      apiKey: "secret",
+      baseUrl: "https://kimi.example/v1",
+      now: () => now,
+      fetcher: async (_url, init) => {
+        sent = JSON.parse(String(init?.body));
+        return Response.json({
+          choices: [{ message: { tool_calls: [{ function: { name: "submit_post", arguments: JSON.stringify({ body: "Bonjour" }) } }] } }],
+        });
+      },
+    });
+
+    await gateway.invokeStructured({ ...request, model: "kimi-for-coding-highspeed", reasoningEffort: "low" });
+
+    const requestBody = sent as Record<string, unknown> | null;
+    expect(requestBody?.tool_choice).toBe("required");
+    expect(requestBody?.thinking).toEqual({ type: "disabled" });
+    expect(requestBody?.reasoning).toBeUndefined();
   });
 
   test("rejects an invalid structured response without falling back", async () => {

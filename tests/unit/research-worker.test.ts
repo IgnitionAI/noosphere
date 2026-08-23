@@ -5,6 +5,46 @@ import { SystemClock } from "@outbound/application/shared/ports";
 import { ResearchWorker } from "../../apps/worker/src/research-worker";
 
 describe("ResearchWorker job leases", () => {
+  test("maintenance cannot block leasing ready business jobs", async () => {
+    const events: string[] = [];
+    const queue: JobQueue = {
+      async enqueue() { return { inserted: true }; },
+      async lease() { events.push("lease"); return []; },
+      async renewLease() { return true; },
+      async acknowledge() {},
+      async defer() {},
+      async retry() { return "scheduled"; },
+    };
+    const worker = new ResearchWorker(
+      queue,
+      { async process() {} } as unknown as ResearchOrchestrator,
+      { now: () => new Date("2026-08-22T06:00:00.000Z") },
+      { workerId: "worker-test", leaseMs: 60_000, batchSize: 1, pollIntervalMs: 1 },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        async reconcile() {
+          events.push("maintenance-start");
+          await Bun.sleep(25);
+          events.push("maintenance-end");
+          return 0;
+        },
+      },
+    );
+
+    await worker.tick();
+    await Bun.sleep(30);
+
+    expect(events).toEqual(["maintenance-start", "lease", "maintenance-end"]);
+  });
+
   test("a long maintenance pass cannot monopolize every subsequent worker tick", async () => {
     let currentTime = new Date("2026-08-22T06:00:00.000Z");
     let maintenanceRuns = 0;
@@ -97,6 +137,79 @@ describe("ResearchWorker job leases", () => {
 
     await worker.tick();
 
+    expect(renewals.length).toBeGreaterThanOrEqual(2);
+    expect(renewals.every((lockedUntil) => lockedUntil.getTime() > now.getTime())).toBe(true);
+  });
+
+  test("keeps a slow Setter command leased independently from the browser", async () => {
+    const now = new Date();
+    const job: LeasedJob = {
+      id: crypto.randomUUID(),
+      workspaceId: crypto.randomUUID(),
+      type: "conversation.command.execute",
+      payload: { commandId: crypto.randomUUID() },
+      idempotencyKey: "conversation:setter:dry-run",
+      correlationId: "setter:test",
+      attempts: 1,
+      maxAttempts: 5,
+      availableAt: now,
+      lockedBy: "setter-command-worker",
+      lockedUntil: new Date(now.getTime() + 90),
+    };
+    let leased = false;
+    let processed = 0;
+    let acknowledged = 0;
+    const renewals: Date[] = [];
+    const queue: JobQueue = {
+      async enqueue() { return { inserted: true }; },
+      async lease(request) {
+        expect(request.types).toEqual(["conversation.command.execute"]);
+        if (leased) return [];
+        leased = true;
+        return [job];
+      },
+      async renewLease(_jobId, _workerId, lockedUntil) {
+        renewals.push(lockedUntil);
+        return true;
+      },
+      async acknowledge() { acknowledged += 1; },
+      async defer() {},
+      async retry() { return "scheduled"; },
+    };
+    const conversationCommandProcessor = {
+      async process() {
+        processed += 1;
+        await Bun.sleep(180);
+        await queue.acknowledge(job.id, job.lockedBy, new Date());
+      },
+    };
+    const worker = new ResearchWorker(
+      queue,
+      { async process() { throw new Error("wrong processor"); } } as unknown as ResearchOrchestrator,
+      new SystemClock(),
+      {
+        workerId: "setter-command-worker",
+        leaseMs: 90,
+        leaseHeartbeatMs: 50,
+        batchSize: 1,
+        pollIntervalMs: 1,
+        jobTypes: ["conversation.command.execute"],
+      },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      conversationCommandProcessor,
+    );
+
+    await worker.tick();
+
+    expect(processed).toBe(1);
+    expect(acknowledged).toBe(1);
     expect(renewals.length).toBeGreaterThanOrEqual(2);
     expect(renewals.every((lockedUntil) => lockedUntil.getTime() > now.getTime())).toBe(true);
   });

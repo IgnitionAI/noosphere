@@ -1,5 +1,6 @@
 import {
   ModelGatewayError,
+  ModelGatewayOutputError,
   type AiReasoningEffort,
   type ModelCatalog,
   type ModelCatalogSnapshot,
@@ -67,11 +68,13 @@ export class KimiChatModelGateway implements ModelGateway {
               },
             },
           ],
-          tool_choice: {
-            type: "function",
-            function: { name: request.outputName },
-          },
-          reasoning: { effort: kimiReasoningEffort(request.reasoningEffort) },
+          // Kimi-for-coding rejects required tool selection only while its
+          // default thinking mode is enabled. Disable thinking for these
+          // bounded executor routes so the output function is guaranteed.
+          tool_choice: "required",
+          ...(request.model.startsWith("kimi-for-coding")
+            ? { thinking: { type: "disabled" } }
+            : { reasoning: { effort: kimiReasoningEffort(request.reasoningEffort) } }),
           stream: false,
         }),
         signal: abort.signal,
@@ -85,12 +88,11 @@ export class KimiChatModelGateway implements ModelGateway {
       try {
         output = request.parse(rawOutput);
       } catch (error) {
-        throw new ModelGatewayError(
-          "AI_PROVIDER_OUTPUT_INVALID",
+        throw new ModelGatewayOutputError(
           this.provider,
           "Kimi returned an output that does not satisfy the requested contract",
-          false,
-          false,
+          rawOutput,
+          error instanceof Error ? error.message : String(error),
           { cause: error },
         );
       }

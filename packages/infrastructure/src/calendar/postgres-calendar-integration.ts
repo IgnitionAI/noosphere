@@ -39,6 +39,7 @@ import {
   normalizeCalcomWebhook,
   verifyCalendarContactToken,
 } from "@outbound/infrastructure/calendar/calcom-webhook";
+import { captureProspectMemoryMutation } from "@outbound/infrastructure/prospect-memory/capture-prospect-memory-mutation";
 
 export interface CalendarConnectionView {
   readonly id: string;
@@ -547,32 +548,48 @@ export class PostgresCalendarIntegration implements WorkspaceCalendarScheduler {
       throw error;
     }
     const now = input.now ?? new Date();
-    const [persisted] = await this.database.insert(calendarBookings).values({
-      id: crypto.randomUUID(),
-      workspaceId: input.workspaceId,
-      connectionId: connection.id,
-      meetingTypeId: meetingType?.id ?? null,
-      providerBookingId: created.uid,
-      contactId: input.contactId,
-      campaignId: input.campaignId,
-      status: "booked",
-      attendeeName: attendee.name,
-      attendeeEmail: attendee.email,
-      attendeePhone: attendee.phone,
-      organizerTimeZone: timeZone,
-      startAt: new Date(created.start),
-      endAt: new Date(created.end),
-      meetingUrl: created.meetingUrl,
-      createdAt: now,
-      updatedAt: now,
-    }).onConflictDoUpdate({
-      target: [
-        calendarBookings.workspaceId,
-        calendarBookings.connectionId,
-        calendarBookings.providerBookingId,
-      ],
-      set: { status: "booked", updatedAt: now },
-    }).returning();
+    const persisted = await this.database.transaction(async (tx) => {
+      const [booking] = await tx.insert(calendarBookings).values({
+        id: crypto.randomUUID(),
+        workspaceId: input.workspaceId,
+        connectionId: connection.id,
+        meetingTypeId: meetingType?.id ?? null,
+        providerBookingId: created.uid,
+        contactId: input.contactId,
+        campaignId: input.campaignId,
+        status: "booked",
+        attendeeName: attendee.name,
+        attendeeEmail: attendee.email,
+        attendeePhone: attendee.phone,
+        organizerTimeZone: timeZone,
+        startAt: new Date(created.start),
+        endAt: new Date(created.end),
+        meetingUrl: created.meetingUrl,
+        createdAt: now,
+        updatedAt: now,
+      }).onConflictDoUpdate({
+        target: [
+          calendarBookings.workspaceId,
+          calendarBookings.connectionId,
+          calendarBookings.providerBookingId,
+        ],
+        set: { status: "booked", updatedAt: now },
+      }).returning();
+      if (!booking) throw new Error("CALENDAR_BOOKING_WRITE_FAILED");
+      await captureProspectMemoryMutation(tx, {
+        workspaceId: input.workspaceId,
+        sourceContactId: input.contactId,
+        sourceKind: "calendar_booking",
+        sourceId: booking.id,
+        sourceVersion: 1,
+        kind: "call_recorded",
+        occurredAt: booking.startAt,
+        observedAt: now,
+        payload: { status: "booked", startAt: booking.startAt.toISOString(), campaignId: input.campaignId },
+        correlationId: `calendar-booking:${booking.id}`,
+      });
+      return booking;
+    });
     if (!persisted) throw new Error("CALENDAR_BOOKING_WRITE_FAILED");
     await this.#applyBookedState({
       workspaceId: input.workspaceId,
@@ -656,6 +673,18 @@ export class PostgresCalendarIntegration implements WorkspaceCalendarScheduler {
       await tx.insert(calendarBookingHistory).values({ id: crypto.randomUUID(), workspaceId: input.workspaceId, bookingId: booking.id, action: "rescheduled", idempotencyKey, fromStatus: locked.status, toStatus: "booked", previousProviderBookingId: locked.providerBookingId, newProviderBookingId: moved.uid, previousStartAt: locked.startAt, newStartAt: new Date(moved.start), reason: input.reason, actorUserId: input.actorUserId ?? null, source, createdAt: now });
       const eventId = crypto.randomUUID();
       await tx.insert(outboxEvents).values({ id: eventId, workspaceId: input.workspaceId, aggregateType: "CalendarBooking", aggregateId: booking.id, eventType: "CalendarMeetingRescheduled", payload: { contactId: input.contactId, campaignId: input.campaignId, bookingId: booking.id, providerBookingId: moved.uid, startAt: moved.start, correlationId: `calendar-booking:${booking.id}` }, createdAt: now });
+      await captureProspectMemoryMutation(tx, {
+        workspaceId: input.workspaceId,
+        sourceContactId: input.contactId,
+        sourceKind: "calendar_booking",
+        sourceId: eventId,
+        sourceVersion: 1,
+        kind: "call_recorded",
+        occurredAt: new Date(moved.start),
+        observedAt: now,
+        payload: { status: "rescheduled", startAt: moved.start, reason: input.reason },
+        correlationId: `calendar-booking:${booking.id}`,
+      });
       await tx.insert(auditLogs).values({ id: crypto.randomUUID(), workspaceId: input.workspaceId, actorUserId: input.actorUserId ?? null, action: "CalendarMeetingRescheduled", subjectType: "calendar_booking", subjectId: booking.id, changes: { previousStartAt: locked.startAt.toISOString(), newStartAt: moved.start, reason: input.reason, source }, correlationId: `calendar-booking:${booking.id}`, sourceEventId: eventId, createdAt: now });
       return booking;
     });
@@ -731,6 +760,18 @@ export class PostgresCalendarIntegration implements WorkspaceCalendarScheduler {
           correlationId: `calendar-booking:${booking.id}`,
         },
         createdAt: now,
+      });
+      await captureProspectMemoryMutation(tx, {
+        workspaceId: input.workspaceId,
+        sourceContactId: input.contactId,
+        sourceKind: "calendar_booking",
+        sourceId: eventId,
+        sourceVersion: 1,
+        kind: "call_recorded",
+        occurredAt: now,
+        observedAt: now,
+        payload: { status: "cancelled", reason: input.reason },
+        correlationId: `calendar-booking:${booking.id}`,
       });
       await tx.insert(auditLogs).values({ id: crypto.randomUUID(), workspaceId: input.workspaceId, actorUserId: input.actorUserId ?? null, action: "CalendarMeetingCancelled", subjectType: "calendar_booking", subjectId: booking.id, changes: { reason: input.reason, source }, correlationId: `calendar-booking:${booking.id}`, sourceEventId: eventId, createdAt: now });
       return booking;
@@ -879,6 +920,18 @@ export class PostgresCalendarIntegration implements WorkspaceCalendarScheduler {
       await tx.insert(calendarBookingHistory).values({ id: crypto.randomUUID(), workspaceId: input.workspaceId, bookingId: booking.id, action: "no_show", idempotencyKey: input.requestKey, fromStatus: booking.status, toStatus: "no_show", previousProviderBookingId: booking.providerBookingId, newProviderBookingId: booking.providerBookingId, previousStartAt: booking.startAt, newStartAt: booking.startAt, reason: input.reason, actorUserId: input.actorUserId, source: "operator", createdAt: input.now });
       const eventId = crypto.randomUUID();
       await tx.insert(outboxEvents).values({ id: eventId, workspaceId: input.workspaceId, aggregateType: "CalendarBooking", aggregateId: booking.id, eventType: "CalendarMeetingNoShow", payload: { contactId: booking.contactId, campaignId: booking.campaignId, bookingId: booking.id, correlationId: `calendar-booking:${booking.id}` }, createdAt: input.now });
+      await captureProspectMemoryMutation(tx, {
+        workspaceId: input.workspaceId,
+        sourceContactId: booking.contactId,
+        sourceKind: "calendar_booking",
+        sourceId: eventId,
+        sourceVersion: 1,
+        kind: "call_recorded",
+        occurredAt: input.now,
+        observedAt: input.now,
+        payload: { status: "no_show", reason: input.reason },
+        correlationId: `calendar-booking:${booking.id}`,
+      });
       await tx.insert(auditLogs).values({ id: crypto.randomUUID(), workspaceId: input.workspaceId, actorUserId: input.actorUserId, action: "CalendarMeetingNoShow", subjectType: "calendar_booking", subjectId: booking.id, changes: { reason: input.reason }, correlationId: `calendar-booking:${booking.id}`, sourceEventId: eventId, createdAt: input.now });
       return updated;
     });
@@ -1203,6 +1256,23 @@ export class PostgresCalendarIntegration implements WorkspaceCalendarScheduler {
             correlationId: `calendar-booking:${persistedBooking.id}`,
           },
           createdAt: now,
+        });
+        await captureProspectMemoryMutation(tx, {
+          workspaceId: connection.workspaceId,
+          sourceContactId: contactId,
+          sourceKind: "calendar_booking",
+          sourceId: eventId,
+          sourceVersion: 1,
+          kind: "call_recorded",
+          occurredAt: event.startAt,
+          observedAt: now,
+          payload: {
+            status: event.status,
+            startAt: event.startAt.toISOString(),
+            trigger: event.trigger,
+            reason: event.reason,
+          },
+          correlationId: `calendar-booking:${persistedBooking.id}`,
         });
       }
       return { duplicate: false, matched: Boolean(contactId), eventId };

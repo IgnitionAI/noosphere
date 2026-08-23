@@ -39,6 +39,9 @@ export async function updateRetentionAction(workspaceSlug: string, workspaceId: 
     invitationsDays: Number(formData.get("invitationsDays")),
     jobsDays: Number(formData.get("jobsDays")),
     auditDays: Number(formData.get("auditDays")),
+    memoryEventsDays: Number(formData.get("memoryEventsDays")),
+    memorySnapshotsDays: Number(formData.get("memorySnapshotsDays")),
+    memoryReceiptsDays: Number(formData.get("memoryReceiptsDays")),
   }, String(formData.get("confirmation") ?? "")));
 }
 

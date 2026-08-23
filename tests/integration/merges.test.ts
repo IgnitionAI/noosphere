@@ -2,7 +2,8 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { createDatabase } from "@outbound/infrastructure/database/client";
-import { authUsers, workspaces } from "@outbound/infrastructure/database/schema";
+import { authUsers, workspaceProspectMemorySettings, workspaces } from "@outbound/infrastructure/database/schema";
+import { PostgresProspectMemoryEventRepository } from "@outbound/infrastructure/prospect-memory/postgres-prospect-memory-repository";
 import { createCrmHttpHandler } from "@outbound/interface/http/crm-handler";
 import { createMergeHttpHandler } from "@outbound/interface/http/merge-handler";
 
@@ -18,6 +19,7 @@ databaseDescribe("F-024 reversible contact merges", () => {
   const context = { userId, workspaceId, role: "operator" as "operator" | "reviewer" | "viewer" | "admin" | "owner" };
   const crm = createCrmHttpHandler({ database: database.db, contextResolver: { async resolve() { return context; } } });
   const merges = createMergeHttpHandler({ database: database.db, contextResolver: { async resolve() { return context; } } });
+  const memoryEvents = new PostgresProspectMemoryEventRepository(database.client);
 
   beforeAll(async () => {
     await migrate(database.db, { migrationsFolder: resolve(import.meta.dir, "../../packages/infrastructure/migrations") });
@@ -31,6 +33,11 @@ databaseDescribe("F-024 reversible contact merges", () => {
     await database.client`drop trigger if exists audit_logs_immutable_trg on audit_logs`;
     await database.client`delete from audit_logs where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`delete from outbox_events where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
+    await database.client`delete from prospect_memory_context_receipts where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
+    await database.client`delete from prospect_memory_snapshots where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
+    await database.client`delete from prospect_memory_events where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
+    await database.client`delete from jobs where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
+    await database.client`delete from workspace_prospect_memory_settings where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`delete from contact_merges where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`delete from merge_candidates where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`delete from contact_suppressions where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
@@ -68,8 +75,30 @@ databaseDescribe("F-024 reversible contact merges", () => {
     context.role = "reviewer";
     expect((await post(`/api/v1/merge-candidates/${candidate!.id}/actions/approve`, {}, merges)).status).toBe(403);
     context.role = "operator";
+    await database.db.insert(workspaceProspectMemorySettings).values({
+      workspaceId,
+      captureEnabled: true,
+      shadowEnabled: true,
+    });
     const approved = await post(`/api/v1/merge-candidates/${candidate!.id}/actions/approve`, {}, merges);
     expect(approved.status).toBe(201);
+    const approvedBody = (await approved.json()) as { id: string };
+
+    const linkedEvents = await database.client<Array<{
+      source_contact_id: string;
+      canonical_contact_id: string;
+    }>>`
+      select source_contact_id, canonical_contact_id
+      from prospect_memory_events
+      where workspace_id = ${workspaceId}
+        and source_kind = 'contact_merge'
+        and source_id = ${approvedBody.id}
+        and kind = 'identity_linked'
+    `;
+    expect(linkedEvents.map((row) => ({ ...row }))).toEqual([{
+      source_contact_id: mergedId,
+      canonical_contact_id: candidate!.primaryContactId,
+    }]);
 
     const survivor = await crm(new Request(`http://localhost/api/v1/contacts/${candidate!.primaryContactId}`));
     const survivorBody = (await survivor.json()) as { identities: Array<unknown> };
@@ -87,6 +116,22 @@ databaseDescribe("F-024 reversible contact merges", () => {
     expect(suppressionAfterUndo.length).toBeGreaterThan(0);
     const history = await merges(new Request(`http://localhost/api/v1/contacts/${candidate!.primaryContactId}/merges`));
     expect(((await history.json()) as Array<{ status: string }>)[0]!.status).toBe("undone");
+
+    const restoredMemory = await memoryEvents.listAfter({
+      workspaceId,
+      contactId: mergedId,
+      sequenceId: 0,
+      limit: 20,
+    });
+    expect(restoredMemory.some((event) => event.kind === "identity_linked" && event.sourceId === approvedBody.id)).toBe(true);
+    expect(restoredMemory.some((event) => event.kind === "identity_unlinked" && event.sourceContactId === mergedId)).toBe(true);
+    const survivorMemory = await memoryEvents.listAfter({
+      workspaceId,
+      contactId: candidate!.primaryContactId,
+      sequenceId: 0,
+      limit: 20,
+    });
+    expect(survivorMemory.some((event) => event.kind === "identity_unlinked" && event.sourceContactId === candidate!.primaryContactId)).toBe(true);
 
     context.workspaceId = otherWorkspaceId;
     const isolated = await merges(new Request("http://localhost/api/v1/merge-candidates"));

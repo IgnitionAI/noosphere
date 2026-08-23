@@ -5,6 +5,7 @@ import {
 } from "@outbound/application/campaigns/prospect-decision";
 import type { Clock } from "@outbound/application/shared/ports";
 import type { Database } from "@outbound/infrastructure/database/client";
+import { captureProspectDecisionMutation } from "@outbound/infrastructure/prospect-memory/capture-prospect-decision-mutation";
 import {
   contacts,
   jobs,
@@ -50,7 +51,8 @@ export class PostgresProspectDecisionScheduler {
         .limit(1);
       if (existing) {
         if (existing.status === "pending") {
-          const now = this.clock.now();
+          const clockNow = this.clock.now();
+          const now = new Date(Math.max(clockNow.getTime(), existing.updatedAt.getTime() + 1));
           const [decision] = await tx
             .update(prospectDecisions)
             .set({
@@ -78,6 +80,7 @@ export class PostgresProspectDecisionScheduler {
               eq(jobs.id, existing.jobId),
               inArray(jobs.status, ["pending", "retry"]),
             ));
+          if (decision) await captureProspectDecisionMutation(tx, decision, input.correlationId);
           return { created: false as const, decision: decision ?? existing };
         }
         return { created: false as const, decision: existing };
@@ -117,6 +120,7 @@ export class PostgresProspectDecisionScheduler {
         updatedAt: now,
       }).returning();
       if (!decision) throw new ProspectDecisionSchedulerError("PROSPECT_DECISION_CREATE_FAILED");
+      await captureProspectDecisionMutation(tx, decision, input.correlationId);
       await tx.insert(outboxEvents).values({
         id: crypto.randomUUID(),
         workspaceId: input.workspaceId,

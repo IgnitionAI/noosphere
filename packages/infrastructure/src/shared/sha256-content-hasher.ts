@@ -2,9 +2,13 @@ import type { ContentHasher } from "@outbound/application/shared/ports";
 
 export class Sha256ContentHasher implements ContentHasher {
   async hash(value: unknown): Promise<string> {
-    const bytes = new TextEncoder().encode(stableStringify(value));
-    const digest = await crypto.subtle.digest("SHA-256", bytes);
-    return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+    // This service runs on Bun. CryptoHasher avoids scheduling one WebCrypto
+    // promise per source event while preserving the exact SHA-256 contract.
+    // That matters for Prospect 360 contexts where a bounded delta can contain
+    // up to 200 immutable events and many contexts are assembled concurrently.
+    return new Bun.CryptoHasher("sha256")
+      .update(stableStringify(value))
+      .digest("hex");
   }
 }
 

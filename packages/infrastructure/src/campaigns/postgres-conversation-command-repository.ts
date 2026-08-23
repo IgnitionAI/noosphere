@@ -16,10 +16,15 @@ export class PostgresConversationCommandRepository {
     conversationId: string;
     requestedBy: string;
     mode: "manual" | "setter";
+    executionMode?: "live" | "dry_run";
     body: string | null;
     idempotencyKey?: string;
     now: Date;
   }) {
+    const executionMode = input.executionMode ?? "live";
+    if (input.mode === "manual" && executionMode === "dry_run") {
+      throw new Error("MANUAL_CONVERSATION_COMMAND_DRY_RUN_INVALID");
+    }
     return this.database.transaction(async (tx) => {
       const [conversation] = await tx
         .select({ id: conversations.id })
@@ -33,6 +38,25 @@ export class PostgresConversationCommandRepository {
         .limit(1)
         .for("update");
       if (!conversation) throw new Error("CONVERSATION_NOT_FOUND");
+      const commandId = crypto.randomUUID();
+      const idempotencyKey = input.idempotencyKey
+        ?? `${input.conversationId}:${input.mode}:${executionMode}:${commandId}`;
+      const [existing] = await tx
+        .select()
+        .from(conversationCommands)
+        .where(and(
+          eq(conversationCommands.workspaceId, input.workspaceId),
+          eq(conversationCommands.idempotencyKey, idempotencyKey),
+        ))
+        .limit(1);
+      if (existing) {
+        const sameCommand = existing.conversationId === input.conversationId
+          && existing.mode === input.mode
+          && existing.executionMode === executionMode
+          && (existing.requestedBody ?? null) === (input.mode === "manual" ? input.body : null);
+        if (!sameCommand) throw new Error("CONVERSATION_COMMAND_IDEMPOTENCY_CONFLICT");
+        return existing;
+      }
       if (input.mode === "manual") {
         await tx.update(conversations).set({ automationMode: "human", updatedAt: input.now }).where(and(
           eq(conversations.workspaceId, input.workspaceId),
@@ -61,15 +85,13 @@ export class PostgresConversationCommandRepository {
         )
         .limit(1);
       if (pending) throw new Error("CONVERSATION_COMMAND_ALREADY_PENDING");
-      const commandId = crypto.randomUUID();
-      const idempotencyKey = input.idempotencyKey
-        ?? `${input.conversationId}:${input.mode}:${commandId}`;
       const [created] = await tx.insert(conversationCommands).values({
         id: commandId,
         workspaceId: input.workspaceId,
         conversationId: input.conversationId,
         requestedBy: input.requestedBy,
         mode: input.mode,
+        executionMode,
         requestedBody: input.mode === "manual" ? input.body : null,
         status: "scheduled",
         idempotencyKey,

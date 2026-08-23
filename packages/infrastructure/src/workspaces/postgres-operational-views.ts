@@ -942,7 +942,7 @@ export class PostgresOperationalViews {
       this.database.execute<ConversationMessageRow>(sql`SELECT id, provider_message_id, direction, sender_type, body, coalesce(sent_at, received_at, created_at) AS message_at FROM messages WHERE workspace_id = ${workspaceId} AND conversation_id = ${conversationId} ORDER BY coalesce(sent_at, received_at, created_at), created_at`),
       this.database.execute<SocialConversationEventRow>(sql`SELECT i.id, i.type, i.actor_name, coalesce(i.body, '') AS body, coalesce(i.occurred_at, i.first_seen_at) AS event_at, sc.text AS post_text, sc.url AS post_url, concat('/attribution?interactionId=', i.id) AS proof_href FROM attribution_touches touch JOIN social_interactions i ON i.workspace_id = touch.workspace_id AND i.id = touch.social_interaction_id JOIN social_content_items sc ON sc.workspace_id = i.workspace_id AND sc.id = i.social_content_id WHERE touch.workspace_id = ${workspaceId} AND touch.conversation_id = ${conversationId} AND touch.kind = 'conversation' AND touch.status = 'active' AND touch.certainty = 'evidence' AND i.status = 'observed' AND i.direction = 'incoming' AND i.type in ('comment', 'reply', 'mention') ORDER BY event_at, i.id`),
       this.database.execute<ConversationDecisionRow>(sql`SELECT rc.intent, rc.confidence, rc.action, rc.rationale, rc.created_at FROM reply_classifications rc JOIN messages m ON m.workspace_id = rc.workspace_id AND m.id = rc.message_id WHERE rc.workspace_id = ${workspaceId} AND m.conversation_id = ${conversationId} ORDER BY rc.created_at DESC LIMIT 1`),
-      this.database.execute<ConversationCommandRow>(sql`SELECT id, mode, status, error_message, created_at FROM conversation_commands WHERE workspace_id = ${workspaceId} AND conversation_id = ${conversationId} ORDER BY created_at DESC LIMIT 1`),
+      this.database.execute<ConversationCommandRow>(sql`SELECT id, mode, execution_mode, status, generated_body, generation_metadata, error_message, created_at FROM conversation_commands WHERE workspace_id = ${workspaceId} AND conversation_id = ${conversationId} ORDER BY created_at DESC LIMIT 1`),
     ]);
     const summary = toConversationView(row);
     const decision = decisionRows[0];
@@ -968,7 +968,10 @@ export class PostgresOperationalViews {
       latestCommand: command ? {
         id: command.id,
         mode: command.mode,
+        executionMode: command.execution_mode,
         status: command.status,
+        generatedBody: command.generated_body,
+        generationMetadata: command.generation_metadata,
         errorMessage: command.error_message,
         createdAt: command.created_at,
       } : null,
@@ -1061,7 +1064,10 @@ type ConversationDecisionRow = {
 type ConversationCommandRow = {
   id: string;
   mode: "manual" | "setter";
+  execution_mode: "live" | "dry_run";
   status: string;
+  generated_body: string | null;
+  generation_metadata: Record<string, unknown>;
   error_message: string | null;
   created_at: Date;
 };

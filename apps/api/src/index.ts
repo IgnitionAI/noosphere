@@ -29,6 +29,7 @@ import { CrawlerProspectEnricher } from "@outbound/infrastructure/crm/crawler-pr
 import { UnipileWebhookIngestor } from "@outbound/infrastructure/campaigns/unipile-webhook-ingestor";
 import { createUnipileWebhookHttpHandler } from "@outbound/interface/http/unipile-webhook-handler";
 import { PostgresCalendarIntegration } from "@outbound/infrastructure/calendar/postgres-calendar-integration";
+import { resolveCalendarSigningKey } from "@outbound/infrastructure/calendar/calendar-signing-key";
 import { createCalendarConnectionHttpHandler } from "@outbound/interface/http/calendar-connection-handler";
 import { createCalendarWebhookHttpHandler } from "@outbound/interface/http/calendar-webhook-handler";
 import { createCalendarBookingHttpHandler } from "@outbound/interface/http/calendar-booking-handler";
@@ -103,6 +104,21 @@ import { KimiModelCatalog } from "@outbound/infrastructure/ai/kimi-model-gateway
 import { CodexModelCatalog } from "@outbound/infrastructure/ai/codex-cli-model-gateway";
 import { createModelCatalogHttpHandler } from "@outbound/interface/http/model-catalog-handler";
 import { createWorkspaceStructuredModelFromEnvironment } from "@outbound/infrastructure/ai/model-runtime-from-environment";
+import { ProspectMemoryOperationsApplication } from "@outbound/application/prospect-memory/prospect-memory-operations";
+import { DefaultProspectContextAssembler } from "@outbound/application/prospect-memory/prospect-context-assembler";
+import {
+  PostgresContextReceiptRecorder,
+  PostgresProspectMemoryEventRepository,
+  PostgresProspectMemoryPolicyReader,
+  PostgresProspectMemorySnapshotRepository,
+} from "@outbound/infrastructure/prospect-memory/postgres-prospect-memory-repository";
+import {
+  PostgresProspectMemoryAuthoritativeStateReader,
+  PostgresProspectMemorySourceMaterialReader,
+} from "@outbound/infrastructure/prospect-memory/postgres-prospect-memory-state-reader";
+import { PostgresProspectMemoryOperationsReader } from "@outbound/infrastructure/prospect-memory/postgres-prospect-memory-operations-reader";
+import { Sha256ContentHasher } from "@outbound/infrastructure/shared/sha256-content-hasher";
+import { createProspectMemoryHttpHandler, isProspectMemoryRoute } from "@outbound/interface/http/prospect-memory-handler";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
@@ -197,6 +213,36 @@ const documents = createResearchDocumentHttpHandler({
   service: documentService,
   contextResolver: auth.contextResolver,
 });
+const prospectMemoryEvents = new PostgresProspectMemoryEventRepository(database.client);
+const prospectMemorySnapshots = new PostgresProspectMemorySnapshotRepository(database.client);
+const prospectMemoryAuthoritativeState = new PostgresProspectMemoryAuthoritativeStateReader(database.db);
+const prospectMemoryPolicies = new PostgresProspectMemoryPolicyReader(database.client);
+const prospectMemoryOperationsReader = new PostgresProspectMemoryOperationsReader(database.client);
+const prospectMemoryHasher = new Sha256ContentHasher();
+const prospectMemoryAssembler = new DefaultProspectContextAssembler(
+  prospectMemoryEvents,
+  prospectMemorySnapshots,
+  prospectMemoryAuthoritativeState,
+  new PostgresProspectMemorySourceMaterialReader(database.db, prospectMemoryHasher),
+  prospectMemoryPolicies,
+  new PostgresContextReceiptRecorder(database.client),
+  ids,
+  prospectMemoryHasher,
+);
+const prospectMemory = createProspectMemoryHttpHandler({
+  contextResolver: auth.contextResolver,
+  application: new ProspectMemoryOperationsApplication(
+    prospectMemoryEvents,
+    prospectMemorySnapshots,
+    prospectMemoryAuthoritativeState,
+    prospectMemoryPolicies,
+    prospectMemoryOperationsReader,
+    prospectMemoryAssembler,
+    queue,
+    ids,
+    clock,
+  ),
+});
 const crm = createCrmHttpHandler({
   database: database.db,
   contextResolver: auth.contextResolver,
@@ -283,6 +329,8 @@ const campaignHandler = createCampaignHttpHandler({
     undefined,
     contentBrandKitRepository,
     workspaceStructuredModel,
+    prospectMemoryAssembler,
+    prospectMemoryPolicies,
   ),
 });
 const messagingStrategyHandler = createMessagingStrategyHttpHandler({
@@ -303,8 +351,7 @@ const connectedAccounts = createConnectedAccountHttpHandler({
   webhookSecret: process.env.UNIPILE_WEBHOOK_SECRET ?? "",
   publicAppBaseUrl: requiredEnvironment("BETTER_AUTH_URL"),
 });
-const calendarSigningKey = process.env.CALENDAR_WEBHOOK_SIGNING_KEY
-  ?? requiredSecretEnvironment("BETTER_AUTH_SECRET");
+const calendarSigningKey = resolveCalendarSigningKey(process.env);
 const calendarIntegration = new PostgresCalendarIntegration(database.db, calendarSigningKey);
 const calendarConnection = createCalendarConnectionHttpHandler({
   integration: calendarIntegration,
@@ -463,6 +510,7 @@ const server = Bun.serve({
     if (pathname === "/api/v1/workspaces" || pathname.startsWith("/api/v1/workspaces/") || pathname.startsWith("/api/v1/invitations/")) return workspace(request);
     if (pathname === "/api/v1/workspace-ai-settings") return workspaceAiSettings(request);
     if (pathname === "/api/v1/ai/models") return modelCatalog(request);
+    if (isProspectMemoryRoute(pathname)) return prospectMemory(request);
     if (pathname.startsWith("/api/v1/messaging-strategies") || pathname.startsWith("/api/v1/ai-policies")) {
       return messagingStrategyHandler(request);
     }

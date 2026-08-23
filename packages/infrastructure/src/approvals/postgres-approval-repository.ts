@@ -2,6 +2,7 @@ import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { decideApprovalItem, type ApprovalDecision } from "@outbound/domain/campaigns/approval-item";
 import { resolveCampaignAutopilotPolicy } from "@outbound/domain/campaigns/campaign-autopilot-policy";
 import type { Database } from "@outbound/infrastructure/database/client";
+import { captureProspectDecisionMutation } from "@outbound/infrastructure/prospect-memory/capture-prospect-decision-mutation";
 import {
   approvalItems,
   auditLogs,
@@ -174,10 +175,13 @@ export class PostgresApprovalRepository {
           createdAt: decidedAt,
           updatedAt: decidedAt,
         }).onConflictDoNothing();
-        await tx.update(prospectDecisions).set({ status: "completed", completedAt: decidedAt, updatedAt: decidedAt }).where(and(
+        const [updatedDecision] = await tx.update(prospectDecisions).set({ status: "completed", completedAt: decidedAt, updatedAt: decidedAt }).where(and(
           eq(prospectDecisions.workspaceId, input.workspaceId),
           eq(prospectDecisions.id, context.decisionId),
-        ));
+        )).returning();
+        if (updatedDecision) {
+          await captureProspectDecisionMutation(tx, updatedDecision, context.correlationId);
+        }
       } else {
         await tx.update(outreachActions).set({
           status: "cancelled",
@@ -185,12 +189,18 @@ export class PostgresApprovalRepository {
           lastErrorCode: "DRY_RUN_REJECTED",
           updatedAt: decidedAt,
         }).where(and(eq(outreachActions.workspaceId, input.workspaceId), eq(outreachActions.id, context.actionId)));
-        await tx.update(prospectDecisions).set({
+        const [updatedDecision] = await tx.update(prospectDecisions).set({
           status: "cancelled",
           invalidatedAt: decidedAt,
           completedAt: decidedAt,
           updatedAt: decidedAt,
-        }).where(and(eq(prospectDecisions.workspaceId, input.workspaceId), eq(prospectDecisions.id, context.decisionId)));
+        }).where(and(
+          eq(prospectDecisions.workspaceId, input.workspaceId),
+          eq(prospectDecisions.id, context.decisionId),
+        )).returning();
+        if (updatedDecision) {
+          await captureProspectDecisionMutation(tx, updatedDecision, context.correlationId);
+        }
       }
     }
     const eventType = input.decision === "approve" ? "ApprovalItemApproved" : "ApprovalItemRejected";

@@ -596,6 +596,62 @@
       "when": 1797861600000,
       "tag": "0084_provider_neutral_ai_routing",
       "breakpoints": true
+    },
+    {
+      "idx": 85,
+      "version": "7",
+      "when": 1797865200000,
+      "tag": "0085_operator_requeue_aggregate_recovery",
+      "breakpoints": true
+    },
+    {
+      "idx": 86,
+      "version": "7",
+      "when": 1797868800000,
+      "tag": "0086_recover_codex_tls_assessments",
+      "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "7",
+      "when": 1797872400000,
+      "tag": "0087_resume_incomplete_icp_budget_runs",
+      "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "7",
+      "when": 1797876000000,
+      "tag": "0088_retry_invalid_market_outputs",
+      "breakpoints": true
+    },
+    {
+      "idx": 89,
+      "version": "7",
+      "when": 1797879600000,
+      "tag": "0089_prospect_360_memory_foundation",
+      "breakpoints": true
+    },
+    {
+      "idx": 90,
+      "version": "7",
+      "when": 1797883200000,
+      "tag": "0090_prospect_memory_retention",
+      "breakpoints": true
+    },
+    {
+      "idx": 91,
+      "version": "7",
+      "when": 1797886800000,
+      "tag": "0091_conversation_command_dry_run",
+      "breakpoints": true
+    },
+    {
+      "idx": 92,
+      "version": "7",
+      "when": 1797890400000,
+      "tag": "0092_conversation_command_generation_audit",
+      "breakpoints": true
     }
   ]
 }

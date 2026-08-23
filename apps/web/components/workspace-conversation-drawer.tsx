@@ -3,16 +3,21 @@ import Link from "next/link";
 import { sendProspectMessageAction } from "@/app/w/[workspaceSlug]/prospects/actions";
 import { setConversationAutomationAction } from "@/app/w/[workspaceSlug]/inbox/actions";
 import { ConversationComposer } from "@/components/conversation-composer";
-import type { WorkspaceConversationDetail } from "@/lib/api";
+import { ProspectMemoryPanel } from "@/components/prospect-memory-panel";
+import type { ProspectMemoryStatus, ProspectMemoryView, WorkspaceConversationDetail } from "@/lib/api";
 
 export function WorkspaceConversationDrawer({
   conversation,
   workspaceSlug,
   closeHref,
+  memoryStatus,
+  memoryView,
 }: {
   conversation: WorkspaceConversationDetail;
   workspaceSlug: string;
   closeHref: string;
+  memoryStatus: ProspectMemoryStatus | null;
+  memoryView: ProspectMemoryView | null;
 }) {
   const send = sendProspectMessageAction.bind(
     null,
@@ -82,6 +87,7 @@ export function WorkspaceConversationDrawer({
         </header>
 
         <div className="flex-1 space-y-3 overflow-y-auto p-4 sm:p-5">
+          {memoryStatus ? <ProspectMemoryPanel status={memoryStatus} view={memoryView} /> : null}
           {conversation.socialEvents.length ? (
             <section className="space-y-2" aria-label="Interactions sociales prouvées">
               <div className="flex items-center justify-between gap-2">
@@ -131,9 +137,30 @@ export function WorkspaceConversationDrawer({
 
         {conversation.kind === "message_thread" ? <footer className="border-t border-line bg-white p-4 sm:p-5">
           {conversation.latestCommand && ["scheduled", "sending"].includes(conversation.latestCommand.status) ? (
-            <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">Message en cours de préparation ou d’envoi…</p>
+            <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              {conversation.latestCommand.executionMode === "dry_run"
+                ? "Prévisualisation en cours — aucun message ne sera envoyé. Vous pouvez fermer cette fenêtre."
+                : "Message en cours de préparation ou d’envoi — vous pouvez fermer cette fenêtre."}
+            </p>
           ) : null}
-          <ConversationComposer conversationId={conversation.id} sendAction={send} workspaceSlug={workspaceSlug} />
+          {conversation.latestCommand?.status === "cancelled" && conversation.latestCommand.errorMessage ? (
+            <p className="mb-3 rounded-lg bg-slate-100 px-3 py-2 text-xs text-muted">
+              Le Setter n’a rien envoyé : {conversation.latestCommand.errorMessage}
+            </p>
+          ) : null}
+          {conversation.latestCommand?.status === "failed" ? (
+            <p className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
+              L’envoi a échoué{conversation.latestCommand.errorMessage ? ` : ${conversation.latestCommand.errorMessage}` : "."}
+            </p>
+          ) : null}
+          <ConversationComposer
+            commandStatus={conversation.latestCommand?.status ?? null}
+            commandExecutionMode={conversation.latestCommand?.executionMode ?? null}
+            generatedBody={conversation.latestCommand?.generatedBody ?? null}
+            conversationId={conversation.id}
+            sendAction={send}
+            workspaceSlug={workspaceSlug}
+          />
         </footer> : (
           <footer className="border-t border-line bg-white p-4 text-xs leading-5 text-muted sm:p-5">
             Ce signal Inbound est visible pour comprendre le prospect. Il n’ouvre pas de DM et ne déclenche aucune action automatique.

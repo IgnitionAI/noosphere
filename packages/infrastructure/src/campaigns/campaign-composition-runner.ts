@@ -37,6 +37,8 @@ import {
   sequenceSteps,
   sequenceVersions,
 } from "@outbound/infrastructure/database/schema";
+import { captureProspectDecisionMutation } from "@outbound/infrastructure/prospect-memory/capture-prospect-decision-mutation";
+import { captureProspectMemoryMutation } from "@outbound/infrastructure/prospect-memory/capture-prospect-memory-mutation";
 import { PostgresCampaignEditorialContextReader } from "./postgres-campaign-editorial-context";
 
 export class CampaignCompositionJobProcessor {
@@ -124,6 +126,7 @@ export class CampaignCompositionJobProcessor {
               }
             : null,
           prospect: {
+            contactId: prospect.contactId,
             firstName: prospect.firstName,
             lastName: prospect.lastName,
             headline: prospect.headline,
@@ -370,7 +373,7 @@ export class CampaignCompositionJobProcessor {
           now,
         });
         if (!enrollmentId) {
-          await tx.update(campaignProspects).set({
+          const [excludedProspect] = await tx.update(campaignProspects).set({
             status: "excluded",
             state: "excluded",
             eligible: false,
@@ -381,7 +384,31 @@ export class CampaignCompositionJobProcessor {
             eq(campaignProspects.workspaceId, input.workspaceId),
             eq(campaignProspects.campaignId, input.campaignId),
             eq(campaignProspects.candidateId, prospect.candidateId),
-          ));
+          )).returning({
+            id: campaignProspects.id,
+            state: campaignProspects.state,
+            status: campaignProspects.status,
+            updatedAt: campaignProspects.updatedAt,
+          });
+          if (excludedProspect) {
+            await captureProspectMemoryMutation(tx, {
+              workspaceId: input.workspaceId,
+              sourceContactId: prospect.contactId,
+              sourceKind: "campaign_prospect",
+              sourceId: excludedProspect.id,
+              sourceVersion: excludedProspect.updatedAt.getTime(),
+              kind: "campaign_changed",
+              occurredAt: excludedProspect.updatedAt,
+              observedAt: excludedProspect.updatedAt,
+              payload: {
+                campaignId: input.campaignId,
+                state: excludedProspect.state,
+                status: excludedProspect.status,
+                reason: "ACTIVE_SEQUENCE_CONFLICT",
+              },
+              correlationId: `campaign:${input.campaignId}`,
+            });
+          }
           continue;
         }
         const channels = prospect.channels as ProspectChannels;
@@ -490,7 +517,7 @@ export class CampaignCompositionJobProcessor {
                 ))
                 .limit(1);
           if (!storedJob) throw new Error("PROSPECT_DECISION_JOB_IDEMPOTENCY_CONFLICT");
-          await tx.insert(prospectDecisions).values({
+          const [insertedDecision] = await tx.insert(prospectDecisions).values({
             id: decisionId,
             workspaceId: input.workspaceId,
             contactId: prospect.contactId,
@@ -507,9 +534,16 @@ export class CampaignCompositionJobProcessor {
             payload: { sequenceVersionId, stepPosition: step.position },
             createdAt: now,
             updatedAt: now,
-          }).onConflictDoNothing();
+          }).onConflictDoNothing().returning();
+          if (insertedDecision) {
+            await captureProspectDecisionMutation(
+              tx,
+              insertedDecision,
+              `campaign:${input.campaignId}`,
+            );
+          }
         }
-        await tx.update(campaignProspects).set({
+        const [enrolledProspect] = await tx.update(campaignProspects).set({
           status: "enrolled",
           enrolledAt: now,
           updatedAt: now,
@@ -517,7 +551,30 @@ export class CampaignCompositionJobProcessor {
           eq(campaignProspects.workspaceId, input.workspaceId),
           eq(campaignProspects.campaignId, input.campaignId),
           eq(campaignProspects.candidateId, prospect.candidateId),
-        ));
+        )).returning({
+          id: campaignProspects.id,
+          state: campaignProspects.state,
+          status: campaignProspects.status,
+          updatedAt: campaignProspects.updatedAt,
+        });
+        if (enrolledProspect) {
+          await captureProspectMemoryMutation(tx, {
+            workspaceId: input.workspaceId,
+            sourceContactId: prospect.contactId,
+            sourceKind: "campaign_prospect",
+            sourceId: enrolledProspect.id,
+            sourceVersion: enrolledProspect.updatedAt.getTime(),
+            kind: "campaign_changed",
+            occurredAt: enrolledProspect.updatedAt,
+            observedAt: enrolledProspect.updatedAt,
+            payload: {
+              campaignId: input.campaignId,
+              state: enrolledProspect.state,
+              status: enrolledProspect.status,
+            },
+            correlationId: `campaign:${input.campaignId}`,
+          });
+        }
       }
       if (!earliestDueAt) {
         await tx.update(campaigns).set({

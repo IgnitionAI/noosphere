@@ -2,8 +2,12 @@ import { AlertTriangle, AtSign, Inbox, LoaderCircle, Mail, MessageCircle, Search
 import Link from "next/link";
 import { WorkspaceConversationDrawer } from "@/components/workspace-conversation-drawer";
 import {
+  getProspectMemoryStatus,
+  getProspectMemoryView,
   getWorkspaceConversation,
   listWorkspaceConversations,
+  type ProspectMemoryStatus,
+  type ProspectMemoryView,
   type WorkspaceConversationView,
 } from "@/lib/api";
 
@@ -50,6 +54,16 @@ export default async function InboxPage({
   const selectedId = query.conversation
     ?? (query.prospect ? result.data.find((item) => item.contactId === query.prospect)?.id : undefined);
   const selected = selectedId ? await getWorkspaceConversation(workspaceSlug, selectedId) : null;
+  let memoryStatus: ProspectMemoryStatus | null = null;
+  let memoryView: ProspectMemoryView | null = null;
+  if (selected) {
+    try { memoryStatus = await getProspectMemoryStatus(workspaceSlug, selected.contactId); }
+    catch { memoryStatus = null; }
+    if (memoryStatus?.enabled) {
+      try { memoryView = await getProspectMemoryView(workspaceSlug, selected.contactId, "call_preparation"); }
+      catch { memoryView = null; }
+    }
+  }
   const closeHref = inboxHref(workspaceSlug, query, { conversation: null, prospect: null });
   const unread = result.data.reduce((total, item) => total + item.unreadCount, 0);
   const campaign = result.data.filter((item) => item.origin === "campaign").length;
@@ -161,7 +175,15 @@ export default async function InboxPage({
         ) : null}
       </section>
 
-      {selected ? <WorkspaceConversationDrawer closeHref={closeHref} conversation={selected} workspaceSlug={workspaceSlug} /> : null}
+      {selected ? (
+        <WorkspaceConversationDrawer
+          closeHref={closeHref}
+          conversation={selected}
+          memoryStatus={memoryStatus}
+          memoryView={memoryView}
+          workspaceSlug={workspaceSlug}
+        />
+      ) : null}
     </>
   );
 }

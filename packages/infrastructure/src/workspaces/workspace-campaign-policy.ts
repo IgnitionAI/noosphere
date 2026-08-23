@@ -23,7 +23,14 @@ export async function workspaceCampaignPolicy(
       windowEnd: row.windowEnd,
     },
     channelLimits: { linkedin: row.linkedinDailyLimit, email: row.emailDailyLimit, whatsapp: row.whatsappDailyLimit },
-    retention: { invitationsDays: row.invitationsRetentionDays, jobsDays: row.jobsRetentionDays, auditDays: row.auditRetentionDays },
+    retention: {
+      invitationsDays: row.invitationsRetentionDays,
+      jobsDays: row.jobsRetentionDays,
+      auditDays: row.auditRetentionDays,
+      memoryEventsDays: row.memoryEventsRetentionDays,
+      memorySnapshotsDays: row.memorySnapshotsRetentionDays,
+      memoryReceiptsDays: row.memoryReceiptsRetentionDays,
+    },
   } : defaults;
   return campaignAutopilotFromWorkspacePolicy(policy, channel);
 }

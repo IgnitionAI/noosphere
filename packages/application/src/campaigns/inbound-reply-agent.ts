@@ -1,4 +1,5 @@
 import type { ProspectingChannel } from "@outbound/domain/campaigns/prospecting-plan";
+import type { AiProviderId } from "@outbound/application/ai/model-gateway";
 
 export type InboundReplyIntent =
   | "positive"
@@ -28,7 +29,7 @@ export interface InboundReplyDecision {
   readonly selectedSlotStart?: string | null;
   readonly replyBody: string | null;
   readonly rationale: string;
-  readonly metadata: {
+    readonly metadata: {
     readonly provider: string;
     readonly model: string;
     readonly promptVersion: string;
@@ -40,6 +41,10 @@ export interface InboundReplyDecision {
     readonly meetingProposalId?: string;
     readonly knowledgeClaimIds?: readonly string[];
     readonly knowledgeSourceIds?: readonly string[];
+    readonly memoryReceiptId?: string;
+    readonly memorySnapshotId?: string | null;
+    readonly memorySnapshotVersion?: number | null;
+    readonly memoryWatermark?: number;
   };
 }
 
@@ -55,6 +60,19 @@ export interface InboundReplyAgent {
       readonly direction: "inbound" | "outbound";
       readonly body: string;
     }[];
+    /** Compiled server-side Prospect 360 context. Never supplied by a client. */
+    readonly prospectContext?: Readonly<Record<string, unknown>>;
+    /** Audit reference for the server-assembled context. Never supplied by a client or used as model authority. */
+    readonly prospectContextReference?: Readonly<{
+      receiptId: string;
+      snapshotId: string | null;
+      snapshotVersion: number | null;
+      watermark: number;
+      privacyEpoch: number;
+      mode: "shadow" | "active";
+    }>;
+    /** Provider policy resolved server-side before personal context is handed to a model. */
+    readonly prospectContextAllowedProviders?: readonly AiProviderId[];
     readonly instructions: string | null;
     readonly bookingUrl: string | null;
     readonly calendar?: {

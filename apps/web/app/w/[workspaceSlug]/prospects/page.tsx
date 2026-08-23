@@ -1,6 +1,17 @@
 import { AtSign, Filter, Mail, MessageCircle, Search, UserRound } from "lucide-react";
 import Link from "next/link";
-import { getProspectView, listProspectViews, listSignals, OutboundApiError, type IntentSignal, type SignalType } from "@/lib/api";
+import {
+  getProspectMemoryStatus,
+  getProspectMemoryView,
+  getProspectView,
+  listProspectViews,
+  listSignals,
+  OutboundApiError,
+  type IntentSignal,
+  type ProspectMemoryStatus,
+  type ProspectMemoryView,
+  type SignalType,
+} from "@/lib/api";
 import { ProspectActivityDrawer } from "@/components/prospect-activity-drawer";
 
 export const metadata = { title: "Prospects" };
@@ -43,6 +54,16 @@ export default async function ProspectsPage({
   const signalsByContact = new Map<string, IntentSignal[]>();
   for (const signal of signals) signalsByContact.set(signal.entityId, [...(signalsByContact.get(signal.entityId) ?? []), signal]);
   const selected = query.prospect ? await getProspectView(workspaceSlug, query.prospect) : null;
+  let memoryStatus: ProspectMemoryStatus | null = null;
+  let memoryView: ProspectMemoryView | null = null;
+  if (selected) {
+    try { memoryStatus = await getProspectMemoryStatus(workspaceSlug, selected.id); }
+    catch (error) { if (!(error instanceof OutboundApiError)) throw error; }
+    if (memoryStatus?.enabled) {
+      try { memoryView = await getProspectMemoryView(workspaceSlug, selected.id, "call_preparation"); }
+      catch (error) { if (!(error instanceof OutboundApiError)) throw error; }
+    }
+  }
   const listHref = prospectListHref(workspaceSlug, query);
 
   return (
@@ -156,7 +177,15 @@ export default async function ProspectsPage({
           )}
         </section>
 
-        {selected ? <ProspectActivityDrawer prospect={selected} workspaceSlug={workspaceSlug} closeHref={listHref} /> : null}
+        {selected ? (
+          <ProspectActivityDrawer
+            prospect={selected}
+            workspaceSlug={workspaceSlug}
+            closeHref={listHref}
+            memoryStatus={memoryStatus}
+            memoryView={memoryView}
+          />
+        ) : null}
       </div>
     </>
   );

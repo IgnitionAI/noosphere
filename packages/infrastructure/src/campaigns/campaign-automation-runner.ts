@@ -24,6 +24,7 @@ import {
   sequenceEnrollments,
 } from "@outbound/infrastructure/database/schema";
 import { suppressionFingerprint } from "@outbound/infrastructure/crm/suppression-fingerprint";
+import { captureProspectMemoryMutation } from "@outbound/infrastructure/prospect-memory/capture-prospect-memory-mutation";
 
 export class CampaignAutomationJobProcessor {
   constructor(
@@ -236,7 +237,7 @@ export class CampaignAutomationJobProcessor {
             eq(prospectDiscoveryCandidates.id, input.candidate.id),
           ),
         );
-      await tx
+      const [importedProspect] = await tx
         .update(campaignProspects)
         .set({
           contactId,
@@ -248,7 +249,30 @@ export class CampaignAutomationJobProcessor {
           exclusionReason: null,
           updatedAt: this.clock.now(),
         })
-        .where(campaignProspectKey(input));
+        .where(campaignProspectKey(input))
+        .returning({
+          id: campaignProspects.id,
+          contactId: campaignProspects.contactId,
+          state: campaignProspects.state,
+          updatedAt: campaignProspects.updatedAt,
+        });
+      if (importedProspect?.contactId) {
+        await captureProspectMemoryMutation(tx, {
+          workspaceId: input.workspaceId,
+          sourceContactId: importedProspect.contactId,
+          sourceKind: "campaign_prospect",
+          sourceId: importedProspect.id,
+          sourceVersion: importedProspect.updatedAt.getTime(),
+          kind: "campaign_changed",
+          occurredAt: importedProspect.updatedAt,
+          observedAt: importedProspect.updatedAt,
+          payload: {
+            campaignId: input.campaignId,
+            state: importedProspect.state,
+          },
+          correlationId: `campaign-automation:${input.campaignId}`,
+        });
+      }
       return true;
     });
   }
@@ -375,7 +399,7 @@ async function createCandidateContact(
     : null;
   const contactId = crypto.randomUUID();
   const name = contactName(input.candidate, input.channel, input.identity.value!);
-  await tx.insert(contacts).values({
+  const [contact] = await tx.insert(contacts).values({
     id: contactId,
     workspaceId: input.workspaceId,
     firstName: name.firstName,
@@ -384,8 +408,9 @@ async function createCandidateContact(
     source: input.channel === "linkedin" ? "provider" : "icp_research",
     createdAt: input.now,
     updatedAt: input.now,
-  });
-  await tx.insert(contactIdentities).values({
+  }).returning({ id: contacts.id, updatedAt: contacts.updatedAt });
+  if (!contact) throw new Error("CAMPAIGN_CONTACT_CREATE_FAILED");
+  const [identity] = await tx.insert(contactIdentities).values({
     id: crypto.randomUUID(),
     workspaceId: input.workspaceId,
     contactId,
@@ -396,9 +421,34 @@ async function createCandidateContact(
     source: input.channel === "linkedin" ? "provider" : "icp_research",
     createdAt: input.now,
     updatedAt: input.now,
+  }).returning({ id: contactIdentities.id, type: contactIdentities.type, updatedAt: contactIdentities.updatedAt });
+  if (!identity) throw new Error("CAMPAIGN_CONTACT_IDENTITY_CREATE_FAILED");
+  await captureProspectMemoryMutation(tx, {
+    workspaceId: input.workspaceId,
+    sourceContactId: contactId,
+    sourceKind: "contact",
+    sourceId: contactId,
+    sourceVersion: contact.updatedAt.getTime(),
+    kind: "contact_updated",
+    occurredAt: contact.updatedAt,
+    observedAt: contact.updatedAt,
+    payload: { source: input.channel === "linkedin" ? "provider" : "icp_research" },
+    correlationId: `campaign-contact:${input.candidate.id}`,
+  });
+  await captureProspectMemoryMutation(tx, {
+    workspaceId: input.workspaceId,
+    sourceContactId: contactId,
+    sourceKind: "contact_identity",
+    sourceId: identity.id,
+    sourceVersion: identity.updatedAt.getTime(),
+    kind: "identity_linked",
+    occurredAt: identity.updatedAt,
+    observedAt: identity.updatedAt,
+    payload: { identityType: identity.type, verificationStatus: input.identity.status },
+    correlationId: `campaign-contact:${input.candidate.id}`,
   });
   if (companyId) {
-    await tx.insert(contactEmployments).values({
+    const [employment] = await tx.insert(contactEmployments).values({
       id: crypto.randomUUID(),
       workspaceId: input.workspaceId,
       contactId,
@@ -406,7 +456,21 @@ async function createCandidateContact(
       title: input.candidate.headline ?? "Contact professionnel",
       isCurrent: true,
       createdAt: input.now,
-    });
+    }).returning({ id: contactEmployments.id, createdAt: contactEmployments.createdAt });
+    if (employment) {
+      await captureProspectMemoryMutation(tx, {
+        workspaceId: input.workspaceId,
+        sourceContactId: contactId,
+        sourceKind: "contact_employment",
+        sourceId: employment.id,
+        sourceVersion: employment.createdAt.getTime(),
+        kind: "employment_updated",
+        occurredAt: employment.createdAt,
+        observedAt: employment.createdAt,
+        payload: { companyId, title: input.candidate.headline, isCurrent: true },
+        correlationId: `campaign-contact:${input.candidate.id}`,
+      });
+    }
   }
   return contactId;
 }

@@ -54,6 +54,7 @@ import { CampaignHealthReconciler } from "@outbound/infrastructure/campaigns/cam
 import { UnipileWebhookIngestor } from "@outbound/infrastructure/campaigns/unipile-webhook-ingestor";
 import { UnipileAccountInboxSynchronizer } from "@outbound/infrastructure/inbox/unipile-account-inbox-synchronizer";
 import { PostgresCalendarIntegration } from "@outbound/infrastructure/calendar/postgres-calendar-integration";
+import { resolveCalendarSigningKey } from "@outbound/infrastructure/calendar/calendar-signing-key";
 import { PostgresUnipileChannelConnections } from "@outbound/infrastructure/channels/postgres-unipile-channel-connections";
 import { PostgresImportService } from "@outbound/infrastructure/crm/postgres-import-service";
 import { EnrichmentJobProcessor, PostgresEnrichmentRepository } from "@outbound/infrastructure/crm/postgres-enrichment-repository";
@@ -109,6 +110,30 @@ import { EditorialLearningReconciler } from "@outbound/application/content/edito
 import { PostgresEditorialLearningRepository } from "@outbound/infrastructure/content/postgres-editorial-learning-repository";
 import { ContentPublicationOutcomeReconciler } from "@outbound/application/content/content-publication-reconciliation";
 import { PostgresContentPublicationReconciliationRepository } from "@outbound/infrastructure/content/postgres-content-publication-reconciliation-repository";
+import { RefreshProspectMemory } from "@outbound/application/prospect-memory/refresh-prospect-memory";
+import {
+  DeterministicProspectMemoryProjector,
+  StrictProspectMemoryProjectionValidator,
+} from "@outbound/application/prospect-memory/prospect-memory-projector";
+import {
+  PostgresContextReceiptRecorder,
+  PostgresProspectMemoryEventRepository,
+  PostgresProspectMemoryPolicyReader,
+  PostgresProspectMemorySnapshotRepository,
+} from "@outbound/infrastructure/prospect-memory/postgres-prospect-memory-repository";
+import {
+  PostgresProspectMemoryAuthoritativeStateReader,
+  PostgresProspectMemorySemanticBudgetReader,
+  PostgresProspectMemorySourceMaterialReader,
+} from "@outbound/infrastructure/prospect-memory/postgres-prospect-memory-state-reader";
+import { LangChainProspectMemorySynthesizer } from "@outbound/infrastructure/prospect-memory/langchain-prospect-memory-synthesizer";
+import { ProspectMemoryRefreshJobProcessor } from "@outbound/infrastructure/prospect-memory/prospect-memory-refresh-job-processor";
+import {
+  ProspectMemoryBackfillJobProcessor,
+  ProspectMemoryBackfillScheduler,
+} from "@outbound/infrastructure/prospect-memory/prospect-memory-backfill";
+import { DefaultProspectContextAssembler } from "@outbound/application/prospect-memory/prospect-context-assembler";
+import { DeterministicProspectMemoryShadowComparator } from "@outbound/application/prospect-memory/prospect-memory-shadow-comparator";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
@@ -133,6 +158,7 @@ const outreachScheduler = new PostgresOutreachScheduler(database.db, unipileClie
 const repository = new PostgresProductResearchRepository(database.db);
 const clock = new SystemClock();
 const ids = new CryptoIdGenerator();
+const contentHasher = new Sha256ContentHasher();
 const workspaceDataLifecycle = new PostgresWorkspaceDataLifecycle(database.db, clock, ids);
 const knowledgeExpirationProcessor = new KnowledgeSourceExpirationProcessor(
   new PostgresKnowledgeService(database.db, clock, ids),
@@ -173,6 +199,24 @@ const retentionPurgeProcessor = new WorkspaceRetentionPurgeProcessor(database.db
 const toolRunRecorder = new PostgresResearchToolRunRecorder(database.db);
 const workspaceAiSettings = new PostgresWorkspaceAiSettingsRepository(database.db);
 const workspaceStructuredModel = createWorkspaceStructuredModelFromEnvironment(process.env, workspaceAiSettings);
+const prospectMemoryEvents = new PostgresProspectMemoryEventRepository(database.client);
+const prospectMemorySnapshots = new PostgresProspectMemorySnapshotRepository(database.client);
+const prospectMemoryPolicies = new PostgresProspectMemoryPolicyReader(database.client);
+const prospectMemorySourceMaterials = new PostgresProspectMemorySourceMaterialReader(database.db, contentHasher);
+const prospectContextAssembler = new DefaultProspectContextAssembler(
+  prospectMemoryEvents,
+  prospectMemorySnapshots,
+  new PostgresProspectMemoryAuthoritativeStateReader(database.db),
+  prospectMemorySourceMaterials,
+  prospectMemoryPolicies,
+  new PostgresContextReceiptRecorder(database.client),
+  ids,
+  contentHasher,
+);
+const prospectMemoryShadowComparator = new DeterministicProspectMemoryShadowComparator(
+  aiRunRecorder,
+  contentHasher,
+);
 const evaluationRunProcessor = new EvaluationRunProcessor(
   database.db,
   queue,
@@ -244,10 +288,21 @@ const channelAssessmentProcessor = new ChannelAssessmentJobProcessor(
 );
 const campaignAutomationProcessor = new CampaignAutomationJobProcessor(database.db, queue, clock);
 const contentBrandKitRepository = new PostgresContentBrandKitRepository(database.db);
-const campaignContentGenerator = new LangChainCampaignContentGenerator(process.env, workspaceAiSettings, knowledgeRetriever, activeAiConfigurations, aiRunRecorder, undefined, contentBrandKitRepository, workspaceStructuredModel);
+const campaignContentGenerator = new LangChainCampaignContentGenerator(
+  process.env,
+  workspaceAiSettings,
+  knowledgeRetriever,
+  activeAiConfigurations,
+  aiRunRecorder,
+  undefined,
+  contentBrandKitRepository,
+  workspaceStructuredModel,
+  prospectContextAssembler,
+  prospectMemoryPolicies,
+);
 const calendarIntegration = new PostgresCalendarIntegration(
   database.db,
-  process.env.CALENDAR_WEBHOOK_SIGNING_KEY ?? requiredEnvironment("BETTER_AUTH_SECRET"),
+  resolveCalendarSigningKey(process.env),
 );
 const campaignCompositionProcessor = new CampaignCompositionJobProcessor(
   database.db,
@@ -261,6 +316,9 @@ const prospectDecisionProcessor = new ProspectDecisionJobProcessor(
   queue,
   new LangChainProspectDecisionAgent(process.env, workspaceAiSettings, workspaceStructuredModel),
   clock,
+  prospectContextAssembler,
+  prospectMemoryPolicies,
+  prospectMemoryShadowComparator,
 );
 const outreachDispatchProcessor = new OutreachDispatchJobProcessor(
   database.db,
@@ -300,6 +358,9 @@ const conversationCommandProcessor = new ConversationCommandJobProcessor(
   clock,
   process.env.BOOKING_URL?.trim() || null,
   calendarIntegration,
+  prospectContextAssembler,
+  prospectMemoryShadowComparator,
+  prospectMemoryPolicies,
 );
 const dailyProspectingScheduler = new DailyProspectingScheduler(database.db, clock, {
   localTime: process.env.DAILY_PROSPECTING_TIME ?? "06:00",
@@ -356,6 +417,37 @@ const contentPublicationProcessor = new ContentPublicationJobProcessor(
   queue,
   () => clock.now(),
   contentMediaStorage,
+);
+const prospectMemoryRefreshProcessor = new ProspectMemoryRefreshJobProcessor(
+  new RefreshProspectMemory(
+    prospectMemoryEvents,
+    prospectMemorySnapshots,
+    new PostgresProspectMemoryAuthoritativeStateReader(database.db),
+    prospectMemorySourceMaterials,
+    prospectMemoryPolicies,
+    new PostgresProspectMemorySemanticBudgetReader(database.db),
+    new LangChainProspectMemorySynthesizer(workspaceStructuredModel, aiRunRecorder, contentHasher),
+    new DeterministicProspectMemoryProjector(),
+    new StrictProspectMemoryProjectionValidator(),
+    clock,
+    ids,
+    contentHasher,
+  ),
+  queue,
+  clock,
+);
+const prospectMemoryBackfillProcessor = new ProspectMemoryBackfillJobProcessor(
+  database.db,
+  database.client,
+  queue,
+  ids,
+  clock,
+);
+const prospectMemoryBackfillScheduler = new ProspectMemoryBackfillScheduler(
+  database.db,
+  queue,
+  ids,
+  clock,
 );
 const contentAutopilotReconciler = new ContentAutopilotReconciler(
   new PostgresContentAutopilotRepository(database.db),
@@ -423,7 +515,7 @@ const maintenance = {
     const reconciledPreSendWaits = await jobOutcomeReconciler.reconcileExhaustedPreSendWaits();
     const reconciledRecoverableProviderRefusals = await jobOutcomeReconciler.reconcileRecoverableOutreachActions();
     const reconciledStaleProviderActions = await jobOutcomeReconciler.reconcileStaleOutreachActions();
-    const [dailyRuns, dailyIdeaRuns, assessmentJobs, repairedCampaigns, retainedSourcing, inboundEvents, observedSocialEngagements, reconciledJobOutcomes] = await Promise.all([
+    const [dailyRuns, dailyIdeaRuns, assessmentJobs, repairedCampaigns, retainedSourcing, inboundEvents, observedSocialEngagements, reconciledJobOutcomes, prospectMemoryBackfills] = await Promise.all([
       dailyProspectingScheduler.reconcile(),
       dailyContentIdeaScheduler.reconcile(),
       prospectAssessmentReconciler.reconcile(),
@@ -432,6 +524,7 @@ const maintenance = {
       unipileInboxSynchronizer?.reconcile() ?? Promise.resolve(0),
       socialEngagementSynchronizer?.reconcile() ?? Promise.resolve(0),
       jobOutcomeReconciler.reconcile(),
+      prospectMemoryBackfillScheduler.reconcile(),
     ]);
     const reconciledProviderEffects = await contentPublicationOutcomeReconciler?.reconcile() ?? 0;
     const observedSocialPosts = await socialContentSynchronizer?.reconcile() ?? 0;
@@ -471,7 +564,7 @@ const maintenance = {
     if (editorialLearningVersions > 0) {
       console.info(JSON.stringify({ event: "linkedin_editorial_learning_updated", versions: editorialLearningVersions }));
     }
-    return dailyRuns + dailyIdeaRuns + automatedContentActions + assessmentJobs + repairedCampaigns + retainedSourcing + inboundEvents + reconciledProviderEffects + observedSocialPosts + observedSocialEngagements + attributedInteractions + editorialLearningVersions + reconciledJobOutcomes + reconciledPreSendWaits + reconciledRecoverableProviderRefusals + reconciledStaleProviderActions;
+    return dailyRuns + dailyIdeaRuns + automatedContentActions + assessmentJobs + repairedCampaigns + retainedSourcing + inboundEvents + reconciledProviderEffects + observedSocialPosts + observedSocialEngagements + attributedInteractions + editorialLearningVersions + reconciledJobOutcomes + prospectMemoryBackfills + reconciledPreSendWaits + reconciledRecoverableProviderRefusals + reconciledStaleProviderActions;
   },
 };
 const orchestrator = new ResearchOrchestrator(
@@ -488,16 +581,17 @@ const orchestrator = new ResearchOrchestrator(
   ),
   ids,
   clock,
-  new Sha256ContentHasher(),
+  contentHasher,
 );
 const worker = new ResearchWorker(queue, orchestrator, clock, {
   workerId: process.env.WORKER_ID ?? `research-${crypto.randomUUID()}`,
   leaseMs: positiveIntegerEnvironment("JOB_LEASE_MS", 60_000),
+  leaseHeartbeatMs: positiveIntegerEnvironment("JOB_HEARTBEAT_MS", 20_000),
   batchSize: positiveIntegerEnvironment("JOB_BATCH_SIZE", 4),
   pollIntervalMs: positiveIntegerEnvironment("JOB_POLL_INTERVAL_MS", 1_000),
   ...optionalJobTypes("WORKER_JOB_TYPES"),
   ...optionalExcludedJobTypes("WORKER_EXCLUDED_JOB_TYPES"),
-}, documentService, discoveryProcessor, channelAssessmentProcessor, campaignAutomationProcessor, campaignCompositionProcessor, outreachDispatchProcessor, inboundReplyProcessor, automatedReplySendProcessor, conversationCommandProcessor, process.env.WORKER_DISABLE_MAINTENANCE === "true" ? undefined : maintenance, process.env.WORKER_DISABLE_OUTBOX === "true" ? undefined : outboxDispatcher, importService, process.env.WORKER_DISABLE_OUTREACH_SCHEDULER === "true" ? undefined : outreachScheduler, enrichmentProcessor, signalProcessor, workspaceExportProcessor, retentionPurgeProcessor, knowledgeExpirationProcessor, evaluationRunProcessor, prospectDecisionProcessor, contentIdeaDiscoveryProcessor, contentGenerationProcessor, contentPublicationProcessor);
+}, documentService, discoveryProcessor, channelAssessmentProcessor, campaignAutomationProcessor, campaignCompositionProcessor, outreachDispatchProcessor, inboundReplyProcessor, automatedReplySendProcessor, conversationCommandProcessor, process.env.WORKER_DISABLE_MAINTENANCE === "true" ? undefined : maintenance, process.env.WORKER_DISABLE_OUTBOX === "true" ? undefined : outboxDispatcher, importService, process.env.WORKER_DISABLE_OUTREACH_SCHEDULER === "true" ? undefined : outreachScheduler, enrichmentProcessor, signalProcessor, workspaceExportProcessor, retentionPurgeProcessor, knowledgeExpirationProcessor, evaluationRunProcessor, prospectDecisionProcessor, contentIdeaDiscoveryProcessor, contentGenerationProcessor, contentPublicationProcessor, prospectMemoryRefreshProcessor, prospectMemoryBackfillProcessor);
 
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
   process.once(signal, () => {

@@ -22,4 +22,4 @@ services:
     environment:
       # The local benchmark stack exercises the complete durable pipeline while
       # keeping autonomous provider effects behind an explicit canary opt-in.
-      WORKER_EXCLUDED_JOB_TYPES: ${BENCHMARK_WORKER_EXCLUDED_JOB_TYPES:-prospect.decision.execute,outreach.dispatch,inbound.reply.send,content.publication.publish}
+      WORKER_EXCLUDED_JOB_TYPES: ${BENCHMARK_WORKER_EXCLUDED_JOB_TYPES:-prospect.decision.execute,conversation.command.execute,prospect.memory.refresh,prospect.memory.backfill,outreach.dispatch,inbound.reply.send,content.publication.publish}

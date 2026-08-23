@@ -1,5 +1,6 @@
 import type { ProspectDecisionProposal } from "@outbound/domain/campaigns/prospect-decision";
 import type { SocialProspectSignalAssessment } from "@outbound/domain/crm/social-prospect-signal";
+import type { AiProviderId } from "@outbound/application/ai/model-gateway";
 
 export const PROSPECT_DECISION_JOB_TYPE = "prospect.decision.execute";
 
@@ -29,6 +30,7 @@ export interface ProspectDecisionState {
     readonly dueAt: Date;
   } | null;
   readonly latestMessages: readonly {
+    readonly id?: string;
     readonly direction: string;
     readonly body: string;
     readonly occurredAt: Date;
@@ -36,6 +38,17 @@ export interface ProspectDecisionState {
   readonly sentTouches: number;
   readonly suppressed: boolean;
   readonly socialSignalAssessment: SocialProspectSignalAssessment;
+  /** Server-compiled Prospect 360 scoring context; prospect content remains untrusted data. */
+  readonly prospectContext?: Readonly<Record<string, unknown>>;
+  /** Durable audit reference. Never used as model authority. */
+  readonly prospectContextReference?: Readonly<{
+    receiptId: string;
+    snapshotId: string | null;
+    snapshotVersion: number | null;
+    watermark: number;
+    privacyEpoch: number;
+  }>;
+  readonly prospectContextAllowedProviders?: readonly AiProviderId[];
 }
 
 export interface ProspectDecisionAgent {

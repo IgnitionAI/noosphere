@@ -26,6 +26,10 @@ test("the OpenAPI contract declares every F-009 HTTP route", () => {
       "/api/v1/product-research-runs/{runId}/findings/{findingId}",
       "/api/v1/product-research-runs/{runId}/icp-proposals/{proposalId}",
       "/api/v1/product-research-runs/{runId}/report",
+      "/api/v1/prospects/{contactId}/memory-status",
+      "/api/v1/prospects/{contactId}/memory-view",
+      "/api/v1/prospects/{contactId}/memory/actions/refresh",
+      "/api/v1/workspace/prospect-memory-settings",
       "/api/v1/research-documents",
       "/api/v1/research-documents/upload-intents",
       "/api/v1/research-documents/{documentId}",
@@ -79,6 +83,7 @@ test("the OpenAPI contract declares every F-009 HTTP route", () => {
       "/api/v1/ai-policies/{policyId}",
       "/api/v1/ai-policies/{policyId}/actions/publish",
       "/api/v1/connected-accounts",
+      "/api/v1/channel-connections/{channel}",
       "/api/v1/connected-accounts/{connectedAccountId}",
       "/api/v1/connected-accounts/{connectedAccountId}/actions/check",
       "/api/v1/connected-accounts/{connectedAccountId}/actions/reconnect",
@@ -143,6 +148,7 @@ test("the OpenAPI contract declares every F-009 HTTP route", () => {
       "/api/v1/content/publications",
       "/api/v1/content/publications/{publicationId}",
       "/api/v1/conversations",
+      "/api/v1/conversations/{conversationId}/messages",
       "/api/v1/opportunities",
       "/api/v1/opportunities/{opportunityId}",
       "/api/v1/opportunities/{opportunityId}/actions/change-stage",
@@ -202,6 +208,25 @@ test("the OpenAPI contract declares every F-009 HTTP route", () => {
   );
   expect(document.paths["/api/v1/product-research-runs"]?.get).toBeDefined();
   expect(document.paths["/api/v1/product-research-runs"]?.post).toBeDefined();
+  expect(document.paths["/api/v1/conversations/{conversationId}/messages"]?.post).toBeDefined();
+});
+
+test("the OpenAPI contract exposes the effect-free Setter dry-run explicitly", () => {
+  const document = JSON.parse(
+    readFileSync(
+      resolve(import.meta.dir, "../../packages/contracts/openapi/product-research-v1.json"),
+      "utf8",
+    ),
+  ) as {
+    components: { schemas: Record<string, { additionalProperties?: boolean; properties?: Record<string, unknown> }> };
+  };
+  const request = document.components.schemas.ConversationCommandRequest;
+  const response = document.components.schemas.ConversationCommand;
+  expect(request?.additionalProperties).toBe(false);
+  expect(request?.properties).toHaveProperty("executionMode");
+  expect(response?.additionalProperties).toBe(false);
+  expect(response?.properties).toHaveProperty("executionMode");
+  expect(response?.properties).toHaveProperty("generationMetadata");
 });
 
 test("the OpenAPI contract documents the V3 workflow", () => {

@@ -175,7 +175,10 @@ export interface ConversationWorkspaceDetail extends ConversationWorkspaceView {
   readonly latestCommand: {
     readonly id: string;
     readonly mode: "manual" | "setter";
+    readonly executionMode: "live" | "dry_run";
     readonly status: string;
+    readonly generatedBody: string | null;
+    readonly generationMetadata: Readonly<Record<string, unknown>>;
     readonly errorMessage: string | null;
     readonly createdAt: Date;
   } | null;

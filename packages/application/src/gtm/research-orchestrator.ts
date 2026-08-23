@@ -174,19 +174,22 @@ export class ResearchOrchestrator {
       return { outcome: "completed", stage: "market_investigation", nextStage: "market_investigation" };
     } catch (error) {
       let leaseAlreadyReleased = false;
-      if (error instanceof RetryableAgentError) {
+      const stageBudgetExhausted =
+        error instanceof TerminalAgentError && isStageBudgetExhaustion(error.code);
+      if (error instanceof RetryableAgentError || stageBudgetExhausted) {
+        const retryCode = error.code;
         const retryOutcome = await this.queue.retry({
           jobId: job.id,
           workerId: job.lockedBy,
           availableAt: new Date(this.clock.now().getTime() + 5_000),
-          errorCode: error.code,
+          errorCode: retryCode,
           errorMessage: error.message,
         });
         leaseAlreadyReleased = true;
         checkpoint = {
           ...checkpoint,
           status: "failed",
-          errorCode: error.code,
+          errorCode: retryCode,
           completedAt: this.clock.now(),
         };
         if (retryOutcome === "scheduled") {
@@ -497,23 +500,26 @@ export class ResearchOrchestrator {
       await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
       return { outcome: "completed", stage: payload.stage, nextStage };
     } catch (error) {
-      if (error instanceof RetryableAgentError) {
+      const stageBudgetExhausted =
+        error instanceof TerminalAgentError && isStageBudgetExhaustion(error.code);
+      if (error instanceof RetryableAgentError || stageBudgetExhausted) {
+        const retryCode = error.code;
         const delayMs = Math.min(15 * 60_000, 2 ** Math.max(0, job.attempts - 1) * 5_000);
         const failedCheckpoint = {
           ...checkpoint,
           status: "failed" as const,
-          errorCode: error.code,
+          errorCode: retryCode,
           completedAt: this.clock.now(),
         };
         const retryOutcome = await this.queue.retry({
           jobId: job.id,
           workerId: job.lockedBy,
           availableAt: new Date(this.clock.now().getTime() + delayMs),
-          errorCode: error.code,
+          errorCode: retryCode,
           errorMessage: error.message,
         });
         if (retryOutcome === "dead_lettered") {
-          run.failStage(payload.stage, error.code, this.clock.now());
+          run.failStage(payload.stage, retryCode, this.clock.now());
           await this.repository.commitStageFailed(run, failedCheckpoint, run.pullEvents());
           return { outcome: "failed", stage: payload.stage };
         }
@@ -532,7 +538,7 @@ export class ResearchOrchestrator {
           error: error instanceof Error ? error.message : String(error),
         }),
       );
-      if (run.snapshot.brief.researchVersion === 3 && isBudgetExhaustion(code)) {
+      if (run.snapshot.brief.researchVersion === 3 && isGlobalBudgetExhaustion(code)) {
         run.finishPartial(payload.stage, code, this.clock.now());
       } else if (run.snapshot.brief.researchVersion === 3) {
         run.interrupt(payload.stage, code, this.clock.now());
@@ -547,7 +553,7 @@ export class ResearchOrchestrator {
       await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
       return {
         outcome:
-          run.snapshot.brief.researchVersion === 3 && isBudgetExhaustion(code)
+          run.snapshot.brief.researchVersion === 3 && isGlobalBudgetExhaustion(code)
             ? "partial"
             : "failed",
         stage: payload.stage,
@@ -644,7 +650,15 @@ function aiConfigurationReferences(parameters: Readonly<Record<string, unknown>>
 }
 
 export function isBudgetExhaustion(code: string): boolean {
-  return code === "RESEARCH_BUDGET_EXHAUSTED" || code === "RESEARCH_GLOBAL_DEADLINE_EXHAUSTED";
+  return isStageBudgetExhaustion(code) || isGlobalBudgetExhaustion(code);
+}
+
+export function isStageBudgetExhaustion(code: string): boolean {
+  return code === "RESEARCH_BUDGET_EXHAUSTED";
+}
+
+export function isGlobalBudgetExhaustion(code: string): boolean {
+  return code === "RESEARCH_GLOBAL_DEADLINE_EXHAUSTED";
 }
 
 function organizationHypotheses(output: unknown): Array<{

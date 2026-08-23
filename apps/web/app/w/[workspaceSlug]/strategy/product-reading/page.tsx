@@ -1,7 +1,8 @@
-import { ArrowRight, Clock3, FileSearch, PauseCircle } from "lucide-react";
+import { ArrowRight, CircleAlert, Clock3, FileSearch, PauseCircle } from "lucide-react";
 import Link from "next/link";
 import { listResearchRuns, type ResearchRunSummary } from "@/lib/api";
 import { BriefForm } from "./brief-form";
+import { loadProductReadingPageState } from "./product-reading-state";
 
 export const metadata = { title: "Trouver mon ICP" };
 
@@ -11,7 +12,9 @@ export default async function ProductReadingPage({
   params: Promise<{ workspaceSlug: string }>;
 }) {
   const { workspaceSlug } = await params;
-  const runs = await listResearchRuns(workspaceSlug);
+  const { runs, historyUnavailable } = await loadProductReadingPageState(
+    () => listResearchRuns(workspaceSlug),
+  );
   const latestRun = runs[0] ?? null;
   const recoverableRun = runs.find((run) =>
     ["draft", "queued", "running", "paused", "ready_for_review", "completed", "partial", "interrupted"].includes(run.status),
@@ -47,6 +50,17 @@ export default async function ProductReadingPage({
           prospecte automatiquement jusqu’aux rendez-vous.
         </p>
       </header>
+      {historyUnavailable ? (
+        <section className="mb-6 flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 p-4 text-amber-950" role="status">
+          <CircleAlert className="mt-0.5 shrink-0" size={18} />
+          <div>
+            <h2 className="text-sm font-semibold">L’historique ICP est temporairement indisponible</h2>
+            <p className="mt-1 text-xs leading-5 text-amber-900">
+              Le formulaire reste utilisable. Rechargez plus tard pour retrouver les analyses précédentes.
+            </p>
+          </div>
+        </section>
+      ) : null}
       {recoverableRun ? (
         <RecoverableRun workspaceSlug={workspaceSlug} run={recoverableRun} />
       ) : null}

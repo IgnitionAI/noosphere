@@ -79,7 +79,7 @@ services:
       CRAWLER_SERVICE_URL: http://crawler:8000
       DOCUMENT_EXTRACTOR: ${DOCUMENT_EXTRACTOR:-lightweight}
       CODEX_SERVICE_HOME: /var/lib/noosphere-codex
-      WORKER_EXCLUDED_JOB_TYPES: prospect.decision.execute
+      WORKER_EXCLUDED_JOB_TYPES: prospect.decision.execute,conversation.command.execute,prospect.memory.refresh,prospect.memory.backfill
     volumes:
       - codex-service-home:/var/lib/noosphere-codex
     depends_on:
@@ -121,6 +121,70 @@ services:
     restart: unless-stopped
     networks: [outbound-private]
 
+  setter-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    command: ["bun", "dist/backend/worker/src/index.js"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@database:5432/${POSTGRES_DB:-ignition_outbound}
+      S3_ENDPOINT: http://minio:9000
+      CRAWLER_SERVICE_URL: http://crawler:8000
+      DOCUMENT_EXTRACTOR: ${DOCUMENT_EXTRACTOR:-lightweight}
+      CODEX_SERVICE_HOME: /var/lib/noosphere-codex
+      WORKER_ID: setter-command-worker
+      WORKER_JOB_TYPES: conversation.command.execute
+      JOB_BATCH_SIZE: "2"
+      JOB_POLL_INTERVAL_MS: "250"
+      WORKER_DISABLE_MAINTENANCE: "true"
+      WORKER_DISABLE_OUTBOX: "true"
+      WORKER_DISABLE_OUTREACH_SCHEDULER: "true"
+    volumes:
+      - codex-service-home:/var/lib/noosphere-codex
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+      crawler:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [outbound-private]
+
+  memory-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    command: ["bun", "dist/backend/worker/src/index.js"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@database:5432/${POSTGRES_DB:-ignition_outbound}
+      S3_ENDPOINT: http://minio:9000
+      CRAWLER_SERVICE_URL: http://crawler:8000
+      DOCUMENT_EXTRACTOR: ${DOCUMENT_EXTRACTOR:-lightweight}
+      CODEX_SERVICE_HOME: /var/lib/noosphere-codex
+      WORKER_ID: prospect-memory-worker
+      WORKER_JOB_TYPES: prospect.memory.refresh,prospect.memory.backfill
+      JOB_BATCH_SIZE: "2"
+      JOB_POLL_INTERVAL_MS: "500"
+      JOB_LEASE_MS: "120000"
+      JOB_HEARTBEAT_MS: "30000"
+      WORKER_DISABLE_MAINTENANCE: "true"
+      WORKER_DISABLE_OUTBOX: "true"
+      WORKER_DISABLE_OUTREACH_SCHEDULER: "true"
+    volumes:
+      - codex-service-home:/var/lib/noosphere-codex
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+      crawler:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [outbound-private]
+
   proxy:
     image: caddy:2.10.0-alpine
     environment:
@@ -147,11 +211,12 @@ services:
     environment:
       PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
     entrypoint: ["/bin/sh", "-ec"]
-    command: >-
-      mkdir -p /backups/postgres
-      && pg_dump --host database --username ${POSTGRES_USER:-postgres}
-      --dbname ${POSTGRES_DB:-ignition_outbound} --format custom --no-owner --no-acl
-      > /backups/postgres/ignition_outbound_$$(date -u +%Y%m%dT%H%M%SZ).dump
+    command:
+      - |
+        mkdir -p /backups/postgres
+        pg_dump --host database --username ${POSTGRES_USER:-postgres} \
+          --dbname ${POSTGRES_DB:-ignition_outbound} --format custom --no-owner --no-acl \
+          > /backups/postgres/ignition_outbound_$$(date -u +%Y%m%dT%H%M%SZ).dump
     volumes:
       - ${BACKUP_DIR:?BACKUP_DIR is required}:/backups
     depends_on:
@@ -164,10 +229,11 @@ services:
     profiles: [backup]
     env_file: .env
     entrypoint: ["/bin/sh", "-ec"]
-    command: >-
-      mkdir -p /backups/minio
-      && mc alias set local http://minio:9000 "$${S3_ACCESS_KEY_ID}" "$${S3_SECRET_ACCESS_KEY}"
-      && mc mirror --overwrite local/"$${S3_BUCKET}" /backups/minio/latest
+    command:
+      - |
+        mkdir -p /backups/minio
+        mc alias set local http://minio:9000 "$${S3_ACCESS_KEY_ID}" "$${S3_SECRET_ACCESS_KEY}"
+        mc mirror --overwrite local/"$${S3_BUCKET}" /backups/minio/latest
     volumes:
       - ${BACKUP_DIR:?BACKUP_DIR is required}:/backups
     depends_on:

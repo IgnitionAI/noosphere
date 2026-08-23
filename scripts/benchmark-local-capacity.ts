@@ -20,6 +20,8 @@ type ScenarioResult = {
 
 type CrawlerScenarioResult = {
   readonly name: "crawler_four_public_domains";
+  readonly skipped: boolean;
+  readonly skipReason: string | null;
   readonly targets: readonly string[];
   readonly durationMs: number;
   readonly completed: number;
@@ -34,6 +36,12 @@ type CrawlerStatus = {
   readonly result?: { readonly pagesCount?: number } | null;
 };
 
+type MemoryBenchmarkTarget = {
+  readonly delta: string;
+  readonly contactId: string;
+  readonly observedPendingEventCount: number;
+};
+
 const apiUrl = new URL(process.env.BENCHMARK_API_URL ?? "http://127.0.0.1:63001");
 const webUrl = new URL(process.env.BENCHMARK_WEB_URL ?? "http://127.0.0.1:63000");
 const crawlerUrl = new URL(process.env.BENCHMARK_CRAWLER_URL ?? "http://127.0.0.1:63080");
@@ -41,16 +49,21 @@ const requestCount = positiveInteger("BENCHMARK_REQUESTS", 1_000);
 const ssrRequestCount = positiveInteger("BENCHMARK_SSR_REQUESTS", 200);
 const concurrency = positiveInteger("BENCHMARK_CONCURRENCY", 20);
 const ssrConcurrency = positiveInteger("BENCHMARK_SSR_CONCURRENCY", 5);
+const memoryRequestCount = positiveInteger("BENCHMARK_MEMORY_REQUESTS", 1_000);
+const memoryConcurrency = positiveInteger("BENCHMARK_MEMORY_CONCURRENCY", 100);
+const resourceSamplingEnabled = process.env.BENCHMARK_DISABLE_DOCKER_SAMPLING !== "true";
+const continuousResourceSampling = process.env.BENCHMARK_CONTINUOUS_RESOURCE_SAMPLING !== "false";
 const outputPath = process.env.BENCHMARK_OUTPUT;
 const email = required("BOOTSTRAP_OWNER_EMAIL");
 const password = required("BOOTSTRAP_OWNER_PASSWORD");
-const crawlerApiKey = required("CRAWLER_API_KEY");
+const skipCrawler = process.env.BENCHMARK_SKIP_CRAWLER === "true";
+const crawlerApiKey = skipCrawler ? null : required("CRAWLER_API_KEY");
 const containerPrefix = process.env.BENCHMARK_CONTAINER_PREFIX ?? "ignition-outbound";
-const containerServices = ["api", "web", "worker", "decision-worker", "database", "minio", "searxng", "crawler"] as const;
+const containerServices = ["api", "web", "worker", "decision-worker", "setter-worker", "memory-worker", "database", "minio", "searxng", "crawler"] as const;
 
 await waitFor(new URL("/health/ready", apiUrl), 120_000);
 await waitFor(new URL("/login", webUrl), 120_000);
-await waitFor(new URL("/health", crawlerUrl), 120_000);
+if (!skipCrawler) await waitFor(new URL("/health", crawlerUrl), 120_000);
 
 const signIn = await fetch(new URL("/api/auth/sign-in/email", webUrl), {
   method: "POST",
@@ -70,6 +83,11 @@ if (!workspaceSlug) throw new Error("No benchmark workspace is available");
 const apiHeaders = { cookie, "x-workspace-slug": workspaceSlug };
 const pageHeaders = { cookie };
 const scenarios: ScenarioResult[] = [];
+const prospectResponse = await fetch(new URL("/api/v1/prospects?limit=1", apiUrl), { headers: apiHeaders });
+const prospectBody = prospectResponse.ok
+  ? await prospectResponse.json() as { data?: Array<{ id: string }> }
+  : { data: [] };
+const fallbackMemoryContactId = prospectBody.data?.[0]?.id;
 
 scenarios.push(await runScenario({
   name: "health_ready",
@@ -78,7 +96,7 @@ scenarios.push(await runScenario({
   concurrency,
   headers: {},
 }));
-const crawler = await runCrawlerScenario();
+const crawler = skipCrawler ? skippedCrawlerScenario() : await runCrawlerScenario();
 scenarios.push(await runScenario({
   name: "operational_read_mix",
   target: new URL("/api/v1/workspace/operational-summary", apiUrl),
@@ -97,6 +115,48 @@ scenarios.push(await runScenario({
     "/api/v1/content/publications?limit=20",
   ],
 }));
+const configuredMemoryTargets = [
+  { delta: "0", contactId: process.env.BENCHMARK_MEMORY_CONTACT_0_ID },
+  { delta: "20", contactId: process.env.BENCHMARK_MEMORY_CONTACT_20_ID },
+  { delta: "200", contactId: process.env.BENCHMARK_MEMORY_CONTACT_200_ID },
+].filter((target): target is { delta: string; contactId: string } => Boolean(target.contactId));
+const memoryTargets: MemoryBenchmarkTarget[] = [];
+let memorySkippedReason: string | null = null;
+for (const target of configuredMemoryTargets) {
+  const status = await readMemoryStatus(target.contactId);
+  if (!status) throw new Error(`Prospect memory status is unavailable for ${target.contactId}`);
+  const expected = Number(target.delta);
+  if (!status.enabled) throw new Error(`Prospect memory is disabled for benchmark contact delta ${target.delta}`);
+  if (status.pendingEventCount !== expected) {
+    throw new Error(
+      `Benchmark contact ${target.contactId} has delta ${status.pendingEventCount}; expected ${expected}`,
+    );
+  }
+  memoryTargets.push({ ...target, observedPendingEventCount: status.pendingEventCount });
+}
+if (memoryTargets.length === 0 && fallbackMemoryContactId) {
+  const status = await readMemoryStatus(fallbackMemoryContactId, false);
+  if (status?.enabled) {
+    memoryTargets.push({
+      delta: "available",
+      contactId: fallbackMemoryContactId,
+      observedPendingEventCount: status.pendingEventCount,
+    });
+  } else {
+    memorySkippedReason = "No enabled Prospect 360 memory contact was configured for this benchmark.";
+  }
+} else if (memoryTargets.length === 0) {
+  memorySkippedReason = "No prospect is available for the Prospect 360 memory benchmark.";
+}
+for (const target of memoryTargets) {
+  scenarios.push(await runScenario({
+    name: `prospect_memory_view_delta_${target.delta}`,
+    target: new URL(`/api/v1/prospects/${target.contactId}/memory-view?capability=call_preparation`, apiUrl),
+    requests: memoryRequestCount,
+    concurrency: memoryConcurrency,
+    headers: apiHeaders,
+  }));
+}
 scenarios.push(await runScenario({
   name: "today_ssr",
   target: new URL(`/w/${workspaceSlug}`, webUrl),
@@ -128,6 +188,15 @@ const report = {
     concurrency,
     ssrRequestCount,
     ssrConcurrency,
+    memoryRequestCount,
+    memoryConcurrency,
+    resourceSamplingEnabled,
+    continuousResourceSampling,
+    memoryTargets: memoryTargets.map((target) => ({
+      delta: target.delta,
+      observedPendingEventCount: target.observedPendingEventCount,
+    })),
+    memorySkippedReason,
   },
   scenarios,
   crawler,
@@ -139,6 +208,26 @@ if (outputPath) {
   await Bun.write(outputPath, serialized);
 }
 process.stdout.write(serialized);
+
+async function readMemoryStatus(
+  contactId: string,
+  required = true,
+): Promise<{ readonly enabled: boolean; readonly pendingEventCount: number } | null> {
+  const response = await fetch(
+    new URL(`/api/v1/prospects/${contactId}/memory-status`, apiUrl),
+    { headers: apiHeaders },
+  );
+  if (!response.ok) {
+    if (!required) return null;
+    throw new Error(`Prospect memory status failed for ${contactId}: ${response.status}`);
+  }
+  const body = await response.json() as { enabled?: unknown; pendingEventCount?: unknown };
+  if (typeof body.enabled !== "boolean" || !Number.isSafeInteger(body.pendingEventCount)) {
+    if (!required) return null;
+    throw new Error(`Prospect memory status is invalid for ${contactId}`);
+  }
+  return { enabled: body.enabled, pendingEventCount: Number(body.pendingEventCount) };
+}
 
 async function runScenario(input: {
   name: string;
@@ -154,13 +243,16 @@ async function runScenario(input: {
   }
 
   const samples: DockerSample[] = [];
-  let sampling = true;
-  const sampler = (async () => {
-    while (sampling) {
-      samples.push(await sampleDocker());
-      await Bun.sleep(750);
-    }
-  })();
+  if (resourceSamplingEnabled) samples.push(await sampleDocker());
+  let sampling = resourceSamplingEnabled && continuousResourceSampling;
+  const sampler = sampling
+    ? (async () => {
+        while (sampling) {
+          samples.push(await sampleDocker());
+          await Bun.sleep(750);
+        }
+      })()
+    : Promise.resolve();
   const latencies = new Array<number>(input.requests);
   let errors = 0;
   let nextIndex = 0;
@@ -186,7 +278,7 @@ async function runScenario(input: {
   const durationMs = performance.now() - startedAt;
   sampling = false;
   await sampler;
-  samples.push(await sampleDocker());
+  if (resourceSamplingEnabled) samples.push(await sampleDocker());
 
   const sorted = latencies.toSorted((left, right) => left - right);
   return {
@@ -216,13 +308,16 @@ async function runCrawlerScenario(): Promise<CrawlerScenarioResult> {
   ] as const;
   const errors: string[] = [];
   const samples: DockerSample[] = [];
-  let sampling = true;
-  const sampler = (async () => {
-    while (sampling) {
-      samples.push(await sampleDocker());
-      await Bun.sleep(750);
-    }
-  })();
+  if (resourceSamplingEnabled) samples.push(await sampleDocker());
+  let sampling = resourceSamplingEnabled && continuousResourceSampling;
+  const sampler = sampling
+    ? (async () => {
+        while (sampling) {
+          samples.push(await sampleDocker());
+          await Bun.sleep(750);
+        }
+      })()
+    : Promise.resolve();
   const startedAt = performance.now();
   let finalStatuses: CrawlerStatus[] = [];
   let durationMs = 0;
@@ -230,7 +325,7 @@ async function runCrawlerScenario(): Promise<CrawlerScenarioResult> {
     const jobs = await Promise.all(targets.map(async (target) => {
       const response = await fetch(new URL("/crawl/pages", crawlerUrl), {
         method: "POST",
-        headers: { "content-type": "application/json", "x-api-key": crawlerApiKey },
+        headers: { "content-type": "application/json", "x-api-key": crawlerApiKey! },
         body: JSON.stringify({
           urls: [target],
           includeImages: false,
@@ -248,7 +343,7 @@ async function runCrawlerScenario(): Promise<CrawlerScenarioResult> {
       const deadline = Date.now() + 120_000;
       while (Date.now() < deadline) {
         const response = await fetch(new URL(`/crawl/${id}`, crawlerUrl), {
-          headers: { "x-api-key": crawlerApiKey },
+          headers: { "x-api-key": crawlerApiKey! },
         });
         if (!response.ok) throw new Error(`Crawler status failed: ${response.status}`);
         const status = await response.json() as CrawlerStatus;
@@ -265,10 +360,12 @@ async function runCrawlerScenario(): Promise<CrawlerScenarioResult> {
   } finally {
     sampling = false;
     await sampler;
-    samples.push(await sampleDocker());
+    if (resourceSamplingEnabled) samples.push(await sampleDocker());
   }
   return {
     name: "crawler_four_public_domains",
+    skipped: false,
+    skipReason: null,
     targets,
     durationMs: rounded(durationMs),
     completed: finalStatuses.filter((status) => status.status === "completed").length,
@@ -278,13 +375,41 @@ async function runCrawlerScenario(): Promise<CrawlerScenarioResult> {
   };
 }
 
+function skippedCrawlerScenario(): CrawlerScenarioResult {
+  return {
+    name: "crawler_four_public_domains",
+    skipped: true,
+    skipReason: "BENCHMARK_SKIP_CRAWLER=true; use a separate crawler evidence run.",
+    targets: [],
+    durationMs: 0,
+    completed: 0,
+    errors: [],
+    pagesProduced: 0,
+    resourcePeaks: {},
+  };
+}
+
 function resolveTarget(input: { target: URL; paths?: readonly string[] }, index: number): URL {
   return input.paths?.length ? new URL(input.paths[index % input.paths.length]!, apiUrl) : input.target;
 }
 
 async function sampleDocker(): Promise<DockerSample> {
   const services: Record<string, { cpuPercent: number; memoryMiB: number }> = {};
-  const names = containerServices.map((service) => `${containerPrefix}-${service}-1`);
+  const expectedNames = new Set(containerServices.map((service) => `${containerPrefix}-${service}-1`));
+  const listProcess = Bun.spawn(
+    ["docker", "ps", "--format", "{{.Names}}"],
+    { stdout: "pipe", stderr: "ignore" },
+  );
+  const [listExitCode, listOutput] = await Promise.all([
+    listProcess.exited,
+    new Response(listProcess.stdout).text(),
+  ]);
+  if (listExitCode !== 0) return { at: new Date().toISOString(), services };
+  const names = listOutput
+    .trim()
+    .split("\n")
+    .filter((name) => expectedNames.has(name));
+  if (names.length === 0) return { at: new Date().toISOString(), services };
   const process = Bun.spawn(
     ["docker", "stats", "--no-stream", "--format", "{{.Name}}|{{.CPUPerc}}|{{.MemUsage}}", ...names],
     { stdout: "pipe", stderr: "ignore" },

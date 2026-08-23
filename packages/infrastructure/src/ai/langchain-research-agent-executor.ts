@@ -23,7 +23,11 @@ import {
 import type { WorkspaceAiModelPolicyReader } from "@outbound/application/workspaces/workspace-ai-settings";
 import type { WorkspaceAiModelPolicy } from "@outbound/application/workspaces/workspace-ai-settings";
 import { routesForCapability } from "@outbound/application/workspaces/workspace-ai-settings";
-import { ModelGatewayError, type ModelRoute } from "@outbound/application/ai/model-gateway";
+import {
+  ModelGatewayError,
+  ModelGatewayOutputError,
+  type ModelRoute,
+} from "@outbound/application/ai/model-gateway";
 import type { ActiveAiConfigurationReader } from "@outbound/application/ai/active-ai-configuration";
 import { CrawlerClient } from "./crawler-client";
 import {
@@ -57,11 +61,24 @@ const principalStages = new Set<ResearchStage>([
   "adversarial_review",
 ]);
 
+const routedToolArgumentValueSchema = z.union([
+  z.string(),
+  z.number(),
+  z.boolean(),
+  z.array(z.string()),
+  z.array(z.number()),
+  z.null(),
+]);
+
 const routedResearchPlanSchema = z.object({
   approach: z.string().trim().min(1).max(2_000),
   calls: z.array(z.object({
     tool: z.string().trim().min(1).max(120),
-    arguments: z.record(z.string(), z.unknown()),
+    // Codex structured outputs reject JSON Schema `propertyNames` and require
+    // a typed additionalProperties schema. Tool-specific schemas still apply
+    // before execution, so this envelope covers the scalar/list arguments
+    // exposed by Noosphere's bounded research tools.
+    arguments: z.object({}).catchall(routedToolArgumentValueSchema),
     purpose: z.string().trim().min(1).max(500),
   })).max(12),
 });
@@ -82,6 +99,7 @@ export interface LangChainResearchAgentExecutorOptions {
   readonly baseUrl?: string;
   readonly researchModels: readonly string[];
   readonly synthesisModels: readonly string[];
+  readonly defaultRoutes?: readonly ModelRoute[];
   readonly crawlerServiceUrl: string;
   readonly crawlerApiKey: string;
   readonly documents?: InternalDocumentSearch;
@@ -102,6 +120,7 @@ export interface ResearchModelConfiguration {
   readonly baseUrl?: string;
   readonly researchModels: readonly string[];
   readonly synthesisModels: readonly string[];
+  readonly defaultRoutes: readonly ModelRoute[];
 }
 
 export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
@@ -234,15 +253,19 @@ export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
         evidenceSystemPrompt(stageInstructions[stage]) +
         (activeConfiguration ? `\n\nApproved workspace guidance (subordinate to every evidence, safety and non-action rule above):\n${activeConfiguration.promptContent}` : "") +
         (promptJsonOutput ? jsonOutputInstructions(schema) : "");
-      const legacyRoutes: readonly ModelRoute[] = modelCandidates.map((model) => ({
-        provider: this.options.provider === "kimi-code" ? "kimi-code" : "openai-api",
-        model,
+      const legacyRoutes = modelRoutesForCandidates(
+        this.options.provider === "kimi-code" ? "kimi-code" : "openai-api",
+        modelCandidates,
         reasoningEffort,
-      }));
+        this.options.defaultRoutes,
+      );
       const configuredRoutes = routesForCapability(workspacePolicy, "icp_research", legacyRoutes);
       if (
         this.options.routedModel
-        && configuredRoutes.some((route) => route.provider !== "kimi-code")
+        && (
+          input.brief.researchVersion === 3
+          || configuredRoutes.some((route) => route.provider !== "kimi-code")
+        )
       ) {
         let routed = await this.#invokeRoutedResearch(
           stage,
@@ -253,6 +276,7 @@ export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
           legacyRoutes,
           budget,
           controller.signal,
+          structuredGraceMs,
         );
         let output = parseAgentOutput(stage, sanitizeRawOutput(stage, routed.output));
         if (stage === "competitor_discovery") {
@@ -310,6 +334,7 @@ export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
             legacyRoutes,
             budget,
             controller.signal,
+            structuredGraceMs,
           );
           const publicOutput = parseAgentOutput(
             "product_truth",
@@ -529,9 +554,21 @@ export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
       ) {
         throw error;
       }
+      if (controller.signal.aborted) {
+        throw new TerminalAgentError(
+          "RESEARCH_BUDGET_EXHAUSTED",
+          "Research stage time budget exhausted while waiting for the model",
+        );
+      }
       if (error instanceof ModelGatewayError) {
         if (error.code === "AI_PROVIDER_QUOTA_EXHAUSTED") {
           throw new TerminalAgentError("MODEL_PROVIDER_QUOTA_EXHAUSTED", error.message);
+        }
+        if (error.code === "AI_PROVIDER_OUTPUT_INVALID") {
+          const detail = error instanceof ModelGatewayOutputError
+            ? error.validationMessage.slice(0, 4_000)
+            : error.message;
+          throw new RetryableAgentError("MODEL_OUTPUT_INVALID", detail);
         }
         if (["AI_PROVIDER_TIMEOUT", "AI_PROVIDER_CATALOG_UNAVAILABLE", "AI_PROVIDER_INVOCATION_FAILED"].includes(error.code)) {
           throw new RetryableAgentError("MODEL_PROVIDER_UNAVAILABLE", error.message);
@@ -568,6 +605,7 @@ export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
     fallbackRoutes: readonly ModelRoute[],
     budget: ResearchBudget,
     signal: AbortSignal,
+    structuredGraceMs: number,
   ) {
     if (!this.options.routedModel) throw new Error("ROUTED_RESEARCH_MODEL_REQUIRED");
     const task = buildTask(stage, input);
@@ -578,15 +616,22 @@ export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
     let fallbackReason: string | null = null;
     let finalMetadata = null as null | Awaited<ReturnType<WorkspaceStructuredModel["invoke"]>>["metadata"];
     const maxRounds = tools.length === 0 ? 0 : 2;
+    const synthesisReserveMs = input.brief.researchVersion === 3
+      ? v3SynthesisReserveMs(stage, budget.limits.durationMs)
+      : 0;
 
-    for (let round = 1; round <= maxRounds; round += 1) {
+    collection: for (let round = 1; round <= maxRounds; round += 1) {
       const remainingMs = budget.remainingDurationMs();
       if (remainingMs === 0) throw new ResearchBudgetExceededError("durationMs");
+      if (remainingMs <= synthesisReserveMs) break;
       const plan = await this.options.routedModel.invoke({
         workspaceId: input.workspaceId,
         capability: "icp_research",
-        requestKey: `${input.runId}:${stage}:tool-plan:${round}`,
-        fallbackRoutes,
+        requestKey: `${input.runId}:${stage}:${input.researchStageRunId}:tool-plan:${round}`,
+        fallbackRoutes: fallbackRoutes.map((route) => ({
+          ...route,
+          reasoningEffort: "low" as const,
+        })),
         systemPrompt: [
           "You plan a bounded read-only evidence collection round for one ICP research stage.",
           "Choose only tools in the supplied catalog and conform exactly to each input schema.",
@@ -605,12 +650,13 @@ export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
         outputDescription: "Submit the next bounded set of read-only research tool calls.",
         schema: routedResearchPlanSchema,
         signal,
-        timeoutMs: Math.min(5 * 60_000, remainingMs),
+        timeoutMs: Math.min(5 * 60_000, remainingMs - synthesisReserveMs),
       });
       providerAttempt = plan.providerAttempt;
       fallbackReason = plan.fallbackReason;
       finalMetadata = plan.metadata;
-      for (const call of plan.output.calls) {
+      for (const call of plan.output.calls.slice(0, v3ToolCallsPerRound(stage, round))) {
+        if (budget.remainingDurationMs() <= synthesisReserveMs) break collection;
         const candidate = tools.find((tool) => tool.name === call.tool);
         if (!candidate) {
           collected.push({
@@ -652,11 +698,17 @@ export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
     }
 
     const remainingMs = budget.remainingDurationMs();
-    if (remainingMs === 0) throw new ResearchBudgetExceededError("durationMs");
-    const synthesis = await this.options.routedModel.invoke({
+    const synthesisWindowMs = remainingMs + structuredGraceMs;
+    if (synthesisWindowMs === 0) throw new ResearchBudgetExceededError("durationMs");
+    const parseStageOutput = (value: unknown) =>
+      parseAgentOutput(stage, sanitizeRawOutput(stage, value));
+    const collectedToolEvidence = serializeRecoveryContext(
+      collected,
+      v3SynthesisContextCharacters(stage),
+    );
+    const synthesisRequest = {
       workspaceId: input.workspaceId,
-      capability: "icp_research",
-      requestKey: `${input.runId}:${stage}:synthesis`,
+      capability: "icp_research" as const,
       fallbackRoutes,
       systemPrompt: [
         systemPrompt,
@@ -664,17 +716,43 @@ export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
         "Synthesize the required stage output only from the task, previous stage outputs and collected tool evidence below.",
         "Never claim that an unavailable or failed tool call succeeded. Unsupported statements must be omitted or explicitly marked as hypotheses where the contract permits.",
       ].join("\n\n"),
-      payload: {
-        stage,
-        task,
-        collectedToolEvidence: serializeRecoveryContext(collected, 160_000),
-      },
+      payload: { stage, task, collectedToolEvidence },
       outputName: `submit_${stage}`,
       outputDescription: `Submit the evidence-grounded structured output for ${stage}.`,
       schema: schema as z.ZodType<unknown>,
+      parse: parseStageOutput,
       signal,
-      timeoutMs: Math.min(8 * 60_000, remainingMs),
-    });
+      timeoutMs: Math.min(8 * 60_000, synthesisWindowMs),
+    };
+    let synthesis;
+    try {
+      synthesis = await this.options.routedModel.invoke({
+        ...synthesisRequest,
+        requestKey: `${input.runId}:${stage}:${input.researchStageRunId}:synthesis`,
+      });
+    } catch (error) {
+      if (!(error instanceof ModelGatewayOutputError)) throw error;
+      const repairWindowMs = budget.remainingDurationMs() + structuredGraceMs;
+      if (repairWindowMs <= 0) throw error;
+      synthesis = await this.options.routedModel.invoke({
+        ...synthesisRequest,
+        requestKey: `${input.runId}:${stage}:${input.researchStageRunId}:structured-repair`,
+        systemPrompt: [
+          systemPrompt,
+          "Repair the supplied draft so it satisfies the output contract exactly.",
+          "Preserve supported facts and citations, remove invalid or unsupported fields, and never invent evidence.",
+          "Return only the corrected structured output through the required tool.",
+        ].join("\n\n"),
+        payload: {
+          stage,
+          task,
+          invalidDraft: serializeRecoveryContext(error.rawOutput, 60_000),
+          validationError: error.validationMessage.slice(0, 8_000),
+          collectedToolEvidence,
+        },
+        timeoutMs: Math.min(4 * 60_000, repairWindowMs),
+      });
+    }
     return {
       ...synthesis,
       providerAttempt: synthesis.providerAttempt ?? providerAttempt,
@@ -1116,15 +1194,7 @@ export function createLangChainResearchAgentExecutorFromEnvironment(
   activeConfigurationReader?: ActiveAiConfigurationReader,
   routedModel?: WorkspaceStructuredModel,
 ): LangChainResearchAgentExecutor {
-  const model = !process.env.KIMI_CODE_API_KEY && process.env.CODEX_SERVICE_HOME
-    ? {
-        provider: "kimi-code" as const,
-        apiKey: "unused-provider-neutral-runtime",
-        baseUrl: process.env.KIMI_CODE_BASE_URL?.trim() || "https://api.kimi.com/coding/v1",
-        researchModels: [process.env.CODEX_DEFAULT_MODEL?.trim() || "gpt-5.6-luna"],
-        synthesisModels: [process.env.CODEX_DEFAULT_MODEL?.trim() || "gpt-5.6-luna"],
-      }
-    : resolveResearchModelConfigurationFromEnvironment(process.env);
+  const model = resolveResearchModelConfigurationFromEnvironment(process.env);
   return new LangChainResearchAgentExecutor({
     ...model,
     crawlerServiceUrl: requiredEnvironment("CRAWLER_SERVICE_URL"),
@@ -1170,6 +1240,24 @@ export function reasoningEffortForStage(
   return modelTierForStage(stage, researchVersion) === "principal" ? "max" : "low";
 }
 
+export function modelRoutesForCandidates(
+  provider: ModelRoute["provider"],
+  models: readonly string[],
+  principalEffort: ModelRoute["reasoningEffort"],
+  defaultRoutes: readonly ModelRoute[] = [],
+): readonly ModelRoute[] {
+  return models.map((model, index) => {
+    const configuredRoute = defaultRoutes.find((route) => route.model === model);
+    return {
+      provider: configuredRoute?.provider ?? provider,
+      model,
+      reasoningEffort: index === 0
+        ? configuredRoute?.reasoningEffort ?? principalEffort
+        : "low",
+    };
+  });
+}
+
 export function resolveResearchModelConfigurationFromEnvironment(
   environment: Readonly<Record<string, string | undefined>>,
 ): ResearchModelConfiguration {
@@ -1186,11 +1274,12 @@ export function resolveResearchModelConfigurationFromEnvironment(
       baseUrl: environment.KIMI_CODE_BASE_URL?.trim() || "https://api.kimi.com/coding/v1",
       researchModels: policy.researchModels,
       synthesisModels: policy.synthesisModels,
+      defaultRoutes: policy.defaultRoutes ?? [],
     };
   }
   const provider = requestedProvider as ResearchModelProvider;
   if (provider !== "kimi-code" && provider !== "openai") {
-    throw new Error(`AI_PROVIDER must be one of: kimi-code, openai`);
+    throw new Error(`AI_PROVIDER must be one of: kimi-code, codex-cli, openai`);
   }
   const policy = resolveResearchModelPolicyFromEnvironment(environment);
   if (provider === "kimi-code") {
@@ -1202,6 +1291,7 @@ export function resolveResearchModelConfigurationFromEnvironment(
         "https://api.kimi.com/coding/v1",
       researchModels: policy.researchModels,
       synthesisModels: policy.synthesisModels,
+      defaultRoutes: policy.defaultRoutes ?? [],
     };
   }
   if (provider === "openai") {
@@ -1210,9 +1300,10 @@ export function resolveResearchModelConfigurationFromEnvironment(
       apiKey: requiredEnvironmentFrom(environment, "OPENAI_API_KEY"),
       researchModels: policy.researchModels,
       synthesisModels: policy.synthesisModels,
+      defaultRoutes: policy.defaultRoutes ?? [],
     };
   }
-  throw new Error(`AI_PROVIDER must be one of: kimi-code, openai`);
+  throw new Error(`AI_PROVIDER must be one of: kimi-code, codex-cli, openai`);
 }
 
 export function resolveResearchModelPolicyFromEnvironment(
@@ -1260,10 +1351,37 @@ export function resolveResearchModelPolicyFromEnvironment(
     const reasoningEffort = ["low", "medium", "high", "xhigh", "max", "ultra"].includes(requestedEffort)
       ? requestedEffort as ModelRoute["reasoningEffort"]
       : "xhigh";
+    const codexFallbackModels = modelCandidatesFromEnvironment(
+      environment,
+      "CODEX_FALLBACK_MODELS",
+      "CODEX_FALLBACK_MODEL",
+      ["gpt-5.4-mini"],
+    ).filter((fallbackModel) => fallbackModel !== model);
+    const kimiFallbackModels = environment.KIMI_CODE_API_KEY
+      ? modelCandidatesFromEnvironment(
+          environment,
+          "KIMI_FALLBACK_MODELS",
+          "KIMI_FALLBACK_MODEL",
+          ["kimi-for-coding-highspeed"],
+        )
+      : [];
+    const candidates = [...new Set([model, ...codexFallbackModels, ...kimiFallbackModels])];
     return {
-      researchModels: [model],
-      synthesisModels: [model],
-      defaultRoutes: [{ provider: "codex-cli", model, reasoningEffort }],
+      researchModels: candidates,
+      synthesisModels: candidates,
+      defaultRoutes: [
+        { provider: "codex-cli", model, reasoningEffort },
+        ...codexFallbackModels.map((fallbackModel) => ({
+          provider: "codex-cli" as const,
+          model: fallbackModel,
+          reasoningEffort: "low" as const,
+        })),
+        ...kimiFallbackModels.map((fallbackModel) => ({
+          provider: "kimi-code" as const,
+          model: fallbackModel,
+          reasoningEffort: "low" as const,
+        })),
+      ],
       capabilityRoutes: {},
     };
   }
@@ -1511,6 +1629,33 @@ export function v3StageDurationMs(stage: ResearchStage): number {
     objective_ranking: 90_000,
   };
   return durations[stage] ?? Number.MAX_SAFE_INTEGER;
+}
+
+export function v3SynthesisReserveMs(stage: ResearchStage, durationMs: number): number {
+  void stage;
+  return Math.min(
+    Math.max(0, durationMs - 30_000),
+    Math.max(60_000, Math.floor(durationMs * 0.4)),
+  );
+}
+
+export function v3SynthesisContextCharacters(stage: ResearchStage): number {
+  const limits: Partial<Record<ResearchStage, number>> = {
+    organization_discovery: 60_000,
+    market_investigation: 80_000,
+    adversarial_review: 80_000,
+  };
+  return limits[stage] ?? 100_000;
+}
+
+export function v3ToolCallsPerRound(stage: ResearchStage, round: number): number {
+  const limits: Partial<Record<ResearchStage, readonly [number, number]>> = {
+    product_truth: [2, 1],
+    organization_discovery: [6, 2],
+    market_investigation: [4, 2],
+    adversarial_review: [4, 2],
+  };
+  return limits[stage]?.[round === 1 ? 0 : 1] ?? 4;
 }
 
 export function v3StageToolLimits(

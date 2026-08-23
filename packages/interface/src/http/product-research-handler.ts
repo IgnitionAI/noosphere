@@ -270,6 +270,7 @@ export function createProductResearchHttpHandler(dependencies: ProductResearchHt
         const nextStage = progress.workflowStages.find(
           (stage) => !run.completedStages.includes(stage),
         ) ?? null;
+        const terminalRun = ["partial", "interrupted", "failed"].includes(run.status);
         return json({
           id: run.id,
           status: run.status,
@@ -289,7 +290,9 @@ export function createProductResearchHttpHandler(dependencies: ProductResearchHt
                   ? run.status === "paused"
                     ? "paused"
                     : "running"
-                  : stage === nextStage
+                  : terminalRun && latest?.status === "failed"
+                    ? "failed"
+                  : stage === nextStage && !terminalRun
                     ? "queued"
                     : "pending",
               attempts: attempts.length,

@@ -35,6 +35,28 @@ circuit et ne sont pas retentés sur le même provider.
 Le transport Codex est isolé dans un environnement de service minimal. Il ne
 voit ni le dépôt, ni les secrets applicatifs, ni les outils d'envoi.
 
+## Durées de vie et concurrence
+
+Noosphere utilise une composition explicite au démarrage du processus, sans
+conteneur d'injection de dépendances. Les durées de vie restent néanmoins
+définies :
+
+- **processus** : pool PostgreSQL, repositories, routeur de modèles et gateways
+  sans état mutable de conversation ;
+- **job** : contexte workspace, policy, historique, deadline, request key et
+  trace d'agent ;
+- **invocation transitoire** : chaque appel Codex crée son propre répertoire
+  temporaire et son propre processus `codex exec --ephemeral`; chaque appel
+  Kimi/OpenAI crée sa propre requête HTTP.
+
+Un gateway construit une fois par processus n'est donc pas une session agent
+singleton. Aucun historique, prompt, trace d'outils, signal d'annulation ou
+répertoire temporaire n'est partagé entre deux jobs.
+
+Les commandes interactives (`conversation.command.execute`) utilisent un pool
+de workers dédié. Les générations de contenu et recherches longues ne peuvent
+ainsi pas empêcher le polling d'une commande Setter déjà persistée.
+
 ## Conséquences positives
 
 - une panne ou un quota fournisseur n'immobilise plus tout Noosphere ;

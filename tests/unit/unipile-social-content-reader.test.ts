@@ -18,6 +18,38 @@ describe("Unipile social content reader", () => {
     expect(page).toEqual({ data: [expect.objectContaining({ providerPostId: "12345", socialId: "urn:li:activity:12345", authorProviderId: "ACoOWNER", text: "Post observé" })], nextCursor: "next_fixture" });
   });
 
+  test("treats an Unipile cursor without a pagination token as the end of the backfill", async () => {
+    const terminalCursor = Buffer.from(JSON.stringify({ pagination_token: null, start: 721 })).toString("base64");
+    const calls: URL[] = [];
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      calls.push(url);
+      if (url.pathname.endsWith("/users/me")) return Response.json({ provider_id: "ACoOWNER" });
+      return Response.json({ items: [], cursor: terminalCursor });
+    }) as unknown as typeof fetch;
+    const reader = new UnipileSocialContentReader({ dsn: "https://api.example.test", apiKey: "secret", fetchImpl });
+
+    const page = await reader.listOwnContent({ accountId: "account-fixture", cursor: null, limit: 25 });
+
+    expect(page).toEqual({ data: [], nextCursor: null });
+    expect(calls).toHaveLength(2);
+  });
+
+  test("recovers a previously stored terminal Unipile cursor without calling the provider", async () => {
+    const terminalCursor = Buffer.from(JSON.stringify({ pagination_token: null, start: 721 })).toString("base64");
+    let calls = 0;
+    const fetchImpl = (async () => {
+      calls += 1;
+      return Response.json({});
+    }) as unknown as typeof fetch;
+    const reader = new UnipileSocialContentReader({ dsn: "https://api.example.test", apiKey: "secret", fetchImpl });
+
+    const page = await reader.listOwnContent({ accountId: "account-fixture", cursor: terminalCursor, limit: 25 });
+
+    expect(page).toEqual({ data: [], nextCursor: null });
+    expect(calls).toBe(0);
+  });
+
   test("reads cumulative counters from each post and rejects negative counters", async () => {
     const fetchImpl = (async () => Response.json({ social_id: "urn:li:activity:12345", impressions_counter: 900, reaction_counter: "12", comment_counter: 3, repost_counter: -1 })) as unknown as typeof fetch;
     const reader = new UnipileSocialContentReader({ dsn: "https://api.example.test", apiKey: "secret", fetchImpl });

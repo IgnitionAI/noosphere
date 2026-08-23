@@ -20,6 +20,7 @@ import {
   auditLogs,
 } from "@outbound/infrastructure/database/schema";
 import type { WorkspaceRole } from "@outbound/interface/http/request-context";
+import { captureProspectDecisionMutation } from "@outbound/infrastructure/prospect-memory/capture-prospect-decision-mutation";
 
 export const WORKSPACE_ONBOARDING_STEPS = [
   "workspace",
@@ -489,11 +490,18 @@ async function releaseAutonomousApprovals(
       updatedAt: now,
     }).where(and(eq(outreachActions.workspaceId, workspaceId), eq(outreachActions.id, action.id)));
     if (item.itemType === "prospect_decision_send") {
-      await tx.update(prospectDecisions).set({ status: "completed", completedAt: now, updatedAt: now }).where(and(
+      const completedDecisions = await tx.update(prospectDecisions).set({ status: "completed", completedAt: now, updatedAt: now }).where(and(
         eq(prospectDecisions.workspaceId, workspaceId),
         eq(prospectDecisions.outreachActionId, action.id),
         eq(prospectDecisions.status, "awaiting_approval"),
-      ));
+      )).returning();
+      for (const completedDecision of completedDecisions) {
+        await captureProspectDecisionMutation(
+          tx,
+          completedDecision,
+          action.correlationId ?? `campaign:${item.campaignId}`,
+        );
+      }
       await tx.insert(jobs).values({
         id: crypto.randomUUID(),
         workspaceId,

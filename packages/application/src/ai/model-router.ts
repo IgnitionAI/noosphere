@@ -19,7 +19,10 @@ export interface RoutedModelResult<T> extends StructuredModelResult<T> {
 export class ModelRouter {
   readonly #gateways: ReadonlyMap<ModelRoute["provider"], ModelGateway>;
 
-  constructor(gateways: readonly ModelGateway[]) {
+  constructor(
+    gateways: readonly ModelGateway[],
+    private readonly now: () => Date = () => new Date(),
+  ) {
     this.#gateways = new Map(gateways.map((gateway) => [gateway.provider, gateway]));
   }
 
@@ -38,8 +41,15 @@ export class ModelRouter {
       }
 
       try {
+        const current = this.now();
+        const remainingMs = Math.max(0, request.deadlineAt.getTime() - current.getTime());
+        const remainingRoutes = request.routes.length - index;
+        const attemptDeadline = remainingRoutes > 1
+          ? new Date(current.getTime() + Math.floor(remainingMs / remainingRoutes))
+          : request.deadlineAt;
         const result = await gateway.invokeStructured({
           ...request,
+          deadlineAt: attemptDeadline,
           model: route.model,
           reasoningEffort: route.reasoningEffort,
         });

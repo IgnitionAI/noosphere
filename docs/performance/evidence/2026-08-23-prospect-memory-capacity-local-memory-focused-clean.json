@@ -1,0 +1,162 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-23T15:01:56.725Z",
+  "topology": "standard_without_docling_or_proxy",
+  "workspaceSlug": "prospect-memory-benchmark",
+  "runtime": {
+    "bun": "1.3.4",
+    "platform": "darwin",
+    "architecture": "arm64",
+    "docker": "CPUs=6 Memory=6213521408"
+  },
+  "configuration": {
+    "requestCount": 1,
+    "concurrency": 20,
+    "ssrRequestCount": 1,
+    "ssrConcurrency": 5,
+    "memoryRequestCount": 1000,
+    "memoryConcurrency": 100,
+    "resourceSamplingEnabled": false,
+    "continuousResourceSampling": true,
+    "memoryTargets": [
+      {
+        "delta": "0",
+        "observedPendingEventCount": 0
+      },
+      {
+        "delta": "20",
+        "observedPendingEventCount": 20
+      },
+      {
+        "delta": "200",
+        "observedPendingEventCount": 200
+      }
+    ],
+    "memorySkippedReason": null
+  },
+  "scenarios": [
+    {
+      "name": "health_ready",
+      "target": "http://127.0.0.1:64001/health/ready",
+      "requests": 1,
+      "concurrency": 20,
+      "durationMs": 4.82,
+      "throughputPerSecond": 207.5,
+      "errors": 0,
+      "latencyMs": {
+        "p50": 4.37,
+        "p95": 4.37,
+        "p99": 4.37,
+        "max": 4.37
+      },
+      "resourcePeaks": {}
+    },
+    {
+      "name": "operational_read_mix",
+      "target": "http://127.0.0.1:64001/mixed",
+      "requests": 1,
+      "concurrency": 20,
+      "durationMs": 33.92,
+      "throughputPerSecond": 29.48,
+      "errors": 0,
+      "latencyMs": {
+        "p50": 33.89,
+        "p95": 33.89,
+        "p99": 33.89,
+        "max": 33.89
+      },
+      "resourcePeaks": {}
+    },
+    {
+      "name": "prospect_memory_view_delta_0",
+      "target": "http://127.0.0.1:64001/api/v1/prospects/28df0a8f-9059-4653-b007-f5cfa3060af0/memory-view?capability=call_preparation",
+      "requests": 1000,
+      "concurrency": 100,
+      "durationMs": 5032.17,
+      "throughputPerSecond": 198.72,
+      "errors": 0,
+      "latencyMs": {
+        "p50": 503.07,
+        "p95": 667.72,
+        "p99": 699.92,
+        "max": 723.69
+      },
+      "resourcePeaks": {}
+    },
+    {
+      "name": "prospect_memory_view_delta_20",
+      "target": "http://127.0.0.1:64001/api/v1/prospects/65e91fbc-9325-4b5d-a65e-9317932ac99c/memory-view?capability=call_preparation",
+      "requests": 1000,
+      "concurrency": 100,
+      "durationMs": 6587.86,
+      "throughputPerSecond": 151.79,
+      "errors": 0,
+      "latencyMs": {
+        "p50": 568.42,
+        "p95": 1385.39,
+        "p99": 1487.93,
+        "max": 1520.62
+      },
+      "resourcePeaks": {}
+    },
+    {
+      "name": "prospect_memory_view_delta_200",
+      "target": "http://127.0.0.1:64001/api/v1/prospects/3c199776-ee15-4988-b9df-4b32b8e20caf/memory-view?capability=call_preparation",
+      "requests": 1000,
+      "concurrency": 100,
+      "durationMs": 23198.46,
+      "throughputPerSecond": 43.11,
+      "errors": 0,
+      "latencyMs": {
+        "p50": 1767.09,
+        "p95": 5039.15,
+        "p99": 5402.58,
+        "max": 5550.7
+      },
+      "resourcePeaks": {}
+    },
+    {
+      "name": "today_ssr",
+      "target": "http://127.0.0.1:64000/w/prospect-memory-benchmark",
+      "requests": 1,
+      "concurrency": 5,
+      "durationMs": 259.03,
+      "throughputPerSecond": 3.86,
+      "errors": 0,
+      "latencyMs": {
+        "p50": 258.89,
+        "p95": 258.89,
+        "p99": 258.89,
+        "max": 258.89
+      },
+      "resourcePeaks": {}
+    },
+    {
+      "name": "prospects_ssr",
+      "target": "http://127.0.0.1:64000/w/prospect-memory-benchmark/prospects?campaignScope=outside_campaign",
+      "requests": 1,
+      "concurrency": 5,
+      "durationMs": 652.67,
+      "throughputPerSecond": 1.53,
+      "errors": 0,
+      "latencyMs": {
+        "p50": 652.63,
+        "p95": 652.63,
+        "p99": 652.63,
+        "max": 652.63
+      },
+      "resourcePeaks": {}
+    }
+  ],
+  "crawler": {
+    "name": "crawler_four_public_domains",
+    "skipped": true,
+    "skipReason": "BENCHMARK_SKIP_CRAWLER=true; use a separate crawler evidence run.",
+    "targets": [],
+    "durationMs": 0,
+    "completed": 0,
+    "errors": [],
+    "pagesProduced": 0,
+    "resourcePeaks": {}
+  }
+}

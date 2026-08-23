@@ -2,6 +2,7 @@ import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import type { ProspectingChannel } from "@outbound/domain/campaigns/prospecting-plan";
 import { normalizeEmail } from "@outbound/domain/crm/normalization";
 import type { Database } from "@outbound/infrastructure/database/client";
+import { captureProspectMemoryMutation } from "@outbound/infrastructure/prospect-memory/capture-prospect-memory-mutation";
 import {
   automatedReplies,
   connectedAccounts,
@@ -262,7 +263,7 @@ export class UnipileAccountInboxSynchronizer {
             after,
             ...(this.options.fetchImpl ? { fetchImpl: this.options.fetchImpl } : {}),
           });
-      const result = await this.#persistThreads(account, page.threads, activityFloor);
+      const result = await this.#persistThreads(account, page.threads, activityFloor, now);
       const highWatermark = latestDate(state.highWatermark, page.highWatermark);
       const completedBackfill = state.backfillComplete || page.nextCursor === null;
       await this.database.update(inboxSyncStates).set({
@@ -324,6 +325,7 @@ export class UnipileAccountInboxSynchronizer {
     account: SyncAccount,
     threads: readonly MirroredInboxThread[],
     activityFloor: Date | null,
+    observedAt: Date,
   ): Promise<{ insertedMessages: number; inboundEvents: Record<string, unknown>[] }> {
     const campaignContacts = await this.#campaignContacts(account);
     let insertedMessages = 0;
@@ -341,7 +343,7 @@ export class UnipileAccountInboxSynchronizer {
         ?? await this.#campaignForContact(account, contactId);
       const [firstName, lastName] = splitContactName(thread.contactName, thread.channel);
       const outcome = await this.database.transaction(async (tx) => {
-        await tx.insert(contacts).values({
+        const [insertedContact] = await tx.insert(contacts).values({
           id: contactId,
           workspaceId: account.workspaceId,
           firstName,
@@ -351,8 +353,8 @@ export class UnipileAccountInboxSynchronizer {
           source: "provider",
           createdAt: thread.updatedAt,
           updatedAt: thread.updatedAt,
-        }).onConflictDoNothing();
-        await tx.insert(contactIdentities).values({
+        }).onConflictDoNothing().returning({ id: contacts.id, updatedAt: contacts.updatedAt });
+        const [linkedIdentity] = await tx.insert(contactIdentities).values({
           id: crypto.randomUUID(),
           workspaceId: account.workspaceId,
           contactId,
@@ -366,7 +368,43 @@ export class UnipileAccountInboxSynchronizer {
         }).onConflictDoUpdate({
           target: [contactIdentities.workspaceId, contactIdentities.type, contactIdentities.normalizedValue],
           set: { value: thread.identityValue, verificationStatus: "verified", updatedAt: thread.updatedAt },
+        }).returning({
+          id: contactIdentities.id,
+          type: contactIdentities.type,
+          verificationStatus: contactIdentities.verificationStatus,
+          updatedAt: contactIdentities.updatedAt,
         });
+        if (insertedContact) {
+          await captureProspectMemoryMutation(tx, {
+            workspaceId: account.workspaceId,
+            sourceContactId: contactId,
+            sourceKind: "contact",
+            sourceId: contactId,
+            sourceVersion: insertedContact.updatedAt.getTime(),
+            kind: "contact_updated",
+            occurredAt: insertedContact.updatedAt,
+            observedAt,
+            payload: { source: "provider", preferredChannel: thread.channel },
+            correlationId: `inbox-sync:${account.id}:${thread.threadId}`,
+          });
+        }
+        if (linkedIdentity) {
+          await captureProspectMemoryMutation(tx, {
+            workspaceId: account.workspaceId,
+            sourceContactId: contactId,
+            sourceKind: "contact_identity",
+            sourceId: linkedIdentity.id,
+            sourceVersion: linkedIdentity.updatedAt.getTime(),
+            kind: "identity_linked",
+            occurredAt: linkedIdentity.updatedAt,
+            observedAt,
+            payload: {
+              identityType: linkedIdentity.type,
+              verificationStatus: linkedIdentity.verificationStatus,
+            },
+            correlationId: `inbox-sync:${account.id}:${thread.threadId}`,
+          });
+        }
         const [conversation] = await tx.insert(conversations).values({
           id: crypto.randomUUID(),
           workspaceId: account.workspaceId,
@@ -414,10 +452,35 @@ export class UnipileAccountInboxSynchronizer {
               sentAt: message.direction === "outbound" ? message.occurredAt : null,
               receivedAt: message.direction === "inbound" ? message.occurredAt : null,
               createdAt: message.occurredAt,
-            }))).onConflictDoNothing().returning({ providerMessageId: messages.providerMessageId })
+            }))).onConflictDoNothing().returning({
+              id: messages.id,
+              providerMessageId: messages.providerMessageId,
+            })
           : [];
         const createdIds = new Set(created.map((message) => message.providerMessageId));
         const newMessages = thread.messages.filter((message) => createdIds.has(message.id));
+        const internalIds = new Map(created.map((message) => [message.providerMessageId, message.id]));
+        for (const message of newMessages) {
+          const internalMessageId = internalIds.get(message.id);
+          if (!internalMessageId) continue;
+          await captureProspectMemoryMutation(tx, {
+            workspaceId: account.workspaceId,
+            sourceContactId: contactId,
+            sourceKind: "message",
+            sourceId: internalMessageId,
+            sourceVersion: 1,
+            kind: message.direction === "inbound" ? "message_received" : "message_sent",
+            occurredAt: message.occurredAt,
+            observedAt,
+            payload: {
+              conversationId: conversation.id,
+              channel: thread.channel,
+              direction: message.direction,
+              senderType: message.direction === "inbound" ? "prospect" : "human",
+            },
+            correlationId: `inbox-sync:${account.id}:${thread.threadId}`,
+          });
+        }
         const newOutbound = newMessages.filter((message) => message.direction === "outbound");
         const automatedOutbound = new Set<string>();
         if (newOutbound.length) {

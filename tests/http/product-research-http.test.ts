@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { ProductResearchApplication } from "@outbound/application/gtm/product-research-application";
 import { ResearchOrchestrator } from "@outbound/application/gtm/research-orchestrator";
 import type { ResearchAgentExecutor } from "@outbound/application/gtm/product-research-ports";
+import { TerminalAgentError } from "@outbound/application/gtm/product-research-ports";
 import { CryptoIdGenerator, SystemClock } from "@outbound/application/shared/ports";
 import type { AgentExecutionResult, AgentStageInput } from "@outbound/contracts/product-research";
 import { researchStages, type ResearchStage } from "@outbound/domain/gtm/product-research";
@@ -66,6 +67,52 @@ describe("F-009 HTTP routes", () => {
       status: "queued",
       attempts: 0,
       lastErrorCode: null,
+    });
+  });
+
+  test("a terminal V3 checkpoint is exposed as failed rather than queued", async () => {
+    const harness = createHarness(new GlobalDeadlineAgents());
+    const response = await harness.handle(
+      new Request("http://localhost/api/v1/product-research-runs", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          productUrl: "https://example.com",
+          productName: "Example",
+          description: "",
+          geography: "France",
+          languages: ["fr"],
+          salesMotion: "saas",
+          knownCompetitors: [],
+          internalDocumentIds: [],
+          depth: "standard",
+          researchVersion: 3,
+        }),
+      }),
+    );
+    const created = (await response.json()) as { id: string };
+    await action(harness.handle, created.id, "start");
+    const [job] = await harness.backend.lease({
+      workerId: "http-terminal-stage",
+      types: ["research.stage.execute"],
+      limit: 1,
+      leaseMs: 30_000,
+      now: harness.clock.now(),
+    });
+    expect(await harness.orchestrator.process(job!)).toMatchObject({ outcome: "partial" });
+
+    const progress = await harness.handle(
+      new Request(`http://localhost/api/v1/product-research-runs/${created.id}`),
+    );
+    const body = (await progress.json()) as {
+      status: string;
+      stages: Array<{ stage: string; status: string; lastErrorCode: string | null }>;
+    };
+    expect(body.status).toBe("partial");
+    expect(body.stages[0]).toMatchObject({
+      stage: "product_truth",
+      status: "failed",
+      lastErrorCode: "RESEARCH_GLOBAL_DEADLINE_EXHAUSTED",
     });
   });
 
@@ -466,7 +513,7 @@ describe("F-009 HTTP routes", () => {
   });
 });
 
-function createHarness() {
+function createHarness(agents: ResearchAgentExecutor = new FixtureAgents()) {
   const backend = new InMemoryResearchBackend();
   const workspaceId = crypto.randomUUID();
   const context = {
@@ -492,7 +539,7 @@ function createHarness() {
   const orchestrator = new ResearchOrchestrator(
     backend,
     backend,
-    new FixtureAgents(),
+    agents,
     new CryptoIdGenerator(),
     clock,
     new Sha256ContentHasher(),
@@ -532,6 +579,15 @@ function action(
       headers: { "x-correlation-id": `http-${name}-test` },
     }),
   );
+}
+
+class GlobalDeadlineAgents implements ResearchAgentExecutor {
+  async execute(): Promise<AgentExecutionResult> {
+    throw new TerminalAgentError(
+      "RESEARCH_GLOBAL_DEADLINE_EXHAUSTED",
+      "The V3 run deadline has expired",
+    );
+  }
 }
 
 class FixtureAgents implements ResearchAgentExecutor {

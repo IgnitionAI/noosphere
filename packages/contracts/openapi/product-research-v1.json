@@ -1279,6 +1279,31 @@
       "get": { "operationId": "listConnectedAccounts", "responses": { "200": { "description": "Connected account statuses and capabilities", "content": { "application/json": { "schema": { "type": "object", "required": ["data"], "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/ConnectedAccount" } } } } } } } } },
       "post": { "operationId": "connectAccount", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConnectedAccountConnectRequest" } } } }, "responses": { "201": { "description": "Connected account", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConnectedAccount" } } } }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" }, "503": { "description": "Provider unavailable" } } }
     },
+    "/api/v1/channel-connections/{channel}": {
+      "parameters": [
+        { "$ref": "#/components/parameters/WorkspaceSlug" },
+        { "name": "channel", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/ChannelConnectionChannel" } }
+      ],
+      "get": {
+        "operationId": "getChannelConnection",
+        "description": "Lists safe Unipile account metadata and the account selected by this workspace for one channel.",
+        "responses": {
+          "200": { "description": "Workspace channel connection", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ChannelConnection" } } } },
+          "403": { "$ref": "#/components/responses/WorkspaceForbidden" },
+          "503": { "description": "Unipile is not configured or temporarily unavailable" }
+        }
+      },
+      "put": {
+        "operationId": "selectChannelAccount",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ChannelAccountSelectionRequest" } } } },
+        "responses": {
+          "200": { "description": "Selected channel account", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SelectableChannelAccount" } } } },
+          "403": { "$ref": "#/components/responses/WorkspaceForbidden" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "503": { "description": "Unipile is not configured or temporarily unavailable" }
+        }
+      }
+    },
     "/api/v1/connected-accounts/{connectedAccountId}": {
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/ConnectedAccountId" }],
       "get": { "operationId": "getConnectedAccount", "responses": { "200": { "description": "Connected account status" }, "404": { "description": "Account not found" } } },
@@ -1588,13 +1613,34 @@
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
       "get": { "operationId": "getWorkspaceSetupReadiness", "summary": "Read the guided launch checklist", "responses": { "200": { "description": "Required and optional launch prerequisites", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SetupReadinessView" } } } }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" } } }
     },
+    "/api/v1/workspace/prospect-memory-settings": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
+      "get": { "operationId": "getProspectMemorySettings", "summary": "Read the admin-only Prospect 360 rollout, budget and provider-processing policy", "responses": { "200": { "description": "Current workspace memory policy", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProspectMemoryPolicy" } } } }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" } } },
+      "put": { "operationId": "updateProspectMemorySettings", "summary": "Atomically activate shadow, active capabilities or rollback without changing provider effects", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProspectMemorySettingsUpdate" } } } }, "responses": { "200": { "description": "Saved workspace memory policy", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProspectMemoryPolicy" } } } }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" }, "422": { "$ref": "#/components/responses/InvalidRequest" } } }
+    },
     "/api/v1/campaigns/{campaignId}/workspace-view": {
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "$ref": "#/components/parameters/CampaignId" }],
       "get": { "operationId": "getCampaignWorkspaceView", "summary": "Read the canonical campaign workspace surface", "responses": { "200": { "description": "Campaign, autopilot, population, timeline and next action" }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" }, "404": { "$ref": "#/components/responses/RunNotFound" } } }
     },
+    "/api/v1/conversations/{conversationId}/messages": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "name": "conversationId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+      "post": { "operationId": "createConversationCommand", "summary": "Queue a durable manual send or Setter generation; dry_run generates without provider or calendar effects", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConversationCommandRequest" } } } }, "responses": { "202": { "description": "Durable command accepted", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConversationCommand" } } } }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" }, "404": { "$ref": "#/components/responses/RunNotFound" }, "409": { "$ref": "#/components/responses/Conflict" }, "422": { "$ref": "#/components/responses/InvalidRequest" } } }
+    },
     "/api/v1/conversations": {
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
       "get": { "operationId": "listWorkspaceConversations", "summary": "List unified campaign, outside-campaign and proved social conversations", "parameters": [{ "name": "channel", "in": "query", "schema": { "type": "string", "enum": ["linkedin", "email", "whatsapp"] } }, { "name": "scope", "in": "query", "schema": { "type": "string", "enum": ["campaign", "outside_campaign"] } }, { "name": "source", "in": "query", "description": "Attribution source, independent from campaign scope.", "schema": { "type": "string", "enum": ["inbound", "outbound", "mixed", "unknown"] } }, { "name": "search", "in": "query", "schema": { "type": "string", "maxLength": 200 } }, { "name": "page", "in": "query", "schema": { "type": "integer", "minimum": 1, "default": 1 } }, { "name": "pageSize", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 25 } }], "responses": { "200": { "description": "Paginated workspace-scoped conversations", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConversationWorkspacePage" } } } }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" } } }
+    },
+    "/api/v1/prospects/{contactId}/memory-status": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "name": "contactId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+      "get": { "operationId": "getProspectMemoryStatus", "summary": "Read durable Prospect 360 freshness and refresh job state without affecting execution", "responses": { "200": { "description": "Memory and durable job status; sentEffect is always false", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProspectMemoryStatus" } } } }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" }, "404": { "$ref": "#/components/responses/RunNotFound" } } }
+    },
+    "/api/v1/prospects/{contactId}/memory-view": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "name": "contactId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }, { "name": "capability", "in": "query", "schema": { "$ref": "#/components/schemas/ProspectMemoryCapability", "default": "call_preparation" } }],
+      "get": { "operationId": "getProspectMemoryView", "summary": "Compile a role- and capability-scoped progressive memory view; raw snapshot payloads are never exposed", "responses": { "200": { "description": "Facts, hypotheses, recommendations and provenance counts", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProspectMemoryView" } } } }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" }, "404": { "$ref": "#/components/responses/RunNotFound" }, "409": { "$ref": "#/components/responses/Conflict" } } }
+    },
+    "/api/v1/prospects/{contactId}/memory/actions/refresh": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }, { "name": "contactId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+      "post": { "operationId": "refreshProspectMemory", "summary": "Idempotently queue a durable memory rebuild; this command never sends a provider message", "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["requestKey"], "properties": { "requestKey": { "type": "string", "format": "uuid" } } } } } }, "responses": { "202": { "description": "Durable memory refresh queued or rehydrated", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProspectMemoryRefreshAccepted" } } } }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" }, "409": { "$ref": "#/components/responses/Conflict" }, "422": { "$ref": "#/components/responses/InvalidRequest" } } }
     },
     "/api/v1/pipeline/view": {
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceSlug" }],
@@ -1808,6 +1854,19 @@
       }
     },
     "schemas": {
+      "ProspectMemoryCapability": { "type": "string", "enum": ["setter_campaign", "draft_improvement", "scoring", "outbound_drafting", "call_preparation", "inbound_aggregate"] },
+      "ProspectMemoryProcessingProfileInput": { "type": "object", "additionalProperties": false, "required": ["provider", "encryptedInTransit", "trainingUse", "providerRetentionDays", "regionOrJurisdiction", "operatorAccessPolicy", "subprocessorsReviewed", "deletionProcedure", "personalDataAllowed", "allowedCapabilities"], "properties": { "provider": { "$ref": "#/components/schemas/AiProviderId" }, "encryptedInTransit": { "type": "boolean", "const": true }, "trainingUse": { "type": "string", "const": "none" }, "providerRetentionDays": { "type": "integer", "minimum": 0, "maximum": 365 }, "regionOrJurisdiction": { "type": "string", "minLength": 1, "maxLength": 200 }, "operatorAccessPolicy": { "type": "string", "minLength": 1, "maxLength": 500 }, "subprocessorsReviewed": { "type": "boolean", "const": true }, "deletionProcedure": { "type": "string", "minLength": 1, "maxLength": 500 }, "personalDataAllowed": { "type": "boolean" }, "allowedCapabilities": { "type": "array", "uniqueItems": true, "maxItems": 6, "items": { "$ref": "#/components/schemas/ProspectMemoryCapability" } } } },
+      "ProspectMemoryProcessingProfile": { "type": "object", "additionalProperties": false, "required": ["provider", "encryptedInTransit", "trainingUse", "providerRetentionDays", "regionOrJurisdiction", "operatorAccessPolicy", "subprocessorsReviewed", "deletionProcedure", "personalDataAllowed", "allowedCapabilities", "reviewedAt"], "properties": { "provider": { "$ref": "#/components/schemas/AiProviderId" }, "encryptedInTransit": { "type": "boolean", "const": true }, "trainingUse": { "type": "string", "const": "none" }, "providerRetentionDays": { "type": "integer", "minimum": 0, "maximum": 365 }, "regionOrJurisdiction": { "type": "string", "minLength": 1, "maxLength": 200 }, "operatorAccessPolicy": { "type": "string", "minLength": 1, "maxLength": 500 }, "subprocessorsReviewed": { "type": "boolean", "const": true }, "deletionProcedure": { "type": "string", "minLength": 1, "maxLength": 500 }, "personalDataAllowed": { "type": "boolean" }, "allowedCapabilities": { "type": "array", "uniqueItems": true, "maxItems": 6, "items": { "$ref": "#/components/schemas/ProspectMemoryCapability" } }, "reviewedAt": { "type": "string", "format": "date-time" } } },
+      "ProspectMemorySettingsUpdate": { "type": "object", "additionalProperties": false, "required": ["captureEnabled", "shadowEnabled", "setterEnabled", "enabledCapabilities", "processingProfiles", "maxDailySemanticRefreshes", "maxDailyCostUsd"], "properties": { "captureEnabled": { "type": "boolean" }, "shadowEnabled": { "type": "boolean" }, "setterEnabled": { "type": "boolean" }, "enabledCapabilities": { "type": "array", "uniqueItems": true, "maxItems": 6, "items": { "$ref": "#/components/schemas/ProspectMemoryCapability" } }, "processingProfiles": { "type": "array", "uniqueItems": true, "maxItems": 3, "items": { "$ref": "#/components/schemas/ProspectMemoryProcessingProfileInput" } }, "maxDailySemanticRefreshes": { "type": "integer", "minimum": 0, "maximum": 1000000 }, "maxDailyCostUsd": { "type": "number", "minimum": 0, "maximum": 1000000 } } },
+      "ProspectMemoryPolicy": { "type": "object", "additionalProperties": false, "required": ["flags", "processingProfiles", "maxDailySemanticRefreshes", "maxDailyCostUsd"], "properties": { "flags": { "type": "object", "additionalProperties": false, "required": ["prospectMemoryCapture", "prospectMemoryShadow", "prospectMemorySetter", "enabledCapabilities"], "properties": { "prospectMemoryCapture": { "type": "boolean" }, "prospectMemoryShadow": { "type": "boolean" }, "prospectMemorySetter": { "type": "boolean" }, "enabledCapabilities": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/components/schemas/ProspectMemoryCapability" } } } }, "processingProfiles": { "type": "array", "items": { "$ref": "#/components/schemas/ProspectMemoryProcessingProfile" } }, "maxDailySemanticRefreshes": { "type": "integer", "minimum": 0 }, "maxDailyCostUsd": { "type": "number", "minimum": 0 } } },
+      "ProspectMemoryState": { "type": "string", "enum": ["fresh", "refreshing", "stale", "budget_blocked", "failed", "anonymized"] },
+      "ProspectMemoryRefreshJob": { "type": ["object", "null"], "additionalProperties": false, "required": ["id", "status", "attempts", "maxAttempts", "availableAt", "lockedUntil", "completedAt", "lastErrorCode", "createdAt", "updatedAt"], "properties": { "id": { "type": "string", "format": "uuid" }, "status": { "type": "string", "enum": ["pending", "running", "retry", "completed", "dead_lettered"] }, "attempts": { "type": "integer", "minimum": 0 }, "maxAttempts": { "type": "integer", "minimum": 1 }, "availableAt": { "type": "string", "format": "date-time" }, "lockedUntil": { "type": ["string", "null"], "format": "date-time" }, "completedAt": { "type": ["string", "null"], "format": "date-time" }, "lastErrorCode": { "type": ["string", "null"] }, "createdAt": { "type": "string", "format": "date-time" }, "updatedAt": { "type": "string", "format": "date-time" } } },
+      "ProspectMemoryStatus": { "type": "object", "additionalProperties": false, "required": ["enabled", "mode", "status", "snapshotId", "snapshotVersion", "generatedAt", "watermark", "latestSequence", "pendingEventCount", "privacyEpoch", "job", "sentEffect", "asOf"], "properties": { "enabled": { "type": "boolean" }, "mode": { "type": "string", "enum": ["disabled", "shadow", "active"] }, "status": { "$ref": "#/components/schemas/ProspectMemoryState" }, "snapshotId": { "type": ["string", "null"], "format": "uuid" }, "snapshotVersion": { "type": ["integer", "null"], "minimum": 1 }, "generatedAt": { "type": ["string", "null"], "format": "date-time" }, "watermark": { "type": "integer", "minimum": 0 }, "latestSequence": { "type": "integer", "minimum": 0 }, "pendingEventCount": { "type": "integer", "minimum": 0 }, "privacyEpoch": { "type": "integer", "minimum": 0 }, "job": { "$ref": "#/components/schemas/ProspectMemoryRefreshJob" }, "sentEffect": { "type": "boolean", "const": false }, "asOf": { "type": "string", "format": "date-time" } } },
+      "ProspectMemorySource": { "type": "object", "additionalProperties": false, "required": ["eventId", "sourceKind", "excerpt"], "properties": { "eventId": { "type": "string", "format": "uuid" }, "sourceKind": { "type": "string" }, "excerpt": { "type": ["string", "null"] } } },
+      "ProspectMemoryAssertion": { "type": "object", "additionalProperties": false, "required": ["id", "nature", "statement", "confidence", "sources", "validUntil"], "properties": { "id": { "type": "string", "format": "uuid" }, "nature": { "type": "string", "enum": ["hypothesis", "recommendation"] }, "statement": { "type": "string" }, "confidence": { "type": "number", "minimum": 0, "maximum": 1 }, "sources": { "type": "array", "items": { "$ref": "#/components/schemas/ProspectMemorySource" } }, "validUntil": { "type": ["string", "null"], "format": "date-time" } } },
+      "ProspectMemoryFacts": { "type": "object", "additionalProperties": false, "required": ["confirmedNeeds", "objections", "commitments", "topicsCovered", "doNotRepeat", "openQuestions"], "properties": { "confirmedNeeds": { "type": "array", "items": { "$ref": "#/components/schemas/ProspectMemorySource" } }, "objections": { "type": "array", "items": { "$ref": "#/components/schemas/ProspectMemorySource" } }, "commitments": { "type": "array", "items": { "$ref": "#/components/schemas/ProspectMemorySource" } }, "topicsCovered": { "type": "array", "items": { "$ref": "#/components/schemas/ProspectMemorySource" } }, "doNotRepeat": { "type": "array", "items": { "$ref": "#/components/schemas/ProspectMemorySource" } }, "openQuestions": { "type": "array", "items": { "$ref": "#/components/schemas/ProspectMemorySource" } } } },
+      "ProspectMemoryView": { "type": "object", "additionalProperties": false, "required": ["capability", "mode", "status", "snapshotId", "snapshotVersion", "generatedAt", "relationshipSummary", "recommendedTone", "facts", "hypotheses", "recommendations", "contradictions", "missingInformation", "automaticActionAllowed", "waitCode", "sourceCount", "excludedSourceCount", "estimatedTokens", "sentEffect", "asOf"], "properties": { "capability": { "$ref": "#/components/schemas/ProspectMemoryCapability" }, "mode": { "type": "string", "enum": ["shadow", "active"] }, "status": { "$ref": "#/components/schemas/ProspectMemoryState" }, "snapshotId": { "type": ["string", "null"], "format": "uuid" }, "snapshotVersion": { "type": ["integer", "null"], "minimum": 1 }, "generatedAt": { "type": ["string", "null"], "format": "date-time" }, "relationshipSummary": { "type": ["string", "null"] }, "recommendedTone": { "type": ["string", "null"] }, "facts": { "$ref": "#/components/schemas/ProspectMemoryFacts" }, "hypotheses": { "type": "array", "items": { "$ref": "#/components/schemas/ProspectMemoryAssertion" } }, "recommendations": { "type": "array", "items": { "$ref": "#/components/schemas/ProspectMemoryAssertion" } }, "contradictions": { "type": "array", "items": { "type": "string" } }, "missingInformation": { "type": "array", "items": { "type": "string" } }, "automaticActionAllowed": { "type": "boolean" }, "waitCode": { "type": ["string", "null"], "enum": ["WAIT_MEMORY_STALE", "WAIT_MEMORY_BUDGET", null] }, "sourceCount": { "type": "integer", "minimum": 0 }, "excludedSourceCount": { "type": "integer", "minimum": 0 }, "estimatedTokens": { "type": "integer", "minimum": 0 }, "sentEffect": { "type": "boolean", "const": false }, "asOf": { "type": "string", "format": "date-time" } } },
+      "ProspectMemoryRefreshAccepted": { "type": "object", "additionalProperties": false, "required": ["inserted", "job", "sentEffect"], "properties": { "inserted": { "type": "boolean" }, "job": { "$ref": "#/components/schemas/ProspectMemoryRefreshJob" }, "sentEffect": { "type": "boolean", "const": false } } },
       "Workspace": {
         "type": "object",
         "required": ["id", "slug", "name", "status", "role"],
@@ -1847,7 +1906,7 @@
       "WorkspaceSendingPreferencesEnvelope": { "type": "object", "required": ["sending"], "properties": { "sending": { "$ref": "#/components/schemas/WorkspaceSendingPreferences" } } },
       "WorkspaceChannelLimits": { "type": "object", "required": ["linkedin", "email", "whatsapp"], "properties": { "linkedin": { "type": "integer", "minimum": 1, "maximum": 100 }, "email": { "type": "integer", "minimum": 1, "maximum": 500 }, "whatsapp": { "type": "integer", "minimum": 1, "maximum": 200 } } },
       "WorkspaceChannelLimitsEnvelope": { "type": "object", "required": ["channelLimits"], "properties": { "channelLimits": { "$ref": "#/components/schemas/WorkspaceChannelLimits" } } },
-      "WorkspaceRetentionPolicy": { "type": "object", "required": ["invitationsDays", "jobsDays", "auditDays"], "properties": { "invitationsDays": { "type": "integer", "minimum": 30, "maximum": 3650 }, "jobsDays": { "type": "integer", "minimum": 30, "maximum": 365 }, "auditDays": { "type": "integer", "minimum": 365, "maximum": 3650 } } },
+      "WorkspaceRetentionPolicy": { "type": "object", "required": ["invitationsDays", "jobsDays", "auditDays", "memoryEventsDays", "memorySnapshotsDays", "memoryReceiptsDays"], "properties": { "invitationsDays": { "type": "integer", "minimum": 30, "maximum": 3650 }, "jobsDays": { "type": "integer", "minimum": 30, "maximum": 365 }, "auditDays": { "type": "integer", "minimum": 365, "maximum": 3650 }, "memoryEventsDays": { "type": "integer", "minimum": 30, "maximum": 3650 }, "memorySnapshotsDays": { "type": "integer", "minimum": 30, "maximum": 365 }, "memoryReceiptsDays": { "type": "integer", "minimum": 30, "maximum": 365 } } },
       "WorkspaceRetentionPolicyEnvelope": { "type": "object", "required": ["retention"], "properties": { "retention": { "$ref": "#/components/schemas/WorkspaceRetentionPolicy" } } },
       "WorkspaceRetentionPolicyUpdate": { "allOf": [{ "$ref": "#/components/schemas/WorkspaceRetentionPolicyEnvelope" }, { "type": "object", "properties": { "confirmation": { "type": "string" } } }] },
       "WorkspaceDataExport": { "type": "object", "required": ["id", "workspaceId", "requestKey", "status", "createdAt", "updatedAt"], "properties": { "id": { "type": "string", "format": "uuid" }, "workspaceId": { "type": "string", "format": "uuid" }, "requestKey": { "type": "string" }, "status": { "type": "string", "enum": ["pending", "processing", "completed", "failed"] }, "sizeBytes": { "type": ["integer", "null"] }, "checksumSha256": { "type": ["string", "null"] }, "expiresAt": { "type": ["string", "null"], "format": "date-time" }, "completedAt": { "type": ["string", "null"], "format": "date-time" }, "failureCode": { "type": ["string", "null"] }, "downloadUrl": { "type": ["string", "null"], "format": "uri" }, "createdAt": { "type": "string", "format": "date-time" }, "updatedAt": { "type": "string", "format": "date-time" } } },
@@ -2922,6 +2981,42 @@
           "accessToken": { "type": "string", "writeOnly": true }
         }
       },
+      "ChannelConnectionChannel": {
+        "type": "string",
+        "enum": ["linkedin", "email", "whatsapp"]
+      },
+      "SelectableChannelAccount": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "name", "channel", "healthy", "selected"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "channel": { "$ref": "#/components/schemas/ChannelConnectionChannel" },
+          "healthy": { "type": "boolean" },
+          "selected": { "type": "boolean" }
+        }
+      },
+      "ChannelConnection": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["channel", "connected", "selectedAccountId", "selectedDisplayName", "accounts"],
+        "properties": {
+          "channel": { "$ref": "#/components/schemas/ChannelConnectionChannel" },
+          "connected": { "type": "boolean" },
+          "selectedAccountId": { "type": ["string", "null"] },
+          "selectedDisplayName": { "type": ["string", "null"] },
+          "accounts": { "type": "array", "items": { "$ref": "#/components/schemas/SelectableChannelAccount" } }
+        }
+      },
+      "ChannelAccountSelectionRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["providerAccountId"],
+        "properties": {
+          "providerAccountId": { "type": "string", "minLength": 1, "maxLength": 500 }
+        }
+      },
       "ConnectionOnboardingRequest": {
         "type": "object",
         "additionalProperties": false,
@@ -3136,6 +3231,41 @@
       "ConversationWorkspacePage": {
         "type": "object", "required": ["data", "pagination"],
         "properties": { "data": { "type": "array", "items": { "type": "object", "required": ["id", "kind", "source", "contactId", "channel", "origin", "status", "unreadCount", "socialEventCount", "lastMessageAt"], "properties": { "id": { "type": "string", "format": "uuid" }, "kind": { "type": "string", "enum": ["message_thread", "social_thread"] }, "source": { "type": "string", "enum": ["inbound", "outbound", "mixed", "unknown"] }, "contactId": { "type": "string", "format": "uuid" }, "firstName": { "type": "string" }, "lastName": { "type": "string" }, "campaignId": { "type": ["string", "null"], "format": "uuid" }, "campaignName": { "type": ["string", "null"] }, "channel": { "type": "string", "enum": ["linkedin", "email", "whatsapp"] }, "origin": { "type": "string", "enum": ["campaign", "outside_campaign"] }, "status": { "type": "string" }, "unreadCount": { "type": "integer" }, "socialEventCount": { "type": "integer", "minimum": 0 }, "lastMessage": { "type": ["object", "null"] }, "lastMessageAt": { "type": "string", "format": "date-time" } } } }, "pagination": { "type": "object", "required": ["page", "pageSize", "total", "hasNext"], "properties": { "page": { "type": "integer" }, "pageSize": { "type": "integer" }, "total": { "type": "integer" }, "hasNext": { "type": "boolean" } } } }
+      },
+      "ConversationCommandRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["mode"],
+        "properties": {
+          "mode": { "type": "string", "enum": ["manual", "setter"] },
+          "executionMode": { "type": "string", "enum": ["live", "dry_run"], "default": "live", "description": "dry_run is accepted only for Setter commands and never calls a channel or calendar mutation." },
+          "body": { "type": ["string", "null"], "minLength": 1, "maxLength": 5000 },
+          "idempotencyKey": { "type": "string", "minLength": 8, "maxLength": 500 }
+        }
+      },
+      "ConversationCommand": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "workspaceId", "conversationId", "requestedBy", "mode", "executionMode", "requestedBody", "generatedBody", "generationMetadata", "status", "idempotencyKey", "providerRequestId", "errorCode", "errorMessage", "sentAt", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "workspaceId": { "type": "string", "format": "uuid" },
+          "conversationId": { "type": "string", "format": "uuid" },
+          "requestedBy": { "type": ["string", "null"], "format": "uuid" },
+          "mode": { "type": "string", "enum": ["manual", "setter"] },
+          "executionMode": { "type": "string", "enum": ["live", "dry_run"] },
+          "requestedBody": { "type": ["string", "null"] },
+          "generatedBody": { "type": ["string", "null"] },
+          "generationMetadata": { "type": "object", "additionalProperties": true, "description": "PII-free model, ai_run and Prospect 360 receipt references used for audit and evaluation." },
+          "status": { "type": "string", "enum": ["scheduled", "sending", "generated", "sent", "failed", "cancelled"] },
+          "idempotencyKey": { "type": "string" },
+          "providerRequestId": { "type": ["string", "null"] },
+          "errorCode": { "type": ["string", "null"] },
+          "errorMessage": { "type": ["string", "null"] },
+          "sentAt": { "type": ["string", "null"], "format": "date-time" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
       },
       "ContentRequestKey": { "type": "object", "additionalProperties": false, "required": ["requestKey"], "properties": { "requestKey": { "type": "string", "minLength": 8, "maxLength": 300 } } },
       "ContentAutopilot": { "type": "object", "additionalProperties": false, "required": ["configured", "enabled", "localTime", "timezone", "publicationTimes", "publicationDays", "postsPerWeek", "lastRunAt", "nextRunAt", "nextPublicationAt", "queuedIdeas", "generatingAssets", "readyAssets", "scheduledPublications", "blockedAssets", "exceptions"], "properties": { "configured": { "type": "boolean" }, "enabled": { "type": "boolean" }, "localTime": { "type": "string" }, "timezone": { "type": "string" }, "publicationTimes": { "type": "array", "minItems": 1, "maxItems": 2, "uniqueItems": true, "items": { "type": "string", "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$" } }, "publicationDays": { "type": "array", "minItems": 1, "maxItems": 7, "uniqueItems": true, "items": { "type": "integer", "minimum": 1, "maximum": 7 } }, "postsPerWeek": { "type": "integer", "minimum": 1, "maximum": 14 }, "lastRunAt": { "type": ["string", "null"], "format": "date-time" }, "nextRunAt": { "type": ["string", "null"], "format": "date-time" }, "nextPublicationAt": { "type": ["string", "null"], "format": "date-time" }, "queuedIdeas": { "type": "integer", "minimum": 0 }, "generatingAssets": { "type": "integer", "minimum": 0 }, "readyAssets": { "type": "integer", "minimum": 0 }, "scheduledPublications": { "type": "integer", "minimum": 0 }, "blockedAssets": { "type": "integer", "minimum": 0 }, "exceptions": { "type": "integer", "minimum": 0 } } },

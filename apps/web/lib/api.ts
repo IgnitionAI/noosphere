@@ -545,7 +545,16 @@ export interface WorkspaceConversationDetail extends WorkspaceConversationView {
     readonly proofHref: string;
   }[];
   readonly decision: { readonly intent: string; readonly confidence: number; readonly action: string; readonly rationale: string; readonly createdAt: string } | null;
-  readonly latestCommand: { readonly id: string; readonly mode: "manual" | "setter"; readonly status: string; readonly errorMessage: string | null; readonly createdAt: string } | null;
+  readonly latestCommand: {
+    readonly id: string;
+    readonly mode: "manual" | "setter";
+    readonly executionMode: "live" | "dry_run";
+    readonly status: string;
+    readonly generatedBody: string | null;
+    readonly generationMetadata: Readonly<Record<string, unknown>>;
+    readonly errorMessage: string | null;
+    readonly createdAt: string;
+  } | null;
 }
 
 export interface WorkspaceConversationPage {
@@ -796,7 +805,14 @@ export interface WorkspaceInvitation {
 export interface WorkspaceDataPolicy {
   readonly sending: { readonly timezone: string; readonly activeDays: readonly number[]; readonly windowStart: string; readonly windowEnd: string };
   readonly channelLimits: { readonly linkedin: number; readonly email: number; readonly whatsapp: number };
-  readonly retention: { readonly invitationsDays: number; readonly jobsDays: number; readonly auditDays: number };
+  readonly retention: {
+    readonly invitationsDays: number;
+    readonly jobsDays: number;
+    readonly auditDays: number;
+    readonly memoryEventsDays: number;
+    readonly memorySnapshotsDays: number;
+    readonly memoryReceiptsDays: number;
+  };
 }
 
 export interface WorkspaceDataExport {
@@ -1240,7 +1256,7 @@ export async function getWorkspaceDataPolicy(workspaceSlug: string, workspaceId:
     crmFetch<{ channelLimits: WorkspaceDataPolicy["channelLimits"] }>(workspaceSlug, `/api/v1/workspaces/${workspaceId}/channel-limits`),
     includeRetention
       ? crmFetch<{ retention: WorkspaceDataPolicy["retention"] }>(workspaceSlug, `/api/v1/workspaces/${workspaceId}/retention-policy`)
-      : Promise.resolve({ retention: { invitationsDays: 90, jobsDays: 90, auditDays: 365 } }),
+      : Promise.resolve({ retention: { invitationsDays: 90, jobsDays: 90, auditDays: 365, memoryEventsDays: 365, memorySnapshotsDays: 90, memoryReceiptsDays: 90 } }),
   ]);
   return { sending: sending.sending, channelLimits: limits.channelLimits, retention: retention.retention };
 }
@@ -1538,34 +1554,53 @@ export async function markCalendarBookingNoShow(workspaceSlug: string, bookingId
   return crmFetch(workspaceSlug, `/api/v1/calendar-bookings/${bookingId}/actions/no-show`, { method: "POST", body: input });
 }
 
-export interface WhatsAppChannelConnection {
-  readonly channel: "whatsapp";
+export type ChannelConnectionChannel = "linkedin" | "email" | "whatsapp";
+
+export interface ChannelConnection<TChannel extends ChannelConnectionChannel = ChannelConnectionChannel> {
+  readonly channel: TChannel;
   readonly connected: boolean;
   readonly selectedAccountId: string | null;
   readonly selectedDisplayName: string | null;
   readonly accounts: readonly {
     readonly id: string;
     readonly name: string;
-    readonly channel: "whatsapp";
+    readonly channel: TChannel;
     readonly healthy: boolean;
     readonly selected: boolean;
   }[];
 }
 
+export type WhatsAppChannelConnection = ChannelConnection<"whatsapp">;
+
+export async function getChannelConnection<TChannel extends ChannelConnectionChannel>(
+  workspaceSlug: string,
+  channel: TChannel,
+): Promise<ChannelConnection<TChannel>> {
+  return crmFetch(workspaceSlug, `/api/v1/channel-connections/${channel}`);
+}
+
+export async function selectChannelAccount(
+  workspaceSlug: string,
+  channel: ChannelConnectionChannel,
+  providerAccountId: string,
+): Promise<void> {
+  await crmFetch(workspaceSlug, `/api/v1/channel-connections/${channel}`, {
+    method: "PUT",
+    body: { providerAccountId },
+  });
+}
+
 export async function getWhatsAppChannelConnection(
   workspaceSlug: string,
 ): Promise<WhatsAppChannelConnection> {
-  return crmFetch(workspaceSlug, "/api/v1/channel-connections/whatsapp");
+  return getChannelConnection(workspaceSlug, "whatsapp");
 }
 
 export async function selectWhatsAppChannelAccount(
   workspaceSlug: string,
   providerAccountId: string,
 ): Promise<void> {
-  await crmFetch(workspaceSlug, "/api/v1/channel-connections/whatsapp", {
-    method: "PUT",
-    body: { providerAccountId },
-  });
+  await selectChannelAccount(workspaceSlug, "whatsapp", providerAccountId);
 }
 
 export interface PipelineOpportunity {
@@ -2103,7 +2138,10 @@ export interface ProspectViewSummary extends ContactSummary {
     } | null;
     readonly latestCommand: {
       readonly mode: string;
+      readonly executionMode: "live" | "dry_run";
       readonly status: string;
+      readonly generatedBody: string | null;
+      readonly generationMetadata: Readonly<Record<string, unknown>>;
       readonly errorCode: string | null;
       readonly createdAt: string;
     } | null;
@@ -2128,14 +2166,94 @@ export interface ProspectViewDetail extends ProspectViewSummary {
     readonly commands: readonly {
       readonly id: string;
       readonly mode: string;
+      readonly executionMode: "live" | "dry_run";
       readonly status: string;
       readonly requestedBody: string | null;
       readonly generatedBody: string | null;
+      readonly generationMetadata: Readonly<Record<string, unknown>>;
       readonly errorCode: string | null;
       readonly errorMessage: string | null;
       readonly createdAt: string;
     }[];
   }) | null;
+}
+
+export type ProspectMemoryCapability =
+  | "setter_campaign"
+  | "draft_improvement"
+  | "scoring"
+  | "outbound_drafting"
+  | "call_preparation"
+  | "inbound_aggregate";
+export type ProspectMemoryState = "fresh" | "refreshing" | "stale" | "budget_blocked" | "failed" | "anonymized";
+export interface ProspectMemoryRefreshJob {
+  readonly id: string;
+  readonly status: "pending" | "running" | "retry" | "completed" | "dead_lettered";
+  readonly attempts: number;
+  readonly maxAttempts: number;
+  readonly availableAt: string;
+  readonly lockedUntil: string | null;
+  readonly completedAt: string | null;
+  readonly lastErrorCode: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+export interface ProspectMemoryStatus {
+  readonly enabled: boolean;
+  readonly mode: "disabled" | "shadow" | "active";
+  readonly status: ProspectMemoryState;
+  readonly snapshotId: string | null;
+  readonly snapshotVersion: number | null;
+  readonly generatedAt: string | null;
+  readonly watermark: number;
+  readonly latestSequence: number;
+  readonly pendingEventCount: number;
+  readonly privacyEpoch: number;
+  readonly job: ProspectMemoryRefreshJob | null;
+  readonly sentEffect: false;
+  readonly asOf: string;
+}
+export interface ProspectMemorySource {
+  readonly eventId: string;
+  readonly sourceKind: string;
+  readonly excerpt: string | null;
+}
+export interface ProspectMemoryAssertionView {
+  readonly id: string;
+  readonly nature: "hypothesis" | "recommendation";
+  readonly statement: string;
+  readonly confidence: number;
+  readonly sources: readonly ProspectMemorySource[];
+  readonly validUntil: string | null;
+}
+export interface ProspectMemoryView {
+  readonly capability: ProspectMemoryCapability;
+  readonly mode: "shadow" | "active";
+  readonly status: ProspectMemoryState;
+  readonly snapshotId: string | null;
+  readonly snapshotVersion: number | null;
+  readonly generatedAt: string | null;
+  readonly relationshipSummary: string | null;
+  readonly recommendedTone: string | null;
+  readonly facts: Readonly<{
+    confirmedNeeds: readonly ProspectMemorySource[];
+    objections: readonly ProspectMemorySource[];
+    commitments: readonly ProspectMemorySource[];
+    topicsCovered: readonly ProspectMemorySource[];
+    doNotRepeat: readonly ProspectMemorySource[];
+    openQuestions: readonly ProspectMemorySource[];
+  }>;
+  readonly hypotheses: readonly ProspectMemoryAssertionView[];
+  readonly recommendations: readonly ProspectMemoryAssertionView[];
+  readonly contradictions: readonly string[];
+  readonly missingInformation: readonly string[];
+  readonly automaticActionAllowed: boolean;
+  readonly waitCode: "WAIT_MEMORY_STALE" | "WAIT_MEMORY_BUDGET" | null;
+  readonly sourceCount: number;
+  readonly excludedSourceCount: number;
+  readonly estimatedTokens: number;
+  readonly sentEffect: false;
+  readonly asOf: string;
 }
 
 export interface ProspectDecisionView {
@@ -2198,6 +2316,33 @@ export async function getProspectView(
   return crmFetch(workspaceSlug, `/api/v1/prospects/${contactId}`);
 }
 
+export async function getProspectMemoryStatus(
+  workspaceSlug: string,
+  contactId: string,
+): Promise<ProspectMemoryStatus> {
+  return crmFetch(workspaceSlug, `/api/v1/prospects/${contactId}/memory-status`);
+}
+
+export async function getProspectMemoryView(
+  workspaceSlug: string,
+  contactId: string,
+  capability: ProspectMemoryCapability = "call_preparation",
+): Promise<ProspectMemoryView> {
+  const query = new URLSearchParams({ capability });
+  return crmFetch(workspaceSlug, `/api/v1/prospects/${contactId}/memory-view?${query}`);
+}
+
+export async function refreshProspectMemory(
+  workspaceSlug: string,
+  contactId: string,
+  requestKey = crypto.randomUUID(),
+): Promise<{ inserted: boolean; job: ProspectMemoryRefreshJob | null; sentEffect: false }> {
+  return crmFetch(workspaceSlug, `/api/v1/prospects/${contactId}/memory/actions/refresh`, {
+    method: "POST",
+    body: { requestKey },
+  });
+}
+
 export async function requestProspectDryRun(
   workspaceSlug: string,
   contactId: string,
@@ -2213,11 +2358,16 @@ export async function requestProspectDryRun(
 export async function sendConversationCommand(
   workspaceSlug: string,
   conversationId: string,
-  input: { mode: "manual" | "setter"; body?: string },
-): Promise<{ id: string; status: string }> {
+  input: {
+    mode: "manual" | "setter";
+    body?: string;
+    executionMode?: "live" | "dry_run";
+    idempotencyKey?: string;
+  },
+): Promise<{ id: string; status: string; executionMode: "live" | "dry_run" }> {
   return crmFetch(workspaceSlug, `/api/v1/conversations/${conversationId}/messages`, {
     method: "POST",
-    body: { ...input, idempotencyKey: crypto.randomUUID() },
+    body: { ...input, idempotencyKey: input.idempotencyKey ?? crypto.randomUUID() },
   });
 }
 

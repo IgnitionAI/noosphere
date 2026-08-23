@@ -76,6 +76,10 @@ export interface PersonalizedCampaignContent {
       readonly changesApplied: readonly string[];
       readonly evidenceAnchor: string;
     };
+    readonly memoryReceiptId?: string;
+    readonly memorySnapshotId?: string | null;
+    readonly memorySnapshotVersion?: number | null;
+    readonly memoryWatermark?: number;
   };
 }
 
@@ -96,6 +100,8 @@ export interface CampaignContentGenerator {
       readonly followUpInstructions: string | null;
     } | null;
     readonly prospect: {
+      /** Internal durable contact identity. It is never included in model input. */
+      readonly contactId: string;
       readonly firstName: string;
       readonly lastName: string;
       readonly headline: string | null;

@@ -16,7 +16,7 @@ describe("workspace security and data lifecycle policy", () => {
   test("bounds channel limits, sending windows and retention", () => {
     expect(() => validateWorkspaceDataPolicy({ ...defaultWorkspaceDataPolicy(), channelLimits: { linkedin: 0, email: 50, whatsapp: 30 } })).toThrow("WORKSPACE_CHANNEL_LIMIT_INVALID");
     expect(() => validateWorkspaceDataPolicy({ ...defaultWorkspaceDataPolicy(), sending: { ...defaultWorkspaceDataPolicy().sending, windowStart: "18:00", windowEnd: "09:00" } })).toThrow("WORKSPACE_SENDING_WINDOW_INVALID");
-    expect(() => validateWorkspaceDataPolicy({ ...defaultWorkspaceDataPolicy(), retention: { invitationsDays: 1, jobsDays: 90, auditDays: 365 } })).toThrow("WORKSPACE_RETENTION_INVALID");
+    expect(() => validateWorkspaceDataPolicy({ ...defaultWorkspaceDataPolicy(), retention: { ...defaultWorkspaceDataPolicy().retention, invitationsDays: 1 } })).toThrow("WORKSPACE_RETENTION_INVALID");
   });
 
   test("detects only retention reductions", () => {

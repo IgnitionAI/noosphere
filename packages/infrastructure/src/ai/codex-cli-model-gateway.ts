@@ -277,7 +277,9 @@ async function readCodexOutput(outputPath: string, stdout: string): Promise<stri
 
 function classifyCodexFailure(stderr: string, stdout: string): ModelGatewayError {
   const detail = `${stderr}\n${stdout}`.toLowerCase();
-  if (/usage limit|rate limit|quota|too many requests|insufficient_quota/.test(detail)) {
+  if (
+    /(?:you(?:'ve| have) reached your usage limit|usage limit (?:is )?(?:exhausted|reached)|rate_limit_exceeded|quota (?:is )?(?:exhausted|exceeded)|too many requests|insufficient_quota)/.test(detail)
+  ) {
     return new ModelGatewayError("AI_PROVIDER_QUOTA_EXHAUSTED", "codex-cli", "Codex usage limit is exhausted", true, false);
   }
   if (/not logged in|authentication|unauthorized|login required|missing auth/.test(detail)) {
@@ -285,6 +287,9 @@ function classifyCodexFailure(stderr: string, stdout: string): ModelGatewayError
   }
   if (/model.+(not found|unavailable|unsupported)|unknown model/.test(detail)) {
     return new ModelGatewayError("AI_PROVIDER_MODEL_UNAVAILABLE", "codex-cli", "The selected Codex model is unavailable", true, false);
+  }
+  if (/unknownissuer|invalid peer certificate|certificate verify|failed to connect|connection refused|dns error|network is unreachable/.test(detail)) {
+    return new ModelGatewayError("AI_PROVIDER_UNAVAILABLE", "codex-cli", "Codex cannot reach OpenAI from the service", true, true);
   }
   return new ModelGatewayError("AI_PROVIDER_INVOCATION_FAILED", "codex-cli", "Codex CLI exited without a valid response", true, true);
 }

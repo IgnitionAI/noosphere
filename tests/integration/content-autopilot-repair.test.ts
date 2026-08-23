@@ -18,6 +18,7 @@ import {
 } from "@outbound/infrastructure/database/schema";
 import { PostgresContentAutopilotRepository } from "@outbound/infrastructure/content/postgres-content-autopilot-repository";
 import { PostgresContentGenerationRepository } from "@outbound/infrastructure/content/postgres-content-generation-repository";
+import { PostgresContentPublicationRepository } from "@outbound/infrastructure/content/postgres-content-publication-repository";
 import { PostgresOperationalViews } from "@outbound/infrastructure/workspaces/postgres-operational-views";
 import { ContentAutopilotReconciler } from "@outbound/application/content/content-autopilot";
 import type { ContentPublicationApplication } from "@outbound/application/content/content-publications";
@@ -30,6 +31,7 @@ databaseDescribe("AUT-101 bounded automatic editorial repair", () => {
   const database = createDatabase(databaseUrl);
   const generation = new PostgresContentGenerationRepository(database.db);
   const autopilot = new PostgresContentAutopilotRepository(database.db);
+  const publications = new PostgresContentPublicationRepository(database.db);
   const workspaceId = crypto.randomUUID();
   const userId = crypto.randomUUID();
   const offerId = crypto.randomUUID();
@@ -86,6 +88,48 @@ databaseDescribe("AUT-101 bounded automatic editorial repair", () => {
       preferredDays: [1, 2, 3, 4, 5, 6, 7],
       publicationTimes: ["09:00", "17:00"],
       timezone: "Europe/Paris",
+    });
+  });
+
+  test("cancels queued autopilot publications when only the timezone changes", async () => {
+    const run = await generation.createGeneration({
+      workspaceId,
+      userId,
+      ideaId,
+      operation: "asset.generate",
+      requestKey: `timezone:asset:${crypto.randomUUID()}`,
+      now,
+    });
+    await completeReady(run.id, new Date(now.getTime() + 1_000));
+    const publication = await publications.schedule({
+      workspaceId,
+      userId,
+      assetId: run.assetId,
+      requestKey: `autopilot:publication:timezone:${crypto.randomUUID()}`,
+      scheduledFor: new Date("2026-08-27T07:00:00.000Z"),
+      account: {
+        provider: "unipile",
+        providerAccountId: "linkedin-timezone-test",
+        displayName: "Timezone test",
+        selectionVersion: now.toISOString(),
+        observedAt: now.toISOString(),
+      },
+      now: new Date(now.getTime() + 2_000),
+    });
+
+    await autopilot.configure({
+      workspaceId,
+      userId,
+      requestKey: "autopilot:repair:timezone-only",
+      enabled: true,
+      localTime: "06:00",
+      timezone: "America/New_York",
+      now: new Date(now.getTime() + 3_000),
+    });
+
+    expect(await publications.find({ workspaceId, publicationId: publication.id })).toMatchObject({
+      id: publication.id,
+      status: "cancelled",
     });
   });
 

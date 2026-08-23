@@ -5,7 +5,7 @@ const workspaceId = "11111111-1111-4111-8111-111111111111";
 const userId = "22222222-2222-4222-8222-222222222222";
 const accountId = "unipile-whatsapp-account";
 
-describe("WhatsApp channel connection HTTP route", () => {
+describe("multichannel connection HTTP route", () => {
   test("lists only safe selectable account metadata", async () => {
     const handler = createChannelConnectionHttpHandler({
       contextResolver: context("owner"),
@@ -25,6 +25,33 @@ describe("WhatsApp channel connection HTTP route", () => {
         healthy: true,
         selected: false,
       }],
+    });
+  });
+
+  test("exposes the selected LinkedIn account through the same safe contract", async () => {
+    const handler = createChannelConnectionHttpHandler({
+      contextResolver: context("owner"),
+      connections: fixtureConnections({
+        async list(_workspaceId: string, channel: "linkedin") {
+          expect(channel).toBe("linkedin");
+          return [{ id: "linkedin-account", name: "Salim Laimeche", channel, healthy: true, selected: true }];
+        },
+        async selectedAccount(_workspaceId: string, channel: "linkedin") {
+          expect(channel).toBe("linkedin");
+          return { providerAccountId: "linkedin-account", displayName: "Salim Laimeche", updatedAt: new Date() };
+        },
+      }),
+    });
+
+    const response = await handler(request("GET", undefined, "linkedin"));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      channel: "linkedin",
+      connected: true,
+      selectedAccountId: "linkedin-account",
+      selectedDisplayName: "Salim Laimeche",
+      accounts: [{ id: "linkedin-account", name: "Salim Laimeche", channel: "linkedin", healthy: true, selected: true }],
     });
   });
 
@@ -94,8 +121,8 @@ function context(role: "owner" | "operator") {
   return { async resolve() { return { workspaceId, userId, role }; } };
 }
 
-function request(method: string, body?: unknown) {
-  return new Request("http://localhost/api/v1/channel-connections/whatsapp", {
+function request(method: string, body?: unknown, channel: "linkedin" | "email" | "whatsapp" = "whatsapp") {
+  return new Request(`http://localhost/api/v1/channel-connections/${channel}`, {
     method,
     headers: { "content-type": "application/json", "x-workspace-slug": "ignition-ai" },
     ...(body ? { body: JSON.stringify(body) } : {}),

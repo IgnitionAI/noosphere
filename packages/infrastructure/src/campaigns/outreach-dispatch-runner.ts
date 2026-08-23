@@ -652,6 +652,7 @@ export class OutreachDispatchJobProcessor {
           }
         : null,
       prospect: {
+        contactId: action.contactId,
         firstName: context.firstName,
         lastName: context.lastName,
         headline: context.headline,

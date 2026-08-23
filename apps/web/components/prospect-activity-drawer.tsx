@@ -1,17 +1,22 @@
 import { Bot, BriefcaseBusiness, CalendarCheck, MessageCircle, Sparkles, X } from "lucide-react";
 import Link from "next/link";
-import type { ProspectActivity, ProspectViewDetail } from "@/lib/api";
+import type { ProspectActivity, ProspectMemoryStatus, ProspectMemoryView, ProspectViewDetail } from "@/lib/api";
 import { sendProspectMessageAction } from "@/app/w/[workspaceSlug]/prospects/actions";
 import { ConversationComposer } from "@/components/conversation-composer";
+import { ProspectMemoryPanel } from "@/components/prospect-memory-panel";
 
 export function ProspectActivityDrawer({
   prospect,
   workspaceSlug,
   closeHref,
+  memoryStatus,
+  memoryView,
 }: {
   prospect: ProspectViewDetail;
   workspaceSlug: string;
   closeHref: string;
+  memoryStatus: ProspectMemoryStatus | null;
+  memoryView: ProspectMemoryView | null;
 }) {
   const conversation = prospect.conversation;
   const send = conversation
@@ -54,6 +59,8 @@ export function ProspectActivityDrawer({
                 {prospect.aiOpinion.risks.length ? <p className="mt-2 text-[11px] text-amber-800"><strong>À vérifier :</strong> {prospect.aiOpinion.risks.join(" · ")}</p> : null}
               </div>
             ) : null}
+
+            {memoryStatus ? <ProspectMemoryPanel status={memoryStatus} view={memoryView} /> : null}
 
             {prospect.meeting ? (
               <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-4">
@@ -109,9 +116,12 @@ export function ProspectActivityDrawer({
               ) : null}
               {conversation ? (
                 <div className="space-y-3 border-t border-line p-4">
-                  {conversation.latestCommand && ["scheduled", "sending"].includes(conversation.latestCommand.status) ? <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">Message en cours de préparation ou d’envoi…</p> : null}
+                  {conversation.latestCommand && ["scheduled", "sending"].includes(conversation.latestCommand.status) ? <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">{conversation.latestCommand.executionMode === "dry_run" ? "Prévisualisation en cours — aucun message ne sera envoyé. Vous pouvez fermer cette fenêtre." : "Message en cours de préparation ou d’envoi — vous pouvez fermer cette fenêtre."}</p> : null}
                   <ConversationComposer
+                    commandStatus={conversation.latestCommand?.status ?? null}
+                    commandExecutionMode={conversation.latestCommand?.executionMode ?? null}
                     conversationId={conversation.id}
+                    generatedBody={conversation.latestCommand?.generatedBody ?? null}
                     sendAction={send!}
                     workspaceSlug={workspaceSlug}
                   />

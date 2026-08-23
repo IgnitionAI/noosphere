@@ -15,6 +15,7 @@ import {
   outboxEvents,
   sequenceVersions,
 } from "@outbound/infrastructure/database/schema";
+import { captureProspectMemoryMutation } from "@outbound/infrastructure/prospect-memory/capture-prospect-memory-mutation";
 
 export class CampaignPopulationError extends Error {
   constructor(readonly code: string, readonly details: Readonly<Record<string, unknown>> = {}) {
@@ -77,6 +78,21 @@ export class PostgresCampaignPopulationRepository {
       }
       if (selected.length) {
         const eventId = await this.recordEvent(tx, input.workspaceId, input.campaignId, input.userId, "CampaignProspectsSelected", { campaignId: input.campaignId, contactIds: selected });
+        const observedAt = new Date();
+        for (const contactId of selected) {
+          await captureProspectMemoryMutation(tx, {
+            workspaceId: input.workspaceId,
+            sourceContactId: contactId,
+            sourceKind: "campaign_membership",
+            sourceId: `${eventId}:${contactId}`,
+            sourceVersion: 1,
+            kind: "campaign_changed",
+            occurredAt: observedAt,
+            observedAt,
+            payload: { campaignId: input.campaignId, status: "selected" },
+            correlationId: eventId,
+          });
+        }
         await tx.insert(auditLogs).values({ workspaceId: input.workspaceId, actorUserId: input.userId, action: "CampaignProspectsSelected", subjectType: "Campaign", subjectId: input.campaignId, changes: { contactIds: selected }, sourceEventId: eventId });
       }
     });
@@ -96,6 +112,19 @@ export class PostgresCampaignPopulationRepository {
       if (prospect.status === "excluded") return prospect;
       const updated = await tx.update(campaignProspects).set({ status: "excluded", exclusionReason: reason, excludedAt: new Date(), updatedAt: new Date() }).where(eq(campaignProspects.id, prospect.id)).returning();
       const eventId = await this.recordEvent(tx, input.workspaceId, input.campaignId, input.userId, "CampaignProspectExcluded", { campaignId: input.campaignId, contactId: input.contactId, reason });
+      const observedAt = new Date();
+      await captureProspectMemoryMutation(tx, {
+        workspaceId: input.workspaceId,
+        sourceContactId: input.contactId,
+        sourceKind: "campaign_membership",
+        sourceId: eventId,
+        sourceVersion: 1,
+        kind: "campaign_changed",
+        occurredAt: observedAt,
+        observedAt,
+        payload: { campaignId: input.campaignId, status: "excluded", reason },
+        correlationId: eventId,
+      });
       await tx.insert(auditLogs).values({ workspaceId: input.workspaceId, actorUserId: input.userId, action: "CampaignProspectExcluded", subjectType: "CampaignProspect", subjectId: prospect.id, changes: { reason }, sourceEventId: eventId });
       return updated[0]!;
     });
@@ -150,6 +179,18 @@ export class PostgresCampaignPopulationRepository {
       }
       await tx.update(campaignProspects).set({ status: "enrolled", enrolledAt, updatedAt: enrolledAt }).where(eq(campaignProspects.id, prospect.id));
       const eventId = await this.recordEvent(tx, input.workspaceId, input.campaignId, input.userId, "CampaignProspectEnrolled", { campaignId: input.campaignId, contactId: input.contactId, sequenceVersionId: campaign.sequenceVersionId, enrollmentId: enrollment.id });
+      await captureProspectMemoryMutation(tx, {
+        workspaceId: input.workspaceId,
+        sourceContactId: input.contactId,
+        sourceKind: "campaign_membership",
+        sourceId: eventId,
+        sourceVersion: 1,
+        kind: "campaign_changed",
+        occurredAt: enrolledAt,
+        observedAt: enrolledAt,
+        payload: { campaignId: input.campaignId, status: "enrolled", enrollmentId: enrollment.id },
+        correlationId: eventId,
+      });
       await tx.insert(auditLogs).values({ workspaceId: input.workspaceId, actorUserId: input.userId, action: "CampaignProspectEnrolled", subjectType: "CampaignEnrollment", subjectId: enrollment.id, changes: { campaignId: input.campaignId, contactId: input.contactId, sequenceVersionId: campaign.sequenceVersionId }, sourceEventId: eventId });
       return enrollment;
     });

@@ -9,6 +9,7 @@ import {
   contactSuppressions,
   outboxEvents,
 } from "@outbound/infrastructure/database/schema";
+import { captureProspectMemoryMutation } from "@outbound/infrastructure/prospect-memory/capture-prospect-memory-mutation";
 import { suppressionFingerprint } from "./suppression-fingerprint";
 
 export interface CompanyListCursor {
@@ -243,9 +244,50 @@ export class PostgresCrmRepository {
           isCurrent: true,
         });
       }
-      await this.recordEvent(tx, input.workspaceId, "Contact", input.id, "ContactCreated", {
+      const eventId = await this.recordEvent(tx, input.workspaceId, "Contact", input.id, "ContactCreated", {
         contactId: input.id,
       });
+      const observedAt = new Date();
+      await captureProspectMemoryMutation(tx, {
+        workspaceId: input.workspaceId,
+        sourceContactId: input.id,
+        sourceKind: "contact",
+        sourceId: eventId,
+        sourceVersion: 1,
+        kind: "contact_updated",
+        occurredAt: observedAt,
+        observedAt,
+        payload: { change: "created" },
+        correlationId: eventId,
+      });
+      for (const identity of input.identities) {
+        await captureProspectMemoryMutation(tx, {
+          workspaceId: input.workspaceId,
+          sourceContactId: input.id,
+          sourceKind: "contact_identity",
+          sourceId: identity.id,
+          sourceVersion: 1,
+          kind: "identity_linked",
+          occurredAt: observedAt,
+          observedAt,
+          payload: { identityType: identity.type },
+          correlationId: eventId,
+        });
+      }
+      if (input.employment) {
+        await captureProspectMemoryMutation(tx, {
+          workspaceId: input.workspaceId,
+          sourceContactId: input.id,
+          sourceKind: "contact_employment",
+          sourceId: input.employment.id,
+          sourceVersion: 1,
+          kind: "employment_updated",
+          occurredAt: observedAt,
+          observedAt,
+          payload: { companyId: input.employment.companyId, title: input.employment.title, current: true },
+          correlationId: eventId,
+        });
+      }
       return inserted[0]!;
     });
   }
@@ -369,11 +411,30 @@ export class PostgresCrmRepository {
     contactId: string;
     fields: Partial<Pick<typeof contacts.$inferInsert, "firstName" | "lastName" | "photoUrl" | "preferredChannel">>;
   }) {
-    const rows = await this.db.update(contacts).set({ ...input.fields, updatedAt: new Date() }).where(and(
-      eq(contacts.workspaceId, input.workspaceId), eq(contacts.id, input.contactId),
-    )).returning();
-    if (!rows[0]) throw new Error("CONTACT_NOT_FOUND");
-    return rows[0];
+    return this.db.transaction(async (tx) => {
+      const observedAt = new Date();
+      const rows = await tx.update(contacts).set({ ...input.fields, updatedAt: observedAt }).where(and(
+        eq(contacts.workspaceId, input.workspaceId), eq(contacts.id, input.contactId),
+      )).returning();
+      if (!rows[0]) throw new Error("CONTACT_NOT_FOUND");
+      const eventId = await this.recordEvent(tx, input.workspaceId, "Contact", input.contactId, "ContactUpdated", {
+        contactId: input.contactId,
+        fields: Object.keys(input.fields).sort(),
+      });
+      await captureProspectMemoryMutation(tx, {
+        workspaceId: input.workspaceId,
+        sourceContactId: input.contactId,
+        sourceKind: "contact",
+        sourceId: eventId,
+        sourceVersion: 1,
+        kind: "contact_updated",
+        occurredAt: observedAt,
+        observedAt,
+        payload: { fields: Object.keys(input.fields).sort() },
+        correlationId: eventId,
+      });
+      return rows[0];
+    });
   }
 
   async addIdentity(input: {
@@ -400,6 +461,24 @@ export class PostgresCrmRepository {
             normalizedValue: input.normalizedValue,
           })
           .returning();
+        const observedAt = new Date();
+        const eventId = await this.recordEvent(tx, input.workspaceId, "Contact", input.contactId, "ContactIdentityLinked", {
+          contactId: input.contactId,
+          identityId: input.id,
+          identityType: input.type,
+        });
+        await captureProspectMemoryMutation(tx, {
+          workspaceId: input.workspaceId,
+          sourceContactId: input.contactId,
+          sourceKind: "contact_identity",
+          sourceId: input.id,
+          sourceVersion: 1,
+          kind: "identity_linked",
+          occurredAt: observedAt,
+          observedAt,
+          payload: { identityType: input.type },
+          correlationId: eventId,
+        });
         return rows[0]!;
       } catch (error) {
         if (isUniqueViolation(error)) throw new Error("CONTACT_IDENTITY_CONFLICT");
@@ -460,6 +539,19 @@ export class PostgresCrmRepository {
         "ContactEmploymentChanged",
         { contactId: input.contactId, companyId: input.companyId },
       );
+      const observedAt = new Date();
+      await captureProspectMemoryMutation(tx, {
+        workspaceId: input.workspaceId,
+        sourceContactId: input.contactId,
+        sourceKind: "contact_employment",
+        sourceId: input.id,
+        sourceVersion: 1,
+        kind: "employment_updated",
+        occurredAt: observedAt,
+        observedAt,
+        payload: { companyId: input.companyId, title: input.title, current: true },
+        correlationId: eventId,
+      });
       return rows[0]!;
     });
   }
@@ -525,6 +617,19 @@ export class PostgresCrmRepository {
         "SuppressionRegistered",
         { contactId: input.contactId, channel: input.channel, actorUserId: input.userId },
       );
+      const observedAt = new Date();
+      await captureProspectMemoryMutation(tx, {
+        workspaceId: input.workspaceId,
+        sourceContactId: input.contactId,
+        sourceKind: "contact",
+        sourceId: eventId,
+        sourceVersion: 1,
+        kind: "contact_updated",
+        occurredAt: observedAt,
+        observedAt,
+        payload: { suppressed: true, channel: input.channel },
+        correlationId: eventId,
+      });
       await tx.insert(auditLogs).values({
         workspaceId: input.workspaceId,
         actorUserId: input.userId,

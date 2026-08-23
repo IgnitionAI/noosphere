@@ -39,6 +39,16 @@ class RecordingRunner implements CodexProcessRunner {
   }
 }
 
+class ConcurrentRecordingRunner implements CodexProcessRunner {
+  readonly seen: CodexProcessRequest[] = [];
+
+  async run(input: CodexProcessRequest) {
+    this.seen.push(input);
+    await Bun.sleep(5);
+    return { exitCode: 0, stdout: JSON.stringify({ body: "Bonjour" }), stderr: "" };
+  }
+}
+
 describe("CodexCliModelGateway", () => {
   test("runs Codex ephemerally in an empty read-only directory with a JSON schema", async () => {
     const runner = new RecordingRunner({ exitCode: 0, stdout: JSON.stringify({ body: "Bonjour" }), stderr: "" });
@@ -72,6 +82,25 @@ describe("CodexCliModelGateway", () => {
     expect(processRequest?.stdin).toContain("Do not inspect the filesystem");
   });
 
+  test("gives concurrent invocations independent transient CLI execution scopes", async () => {
+    const runner = new ConcurrentRecordingRunner();
+    const gateway = new CodexCliModelGateway({
+      codexHome: "/srv/noosphere/codex",
+      binaryPath: "/usr/local/bin/codex",
+      runner,
+      now: () => now,
+    });
+
+    await Promise.all([
+      gateway.invokeStructured({ ...request, requestKey: "writer:parallel:1" }),
+      gateway.invokeStructured({ ...request, requestKey: "writer:parallel:2" }),
+    ]);
+
+    expect(runner.seen).toHaveLength(2);
+    expect(runner.seen[0]?.cwd).not.toBe(runner.seen[1]?.cwd);
+    expect(runner.seen.every((invocation) => invocation.command.includes("--ephemeral"))).toBe(true);
+  });
+
   test("classifies a Codex usage limit as fallbackable without retrying Codex", async () => {
     const gateway = new CodexCliModelGateway({
       codexHome: "/srv/noosphere/codex",
@@ -83,6 +112,39 @@ describe("CodexCliModelGateway", () => {
       code: "AI_PROVIDER_QUOTA_EXHAUSTED",
       fallbackAllowed: true,
       retryableOnProvider: false,
+    });
+  });
+
+  test("does not mistake business text mentioning quota for a provider quota error", async () => {
+    const gateway = new CodexCliModelGateway({
+      codexHome: "/tmp/codex-home",
+      runner: new RecordingRunner({
+        exitCode: 1,
+        stdout: "Input evidence discusses a customer quota.",
+        stderr: "invalid_json_schema: propertyNames is not permitted",
+      }),
+    });
+
+    await expect(gateway.invokeStructured(request)).rejects.toMatchObject({
+      code: "AI_PROVIDER_INVOCATION_FAILED",
+    });
+  });
+
+  test("classifies an unavailable container trust store as a retryable provider outage", async () => {
+    const gateway = new CodexCliModelGateway({
+      codexHome: "/srv/noosphere/codex",
+      runner: new RecordingRunner({
+        exitCode: 1,
+        stdout: "",
+        stderr: "failed to connect to websocket: invalid peer certificate: UnknownIssuer",
+      }),
+      now: () => now,
+    });
+
+    await expect(gateway.invokeStructured(request)).rejects.toMatchObject({
+      code: "AI_PROVIDER_UNAVAILABLE",
+      fallbackAllowed: true,
+      retryableOnProvider: true,
     });
   });
 

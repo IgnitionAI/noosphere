@@ -5,6 +5,8 @@ import {
 } from "@outbound/domain/crm/prospect-channels";
 import {
   type AnyPgColumn,
+  bigint,
+  bigserial,
   boolean,
   check,
   foreignKey,
@@ -355,10 +357,36 @@ export const workspaceDataSettings = pgTable("workspace_data_settings", {
   invitationsRetentionDays: integer("invitations_retention_days").notNull().default(90),
   jobsRetentionDays: integer("jobs_retention_days").notNull().default(90),
   auditRetentionDays: integer("audit_retention_days").notNull().default(365),
+  memoryEventsRetentionDays: integer("memory_events_retention_days").notNull().default(365),
+  memorySnapshotsRetentionDays: integer("memory_snapshots_retention_days").notNull().default(90),
+  memoryReceiptsRetentionDays: integer("memory_receipts_retention_days").notNull().default(90),
   updatedBy: uuid("updated_by").references(() => authUsers.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+export const workspaceProspectMemorySettings = pgTable(
+  "workspace_prospect_memory_settings",
+  {
+    workspaceId: uuid("workspace_id")
+      .primaryKey()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    captureEnabled: boolean("capture_enabled").notNull().default(false),
+    shadowEnabled: boolean("shadow_enabled").notNull().default(false),
+    setterEnabled: boolean("setter_enabled").notNull().default(false),
+    enabledCapabilities: jsonb("enabled_capabilities").notNull().default([]),
+    processingProfiles: jsonb("processing_profiles").notNull().default([]),
+    maxDailySemanticRefreshes: integer("max_daily_semantic_refreshes").notNull().default(1_000),
+    maxDailyCostUsd: numeric("max_daily_cost_usd", { precision: 12, scale: 4 }).notNull().default("10"),
+    updatedBy: uuid("updated_by").references(() => authUsers.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check("workspace_prospect_memory_refresh_budget_ck", sql`${table.maxDailySemanticRefreshes} >= 0`),
+    check("workspace_prospect_memory_cost_budget_ck", sql`${table.maxDailyCostUsd} >= 0`),
+  ],
+);
 
 export const workspaceOnboarding = pgTable(
   "workspace_onboarding",
@@ -2232,6 +2260,7 @@ export const contacts = pgTable(
     mergedIntoId: uuid("merged_into_id"),
     mergedAt: timestamp("merged_at", { withTimezone: true }),
     anonymizedAt: timestamp("anonymized_at", { withTimezone: true }),
+    privacyEpoch: integer("privacy_epoch").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -2308,6 +2337,159 @@ export const contactEmployments = pgTable(
     uniqueIndex("contact_employments_current_uq")
       .on(table.workspaceId, table.contactId)
       .where(sql`${table.isCurrent}`),
+  ],
+);
+
+export const prospectMemoryEvents = pgTable(
+  "prospect_memory_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sequenceId: bigserial("sequence_id", { mode: "number" }).unique(),
+    workspaceId: uuid("workspace_id").notNull(),
+    sourceContactId: uuid("source_contact_id").notNull(),
+    canonicalContactId: uuid("canonical_contact_id").notNull(),
+    sourceKind: varchar("source_kind", { length: 80 }).notNull(),
+    sourceId: varchar("source_id", { length: 300 }).notNull(),
+    sourceVersion: bigint("source_version", { mode: "number" }).notNull().default(1),
+    kind: varchar("kind", { length: 80 }).notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    observedAt: timestamp("observed_at", { withTimezone: true }).notNull().defaultNow(),
+    validFrom: timestamp("valid_from", { withTimezone: true }).notNull(),
+    validTo: timestamp("valid_to", { withTimezone: true }),
+    supersedesEventId: uuid("supersedes_event_id"),
+    payload: jsonb("payload").notNull().default({}),
+    schemaVersion: integer("schema_version").notNull().default(1),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.workspaceId, table.sourceContactId],
+      foreignColumns: [contacts.workspaceId, contacts.id],
+      name: "prospect_memory_events_source_contact_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.workspaceId, table.canonicalContactId],
+      foreignColumns: [contacts.workspaceId, contacts.id],
+      name: "prospect_memory_events_canonical_contact_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.supersedesEventId],
+      foreignColumns: [table.id],
+      name: "prospect_memory_events_supersedes_fk",
+    }).onDelete("set null"),
+    uniqueIndex("prospect_memory_events_source_uq").on(
+      table.workspaceId,
+      table.sourceKind,
+      table.sourceId,
+      table.sourceVersion,
+    ),
+    index("prospect_memory_events_contact_sequence_idx").on(
+      table.workspaceId,
+      table.canonicalContactId,
+      table.sequenceId,
+    ),
+    index("prospect_memory_events_source_contact_sequence_idx").on(
+      table.workspaceId,
+      table.sourceContactId,
+      table.sequenceId,
+    ),
+    check("prospect_memory_events_source_version_ck", sql`${table.sourceVersion} > 0`),
+    check("prospect_memory_events_schema_version_ck", sql`${table.schemaVersion} > 0`),
+    check("prospect_memory_events_validity_ck", sql`${table.validTo} is null or ${table.validTo} > ${table.validFrom}`),
+  ],
+);
+
+export const prospectMemorySnapshots = pgTable(
+  "prospect_memory_snapshots",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull(),
+    contactId: uuid("contact_id").notNull(),
+    version: integer("version").notNull(),
+    watermark: bigint("watermark", { mode: "number" }).notNull(),
+    firstSequenceId: bigint("first_sequence_id", { mode: "number" }).notNull(),
+    privacyEpoch: integer("privacy_epoch").notNull(),
+    status: varchar("status", { length: 40 }).notNull(),
+    currentState: jsonb("current_state").notNull(),
+    commercialState: jsonb("commercial_state").notNull(),
+    assertions: jsonb("assertions").notNull().default([]),
+    relationshipSummary: text("relationship_summary").notNull().default(""),
+    recommendedTone: varchar("recommended_tone", { length: 300 }),
+    contradictions: jsonb("contradictions").notNull().default([]),
+    missingInformation: jsonb("missing_information").notNull().default([]),
+    modelProvider: varchar("model_provider", { length: 120 }),
+    model: varchar("model", { length: 200 }),
+    promptVersion: varchar("prompt_version", { length: 120 }).notNull(),
+    policyVersion: varchar("policy_version", { length: 120 }).notNull(),
+    schemaVersion: integer("schema_version").notNull(),
+    rendererVersion: integer("renderer_version").notNull(),
+    contentHash: varchar("content_hash", { length: 64 }).notNull(),
+    generatedAt: timestamp("generated_at", { withTimezone: true }).notNull(),
+    supersededAt: timestamp("superseded_at", { withTimezone: true }),
+    invalidatedAt: timestamp("invalidated_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.workspaceId, table.contactId],
+      foreignColumns: [contacts.workspaceId, contacts.id],
+      name: "prospect_memory_snapshots_contact_fk",
+    }).onDelete("cascade"),
+    unique("prospect_memory_snapshots_workspace_id_uq").on(table.workspaceId, table.id),
+    uniqueIndex("prospect_memory_snapshots_version_uq").on(table.workspaceId, table.contactId, table.version),
+    uniqueIndex("prospect_memory_snapshots_current_uq")
+      .on(table.workspaceId, table.contactId)
+      .where(sql`${table.supersededAt} is null and ${table.invalidatedAt} is null`),
+    index("prospect_memory_snapshots_contact_generated_idx").on(
+      table.workspaceId,
+      table.contactId,
+      table.generatedAt,
+    ),
+    check("prospect_memory_snapshots_version_ck", sql`${table.version} > 0`),
+    check("prospect_memory_snapshots_watermark_ck", sql`${table.watermark} >= ${table.firstSequenceId}`),
+    check("prospect_memory_snapshots_privacy_epoch_ck", sql`${table.privacyEpoch} >= 0`),
+  ],
+);
+
+export const prospectMemoryContextReceipts = pgTable(
+  "prospect_memory_context_receipts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull(),
+    contactId: uuid("contact_id").notNull(),
+    requestKey: varchar("request_key", { length: 300 }).notNull(),
+    capability: varchar("capability", { length: 80 }).notNull(),
+    snapshotId: uuid("snapshot_id"),
+    snapshotVersion: integer("snapshot_version"),
+    watermark: bigint("watermark", { mode: "number" }).notNull(),
+    privacyEpoch: integer("privacy_epoch").notNull(),
+    rendererVersion: integer("renderer_version").notNull(),
+    sourceEventIds: jsonb("source_event_ids").notNull().default([]),
+    sourceHashes: jsonb("source_hashes").notNull().default([]),
+    excludedSourceEventIds: jsonb("excluded_source_event_ids").notNull().default([]),
+    normalizedRetrievalQueries: jsonb("normalized_retrieval_queries").notNull().default([]),
+    estimatedInputTokens: integer("estimated_input_tokens").notNull(),
+    contextHash: varchar("context_hash", { length: 64 }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.workspaceId, table.contactId],
+      foreignColumns: [contacts.workspaceId, contacts.id],
+      name: "prospect_memory_context_receipts_contact_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.snapshotId],
+      foreignColumns: [prospectMemorySnapshots.id],
+      name: "prospect_memory_context_receipts_snapshot_fk",
+    }).onDelete("set null"),
+    uniqueIndex("prospect_memory_context_receipts_request_uq").on(table.workspaceId, table.requestKey),
+    index("prospect_memory_context_receipts_contact_created_idx").on(
+      table.workspaceId,
+      table.contactId,
+      table.createdAt,
+    ),
+    check("prospect_memory_context_receipts_tokens_ck", sql`${table.estimatedInputTokens} >= 0`),
   ],
 );
 
@@ -3437,8 +3619,10 @@ export const conversationCommands = pgTable(
       .references(() => conversations.id, { onDelete: "cascade" }),
     requestedBy: uuid("requested_by").references(() => authUsers.id, { onDelete: "set null" }),
     mode: varchar("mode", { length: 20 }).notNull(),
+    executionMode: varchar("execution_mode", { length: 20 }).notNull().default("live"),
     requestedBody: text("requested_body"),
     generatedBody: text("generated_body"),
+    generationMetadata: jsonb("generation_metadata").notNull().default(sql`'{}'::jsonb`),
     status: varchar("status", { length: 40 }).notNull().default("scheduled"),
     idempotencyKey: varchar("idempotency_key", { length: 500 }).notNull(),
     providerRequestId: varchar("provider_request_id", { length: 500 }),
@@ -3460,6 +3644,7 @@ export const conversationCommands = pgTable(
       table.conversationId,
       table.createdAt,
     ),
+    check("conversation_commands_execution_mode_ck", sql`${table.executionMode} in ('live', 'dry_run')`),
   ],
 );
 

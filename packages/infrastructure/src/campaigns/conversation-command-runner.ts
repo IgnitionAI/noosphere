@@ -1,9 +1,15 @@
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import type { InboundReplyAgent } from "@outbound/application/campaigns/inbound-reply-agent";
 import type { OutboundChannelGateway } from "@outbound/application/campaigns/outbound-channel-gateway";
 import { OutboundDeliveryError } from "@outbound/application/campaigns/outbound-channel-gateway";
 import type { JobQueue, LeasedJob } from "@outbound/application/jobs/job-queue";
 import type { Clock } from "@outbound/application/shared/ports";
+import {
+  requireProspectMemoryAllowedProviders,
+  type ProspectContextAssembler,
+  type ProspectMemoryPolicyReader,
+} from "@outbound/application/prospect-memory/prospect-memory";
+import type { ProspectMemoryShadowComparator } from "@outbound/application/prospect-memory/prospect-memory-shadow-comparator";
 import type { ProspectingChannel } from "@outbound/domain/campaigns/prospecting-plan";
 import { resolveCampaignAutopilotPolicy } from "@outbound/domain/campaigns/campaign-autopilot-policy";
 import type { Database } from "@outbound/infrastructure/database/client";
@@ -13,6 +19,7 @@ import {
   type WorkspaceCalendarScheduler,
 } from "@outbound/infrastructure/calendar/postgres-calendar-integration";
 import { PostgresMeetingProposalManager } from "@outbound/infrastructure/calendar/meeting-proposal-manager";
+import { captureProspectMemoryMutation } from "@outbound/infrastructure/prospect-memory/capture-prospect-memory-mutation";
 import {
   automatedReplies,
   campaignProspects,
@@ -38,6 +45,9 @@ export class ConversationCommandJobProcessor {
     private readonly clock: Clock,
     private readonly bookingUrl: string | null,
     private readonly bookingLinks?: WorkspaceCalendarScheduler,
+    private readonly prospectContextAssembler?: ProspectContextAssembler,
+    private readonly prospectMemoryShadowComparator?: ProspectMemoryShadowComparator,
+    private readonly prospectMemoryPolicies?: ProspectMemoryPolicyReader,
   ) {
     this.meetingProposals = bookingLinks
       ? new PostgresMeetingProposalManager(database, bookingLinks)
@@ -47,7 +57,7 @@ export class ConversationCommandJobProcessor {
   async process(job: LeasedJob): Promise<void> {
     const payload = commandPayload(job.payload);
     const command = await this.#load(payload);
-    if (!command || ["sent", "failed", "cancelled"].includes(command.status)) {
+    if (!command || ["sent", "generated", "failed", "cancelled"].includes(command.status)) {
       await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
       return;
     }
@@ -67,7 +77,7 @@ export class ConversationCommandJobProcessor {
         ),
       )
       .limit(1);
-    if (automaticSending) {
+    if (automaticSending && command.executionMode === "live") {
       await this.#fail(payload, "AUTOMATED_REPLY_IN_FLIGHT", "Une réponse automatique est déjà en cours d’envoi.");
       await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
       return;
@@ -88,24 +98,64 @@ export class ConversationCommandJobProcessor {
       return;
     }
     try {
-      await this.database
-        .update(automatedReplies)
-        .set({
-          status: "cancelled",
-          errorCode: "USER_COMMAND_TAKES_PRECEDENCE",
-          errorMessage: "Une commande manuelle ou explicite du Setter remplace cette réponse.",
-          updatedAt: this.clock.now(),
-        })
-        .where(
-          and(
-            eq(automatedReplies.workspaceId, payload.workspaceId),
-            eq(automatedReplies.conversationId, command.conversationId),
-            eq(automatedReplies.status, "scheduled"),
-          ),
-        );
-      const body = command.mode === "manual"
-        ? requiredBody(command.requestedBody)
-        : await this.#generateSetterReply(command);
+      if (command.executionMode === "live") {
+        await this.database
+          .update(automatedReplies)
+          .set({
+            status: "cancelled",
+            errorCode: "USER_COMMAND_TAKES_PRECEDENCE",
+            errorMessage: "Une commande manuelle ou explicite du Setter remplace cette réponse.",
+            updatedAt: this.clock.now(),
+          })
+          .where(
+            and(
+              eq(automatedReplies.workspaceId, payload.workspaceId),
+              eq(automatedReplies.conversationId, command.conversationId),
+              eq(automatedReplies.status, "scheduled"),
+            ),
+          );
+      }
+      const generation = command.mode === "manual"
+        ? { body: requiredBody(command.requestedBody), metadata: {} }
+        : await this.#generateSetterReply(command, command.executionMode === "dry_run");
+      const body = generation.body;
+      if (command.executionMode === "dry_run") {
+        const now = this.clock.now();
+        await this.database.transaction(async (tx) => {
+          await tx
+            .update(conversationCommands)
+            .set({
+              generatedBody: body,
+              generationMetadata: generation.metadata,
+              status: "generated",
+              providerRequestId: null,
+              sentAt: null,
+              errorCode: null,
+              errorMessage: null,
+              updatedAt: now,
+            })
+            .where(and(
+              eq(conversationCommands.workspaceId, payload.workspaceId),
+              eq(conversationCommands.id, payload.commandId),
+            ));
+          await tx.insert(outboxEvents).values({
+            workspaceId: payload.workspaceId,
+            aggregateType: "Conversation",
+            aggregateId: command.conversationId,
+            eventType: "SetterReplyGeneratedDryRun",
+            payload: {
+              conversationId: command.conversationId,
+              commandId: payload.commandId,
+              aiRunId: generation.metadata.aiRunId ?? null,
+              memoryReceiptId: generation.metadata.memoryReceiptId ?? null,
+              sentEffect: false,
+            },
+            createdAt: now,
+          });
+        });
+        await this.queue.acknowledge(job.id, job.lockedBy, now);
+        return;
+      }
       const result = await this.gateway.send({
         accountId: command.providerAccountId,
         channel: command.channel,
@@ -127,10 +177,12 @@ export class ConversationCommandJobProcessor {
       });
       const now = this.clock.now();
       await this.database.transaction(async (tx) => {
+        const messageId = crypto.randomUUID();
         await tx
           .update(conversationCommands)
           .set({
             generatedBody: command.mode === "setter" ? body : null,
+            generationMetadata: generation.metadata,
             status: "sent",
             providerRequestId: result.providerRequestId,
             sentAt: now,
@@ -144,8 +196,8 @@ export class ConversationCommandJobProcessor {
               eq(conversationCommands.id, payload.commandId),
             ),
           );
-        await tx.insert(messages).values({
-          id: crypto.randomUUID(),
+        const [insertedMessage] = await tx.insert(messages).values({
+          id: messageId,
           workspaceId: payload.workspaceId,
           conversationId: command.conversationId,
           providerMessageId: result.providerRequestId,
@@ -154,7 +206,24 @@ export class ConversationCommandJobProcessor {
           body,
           sentAt: now,
           createdAt: now,
-        }).onConflictDoNothing();
+        }).onConflictDoNothing().returning({ id: messages.id });
+        if (insertedMessage) await captureProspectMemoryMutation(tx, {
+          workspaceId: payload.workspaceId,
+          sourceContactId: command.contactId,
+          sourceKind: "message",
+          sourceId: insertedMessage.id,
+          sourceVersion: 1,
+          kind: "message_sent",
+          occurredAt: now,
+          observedAt: now,
+          payload: {
+            conversationId: command.conversationId,
+            channel: command.channel,
+            direction: "outbound",
+            senderType: command.mode === "setter" ? "ai" : "human",
+          },
+          correlationId: job.correlationId,
+        });
         await tx
           .update(conversations)
           .set({
@@ -209,9 +278,67 @@ export class ConversationCommandJobProcessor {
     }
   }
 
-  async #generateSetterReply(command: LoadedConversationCommand) {
-    const history = await this.database
-      .select({ direction: messages.direction, body: messages.body })
+  async #generateSetterReply(
+    command: LoadedConversationCommand,
+    dryRun: boolean,
+  ): Promise<GeneratedSetterReply> {
+    let prospectContext: Readonly<Record<string, unknown>> | undefined;
+    let prospectContextReference: Parameters<InboundReplyAgent["decide"]>[0]["prospectContextReference"];
+    let prospectContextAllowedProviders: Parameters<InboundReplyAgent["decide"]>[0]["prospectContextAllowedProviders"];
+    let shadowContext: Awaited<ReturnType<ProspectContextAssembler["assemble"]>> | null = null;
+    if (this.prospectContextAssembler) {
+      try {
+        const bundle = await this.prospectContextAssembler.assemble({
+          workspaceId: command.workspaceId,
+          contactId: command.contactId,
+          capability: "setter_campaign",
+          principalRole: "worker",
+          requestKey: `setter-context:${command.idempotencyKey}`,
+          now: this.clock.now(),
+        });
+        if (bundle.mode === "active") {
+          if (!bundle.automaticActionAllowed) {
+            throw new SetterStoppedConversationError(
+              bundle.waitCode ?? "WAIT_MEMORY_STALE",
+              "La mémoire Prospect 360 doit être actualisée avant un envoi automatique.",
+            );
+          }
+          prospectContext = bundle.context;
+          prospectContextReference = contextReference(bundle);
+          if (!this.prospectMemoryPolicies) throw new Error("PROSPECT_MEMORY_POLICY_READER_REQUIRED");
+          prospectContextAllowedProviders = await requireProspectMemoryAllowedProviders({
+            policies: this.prospectMemoryPolicies,
+            workspaceId: command.workspaceId,
+            capability: "setter_campaign",
+          });
+        } else if (dryRun) {
+          if (bundle.waitCode) {
+            throw new SetterStoppedConversationError(
+              bundle.waitCode,
+              "La mémoire Prospect 360 doit être actualisée avant le dry-run.",
+            );
+          }
+          prospectContext = bundle.context;
+          prospectContextReference = contextReference(bundle);
+          if (!this.prospectMemoryPolicies) throw new Error("PROSPECT_MEMORY_POLICY_READER_REQUIRED");
+          prospectContextAllowedProviders = await requireProspectMemoryAllowedProviders({
+            policies: this.prospectMemoryPolicies,
+            workspaceId: command.workspaceId,
+            capability: "setter_campaign",
+          });
+          shadowContext = bundle;
+        } else {
+          shadowContext = bundle;
+        }
+      } catch (error) {
+        if (error instanceof SetterStoppedConversationError) throw error;
+        if (!isMemoryDisabled(error)) throw error;
+        // Capture/shadow is opt-in. A disabled workspace must retain the legacy
+        // behavior exactly until its controlled rollout starts.
+      }
+    }
+    const recentHistory = await this.database
+      .select({ id: messages.id, direction: messages.direction, body: messages.body })
       .from(messages)
       .where(
         and(
@@ -219,8 +346,23 @@ export class ConversationCommandJobProcessor {
           eq(messages.conversationId, command.conversationId),
         ),
       )
-      .orderBy(asc(messages.createdAt))
+      .orderBy(desc(messages.createdAt), desc(messages.id))
       .limit(30);
+    const history = [...recentHistory].reverse();
+    if (shadowContext && this.prospectMemoryShadowComparator) {
+      await this.prospectMemoryShadowComparator.compare({
+        workspaceId: command.workspaceId,
+        contactId: command.contactId,
+        requestKey: `setter-shadow:${command.idempotencyKey}`,
+        legacyHistory: history.map((message) => ({
+          direction: message.direction === "outbound" ? "outbound" as const : "inbound" as const,
+          body: message.body,
+          sourceId: message.id,
+        })),
+        memory: shadowContext,
+        comparedAt: this.clock.now(),
+      });
+    }
     const latestInbound = [...history].reverse().find((message) => message.direction === "inbound");
     if (!latestInbound) {
       throw new SetterStoppedConversationError(
@@ -229,7 +371,13 @@ export class ConversationCommandJobProcessor {
       );
     }
     const policy = resolveCampaignAutopilotPolicy(command.autopilotPolicy, command.channel);
-    const calendar = this.meetingProposals
+    const calendar = dryRun
+      ? await this.bookingLinks?.schedulingContext({
+          workspaceId: command.workspaceId,
+          contactId: command.contactId,
+          now: this.clock.now(),
+        })
+      : this.meetingProposals
       ? await this.meetingProposals.prepare({
           workspaceId: command.workspaceId,
           conversationId: command.conversationId,
@@ -260,6 +408,9 @@ export class ConversationCommandJobProcessor {
         direction: message.direction === "outbound" ? "outbound" as const : "inbound" as const,
         body: message.body,
       })),
+      ...(prospectContext ? { prospectContext } : {}),
+      ...(prospectContextReference ? { prospectContextReference } : {}),
+      ...(prospectContextAllowedProviders ? { prospectContextAllowedProviders } : {}),
       instructions: policy.email.replyInstructions,
       bookingUrl,
       ...(calendar ? { calendar } : {}),
@@ -269,6 +420,21 @@ export class ConversationCommandJobProcessor {
         "SETTER_DECIDED_NOT_TO_REPLY",
         decision.rationale,
       );
+    }
+    if (dryRun) {
+      if (!decision.replyBody) {
+        throw new SetterStoppedConversationError(
+          "SETTER_DRY_RUN_DID_NOT_GENERATE_REPLY",
+          decision.rationale,
+        );
+      }
+      if (decision.action === "booking" && calendar) {
+        return generatedSetterReply(
+          commandCalendarFallback(calendar, bookingUrl, decision.replyBody),
+          decision,
+        );
+      }
+      return generatedSetterReply(decision.replyBody, decision);
     }
     if (this.meetingProposals) {
       const effective = await this.meetingProposals.execute({
@@ -288,7 +454,7 @@ export class ConversationCommandJobProcessor {
           effective.rationale,
         );
       }
-      return effective.replyBody;
+      return generatedSetterReply(effective.replyBody, decision);
     }
     if (!decision.replyBody) {
       throw new SetterStoppedConversationError(
@@ -311,7 +477,10 @@ export class ConversationCommandJobProcessor {
           start: decision.selectedSlotStart,
           now: this.clock.now(),
         });
-        return `Parfait, c’est réservé ${booking.label}. Vous allez recevoir la confirmation par email.${booking.meetingUrl ? ` Lien du rendez-vous : ${booking.meetingUrl}` : ""}`;
+        return generatedSetterReply(
+          `Parfait, c’est réservé ${booking.label}. Vous allez recevoir la confirmation par email.${booking.meetingUrl ? ` Lien du rendez-vous : ${booking.meetingUrl}` : ""}`,
+          decision,
+        );
       } catch (error) {
         if (!(error instanceof CalendarIntegrationError)) throw error;
         const refreshed = await this.bookingLinks.schedulingContext({
@@ -319,13 +488,16 @@ export class ConversationCommandJobProcessor {
           contactId: command.contactId,
           now: this.clock.now(),
         });
-        return commandCalendarFallback(refreshed, bookingUrl);
+        return generatedSetterReply(commandCalendarFallback(refreshed, bookingUrl), decision);
       }
     }
     if (decision.action === "booking" && calendar) {
-      return commandCalendarFallback(calendar, bookingUrl, decision.replyBody);
+      return generatedSetterReply(
+        commandCalendarFallback(calendar, bookingUrl, decision.replyBody),
+        decision,
+      );
     }
-    return decision.replyBody;
+    return generatedSetterReply(decision.replyBody, decision);
   }
 
   async #load(input: { workspaceId: string; commandId: string }) {
@@ -334,6 +506,7 @@ export class ConversationCommandJobProcessor {
         id: conversationCommands.id,
         workspaceId: conversationCommands.workspaceId,
         mode: conversationCommands.mode,
+        executionMode: conversationCommands.executionMode,
         requestedBody: conversationCommands.requestedBody,
         status: conversationCommands.status,
         idempotencyKey: conversationCommands.idempotencyKey,
@@ -420,6 +593,7 @@ export class ConversationCommandJobProcessor {
     return {
       ...row,
       mode: row.mode === "setter" ? "setter" as const : "manual" as const,
+      executionMode: row.executionMode === "dry_run" ? "dry_run" as const : "live" as const,
       contactName: `${row.firstName} ${row.lastName}`,
       identityValue: identity[0]?.value ?? null,
       identityNormalized: identity[0]?.normalizedValue ?? null,
@@ -442,10 +616,29 @@ export class ConversationCommandJobProcessor {
   }
 }
 
+function contextReference(bundle: Awaited<ReturnType<ProspectContextAssembler["assemble"]>>) {
+  return {
+    receiptId: bundle.receiptId,
+    snapshotId: bundle.snapshotId,
+    snapshotVersion: bundle.snapshotVersion,
+    watermark: bundle.watermark,
+    privacyEpoch: bundle.privacyEpoch,
+    mode: bundle.mode,
+  } as const;
+}
+
+function isMemoryDisabled(error: unknown): boolean {
+  return error instanceof Error && [
+    "PROSPECT_MEMORY_CAPABILITY_DISABLED",
+    "PROSPECT_MEMORY_CONTACT_UNAVAILABLE",
+  ].includes(error.message);
+}
+
 type LoadedConversationCommand = {
   id: string;
   workspaceId: string;
   mode: "manual" | "setter";
+  executionMode: "live" | "dry_run";
   requestedBody: string | null;
   status: string;
   idempotencyKey: string;
@@ -465,6 +658,26 @@ type LoadedConversationCommand = {
   identityNormalized: string | null;
   latestInboundProviderMessageId: string | null;
 };
+
+type GeneratedSetterReply = {
+  readonly body: string;
+  readonly metadata: Readonly<Record<string, unknown>>;
+};
+
+function generatedSetterReply(
+  body: string,
+  decision: Awaited<ReturnType<InboundReplyAgent["decide"]>>,
+): GeneratedSetterReply {
+  return {
+    body,
+    metadata: {
+      ...decision.metadata,
+      intent: decision.intent,
+      action: decision.action,
+      calendarAction: decision.calendarAction ?? null,
+    },
+  };
+}
 
 class SetterStoppedConversationError extends Error {
   constructor(readonly code: string, message: string) {

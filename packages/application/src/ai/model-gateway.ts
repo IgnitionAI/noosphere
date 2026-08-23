@@ -20,6 +20,7 @@ export const aiCapabilities = [
   "prospect_decision",
   "message_generation",
   "setter",
+  "prospect_memory",
   "evaluation",
 ] as const;
 export type AiCapability = (typeof aiCapabilities)[number];
@@ -98,10 +99,11 @@ export type ModelGatewayErrorCode =
   | "AI_PROVIDER_MODEL_UNAVAILABLE"
   | "AI_PROVIDER_OUTPUT_INVALID"
   | "AI_PROVIDER_QUOTA_EXHAUSTED"
-  | "AI_PROVIDER_TIMEOUT";
+  | "AI_PROVIDER_TIMEOUT"
+  | "AI_PROVIDER_UNAVAILABLE";
 
 export class ModelGatewayError extends Error {
-  readonly name = "ModelGatewayError";
+  readonly name: string = "ModelGatewayError";
 
   constructor(
     readonly code: ModelGatewayErrorCode,
@@ -112,6 +114,20 @@ export class ModelGatewayError extends Error {
     options?: { readonly cause?: unknown },
   ) {
     super(message, options);
+  }
+}
+
+export class ModelGatewayOutputError extends ModelGatewayError {
+  readonly name = "ModelGatewayOutputError";
+
+  constructor(
+    provider: AiProviderId,
+    message: string,
+    readonly rawOutput: unknown,
+    readonly validationMessage: string,
+    options?: { readonly cause?: unknown },
+  ) {
+    super("AI_PROVIDER_OUTPUT_INVALID", provider, message, false, false, options);
   }
 }
 

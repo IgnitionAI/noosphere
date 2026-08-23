@@ -90,4 +90,29 @@ describe("V3 sourcing validator", () => {
       providerCalls: 0,
     });
   });
+
+  test("bounds generated LinkedIn filters without invalidating the durable stage output", async () => {
+    const source = new FakeSource();
+    const longInput = input();
+    longInput.previousOutputs.organization_discovery = {
+      hypotheses: [{ hypothesisId: "H01", organizationType: `Enterprise ${"operations ".repeat(40)}` }],
+    };
+    longInput.previousOutputs.buying_context = {
+      contexts: [{
+        hypothesisId: "H01",
+        users: [`Knowledge ${"manager ".repeat(50)}`],
+        sponsors: [`Operations ${"director ".repeat(50)}`],
+        economicBuyers: [`Chief ${"officer ".repeat(50)}`],
+        purchaseTriggers: [`Transformation ${"programme ".repeat(120)}`],
+      }],
+    };
+
+    const output = await new V3SourcingValidator(source).validate(longInput);
+
+    expect(source.calls[0]?.keywords.length).toBeLessThanOrEqual(500);
+    expect(output.tests[0]?.accountQuery.searchKeywords[0]?.length).toBeLessThanOrEqual(500);
+    expect(output.tests[0]?.accountQuery.industries[0]?.length).toBeLessThanOrEqual(300);
+    expect(output.tests[0]?.accountQuery.jobTitles.every((value) => value.length <= 300)).toBe(true);
+    expect(output.tests[0]?.accountQuery.triggerSignals[0]?.length).toBeLessThanOrEqual(1_000);
+  });
 });

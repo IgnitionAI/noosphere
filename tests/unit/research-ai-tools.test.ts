@@ -255,6 +255,43 @@ describe("research AI tools", () => {
     expect(output.markdownOriginalCharacters).toBe(25_000);
   });
 
+  test("hashes selective-page idempotency keys so valid URL batches fit the crawler contract", async () => {
+    const requestKeys: string[] = [];
+    const runId = crypto.randomUUID();
+    const stageRunId = crypto.randomUUID();
+    const tools = createResearchTools({
+      crawler: {
+        async search() { return []; },
+        async readPages(input) {
+          requestKeys.push(input.requestKey ?? "");
+          return [];
+        },
+        async discover() { return []; },
+      },
+      documents: new UnavailableInternalDocumentSearch(),
+      budget: new ResearchBudget({ searches: 1, pages: 8, tokens: 100, durationMs: 60_000 }),
+      workspaceId: crypto.randomUUID(),
+      documentIds: [],
+      runId,
+      researchStageRunId: stageRunId,
+      correlationId: "test",
+      signal: new AbortController().signal,
+    });
+    const read = tools.find((item) => item.name === "readWebsitePages")!;
+    const urls = Array.from({ length: 4 }, (_, index) =>
+      `https://example.com/${index}/${"long-path-segment-".repeat(20)}`,
+    );
+
+    await read.invoke({ urls });
+    await read.invoke({ urls });
+
+    expect(requestKeys).toHaveLength(2);
+    expect(requestKeys[0]).toBe(requestKeys[1]);
+    expect(requestKeys[0]?.startsWith(`${runId}:${stageRunId}:pages:`)).toBe(true);
+    expect(requestKeys[0]!.length).toBeLessThanOrEqual(500);
+    expect(requestKeys[0]).not.toContain("long-path-segment");
+  });
+
   test("enforces the web search budget before calling the crawler", async () => {
     let calls = 0;
     const crawler = {

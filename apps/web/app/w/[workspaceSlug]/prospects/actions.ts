@@ -67,10 +67,17 @@ export async function sendProspectMessageAction(
 ) {
   const mode = String(formData.get("mode") ?? "manual");
   if (mode !== "manual" && mode !== "setter") throw new Error("Mode d’envoi invalide.");
+  const executionMode = String(formData.get("executionMode") ?? "live");
+  if (executionMode !== "live" && executionMode !== "dry_run") throw new Error("Mode d’exécution invalide.");
+  if (mode === "manual" && executionMode === "dry_run") throw new Error("Le dry-run est réservé au Setter.");
+  const idempotencyKey = String(formData.get("idempotencyKey") ?? "").trim();
+  if (!idempotencyKey) throw new Error("La clé de reprise de la commande est obligatoire.");
   const body = String(formData.get("body") ?? "").trim();
   if (mode === "manual" && !body) throw new Error("Le message est obligatoire.");
   await sendConversationCommand(workspaceSlug, conversationId, {
     mode,
+    executionMode,
+    idempotencyKey,
     ...(body ? { body } : {}),
   });
   revalidatePath(`/w/${workspaceSlug}/prospects`);

@@ -79,11 +79,15 @@ const campaignAutopilotPolicyPatchSchema = z.object({
 }).strict();
 const conversationCommandSchema = z.object({
   mode: z.enum(["manual", "setter"]),
+  executionMode: z.enum(["live", "dry_run"]).default("live"),
   body: z.string().trim().min(1).max(5_000).nullable().optional(),
   idempotencyKey: z.string().trim().min(8).max(500).optional(),
 }).strict().superRefine((value, context) => {
   if (value.mode === "manual" && !value.body) {
     context.addIssue({ code: "custom", path: ["body"], message: "A manual message body is required" });
+  }
+  if (value.mode === "manual" && value.executionMode === "dry_run") {
+    context.addIssue({ code: "custom", path: ["executionMode"], message: "Dry-run is reserved for the Setter" });
   }
 });
 const conversationDraftImprovementSchema = z.object({
@@ -113,6 +117,7 @@ export function createCampaignHttpHandler(dependencies: {
   readonly database: Database;
   readonly jobQueue?: JobQueue;
   readonly draftImprover?: ConversationDraftImprover;
+  readonly conversationCommands?: Pick<PostgresConversationCommandRepository, "create" | "setAutomationMode">;
 }) {
   const campaigns = new PostgresCampaignRepository(dependencies.database);
   const population = new PostgresCampaignPopulationRepository(dependencies.database);
@@ -120,7 +125,8 @@ export function createCampaignHttpHandler(dependencies: {
   const campaignDashboard = new PostgresCampaignAutopilotDashboard(dependencies.database);
   const plans = new PostgresProspectingPlanRepository(dependencies.database);
   const discovery = new PostgresDiscoveryRepository(dependencies.database);
-  const conversationCommands = new PostgresConversationCommandRepository(dependencies.database);
+  const conversationCommands = dependencies.conversationCommands
+    ?? new PostgresConversationCommandRepository(dependencies.database);
 
   return async function handle(request: Request): Promise<Response> {
     try {
@@ -163,6 +169,7 @@ export function createCampaignHttpHandler(dependencies: {
           conversationId,
           requestedBy: context.userId,
           mode: body.mode,
+          executionMode: body.executionMode,
           body: body.mode === "manual" ? body.body! : null,
           ...(body.idempotencyKey ? { idempotencyKey: body.idempotencyKey } : {}),
           now: new Date(),

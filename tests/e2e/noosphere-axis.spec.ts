@@ -118,7 +118,10 @@ test("channel settings stay usable before Unipile is configured", async ({ page 
     if (request.url().includes("/__nextjs_original-stack-frames")) frameworkErrors.push(request.url());
   });
   await page.goto(`/w/${workspaceSlug}/settings/channels`);
-  await expect(page.getByRole("heading", { name: "Compte d’envoi WhatsApp" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Canaux connectés" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "LinkedIn" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Email" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "WhatsApp" })).toBeVisible();
   await expect(page.getByText("Unipile n’est pas configuré sur ce serveur.")).toBeVisible();
   expect(frameworkErrors).toEqual([]);
 });

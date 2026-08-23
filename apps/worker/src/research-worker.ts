@@ -6,6 +6,7 @@ import type { LeasedJob } from "@outbound/application/jobs/job-queue";
 export interface ResearchWorkerOptions {
   readonly workerId: string;
   readonly leaseMs: number;
+  readonly leaseHeartbeatMs?: number;
   readonly batchSize: number;
   readonly pollIntervalMs: number;
   readonly jobTypes?: readonly string[];
@@ -24,6 +25,7 @@ export interface OutreachSchedulerProcessor {
 export class ResearchWorker {
   #stopping = false;
   #lastMaintenanceAt = 0;
+  #maintenanceInFlight: Promise<void> | null = null;
 
   constructor(
     private readonly queue: JobQueue,
@@ -53,6 +55,8 @@ export class ResearchWorker {
     private readonly contentIdeaDiscoveryProcessor?: { process(job: LeasedJob): Promise<void> },
     private readonly contentGenerationProcessor?: { process(job: LeasedJob): Promise<void> },
     private readonly contentPublicationProcessor?: { process(job: LeasedJob): Promise<void> },
+    private readonly prospectMemoryRefreshProcessor?: { process(job: LeasedJob): Promise<void> },
+    private readonly prospectMemoryBackfillProcessor?: { process(job: LeasedJob): Promise<void> },
   ) {}
 
   stop(): void {
@@ -68,10 +72,7 @@ export class ResearchWorker {
 
   async tick(): Promise<number> {
     const now = this.clock.now();
-    if (this.maintenance && now.getTime() - this.#lastMaintenanceAt >= 60_000) {
-      await this.maintenance.reconcile();
-      this.#lastMaintenanceAt = this.clock.now().getTime();
-    }
+    this.#startMaintenance(now);
     if (this.outreachProcessor) await this.outreachProcessor.markDue({ now, queue: this.queue });
     const availableTypes = [
         "research.stage.execute",
@@ -96,6 +97,8 @@ export class ResearchWorker {
         ...(this.contentIdeaDiscoveryProcessor ? ["content.ideas.discover"] : []),
         ...(this.contentGenerationProcessor ? ["content.asset.generate"] : []),
         ...(this.contentPublicationProcessor ? ["content.publication.publish"] : []),
+        ...(this.prospectMemoryRefreshProcessor ? ["prospect.memory.refresh"] : []),
+        ...(this.prospectMemoryBackfillProcessor ? ["prospect.memory.backfill"] : []),
     ];
     const allowed = this.options.jobTypes ? new Set(this.options.jobTypes) : null;
     const excluded = new Set(this.options.excludedJobTypes ?? []);
@@ -115,6 +118,28 @@ export class ResearchWorker {
     );
     const delivered = this.outboxDispatcher ? await this.outboxDispatcher.dispatchBatch() : 0;
     return jobs.length + delivered;
+  }
+
+  #startMaintenance(now: Date): void {
+    if (!this.maintenance || this.#maintenanceInFlight || now.getTime() - this.#lastMaintenanceAt < 60_000) {
+      return;
+    }
+    let run: Promise<number>;
+    try {
+      run = this.maintenance.reconcile();
+    } catch (error) {
+      this.#lastMaintenanceAt = this.clock.now().getTime();
+      logMaintenanceError(error);
+      return;
+    }
+    const tracked = run
+      .then(() => undefined)
+      .catch((error) => logMaintenanceError(error))
+      .finally(() => {
+        this.#lastMaintenanceAt = this.clock.now().getTime();
+        if (this.#maintenanceInFlight === tracked) this.#maintenanceInFlight = null;
+      });
+    this.#maintenanceInFlight = tracked;
   }
 
   async #processSafely(job: LeasedJob): Promise<void> {
@@ -165,6 +190,10 @@ export class ResearchWorker {
         await this.contentGenerationProcessor.process(job);
       } else if (job.type === "content.publication.publish" && this.contentPublicationProcessor) {
         await this.contentPublicationProcessor.process(job);
+      } else if (job.type === "prospect.memory.refresh" && this.prospectMemoryRefreshProcessor) {
+        await this.prospectMemoryRefreshProcessor.process(job);
+      } else if (job.type === "prospect.memory.backfill" && this.prospectMemoryBackfillProcessor) {
+        await this.prospectMemoryBackfillProcessor.process(job);
       } else {
         await this.orchestrator.process(job);
       }
@@ -206,7 +235,10 @@ export class ResearchWorker {
   }
 
   #startLeaseHeartbeat(job: LeasedJob): () => void {
-    const intervalMs = Math.max(50, Math.floor(this.options.leaseMs / 3));
+    const intervalMs = Math.max(
+      50,
+      Math.min(this.options.leaseHeartbeatMs ?? Math.floor(this.options.leaseMs / 3), this.options.leaseMs - 1),
+    );
     let renewalInFlight = false;
     const timer = setInterval(async () => {
       if (renewalInFlight) return;
@@ -233,4 +265,11 @@ export class ResearchWorker {
     timer.unref();
     return () => clearInterval(timer);
   }
+}
+
+function logMaintenanceError(error: unknown): void {
+  console.error(JSON.stringify({
+    event: "research_worker_maintenance_error",
+    error: error instanceof Error ? error.message : String(error),
+  }));
 }

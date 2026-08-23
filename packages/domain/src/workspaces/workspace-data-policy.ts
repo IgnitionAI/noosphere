@@ -20,6 +20,9 @@ export interface WorkspaceRetentionPolicy {
   readonly invitationsDays: number;
   readonly jobsDays: number;
   readonly auditDays: number;
+  readonly memoryEventsDays: number;
+  readonly memorySnapshotsDays: number;
+  readonly memoryReceiptsDays: number;
 }
 
 const CHANNEL_BOUNDS = {
@@ -32,6 +35,9 @@ const RETENTION_BOUNDS = {
   invitationsDays: [30, 3_650],
   jobsDays: [30, 365],
   auditDays: [365, 3_650],
+  memoryEventsDays: [30, 3_650],
+  memorySnapshotsDays: [30, 365],
+  memoryReceiptsDays: [30, 365],
 } as const;
 
 export function defaultWorkspaceDataPolicy(): WorkspaceDataPolicy {
@@ -43,7 +49,14 @@ export function defaultWorkspaceDataPolicy(): WorkspaceDataPolicy {
       windowEnd: "17:00",
     },
     channelLimits: { linkedin: 20, email: 50, whatsapp: 30 },
-    retention: { invitationsDays: 90, jobsDays: 90, auditDays: 365 },
+    retention: {
+      invitationsDays: 90,
+      jobsDays: 90,
+      auditDays: 365,
+      memoryEventsDays: 365,
+      memorySnapshotsDays: 90,
+      memoryReceiptsDays: 90,
+    },
   };
 }
 

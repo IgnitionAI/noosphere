@@ -28,7 +28,7 @@ describe("F-053 workspace data HTTP", () => {
       async updateRetentionPolicy() { throw new WorkspaceDataLifecycleError("TYPED_CONFIRMATION_REQUIRED", 400); },
       async getExport() { return { id: exportId, workspaceId, status: "completed", expiresAt: new Date("2026-08-08T00:00:00.000Z") }; },
     });
-    const retention = await handle(request(`/api/v1/workspaces/${workspaceId}/retention-policy`, "PUT", { retention: { invitationsDays: 90, jobsDays: 60, auditDays: 365 }, confirmation: "" }));
+    const retention = await handle(request(`/api/v1/workspaces/${workspaceId}/retention-policy`, "PUT", { retention: memoryRetention({ jobsDays: 60 }), confirmation: "" }));
     expect(retention.status).toBe(400);
     expect(await retention.json()).toMatchObject({ code: "TYPED_CONFIRMATION_REQUIRED" });
     const expired = await handle(request(`/api/v1/exports/${exportId}`));
@@ -56,7 +56,7 @@ function handler(role: "operator" | "owner", overrides: Record<string, unknown> 
   const service = {
     async getProfile() { return { id: workspaceId, name: "Workspace", slug: "workspace" }; },
     async updateProfile() { return {}; },
-    async getPolicy() { return { sending: { timezone: "Europe/Paris", activeDays: [1, 2, 3, 4, 5], windowStart: "09:00", windowEnd: "17:00" }, channelLimits: { linkedin: 20, email: 50, whatsapp: 30 }, retention: { invitationsDays: 90, jobsDays: 90, auditDays: 365 } }; },
+    async getPolicy() { return { sending: { timezone: "Europe/Paris", activeDays: [1, 2, 3, 4, 5], windowStart: "09:00", windowEnd: "17:00" }, channelLimits: { linkedin: 20, email: 50, whatsapp: 30 }, retention: memoryRetention() }; },
     async updateSendingPreferences() { return {}; },
     async updateChannelLimits() { return {}; },
     async updateRetentionPolicy() { return {}; },
@@ -72,6 +72,10 @@ function handler(role: "operator" | "owner", overrides: Record<string, unknown> 
     clock: { now: () => new Date("2026-08-09T00:00:00.000Z") },
     downloads: { async createDownloadUrl() { return "https://download.invalid/export"; } },
   });
+}
+
+function memoryRetention(overrides: Partial<{ invitationsDays: number; jobsDays: number; auditDays: number; memoryEventsDays: number; memorySnapshotsDays: number; memoryReceiptsDays: number }> = {}) {
+  return { invitationsDays: 90, jobsDays: 90, auditDays: 365, memoryEventsDays: 365, memorySnapshotsDays: 90, memoryReceiptsDays: 90, ...overrides };
 }
 
 function request(pathname: string, method = "GET", body?: unknown) {

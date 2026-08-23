@@ -2,6 +2,32 @@ const sensitiveKey = /(?:authorization|cookie|token|secret|password|passwd|api.?
 const email = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
 const phone = /(?<!\d)(?:\+?\d[\s().-]?){8,15}(?!\d)/g;
 
+export type ConsoleJobRecoveryDisposition = "automatic" | "manual" | "blocked" | "none";
+
+/**
+ * A retry is already owned by the durable queue and must not be accelerated by
+ * an operator. Provider-facing dead letters are fail-closed unless their error
+ * proves that no provider call could have started.
+ */
+export function consoleJobRecoveryDisposition(input: {
+  readonly type: string;
+  readonly status: string;
+  readonly lastErrorCode: string | null;
+}): ConsoleJobRecoveryDisposition {
+  if (input.status === "retry") return "automatic";
+  if (input.status !== "dead_lettered") return "none";
+  if (input.type !== "outreach.dispatch") return "manual";
+  if (input.lastErrorCode === "CAMPAIGN_JIT_GENERATION_FAILED") return "manual";
+  if ([
+    "OUTSIDE_SENDING_WINDOW",
+    "OUTSIDE_SENDING_WINDOW_EXHAUSTED",
+    "LINKEDIN_INVITE_RECENT",
+    "LINKEDIN_RELATION_PENDING",
+    "UNIPILE_PROVIDER_LIMIT",
+  ].includes(input.lastErrorCode ?? "")) return "automatic";
+  return "blocked";
+}
+
 export function sanitizeOperationalPayload(value: unknown, maximumLength = 2_000): unknown {
   const sanitized = sanitize(value, new WeakSet<object>());
   const serialized = JSON.stringify(sanitized);

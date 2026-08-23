@@ -20,7 +20,14 @@ const sendingSchema = z.object({
   }).strict(),
 }).strict();
 const limitsSchema = z.object({ channelLimits: z.object({ linkedin: z.number().int(), email: z.number().int(), whatsapp: z.number().int() }).strict() }).strict();
-const retentionSchema = z.object({ retention: z.object({ invitationsDays: z.number().int(), jobsDays: z.number().int(), auditDays: z.number().int() }).strict(), confirmation: z.string().max(100).default("") }).strict();
+const retentionSchema = z.object({ retention: z.object({
+  invitationsDays: z.number().int(),
+  jobsDays: z.number().int(),
+  auditDays: z.number().int(),
+  memoryEventsDays: z.number().int(),
+  memorySnapshotsDays: z.number().int(),
+  memoryReceiptsDays: z.number().int(),
+}).strict(), confirmation: z.string().max(100).default("") }).strict();
 const exportSchema = z.object({ requestKey: z.string().trim().min(1).max(200) }).strict();
 const anonymizeSchema = z.object({ confirmation: z.string().max(100) }).strict();
 

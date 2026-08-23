@@ -1,4 +1,5 @@
 import { z, ZodError } from "zod";
+import { PROSPECTING_CHANNELS, type ProspectingChannel } from "@outbound/domain/campaigns/prospecting-plan";
 import {
   type PostgresUnipileChannelConnections,
   UnipileChannelConnectionError,
@@ -11,7 +12,7 @@ import {
   WorkspaceContextRequiredError,
 } from "@outbound/interface/http/request-context";
 
-const whatsappRoute = "/api/v1/channel-connections/whatsapp";
+const channelRoute = new RegExp(`^/api/v1/channel-connections/(${PROSPECTING_CHANNELS.join("|")})$`);
 const selectionSchema = z.object({ providerAccountId: z.string().trim().min(1).max(500) }).strict();
 
 export function createChannelConnectionHttpHandler(input: {
@@ -24,9 +25,11 @@ export function createChannelConnectionHttpHandler(input: {
 }) {
   return async function handle(request: Request): Promise<Response> {
     try {
-      if (new URL(request.url).pathname !== whatsappRoute) {
+      const route = channelRoute.exec(new URL(request.url).pathname);
+      if (!route) {
         return problem(404, "ROUTE_NOT_FOUND", "Route not found");
       }
+      const channel = route[1] as ProspectingChannel;
       const context = await input.contextResolver.resolve(request);
       requireAdmin(context.role);
       if (!input.connections) {
@@ -34,11 +37,11 @@ export function createChannelConnectionHttpHandler(input: {
       }
       if (request.method === "GET") {
         const [accounts, selected] = await Promise.all([
-          input.connections.list(context.workspaceId, "whatsapp"),
-          input.connections.selectedAccount(context.workspaceId, "whatsapp"),
+          input.connections.list(context.workspaceId, channel),
+          input.connections.selectedAccount(context.workspaceId, channel),
         ]);
         return Response.json({
-          channel: "whatsapp",
+          channel,
           connected: accounts.some((account) => account.healthy),
           selectedAccountId: selected?.providerAccountId ?? null,
           selectedDisplayName: selected?.displayName ?? null,
@@ -49,14 +52,14 @@ export function createChannelConnectionHttpHandler(input: {
         const body = selectionSchema.parse(await request.json());
         const selected = await input.connections.select({
           workspaceId: context.workspaceId,
-          channel: "whatsapp",
+          channel,
           providerAccountId: body.providerAccountId,
           selectedBy: context.userId,
           now: new Date(),
         });
         await input.reassessment?.schedule({
           workspaceId: context.workspaceId,
-          channel: "whatsapp",
+          channel,
           capabilityKey: selected.id,
           now: new Date(),
         });
@@ -67,7 +70,7 @@ export function createChannelConnectionHttpHandler(input: {
       return response;
     } catch (error) {
       if (error instanceof ZodError || error instanceof SyntaxError) {
-        return problem(400, "INVALID_REQUEST", "The WhatsApp account selection is invalid");
+        return problem(400, "INVALID_REQUEST", "The channel account selection is invalid");
       }
       if (error instanceof RequestAuthenticationError) {
         return problem(401, "AUTHENTICATION_REQUIRED", error.message);
@@ -87,8 +90,8 @@ export function createChannelConnectionHttpHandler(input: {
 }
 
 function channelProblemDetail(code: string): string {
-  if (code === "UNIPILE_ACCOUNT_NOT_FOUND") return "Ce compte WhatsApp Unipile n’existe plus.";
-  if (code === "UNIPILE_ACCOUNT_UNHEALTHY") return "Ce compte WhatsApp doit être reconnecté avant sa sélection.";
+  if (code === "UNIPILE_ACCOUNT_NOT_FOUND") return "Ce compte Unipile n’existe plus pour ce canal.";
+  if (code === "UNIPILE_ACCOUNT_UNHEALTHY") return "Ce compte doit être reconnecté avant sa sélection.";
   if (code === "UNIPILE_AUTHENTICATION_FAILED") return "La connexion serveur à Unipile doit être renouvelée.";
   return "Unipile est temporairement indisponible.";
 }

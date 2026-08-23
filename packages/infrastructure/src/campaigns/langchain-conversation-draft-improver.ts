@@ -10,6 +10,11 @@ import {
 import type { WorkspaceAiModelPolicyReader } from "@outbound/application/workspaces/workspace-ai-settings";
 import type { ContentBrandKitReader } from "@outbound/application/content/content-brand-kit";
 import type { WorkspaceStructuredModel } from "@outbound/infrastructure/ai/workspace-structured-model";
+import {
+  requireProspectMemoryAllowedProviders,
+  type ProspectContextAssembler,
+  type ProspectMemoryPolicyReader,
+} from "@outbound/application/prospect-memory/prospect-memory";
 import type { Database } from "@outbound/infrastructure/database/client";
 import {
   buildChatModelFields,
@@ -49,6 +54,8 @@ export class LangChainConversationDraftImprover implements ConversationDraftImpr
     private readonly invokeModel: DraftImprovementModelInvoker = invokeStructuredModel,
     private readonly brandKitReader?: ContentBrandKitReader,
     private readonly routedModel?: WorkspaceStructuredModel,
+    private readonly prospectContextAssembler?: ProspectContextAssembler,
+    private readonly prospectMemoryPolicies?: ProspectMemoryPolicyReader,
   ) {
     this.#configuration = resolveResearchModelConfigurationFromEnvironment(environment);
   }
@@ -114,7 +121,8 @@ export class LangChainConversationDraftImprover implements ConversationDraftImpr
       .limit(1);
     if (!context) throw new ConversationDraftNotFoundError();
 
-    const [historyDescending, currentEmployment, workspacePolicy, brandKit] = await Promise.all([
+    const requestKey = `conversation-draft-improvement:${input.conversationId}:${new Bun.CryptoHasher("sha256").update(draft).digest("hex")}`;
+    const [historyDescending, currentEmployment, workspacePolicy, brandKit, memoryBundle] = await Promise.all([
       this.database
         .select({ direction: messages.direction, body: messages.body })
         .from(messages)
@@ -147,7 +155,27 @@ export class LangChainConversationDraftImprover implements ConversationDraftImpr
         .limit(1),
       this.routedModel ? Promise.resolve(null) : this.modelPolicyReader?.find(input.workspaceId) ?? Promise.resolve(null),
       this.brandKitReader?.find(input.workspaceId) ?? Promise.resolve(null),
+      this.prospectContextAssembler
+        ? this.prospectContextAssembler.assemble({
+            workspaceId: input.workspaceId,
+            contactId: context.contactId,
+            capability: "draft_improvement",
+            principalRole: "operator",
+            requestKey: `${requestKey}:memory`,
+            now: new Date(),
+          }).catch((error) => {
+            if (isOptionalMemoryUnavailable(error)) return null;
+            throw error;
+          })
+        : Promise.resolve(null),
     ]);
+    const memoryAllowedProviders = memoryBundle?.mode === "active"
+      ? await requireProspectMemoryAllowedProviders({
+          policies: requiredMemoryPolicyReader(this.prospectMemoryPolicies),
+          workspaceId: input.workspaceId,
+          capability: "draft_improvement",
+        })
+      : undefined;
     const modelName = workspacePolicy?.synthesisModels[0]
       ?? this.#configuration.synthesisModels[0]!;
     const systemPrompt = [
@@ -169,6 +197,7 @@ export class LangChainConversationDraftImprover implements ConversationDraftImpr
       },
       icpName: context.icpName,
       conversationHistory: [...historyDescending].reverse(),
+      prospectMemory: memoryBundle?.mode === "active" ? memoryBundle.context : null,
       brandVoice: brandKit ? {
         brandName: brandKit.snapshot.brandName,
         tagline: brandKit.snapshot.tagline,
@@ -181,18 +210,24 @@ export class LangChainConversationDraftImprover implements ConversationDraftImpr
     const routed = this.routedModel ? await this.routedModel.invoke({
       workspaceId: input.workspaceId,
       capability: "message_generation",
-      requestKey: `conversation-draft-improvement:${input.conversationId}:${new Bun.CryptoHasher("sha256").update(draft).digest("hex")}`,
+      requestKey,
       fallbackRoutes: [{
         provider: this.#configuration.provider === "kimi-code" ? "kimi-code" : "openai-api",
         model: modelName,
         reasoningEffort: "low",
       }],
+      ...(memoryAllowedProviders ? { allowedProviders: memoryAllowedProviders } : {}),
       systemPrompt,
       payload,
       outputName: "submit_improved_conversation_draft",
       outputDescription: "Submit the improved editable message draft.",
       schema: draftImprovementSchema,
     }) : null;
+    if (!routed && memoryAllowedProviders && !memoryAllowedProviders.includes(
+      this.#configuration.provider === "kimi-code" ? "kimi-code" : "openai-api",
+    )) {
+      throw new Error("AI_PROCESSING_ROUTE_NOT_ALLOWED");
+    }
     const result = routed?.output ?? await this.invokeModel({
       fields: buildChatModelFields(this.#configuration, modelName, "low"),
       messages: [
@@ -205,10 +240,27 @@ export class LangChainConversationDraftImprover implements ConversationDraftImpr
       metadata: {
         provider: routed?.metadata.provider ?? this.#configuration.provider,
         model: routed?.metadata.model ?? modelName,
-        promptVersion: "conversation-draft-improvement-v2-brand",
+        promptVersion: "conversation-draft-improvement-v3-prospect-memory",
+        memorySnapshotId: memoryBundle?.snapshotId ?? null,
+        memorySnapshotVersion: memoryBundle?.snapshotVersion ?? null,
+        memoryReceiptId: memoryBundle?.receiptId ?? null,
+        memoryWatermark: memoryBundle?.watermark ?? null,
+        memoryMode: memoryBundle?.mode ?? "unavailable",
       },
     };
   }
+}
+
+function isOptionalMemoryUnavailable(error: unknown): boolean {
+  return error instanceof Error && [
+    "PROSPECT_MEMORY_CAPABILITY_DISABLED",
+    "PROSPECT_MEMORY_CONTACT_UNAVAILABLE",
+  ].includes(error.message);
+}
+
+function requiredMemoryPolicyReader(reader: ProspectMemoryPolicyReader | undefined): ProspectMemoryPolicyReader {
+  if (!reader) throw new Error("PROSPECT_MEMORY_POLICY_READER_REQUIRED");
+  return reader;
 }
 
 async function invokeStructuredModel(input: {

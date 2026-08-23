@@ -2,7 +2,17 @@ import { CalendarCheck2, CalendarClock, ExternalLink, Settings2, UserRound, Vide
 import Link from "next/link";
 import { BookingSourceAttribution } from "@/components/booking-source-attribution";
 import { CrmPermissionState } from "@/components/crm-states";
-import { getCalendarConnection, listCalendarBookings, OutboundApiError, type CalendarBooking } from "@/lib/api";
+import { ProspectMemoryPanel } from "@/components/prospect-memory-panel";
+import {
+  getCalendarConnection,
+  getProspectMemoryStatus,
+  getProspectMemoryView,
+  listCalendarBookings,
+  OutboundApiError,
+  type CalendarBooking,
+  type ProspectMemoryStatus,
+  type ProspectMemoryView,
+} from "@/lib/api";
 
 export const metadata = { title: "Appels" };
 export const dynamic = "force-dynamic";
@@ -40,6 +50,18 @@ export default async function AppointmentsPage({
   const byView = view === "upcoming" ? upcoming : view === "past" ? past : [...upcoming, ...past];
   const visible = byView.filter((booking) => (source === "all" || booking.source === source) && (!query.booking || booking.id === query.booking));
   const next = upcoming.find((booking) => (source === "all" || booking.source === source) && (!query.booking || booking.id === query.booking)) ?? null;
+  let callMemory: { readonly status: ProspectMemoryStatus; readonly view: ProspectMemoryView | null } | null = null;
+  if (next?.contactId) {
+    try {
+      const status = await getProspectMemoryStatus(workspaceSlug, next.contactId);
+      const memoryView = status.enabled
+        ? await getProspectMemoryView(workspaceSlug, next.contactId, "call_preparation").catch(() => null)
+        : null;
+      callMemory = { status, view: memoryView };
+    } catch {
+      // Calls remain usable when the optional memory projection is unavailable.
+    }
+  }
 
   return (
     <>
@@ -75,6 +97,7 @@ export default async function AppointmentsPage({
             </div>
             {next.meetingUrl ? <a className="button button-signal shrink-0" href={next.meetingUrl} rel="noreferrer" target="_blank"><Video size={15} /> Rejoindre l’appel</a> : null}
           </div>
+          {callMemory ? <div className="mt-4"><ProspectMemoryPanel status={callMemory.status} view={callMemory.view} /></div> : null}
         </section>
       ) : null}
 

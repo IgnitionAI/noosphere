@@ -16,6 +16,7 @@ import {
   socialContentItems,
   socialInteractions,
 } from "@outbound/infrastructure/database/schema";
+import { captureProspectMemoryMutation } from "@outbound/infrastructure/prospect-memory/capture-prospect-memory-mutation";
 
 const MODEL_VERSION = "attribution-v1";
 const BOOKING_WINDOW_MS = 90 * 24 * 60 * 60_000;
@@ -147,6 +148,23 @@ export class PostgresAttributionRepository implements AttributionRepository {
         nextResolutionAt: new Date(now.getTime() + resolution.retryMs),
       }, now));
       if (!resolution.contactId) return;
+      await captureProspectMemoryMutation(tx, {
+        workspaceId: interaction.workspaceId,
+        sourceContactId: resolution.contactId,
+        sourceKind: "social_interaction",
+        sourceId: interaction.id,
+        sourceVersion: interaction.updatedAt.getTime(),
+        kind: "social_interaction",
+        occurredAt,
+        observedAt: now,
+        payload: {
+          type: interaction.type,
+          direction: interaction.direction,
+          network: interaction.network,
+          socialContentId: interaction.socialContentId,
+        },
+        correlationId: `social-interaction:${interaction.id}`,
+      });
       const conversationRows = await tx.select().from(conversations).where(and(
         eq(conversations.workspaceId, interaction.workspaceId),
         eq(conversations.contactId, resolution.contactId),

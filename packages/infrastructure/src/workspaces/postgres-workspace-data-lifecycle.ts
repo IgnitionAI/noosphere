@@ -1,4 +1,5 @@
-import { and, desc, eq, gte, lte, ne } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lte, ne, sql } from "drizzle-orm";
+import { PROSPECT_MEMORY_REFRESH_JOB_TYPE } from "@outbound/application/prospect-memory/prospect-memory";
 import type { Clock, IdGenerator } from "@outbound/application/shared/ports";
 import {
   assertTypedConfirmation,
@@ -17,11 +18,15 @@ import {
   contacts,
   jobs,
   outboxEvents,
+  prospectMemoryContextReceipts,
+  prospectMemoryEvents,
+  prospectMemorySnapshots,
   workspaceDataSettings,
   workspaceExports,
   workspaces,
 } from "@outbound/infrastructure/database/schema";
 import { suppressionFingerprint } from "@outbound/infrastructure/crm/suppression-fingerprint";
+import { captureProspectMemoryMutation } from "@outbound/infrastructure/prospect-memory/capture-prospect-memory-mutation";
 
 type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
 
@@ -117,7 +122,7 @@ export class PostgresWorkspaceDataLifecycle {
           workspaceId: input.workspaceId,
           type: "workspace.retention.purge",
           payload: { workspaceId: input.workspaceId, retention: next.retention, eventId },
-          idempotencyKey: `retention:${next.retention.invitationsDays}:${next.retention.jobsDays}:${next.retention.auditDays}`,
+          idempotencyKey: `retention:${Object.values(next.retention).join(":")}`,
           correlationId: `retention:${eventId}`,
           maxAttempts: 3,
           availableAt: this.clock.now(),
@@ -209,6 +214,7 @@ export class PostgresWorkspaceDataLifecycle {
       const [contact] = await tx.select().from(contacts).where(and(eq(contacts.workspaceId, input.workspaceId), eq(contacts.id, input.contactId))).for("update").limit(1);
       if (!contact) throw new WorkspaceDataLifecycleError("CONTACT_NOT_FOUND", 404);
       if (contact.anonymizedAt) return contact;
+      const now = this.clock.now();
       const identities = await tx.select().from(contactIdentities).where(and(eq(contactIdentities.workspaceId, input.workspaceId), eq(contactIdentities.contactId, input.contactId)));
       for (const identity of identities) {
         await tx.insert(contactSuppressions).values({
@@ -226,15 +232,65 @@ export class PostgresWorkspaceDataLifecycle {
         const replacement = anonymizedIdentity(identity.type, identity.id);
         await tx.update(contactIdentities).set({ value: replacement, normalizedValue: replacement, verificationStatus: "invalid", updatedAt: this.clock.now() }).where(eq(contactIdentities.id, identity.id));
       }
-      const [updated] = await tx.update(contacts).set({ firstName: "Anonymisé", lastName: input.contactId.slice(0, 8), photoUrl: null, preferredChannel: null, status: "suppressed", anonymizedAt: this.clock.now(), updatedAt: this.clock.now() }).where(and(eq(contacts.workspaceId, input.workspaceId), eq(contacts.id, input.contactId))).returning();
+      await captureProspectMemoryMutation(tx, {
+        workspaceId: input.workspaceId,
+        sourceContactId: input.contactId,
+        sourceKind: "contact",
+        sourceId: input.contactId,
+        sourceVersion: contact.privacyEpoch + 1,
+        kind: "contact_anonymized",
+        occurredAt: now,
+        observedAt: now,
+        payload: { contactId: input.contactId, nextPrivacyEpoch: contact.privacyEpoch + 1 },
+        correlationId: `contact-anonymized:${input.contactId}:${contact.privacyEpoch + 1}`,
+      });
+      const [updated] = await tx.update(contacts).set({
+        firstName: "Anonymisé",
+        lastName: input.contactId.slice(0, 8),
+        photoUrl: null,
+        preferredChannel: null,
+        status: "suppressed",
+        anonymizedAt: now,
+        privacyEpoch: sql`${contacts.privacyEpoch} + 1`,
+        updatedAt: now,
+      }).where(and(eq(contacts.workspaceId, input.workspaceId), eq(contacts.id, input.contactId))).returning();
       if (!updated) throw new WorkspaceDataLifecycleError("CONTACT_ANONYMIZATION_FAILED", 409);
+      // Derived memory may contain personal conversation excerpts. Once the
+      // privacy epoch changes, remove it locally instead of merely hiding it.
+      await tx.delete(prospectMemoryContextReceipts).where(and(
+        eq(prospectMemoryContextReceipts.workspaceId, input.workspaceId),
+        eq(prospectMemoryContextReceipts.contactId, input.contactId),
+      ));
+      await tx.delete(prospectMemorySnapshots).where(and(
+        eq(prospectMemorySnapshots.workspaceId, input.workspaceId),
+        eq(prospectMemorySnapshots.contactId, input.contactId),
+      ));
+      await tx.delete(prospectMemoryEvents).where(and(
+        eq(prospectMemoryEvents.workspaceId, input.workspaceId),
+        sql`(${prospectMemoryEvents.canonicalContactId} = ${input.contactId} or ${prospectMemoryEvents.sourceContactId} = ${input.contactId})`,
+      ));
+      await tx.update(jobs).set({
+        status: "dead_lettered",
+        completedAt: now,
+        lockedAt: null,
+        lockedUntil: null,
+        lockedBy: null,
+        lastErrorCode: "PROSPECT_ANONYMIZED",
+        lastErrorMessage: "The prospect was anonymized before memory reconstruction completed.",
+        updatedAt: now,
+      }).where(and(
+        eq(jobs.workspaceId, input.workspaceId),
+        eq(jobs.type, PROSPECT_MEMORY_REFRESH_JOB_TYPE),
+        inArray(jobs.status, ["pending", "retry", "running"]),
+        sql`${jobs.payload}->>'contactId' = ${input.contactId}`,
+      ));
       await recordMutation(tx, {
         workspaceId: input.workspaceId,
         actorUserId: input.actorUserId,
         eventType: "ContactAnonymized",
         subjectType: "Contact",
         subjectId: input.contactId,
-        changes: { identityCount: identities.length, factsPreserved: true, suppressionsPreserved: true },
+        changes: { identityCount: identities.length, memoryDerivedPurged: true, suppressionsPreserved: true },
       });
       return updated;
     });
@@ -292,6 +348,9 @@ function settingsValues(workspaceId: string, actorUserId: string, policy: Worksp
     invitationsRetentionDays: policy.retention.invitationsDays,
     jobsRetentionDays: policy.retention.jobsDays,
     auditRetentionDays: policy.retention.auditDays,
+    memoryEventsRetentionDays: policy.retention.memoryEventsDays,
+    memorySnapshotsRetentionDays: policy.retention.memorySnapshotsDays,
+    memoryReceiptsRetentionDays: policy.retention.memoryReceiptsDays,
     updatedBy: actorUserId,
     createdAt: now,
     updatedAt: now,
@@ -308,7 +367,14 @@ function policyFromRow(row: typeof workspaceDataSettings.$inferSelect): Workspac
       windowEnd: row.windowEnd,
     },
     channelLimits: { linkedin: row.linkedinDailyLimit, email: row.emailDailyLimit, whatsapp: row.whatsappDailyLimit },
-    retention: { invitationsDays: row.invitationsRetentionDays, jobsDays: row.jobsRetentionDays, auditDays: row.auditRetentionDays },
+    retention: {
+      invitationsDays: row.invitationsRetentionDays,
+      jobsDays: row.jobsRetentionDays,
+      auditDays: row.auditRetentionDays,
+      memoryEventsDays: row.memoryEventsRetentionDays,
+      memorySnapshotsDays: row.memorySnapshotsRetentionDays,
+      memoryReceiptsDays: row.memoryReceiptsRetentionDays,
+    },
   });
 }
 

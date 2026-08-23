@@ -5,6 +5,12 @@ import type {
 } from "@outbound/application/campaigns/prospect-decision";
 import type { JobQueue, LeasedJob } from "@outbound/application/jobs/job-queue";
 import type { Clock } from "@outbound/application/shared/ports";
+import {
+  requireProspectMemoryAllowedProviders,
+  type ProspectContextAssembler,
+  type ProspectMemoryPolicyReader,
+} from "@outbound/application/prospect-memory/prospect-memory";
+import type { ProspectMemoryShadowComparator } from "@outbound/application/prospect-memory/prospect-memory-shadow-comparator";
 import { resolveCampaignAutopilotPolicy } from "@outbound/domain/campaigns/campaign-autopilot-policy";
 import { evaluateProspectDecisionPolicy } from "@outbound/domain/campaigns/prospect-decision-policy";
 import { assertProspectDecisionProposal } from "@outbound/domain/campaigns/prospect-decision";
@@ -25,6 +31,7 @@ import {
   prospectDecisions,
 } from "@outbound/infrastructure/database/schema";
 import { PostgresSocialProspectSignalReader } from "@outbound/infrastructure/crm/postgres-social-prospect-signal-reader";
+import { captureProspectDecisionMutation } from "@outbound/infrastructure/prospect-memory/capture-prospect-decision-mutation";
 import { PostgresProspectDecisionScheduler } from "./postgres-prospect-decision-scheduler";
 
 export class ProspectDecisionJobProcessor {
@@ -36,6 +43,9 @@ export class ProspectDecisionJobProcessor {
     private readonly queue: JobQueue,
     private readonly agent: ProspectDecisionAgent,
     private readonly clock: Clock,
+    private readonly prospectContextAssembler?: ProspectContextAssembler,
+    private readonly prospectMemoryPolicies?: ProspectMemoryPolicyReader,
+    private readonly prospectMemoryShadowComparator?: ProspectMemoryShadowComparator,
   ) {
     this.#scheduler = new PostgresProspectDecisionScheduler(database, clock);
     this.#socialSignals = new PostgresSocialProspectSignalReader(database);
@@ -50,7 +60,7 @@ export class ProspectDecisionJobProcessor {
     }
 
     try {
-      const state = await this.#loadState(decision);
+      const state = await this.#withProspectMemory(await this.#loadState(decision), decision);
       const proposal = assertProspectDecisionProposal(await this.agent.decide(state), this.clock.now());
       const policy = evaluateProspectDecisionPolicy({
         contactStatus: state.contact.status,
@@ -72,9 +82,8 @@ export class ProspectDecisionJobProcessor {
       }
 
       if (!policy.allowed && policy.retryAt) {
-        await this.database
-          .update(prospectDecisions)
-          .set({
+        await this.database.transaction(async (tx) => {
+          const [updated] = await tx.update(prospectDecisions).set({
             status: "pending",
             dueAt: policy.retryAt,
             observation: { summary: proposal.observation },
@@ -86,7 +95,9 @@ export class ProspectDecisionJobProcessor {
           .where(and(
             eq(prospectDecisions.workspaceId, decision.workspaceId),
             eq(prospectDecisions.id, decision.id),
-          ));
+          )).returning();
+          if (updated) await captureProspectDecisionMutation(tx, updated, decision.correlationId);
+        });
         await this.queue.retry({
           jobId: job.id,
           workerId: job.lockedBy,
@@ -108,9 +119,8 @@ export class ProspectDecisionJobProcessor {
         errorCode: "PROSPECT_DECISION_FAILED",
         errorMessage: message,
       });
-      await this.database
-        .update(prospectDecisions)
-        .set({
+      await this.database.transaction(async (tx) => {
+        const [updated] = await tx.update(prospectDecisions).set({
           status: outcome === "dead_lettered" ? "failed" : "pending",
           attempts: job.attempts,
           lastErrorCode: "PROSPECT_DECISION_FAILED",
@@ -121,7 +131,62 @@ export class ProspectDecisionJobProcessor {
         .where(and(
           eq(prospectDecisions.workspaceId, decision.workspaceId),
           eq(prospectDecisions.id, decision.id),
-        ));
+        )).returning();
+        if (updated) await captureProspectDecisionMutation(tx, updated, decision.correlationId);
+      });
+    }
+  }
+
+  async #withProspectMemory(
+    state: ProspectDecisionState,
+    decision: typeof prospectDecisions.$inferSelect,
+  ): Promise<ProspectDecisionState> {
+    if (!this.prospectContextAssembler) return state;
+    try {
+      const bundle = await this.prospectContextAssembler.assemble({
+        workspaceId: decision.workspaceId,
+        contactId: decision.contactId,
+        capability: "scoring",
+        principalRole: "worker",
+        requestKey: `prospect-decision-context:${decision.id}`,
+        now: this.clock.now(),
+      });
+      if (bundle.mode === "shadow") {
+        await this.prospectMemoryShadowComparator?.compare({
+          workspaceId: decision.workspaceId,
+          contactId: decision.contactId,
+          requestKey: `prospect-decision-shadow:${decision.id}`,
+          legacyHistory: state.latestMessages.map((message) => ({
+            direction: message.direction === "outbound" ? "outbound" as const : "inbound" as const,
+            body: message.body,
+            ...(message.id ? { sourceId: message.id } : {}),
+          })),
+          memory: bundle,
+          comparedAt: this.clock.now(),
+        });
+        return state;
+      }
+      if (!bundle.automaticActionAllowed) throw new Error(bundle.waitCode ?? "WAIT_MEMORY_STALE");
+      if (!this.prospectMemoryPolicies) throw new Error("PROSPECT_MEMORY_POLICY_READER_REQUIRED");
+      return {
+        ...state,
+        prospectContext: bundle.context,
+        prospectContextReference: {
+          receiptId: bundle.receiptId,
+          snapshotId: bundle.snapshotId,
+          snapshotVersion: bundle.snapshotVersion,
+          watermark: bundle.watermark,
+          privacyEpoch: bundle.privacyEpoch,
+        },
+        prospectContextAllowedProviders: await requireProspectMemoryAllowedProviders({
+          policies: this.prospectMemoryPolicies,
+          workspaceId: decision.workspaceId,
+          capability: "scoring",
+        }),
+      };
+    } catch (error) {
+      if (isOptionalMemoryUnavailable(error)) return state;
+      throw error;
     }
   }
 
@@ -153,6 +218,7 @@ export class ProspectDecisionJobProcessor {
           eq(prospectDecisions.id, input.decisionId),
         ))
         .returning();
+      if (claimed) await captureProspectDecisionMutation(tx, claimed, current.correlationId);
       return claimed ?? null;
     });
   }
@@ -190,7 +256,7 @@ export class ProspectDecisionJobProcessor {
           .limit(1)
       : [];
     const latestMessages = await this.database
-      .select({ direction: messages.direction, body: messages.body, occurredAt: messages.createdAt })
+      .select({ id: messages.id, direction: messages.direction, body: messages.body, occurredAt: messages.createdAt })
       .from(messages)
       .innerJoin(
         conversations,
@@ -317,7 +383,7 @@ export class ProspectDecisionJobProcessor {
             eq(outreachActions.id, decision.outreachActionId!),
             eq(outreachActions.status, "scheduled"),
           ));
-          await tx.update(prospectDecisions).set({
+          const [updatedDecision] = await tx.update(prospectDecisions).set({
             status: "awaiting_approval",
             observation: { summary: proposal.observation },
             proposedAction: proposal.action,
@@ -325,7 +391,13 @@ export class ProspectDecisionJobProcessor {
             policyDecision: policy,
             completedAt: null,
             updatedAt: now,
-          }).where(and(eq(prospectDecisions.workspaceId, decision.workspaceId), eq(prospectDecisions.id, decision.id)));
+          }).where(and(
+            eq(prospectDecisions.workspaceId, decision.workspaceId),
+            eq(prospectDecisions.id, decision.id),
+          )).returning();
+          if (updatedDecision) {
+            await captureProspectDecisionMutation(tx, updatedDecision, decision.correlationId);
+          }
           await tx.insert(outboxEvents).values({
             id: crypto.randomUUID(),
             workspaceId: decision.workspaceId,
@@ -521,7 +593,7 @@ export class ProspectDecisionJobProcessor {
     status: "completed" | "cancelled" | "awaiting_approval",
     now: Date,
   ): Promise<void> {
-    await tx.update(prospectDecisions).set({
+    const [updatedDecision] = await tx.update(prospectDecisions).set({
       status,
       observation: { summary: proposal.observation },
       proposedAction: proposal.action,
@@ -530,7 +602,12 @@ export class ProspectDecisionJobProcessor {
       completedAt: status === "awaiting_approval" ? null : now,
       invalidatedAt: status === "cancelled" ? now : null,
       updatedAt: now,
-    }).where(and(eq(prospectDecisions.workspaceId, decision.workspaceId), eq(prospectDecisions.id, decision.id)));
+    }).where(and(
+      eq(prospectDecisions.workspaceId, decision.workspaceId),
+      eq(prospectDecisions.id, decision.id),
+    )).returning();
+    if (!updatedDecision) throw new Error("PROSPECT_DECISION_NOT_FOUND");
+    await captureProspectDecisionMutation(tx, updatedDecision, decision.correlationId);
     await tx.insert(outboxEvents).values({
       id: crypto.randomUUID(),
       workspaceId: decision.workspaceId,
@@ -574,5 +651,13 @@ function decisionResult(
   return {
     proposal,
     socialSignalAssessment: state.socialSignalAssessment,
+    prospectMemory: state.prospectContextReference ?? null,
   };
+}
+
+function isOptionalMemoryUnavailable(error: unknown): boolean {
+  return error instanceof Error && [
+    "PROSPECT_MEMORY_CAPABILITY_DISABLED",
+    "PROSPECT_MEMORY_CONTACT_UNAVAILABLE",
+  ].includes(error.message);
 }

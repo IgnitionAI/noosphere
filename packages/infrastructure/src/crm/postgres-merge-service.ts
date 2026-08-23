@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull, or } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import type { Database } from "@outbound/infrastructure/database/client";
 import {
   auditLogs,
@@ -11,6 +11,7 @@ import {
   mergeCandidates,
   outboxEvents,
 } from "@outbound/infrastructure/database/schema";
+import { captureProspectMemoryMutation } from "@outbound/infrastructure/prospect-memory/capture-prospect-memory-mutation";
 
 type MatchType = "certain" | "probable";
 
@@ -119,6 +120,9 @@ export class PostgresMergeService {
 
   async merge(input: { workspaceId: string; candidateId: string | null; survivorContactId: string; mergedContactId: string; mergedBy: string }) {
     return this.db.transaction(async (tx) => {
+      for (const contactId of [input.survivorContactId, input.mergedContactId].sort()) {
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`${input.workspaceId}:${contactId}`}, 0))`);
+      }
       const contactRows = await tx.select().from(contacts).where(and(eq(contacts.workspaceId, input.workspaceId), inArray(contacts.id, [input.survivorContactId, input.mergedContactId])));
       const survivor = contactRows.find((row) => row.id === input.survivorContactId);
       const merged = contactRows.find((row) => row.id === input.mergedContactId);
@@ -143,6 +147,19 @@ export class PostgresMergeService {
       const mergeRows = await tx.insert(contactMerges).values({ id: crypto.randomUUID(), workspaceId: input.workspaceId, survivorContactId: survivor.id, mergedContactId: merged.id, candidateId: input.candidateId, snapshot }).returning();
       const merge = mergeRows[0]!;
       const eventId = await this.recordEvent(tx, input.workspaceId, merge.id, "ContactMerged", { mergeId: merge.id, survivorContactId: survivor.id, mergedContactId: merged.id });
+      const observedAt = new Date();
+      await captureProspectMemoryMutation(tx, {
+        workspaceId: input.workspaceId,
+        sourceContactId: merged.id,
+        sourceKind: "contact_merge",
+        sourceId: merge.id,
+        sourceVersion: 1,
+        kind: "identity_linked",
+        occurredAt: observedAt,
+        observedAt,
+        payload: { survivorContactId: survivor.id, mergedContactId: merged.id },
+        correlationId: eventId,
+      });
       await tx.insert(auditLogs).values({ workspaceId: input.workspaceId, actorUserId: input.mergedBy, action: "ContactMerged", subjectType: "ContactMerge", subjectId: merge.id, changes: { survivorContactId: survivor.id, mergedContactId: merged.id }, sourceEventId: eventId });
       return merge;
     });
@@ -150,12 +167,21 @@ export class PostgresMergeService {
 
   async undo(input: { workspaceId: string; contactId: string; undoneBy: string }) {
     return this.db.transaction(async (tx) => {
-      const rows = await tx.select().from(contactMerges).where(and(eq(contactMerges.workspaceId, input.workspaceId), or(eq(contactMerges.survivorContactId, input.contactId), eq(contactMerges.mergedContactId, input.contactId)), eq(contactMerges.status, "active"))).orderBy(asc(contactMerges.mergedAt)).limit(1);
-      const merge = rows[0];
-      if (!merge) {
+      const previewRows = await tx.select().from(contactMerges).where(and(eq(contactMerges.workspaceId, input.workspaceId), or(eq(contactMerges.survivorContactId, input.contactId), eq(contactMerges.mergedContactId, input.contactId)), eq(contactMerges.status, "active"))).orderBy(asc(contactMerges.mergedAt)).limit(1);
+      const preview = previewRows[0];
+      if (!preview) {
         const undone = await tx.select({ id: contactMerges.id }).from(contactMerges).where(and(eq(contactMerges.workspaceId, input.workspaceId), or(eq(contactMerges.survivorContactId, input.contactId), eq(contactMerges.mergedContactId, input.contactId)), eq(contactMerges.status, "undone"))).limit(1);
         throw new Error(undone[0] ? "MERGE_ALREADY_UNDONE" : "MERGE_NOT_FOUND");
       }
+      for (const contactId of [preview.survivorContactId, preview.mergedContactId].sort()) {
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`${input.workspaceId}:${contactId}`}, 0))`);
+      }
+      const [merge] = await tx.select().from(contactMerges).where(and(
+        eq(contactMerges.workspaceId, input.workspaceId),
+        eq(contactMerges.id, preview.id),
+        eq(contactMerges.status, "active"),
+      )).limit(1);
+      if (!merge) throw new Error("MERGE_STATE_CHANGED");
       const snapshot = merge.snapshot as { contacts: Array<Record<string, unknown>>; identities: Array<Record<string, unknown>>; employments: Array<Record<string, unknown>>; suppressions: Array<Record<string, unknown>> };
       for (const contact of snapshot.contacts) {
         const id = String(contact.id);
@@ -166,6 +192,27 @@ export class PostgresMergeService {
       for (const suppression of snapshot.suppressions) await tx.update(contactSuppressions).set({ contactId: suppression.contactId ? String(suppression.contactId) : null }).where(and(eq(contactSuppressions.workspaceId, input.workspaceId), eq(contactSuppressions.id, String(suppression.id))));
       await tx.update(contactMerges).set({ status: "undone", undoneBy: input.undoneBy, undoneAt: new Date() }).where(and(eq(contactMerges.workspaceId, input.workspaceId), eq(contactMerges.id, merge.id)));
       const eventId = await this.recordEvent(tx, input.workspaceId, merge.id, "ContactMergeUndone", { mergeId: merge.id });
+      const observedAt = new Date();
+      for (const [contactId, suffix] of [
+        [merge.survivorContactId, "survivor"],
+        [merge.mergedContactId, "restored"],
+      ] as const) {
+        await captureProspectMemoryMutation(tx, {
+          workspaceId: input.workspaceId,
+          sourceContactId: contactId,
+          sourceKind: "contact_merge",
+          sourceId: `${merge.id}:undo:${suffix}`,
+          sourceVersion: 1,
+          kind: "identity_unlinked",
+          occurredAt: observedAt,
+          observedAt,
+          payload: {
+            survivorContactId: merge.survivorContactId,
+            restoredContactId: merge.mergedContactId,
+          },
+          correlationId: eventId,
+        });
+      }
       await tx.insert(auditLogs).values({ workspaceId: input.workspaceId, actorUserId: input.undoneBy, action: "ContactMergeUndone", subjectType: "ContactMerge", subjectId: merge.id, changes: {}, sourceEventId: eventId });
       return { ...merge, status: "undone", undoneBy: input.undoneBy };
     });

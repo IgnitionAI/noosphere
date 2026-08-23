@@ -162,7 +162,11 @@ export function createResearchTools(input: {
         const pages = await input.crawler.readPages({
           urls,
           correlationId: input.correlationId,
-          requestKey: `${input.runId}:${input.researchStageRunId ?? "stage"}:pages:${urls.join("|")}`,
+          requestKey: await crawlerPageRequestKey(
+            input.runId,
+            input.researchStageRunId ?? "stage",
+            urls,
+          ),
           signal: input.signal,
         });
         return JSON.stringify(pages.map(compactPageForAgent));
@@ -452,4 +456,13 @@ function stableJson(value: unknown): string {
 async function sha256(value: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function crawlerPageRequestKey(
+  runId: string,
+  stageRunId: string,
+  urls: readonly string[],
+): Promise<string> {
+  const digest = await sha256(stableJson(urls));
+  return `${runId}:${stageRunId}:pages:${digest}`;
 }

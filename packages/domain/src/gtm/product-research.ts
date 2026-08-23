@@ -230,7 +230,11 @@ export class ProductResearchRun {
 
   resume(now: Date): void {
     if (this.#snapshot.status === "queued" || this.#snapshot.status === "running") return;
-    if (this.#snapshot.status === "interrupted" && this.#snapshot.brief.researchVersion === 3) {
+    const recoverableIncompleteV3 =
+      this.#snapshot.brief.researchVersion === 3
+      && (this.#snapshot.status === "interrupted" || this.#snapshot.status === "partial")
+      && this.#snapshot.completedStages.length < this.workflowStages().length;
+    if (recoverableIncompleteV3) {
       this.#update({
         status: "queued",
         activeStage: null,

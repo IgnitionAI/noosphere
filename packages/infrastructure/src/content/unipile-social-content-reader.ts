@@ -21,6 +21,13 @@ export class UnipileSocialContentReader implements SocialContentReader, SocialMe
 
   async listOwnContent(input: { readonly accountId: string; readonly cursor: string | null; readonly limit: number }) {
     requireValue(input.accountId, "accountId");
+    // Unipile can emit one final opaque cursor whose decoded pagination token
+    // is null. Sending that cursor back produces a 400 even though the
+    // historical feed is simply exhausted. Treat it as an explicit end marker
+    // both for new responses and for durable cursors stored before this guard.
+    if (input.cursor && isTerminalPaginationCursor(input.cursor)) {
+      return { data: [], nextCursor: null };
+    }
     const owner = await this.#read(`/api/v1/users/me?account_id=${encodeURIComponent(input.accountId)}`);
     const ownerId = stringValue(owner.provider_id) ?? stringValue(owner.id);
     if (!ownerId) throw invalidResponse("Unipile returned no provider id for the LinkedIn account owner");
@@ -29,12 +36,13 @@ export class UnipileSocialContentReader implements SocialContentReader, SocialMe
     const page = await this.#read(`/api/v1/users/${encodeURIComponent(ownerId)}/posts?${query}`);
     const items = Array.isArray(page.items) ? page.items : Array.isArray(page.data) ? page.data : [];
     const observedAt = new Date();
+    const providerCursor = stringValue(page.cursor) ?? stringValue(recordValue(page.paging)?.cursor) ?? null;
     return {
       data: items.flatMap((item) => {
         const normalized = recordValue(item) ? normalizePost(recordValue(item)!, ownerId, observedAt) : null;
         return normalized ? [normalized] : [];
       }),
-      nextCursor: stringValue(page.cursor) ?? stringValue(recordValue(page.paging)?.cursor) ?? null,
+      nextCursor: providerCursor && !isTerminalPaginationCursor(providerCursor) ? providerCursor : null,
     };
   }
 
@@ -128,6 +136,19 @@ function retryAfterMilliseconds(value: string | null): number | null {
     : new Date(value).getTime() - Date.now();
   if (!Number.isFinite(milliseconds) || milliseconds <= 0) return null;
   return Math.min(24 * 60 * 60_000, milliseconds);
+}
+
+function isTerminalPaginationCursor(value: string): boolean {
+  try {
+    const decoded = JSON.parse(Buffer.from(value, "base64").toString("utf8")) as unknown;
+    const cursor = recordValue(decoded);
+    return cursor?.pagination_token === null
+      && typeof cursor.start === "number"
+      && Number.isFinite(cursor.start)
+      && cursor.start >= 0;
+  } catch {
+    return false;
+  }
 }
 
 function invalidResponse(message: string) { return new SocialProviderError("SOCIAL_PROVIDER_RESPONSE_INVALID", message, "not_sent", false); }

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { sanitizeOperationalPayload } from "@outbound/domain/operations/operator-console";
+import { consoleJobRecoveryDisposition, sanitizeOperationalPayload } from "@outbound/domain/operations/operator-console";
 
 describe("F-003 operator console payload safety", () => {
   test("redacts secrets and unnecessary personal coordinates recursively", () => {
@@ -19,5 +19,12 @@ describe("F-003 operator console payload safety", () => {
     const result = sanitizeOperationalPayload({ content: "x".repeat(4_000) }, 100) as { truncated: boolean; preview: string };
     expect(result.truncated).toBe(true);
     expect(result.preview.length).toBeLessThanOrEqual(100);
+  });
+
+  test("separates automatic retries from safe manual recovery and unknown provider effects", () => {
+    expect(consoleJobRecoveryDisposition({ type: "prospecting.channel.assess", status: "retry", lastErrorCode: "CHANNEL_ASSESSMENT_FAILED" })).toBe("automatic");
+    expect(consoleJobRecoveryDisposition({ type: "outreach.dispatch", status: "dead_lettered", lastErrorCode: "CAMPAIGN_JIT_GENERATION_FAILED" })).toBe("manual");
+    expect(consoleJobRecoveryDisposition({ type: "outreach.dispatch", status: "dead_lettered", lastErrorCode: "ACTION_EXECUTION_STATE_UNKNOWN" })).toBe("blocked");
+    expect(consoleJobRecoveryDisposition({ type: "outreach.dispatch", status: "dead_lettered", lastErrorCode: "OUTSIDE_SENDING_WINDOW" })).toBe("automatic");
   });
 });
