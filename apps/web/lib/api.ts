@@ -1,4 +1,6 @@
 import "server-only";
+import { outboundApiUrl } from "./outbound-api-url";
+export { outboundApiUrl } from "./outbound-api-url";
 import { cookies } from "next/headers";
 
 export interface Session {
@@ -3917,10 +3919,6 @@ export async function archiveChannelCampaign(
     method: "POST",
     body: {},
   });
-}
-
-export function outboundApiUrl(pathname: string): URL {
-  return new URL(pathname, process.env.OUTBOUND_API_URL ?? "http://127.0.0.1:3001");
 }
 
 async function apiFetch(
