@@ -1,8 +1,8 @@
-# Spécification d’architecture — Ignition Outbound
+# Spécification d’architecture — Noosphere
 
 ## 1. Vue d’ensemble
 
-- **Produit** : Ignition Outbound
+- **Produit** : Noosphere
 - **Type** : application web et pipeline asynchrone
 - **Objectif** : rechercher, enrichir, prioriser et contacter des prospects
   B2B sur LinkedIn, email et WhatsApp, puis suivre les conversations et les
@@ -11,12 +11,6 @@
   principal.
 - **Cible structurelle** : produit SaaS multi-workspace sans refonte du domaine.
 - **Statut** : architecture approuvée, implémentation non commencée.
-
-La cible commerciale initiale d’IgnitionAI est le CTO ou Head of Data d’une
-entreprise française de 500 à 5 000 salariés. Cette hypothèse métier reste
-configurable par `ICPVersion` et ne doit jamais être codée en dur.
-Source canonique :
-`knowledge/business/offers/ignitionai-offers-and-icp.md@5cd6218191351ecd7480514ec6edb4c2f82f4f54`.
 
 ## 2. Résultat produit attendu
 
