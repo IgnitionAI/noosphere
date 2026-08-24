@@ -1,0 +1,47 @@
+import { describe, expect, test } from "bun:test";
+import { createContentGenerationHttpHandler, isContentGenerationRoute } from "@outbound/interface/http/content-generation-handler";
+
+const workspaceId = "31000000-0000-4000-8000-000000000001";
+const userId = "31000000-0000-4000-8000-000000000002";
+const ideaId = "31000000-0000-4000-8000-000000000003";
+const assetId = "31000000-0000-4000-8000-000000000004";
+
+describe("Noosphere content generation HTTP", () => {
+  test("never captures the reserved idea discovery route as an idea identifier", () => {
+    expect(isContentGenerationRoute("/api/v1/content/ideas/discover")).toBe(false);
+    expect(isContentGenerationRoute(`/api/v1/content/ideas/${ideaId}`)).toBe(true);
+  });
+
+  test("derives tenant and user from the session and rejects body impersonation", async () => {
+    const calls: unknown[] = [];
+    const handler = createContentGenerationHttpHandler({ contextResolver: context("operator"), application: { async generate(input: unknown) { calls.push(input); return run(); } } as never });
+    expect((await handler(request(`/api/v1/content/ideas/${ideaId}/brief`, "POST", { requestKey: "content-request-1", workspaceId }))).status).toBe(422);
+    expect((await handler(request(`/api/v1/content/ideas/${ideaId}/brief`, "POST", { requestKey: "content-request-2" }))).status).toBe(202);
+    expect(calls).toEqual([{ workspaceId, userId, ideaId, requestKey: "content-request-2" }]);
+  });
+
+  test("lets viewers inspect evidence and content but never generate or improve", async () => {
+    const handler = createContentGenerationHttpHandler({
+      contextResolver: context("viewer"),
+      application: { async findIdea() { return { id: ideaId }; }, async findAssetByIdea() { return { id: assetId }; } } as never,
+      publications: { async findLatestForAsset() { return { id: "31000000-0000-4000-8000-000000000005", status: "scheduled" } as never; } },
+    });
+    const detail = await handler(request(`/api/v1/content/ideas/${ideaId}`));
+    expect(detail.status).toBe(200);
+    expect((await detail.json() as { publication: { status: string } }).publication.status).toBe("scheduled");
+    expect((await handler(request(`/api/v1/content/ideas/${ideaId}/brief`, "POST", { requestKey: "content-request-3" }))).status).toBe(403);
+    expect((await handler(request(`/api/v1/content/assets/${assetId}/improve`, "POST", { requestKey: "content-request-4" }))).status).toBe(403);
+  });
+
+  test("accepts an improvement instruction but exposes no schedule or publish route", async () => {
+    const calls: unknown[] = [];
+    const handler = createContentGenerationHttpHandler({ contextResolver: context("owner"), application: { async improve(input: unknown) { calls.push(input); return run(); } } as never });
+    expect((await handler(request(`/api/v1/content/assets/${assetId}/improve`, "POST", { requestKey: "content-request-5", instruction: "Rendre le hook plus concret" }))).status).toBe(202);
+    expect(calls).toEqual([{ workspaceId, userId, assetId, requestKey: "content-request-5", instruction: "Rendre le hook plus concret" }]);
+    expect((await handler(request(`/api/v1/content/assets/${assetId}/publish`, "POST", { requestKey: "content-request-6" }))).status).toBe(405);
+  });
+});
+
+function context(role: "viewer" | "operator" | "owner") { return { async resolve() { return { workspaceId, userId, role }; } }; }
+function request(path: string, method = "GET", body?: unknown) { return new Request(`http://localhost${path}`, { method, headers: { "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }); }
+function run() { return { id: crypto.randomUUID(), workspaceId, ideaId, assetId, assetVersionId: null, status: "queued", stage: "brief", instruction: null, lastErrorCode: null, lastErrorMessage: null, createdAt: new Date(), completedAt: null }; }

@@ -1,13 +1,16 @@
-import { and, asc, eq, gt, ilike, inArray, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gt, ilike, inArray, isNull, lt, or, sql, lte, gte, type SQL } from "drizzle-orm";
 import type { Database } from "@outbound/infrastructure/database/client";
 import {
   companies,
+  auditLogs,
   contactEmployments,
   contactIdentities,
   contacts,
   contactSuppressions,
   outboxEvents,
 } from "@outbound/infrastructure/database/schema";
+import { captureProspectMemoryMutation } from "@outbound/infrastructure/prospect-memory/capture-prospect-memory-mutation";
+import { suppressionFingerprint } from "./suppression-fingerprint";
 
 export interface CompanyListCursor {
   readonly createdAt: Date;
@@ -27,7 +30,7 @@ export class PostgresCrmRepository {
     employeeCountMax: number | null;
     location: string | null;
     linkedinUrl: string | null;
-    source: "manual" | "csv" | "icp_research" | "provider";
+    source: "manual" | "csv" | "icp_research" | "discovery" | "provider";
   }) {
     try {
       const rows = await this.db
@@ -45,7 +48,7 @@ export class PostgresCrmRepository {
           source: input.source,
         })
         .returning();
-      await this.recordEvent(input.workspaceId, "Company", input.id, "CompanyCreated", {
+      await this.recordEvent(this.db, input.workspaceId, "Company", input.id, "CompanyCreated", {
         companyId: input.id,
       });
       return rows[0]!;
@@ -70,12 +73,24 @@ export class PostgresCrmRepository {
   async listCompanies(input: {
     workspaceId: string;
     search?: string;
+    sector?: string;
+    location?: string;
+    employeeCountMin?: number;
+    employeeCountMax?: number;
     cursor?: CompanyListCursor;
     limit: number;
   }) {
     const conditions: SQL[] = [eq(companies.workspaceId, input.workspaceId)];
     if (input.search) {
       conditions.push(ilike(companies.name, `%${input.search}%`));
+    }
+    if (input.sector) conditions.push(ilike(companies.sector, `%${input.sector}%`));
+    if (input.location) conditions.push(ilike(companies.location, `%${input.location}%`));
+    if (input.employeeCountMin !== undefined) {
+      conditions.push(gte(companies.employeeCountMax, input.employeeCountMin));
+    }
+    if (input.employeeCountMax !== undefined) {
+      conditions.push(lte(companies.employeeCountMin, input.employeeCountMax));
     }
     if (input.cursor) {
       conditions.push(
@@ -100,6 +115,29 @@ export class PostgresCrmRepository {
       data,
       nextCursor: rows.length > input.limit && last ? { createdAt: last.createdAt, id: last.id } : null,
     };
+  }
+
+  async updateCompany(input: {
+    workspaceId: string;
+    companyId: string;
+    fields: Partial<Pick<typeof companies.$inferInsert,
+      "name" | "normalizedDomain" | "sector" | "employeeCountMin" | "employeeCountMax" | "location" | "linkedinUrl">>;
+  }) {
+    try {
+      const rows = await this.db.update(companies).set({ ...input.fields, updatedAt: new Date() }).where(and(
+        eq(companies.workspaceId, input.workspaceId), eq(companies.id, input.companyId),
+      )).returning();
+      if (!rows[0]) throw new Error("COMPANY_NOT_FOUND");
+      return rows[0];
+    } catch (error) {
+      if (isUniqueViolation(error) && input.fields.normalizedDomain) {
+        const existing = await this.db.select({ id: companies.id }).from(companies).where(and(
+          eq(companies.workspaceId, input.workspaceId), eq(companies.normalizedDomain, input.fields.normalizedDomain),
+        )).limit(1);
+        throw new Error(`COMPANY_DOMAIN_CONFLICT:${existing[0]?.id ?? ""}`);
+      }
+      throw error;
+    }
   }
 
   async getCompany(input: { workspaceId: string; companyId: string }) {
@@ -146,7 +184,7 @@ export class PostgresCrmRepository {
     workspaceId: string;
     firstName: string;
     lastName: string;
-    source: "manual" | "csv" | "icp_research" | "provider";
+    source: "manual" | "csv" | "icp_research" | "discovery" | "provider";
     identities: readonly {
       id: string;
       type: "email" | "linkedin" | "phone" | "whatsapp";
@@ -206,9 +244,50 @@ export class PostgresCrmRepository {
           isCurrent: true,
         });
       }
-      await this.recordEvent(input.workspaceId, "Contact", input.id, "ContactCreated", {
+      const eventId = await this.recordEvent(tx, input.workspaceId, "Contact", input.id, "ContactCreated", {
         contactId: input.id,
       });
+      const observedAt = new Date();
+      await captureProspectMemoryMutation(tx, {
+        workspaceId: input.workspaceId,
+        sourceContactId: input.id,
+        sourceKind: "contact",
+        sourceId: eventId,
+        sourceVersion: 1,
+        kind: "contact_updated",
+        occurredAt: observedAt,
+        observedAt,
+        payload: { change: "created" },
+        correlationId: eventId,
+      });
+      for (const identity of input.identities) {
+        await captureProspectMemoryMutation(tx, {
+          workspaceId: input.workspaceId,
+          sourceContactId: input.id,
+          sourceKind: "contact_identity",
+          sourceId: identity.id,
+          sourceVersion: 1,
+          kind: "identity_linked",
+          occurredAt: observedAt,
+          observedAt,
+          payload: { identityType: identity.type },
+          correlationId: eventId,
+        });
+      }
+      if (input.employment) {
+        await captureProspectMemoryMutation(tx, {
+          workspaceId: input.workspaceId,
+          sourceContactId: input.id,
+          sourceKind: "contact_employment",
+          sourceId: input.employment.id,
+          sourceVersion: 1,
+          kind: "employment_updated",
+          occurredAt: observedAt,
+          observedAt,
+          payload: { companyId: input.employment.companyId, title: input.employment.title, current: true },
+          correlationId: eventId,
+        });
+      }
       return inserted[0]!;
     });
   }
@@ -327,6 +406,37 @@ export class PostgresCrmRepository {
     return { ...contact, identities, employments };
   }
 
+  async updateContact(input: {
+    workspaceId: string;
+    contactId: string;
+    fields: Partial<Pick<typeof contacts.$inferInsert, "firstName" | "lastName" | "photoUrl" | "preferredChannel">>;
+  }) {
+    return this.db.transaction(async (tx) => {
+      const observedAt = new Date();
+      const rows = await tx.update(contacts).set({ ...input.fields, updatedAt: observedAt }).where(and(
+        eq(contacts.workspaceId, input.workspaceId), eq(contacts.id, input.contactId),
+      )).returning();
+      if (!rows[0]) throw new Error("CONTACT_NOT_FOUND");
+      const eventId = await this.recordEvent(tx, input.workspaceId, "Contact", input.contactId, "ContactUpdated", {
+        contactId: input.contactId,
+        fields: Object.keys(input.fields).sort(),
+      });
+      await captureProspectMemoryMutation(tx, {
+        workspaceId: input.workspaceId,
+        sourceContactId: input.contactId,
+        sourceKind: "contact",
+        sourceId: eventId,
+        sourceVersion: 1,
+        kind: "contact_updated",
+        occurredAt: observedAt,
+        observedAt,
+        payload: { fields: Object.keys(input.fields).sort() },
+        correlationId: eventId,
+      });
+      return rows[0];
+    });
+  }
+
   async addIdentity(input: {
     id: string;
     workspaceId: string;
@@ -351,6 +461,24 @@ export class PostgresCrmRepository {
             normalizedValue: input.normalizedValue,
           })
           .returning();
+        const observedAt = new Date();
+        const eventId = await this.recordEvent(tx, input.workspaceId, "Contact", input.contactId, "ContactIdentityLinked", {
+          contactId: input.contactId,
+          identityId: input.id,
+          identityType: input.type,
+        });
+        await captureProspectMemoryMutation(tx, {
+          workspaceId: input.workspaceId,
+          sourceContactId: input.contactId,
+          sourceKind: "contact_identity",
+          sourceId: input.id,
+          sourceVersion: 1,
+          kind: "identity_linked",
+          occurredAt: observedAt,
+          observedAt,
+          payload: { identityType: input.type },
+          correlationId: eventId,
+        });
         return rows[0]!;
       } catch (error) {
         if (isUniqueViolation(error)) throw new Error("CONTACT_IDENTITY_CONFLICT");
@@ -403,13 +531,27 @@ export class PostgresCrmRepository {
           isCurrent: true,
         })
         .returning();
-      await this.recordEvent(
+      const eventId = await this.recordEvent(
+        tx,
         input.workspaceId,
         "Contact",
         input.contactId,
         "ContactEmploymentChanged",
         { contactId: input.contactId, companyId: input.companyId },
       );
+      const observedAt = new Date();
+      await captureProspectMemoryMutation(tx, {
+        workspaceId: input.workspaceId,
+        sourceContactId: input.contactId,
+        sourceKind: "contact_employment",
+        sourceId: input.id,
+        sourceVersion: 1,
+        kind: "employment_updated",
+        occurredAt: observedAt,
+        observedAt,
+        payload: { companyId: input.companyId, title: input.title, current: true },
+        correlationId: eventId,
+      });
       return rows[0]!;
     });
   }
@@ -455,20 +597,226 @@ export class PostgresCrmRepository {
               contactId: input.contactId,
               channel: input.channel,
               identityType: identity.type,
-              normalizedValue: identity.normalizedValue,
+              normalizedValue: null,
+              identityFingerprint: suppressionFingerprint({
+                workspaceId: input.workspaceId,
+                identityType: identity.type,
+                normalizedValue: identity.normalizedValue,
+              }),
               reason: input.reason,
               createdBy: input.userId,
             })),
           )
           .onConflictDoNothing();
       }
-      await this.recordEvent(
+      const eventId = await this.recordEvent(
+        tx,
         input.workspaceId,
         "Contact",
         input.contactId,
-        "ContactSuppressed",
-        { contactId: input.contactId, channel: input.channel },
+        "SuppressionRegistered",
+        { contactId: input.contactId, channel: input.channel, actorUserId: input.userId },
       );
+      const observedAt = new Date();
+      await captureProspectMemoryMutation(tx, {
+        workspaceId: input.workspaceId,
+        sourceContactId: input.contactId,
+        sourceKind: "contact",
+        sourceId: eventId,
+        sourceVersion: 1,
+        kind: "contact_updated",
+        occurredAt: observedAt,
+        observedAt,
+        payload: { suppressed: true, channel: input.channel },
+        correlationId: eventId,
+      });
+      await tx.insert(auditLogs).values({
+        workspaceId: input.workspaceId,
+        actorUserId: input.userId,
+        action: "SuppressionRegistered",
+        subjectType: "Contact",
+        subjectId: input.contactId,
+        changes: { contactId: input.contactId, channel: input.channel, reason: input.reason },
+        sourceEventId: eventId,
+      });
+    });
+  }
+
+  async createSuppression(input: {
+    id: string;
+    workspaceId: string;
+    identityType: "email" | "linkedin" | "phone" | "whatsapp";
+    normalizedValue: string;
+    channel: "global" | "email" | "linkedin" | "whatsapp";
+    reason: string | null;
+    createdBy: string;
+  }) {
+    return this.db.transaction(async (tx) => {
+      const inserted = await tx
+        .insert(contactSuppressions)
+        .values({
+          id: input.id,
+          workspaceId: input.workspaceId,
+          contactId: null,
+          identityType: input.identityType,
+          normalizedValue: input.normalizedValue,
+          channel: input.channel,
+          reason: input.reason,
+          createdBy: input.createdBy,
+        })
+        .onConflictDoNothing()
+        .returning();
+      if (!inserted[0]) {
+        const existing = await tx
+          .select()
+          .from(contactSuppressions)
+          .where(
+            and(
+              eq(contactSuppressions.workspaceId, input.workspaceId),
+              eq(contactSuppressions.identityType, input.identityType),
+              eq(contactSuppressions.normalizedValue, input.normalizedValue),
+              eq(contactSuppressions.channel, input.channel),
+            ),
+          )
+          .limit(1);
+        if (!existing[0]) throw new Error("SUPPRESSION_CREATE_FAILED");
+        return existing[0];
+      }
+      const suppression = inserted[0];
+      const eventId = await this.recordEvent(
+        tx,
+        input.workspaceId,
+        "Suppression",
+        suppression.id,
+        "SuppressionRegistered",
+        {
+          suppressionId: suppression.id,
+          identityType: input.identityType,
+          channel: input.channel,
+        },
+      );
+      await tx.insert(auditLogs).values({
+        workspaceId: input.workspaceId,
+        actorUserId: input.createdBy,
+        action: "SuppressionRegistered",
+        subjectType: "Suppression",
+        subjectId: suppression.id,
+        changes: { identityType: input.identityType, channel: input.channel, reason: input.reason },
+        sourceEventId: eventId,
+      });
+      return suppression;
+    });
+  }
+
+  async listSuppressions(input: {
+    workspaceId: string;
+    channel?: "global" | "email" | "linkedin" | "whatsapp";
+    cursor?: CompanyListCursor;
+    limit: number;
+  }) {
+    const conditions: SQL[] = [eq(contactSuppressions.workspaceId, input.workspaceId)];
+    if (input.channel) conditions.push(eq(contactSuppressions.channel, input.channel));
+    if (input.cursor) {
+      conditions.push(
+        or(
+          sql`date_trunc('milliseconds', ${contactSuppressions.createdAt}) < ${input.cursor.createdAt.toISOString()}::timestamptz`,
+          and(
+            sql`date_trunc('milliseconds', ${contactSuppressions.createdAt}) = ${input.cursor.createdAt.toISOString()}::timestamptz`,
+            lt(contactSuppressions.id, input.cursor.id),
+          ),
+        )!,
+      );
+    }
+    const rows = await this.db
+      .select()
+      .from(contactSuppressions)
+      .where(and(...conditions))
+      .orderBy(desc(contactSuppressions.createdAt), desc(contactSuppressions.id))
+      .limit(input.limit + 1);
+    const data = rows.slice(0, input.limit);
+    const last = data.at(-1);
+    return {
+      data,
+      nextCursor: rows.length > input.limit && last ? { createdAt: last.createdAt, id: last.id } : null,
+    };
+  }
+
+  async checkSuppression(input: {
+    workspaceId: string;
+    identityType: "email" | "linkedin" | "phone" | "whatsapp";
+    normalizedValue: string;
+    channel: "global" | "email" | "linkedin" | "phone" | "whatsapp";
+  }) {
+    const rows = await this.db
+      .select({ id: contactSuppressions.id, channel: contactSuppressions.channel, reason: contactSuppressions.reason })
+      .from(contactSuppressions)
+      .where(
+        and(
+          eq(contactSuppressions.workspaceId, input.workspaceId),
+          eq(contactSuppressions.identityType, input.identityType),
+          eq(contactSuppressions.normalizedValue, input.normalizedValue),
+          isNull(contactSuppressions.liftedAt),
+          or(eq(contactSuppressions.channel, "global"), eq(contactSuppressions.channel, input.channel as never)),
+        ),
+      )
+      .limit(1);
+    const match = rows[0];
+    return match
+      ? { eligible: false, suppressionId: match.id, channel: match.channel, reason: match.reason }
+      : { eligible: true, suppressionId: null, channel: null, reason: null };
+  }
+
+  async liftSuppression(input: {
+    workspaceId: string;
+    suppressionId: string;
+    liftedBy: string;
+    justification: string;
+  }) {
+    return this.db.transaction(async (tx) => {
+      const rows = await tx
+        .select()
+        .from(contactSuppressions)
+        .where(
+          and(
+            eq(contactSuppressions.workspaceId, input.workspaceId),
+            eq(contactSuppressions.id, input.suppressionId),
+          ),
+        )
+        .limit(1);
+      const existing = rows[0];
+      if (!existing) throw new Error("SUPPRESSION_NOT_FOUND");
+      if (existing.liftedAt) return existing;
+      const liftedAt = new Date();
+      const updated = await tx
+        .update(contactSuppressions)
+        .set({ liftedAt, liftedBy: input.liftedBy, liftJustification: input.justification })
+        .where(
+          and(
+            eq(contactSuppressions.workspaceId, input.workspaceId),
+            eq(contactSuppressions.id, input.suppressionId),
+            isNull(contactSuppressions.liftedAt),
+          ),
+        )
+        .returning();
+      if (!updated[0]) return existing;
+      const eventId = await this.recordEvent(
+        tx,
+        input.workspaceId,
+        "Suppression",
+        input.suppressionId,
+        "SuppressionLifted",
+        { suppressionId: input.suppressionId, justification: input.justification },
+      );
+      await tx.insert(auditLogs).values({
+        workspaceId: input.workspaceId,
+        actorUserId: input.liftedBy,
+        action: "SuppressionLifted",
+        subjectType: "Suppression",
+        subjectId: input.suppressionId,
+        changes: { justification: input.justification },
+        sourceEventId: eventId,
+      });
+      return updated[0]!;
     });
   }
 
@@ -478,6 +826,11 @@ export class PostgresCrmRepository {
     identities: readonly { type: string; normalizedValue: string }[],
   ): Promise<void> {
     for (const identity of identities) {
+      const fingerprint = suppressionFingerprint({
+        workspaceId,
+        identityType: identity.type,
+        normalizedValue: identity.normalizedValue,
+      });
       const matches = await tx
         .select({ id: contactSuppressions.id })
         .from(contactSuppressions)
@@ -485,7 +838,10 @@ export class PostgresCrmRepository {
           and(
             eq(contactSuppressions.workspaceId, workspaceId),
             eq(contactSuppressions.identityType, identity.type as never),
-            eq(contactSuppressions.normalizedValue, identity.normalizedValue),
+            or(
+              eq(contactSuppressions.identityFingerprint, fingerprint),
+              eq(contactSuppressions.normalizedValue, identity.normalizedValue),
+            ),
           ),
         )
         .limit(1);
@@ -546,19 +902,21 @@ export class PostgresCrmRepository {
   }
 
   private async recordEvent(
+    executor: Pick<Database, "insert">,
     workspaceId: string,
     aggregateType: string,
     aggregateId: string,
     eventType: string,
     payload: Readonly<Record<string, unknown>>,
-  ): Promise<void> {
-    await this.db.insert(outboxEvents).values({
+  ): Promise<string> {
+    const rows = await executor.insert(outboxEvents).values({
       workspaceId,
       aggregateType,
       aggregateId,
       eventType,
       payload,
-    });
+    }).returning({ id: outboxEvents.id });
+    return rows[0]!.id;
   }
 }
 

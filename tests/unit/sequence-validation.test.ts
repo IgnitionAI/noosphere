@@ -69,6 +69,16 @@ describe("validateSequenceSteps", () => {
     expect(errors.map((error) => error.code)).toContain("FALLBACK_SAME_AS_CHANNEL");
   });
 
+  test("rejects fallback channels that form a loop", () => {
+    const errors = validateSequenceSteps([
+      step({ kind: "linkedin_invite", fallbackKind: "email" }),
+      step({ position: 2, kind: "email", subject: "Relance", fallbackKind: "linkedin_invite" }),
+    ]);
+    expect(errors).toEqual([
+      expect.objectContaining({ code: "FALLBACK_LOOP", position: 1 }),
+    ]);
+  });
+
   test("rejects an invalid sending window", () => {
     const errors = validateSequenceSteps([
       step({ windowStart: "18:00", windowEnd: "09:00", kind: "email", subject: "S" }),

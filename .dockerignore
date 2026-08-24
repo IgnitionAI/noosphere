@@ -1,0 +1,17 @@
+.git
+.github
+.env
+.env.*
+!.env.example
+node_modules
+apps/web/.next
+apps/crawler/.venv
+apps/crawler/.pytest_cache
+apps/crawler/__pycache__
+dist
+coverage
+.next
+prototype
+tests
+*.log
+.DS_Store

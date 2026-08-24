@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "preparedAt": "2026-08-23T18:04:59.874Z",
+  "workspaceSlug": "prospect-memory-benchmark",
+  "shadowOnly": true,
+  "semanticModelCalls": 0,
+  "providerEffects": 0,
+  "receiptCountBefore": 0,
+  "targets": [
+    {
+      "delta": 0,
+      "contactId": "2fef873a-115c-4bd7-b010-357b2f4cf1cc",
+      "snapshotWatermark": 1
+    },
+    {
+      "delta": 20,
+      "contactId": "b0a42ed3-8c0d-4baf-a14e-cb293b876a07",
+      "snapshotWatermark": 2
+    },
+    {
+      "delta": 200,
+      "contactId": "2cd9cf1d-2f81-49c3-8e76-850cf38cb005",
+      "snapshotWatermark": 23
+    }
+  ],
+  "environment": {
+    "BENCHMARK_WORKSPACE_SLUG": "prospect-memory-benchmark",
+    "BENCHMARK_MEMORY_CONTACT_0_ID": "2fef873a-115c-4bd7-b010-357b2f4cf1cc",
+    "BENCHMARK_MEMORY_CONTACT_20_ID": "b0a42ed3-8c0d-4baf-a14e-cb293b876a07",
+    "BENCHMARK_MEMORY_CONTACT_200_ID": "2cd9cf1d-2f81-49c3-8e76-850cf38cb005"
+  }
+}

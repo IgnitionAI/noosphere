@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "prospect_discovery_runs_active_version_uq" ON "prospect_discovery_runs" USING btree ("workspace_id","icp_version_id") WHERE "prospect_discovery_runs"."status" = 'running';

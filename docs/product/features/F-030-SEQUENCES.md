@@ -70,6 +70,19 @@ templates validés, puis publier une `SequenceVersion` immuable.
   la v1 reste inchangée et la v2 est créée ;
 - Étant donné un operator, quand il publie, alors 403 (admin/owner requis).
 
+## États et erreurs
+
+- loading : skeleton de la liste et de l’éditeur d’étapes ;
+- empty : aucune séquence — action principale « créer une séquence » ;
+- validation : 422 à la publication avec la contrainte violée localisée sur
+  l’étape concernée (longueur canal, sujet manquant, fallback en boucle) ;
+- forbidden : operator/reviewer/viewer sans action publier, contrôlé côté
+  serveur ;
+- provider indisponible : non applicable à la composition (les comptes
+  connectés sont contrôlés au préflight F-031) ;
+- conflit métier : publication concurrente du même brouillon ;
+- reprise : brouillon sauvegardé rouvert en l’état après navigation.
+
 ## Contrats
 
 **Routes UI** : `/w/[workspaceSlug]/sequences`,

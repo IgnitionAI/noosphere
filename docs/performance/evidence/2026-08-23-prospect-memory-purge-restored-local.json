@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "verifiedAt": "2026-08-23T15:50:32.586Z",
+  "database": "prospect_memory_restore_test_v2",
+  "workspaceSlug": "prospect-memory-benchmark",
+  "workspaceId": "eccfd20e-f834-4bc3-8f7c-120c55264c92",
+  "before": {
+    "events": 223,
+    "snapshots": 3,
+    "receipts": 3060,
+    "inFlightMemoryJobs": 1,
+    "messages": 0,
+    "outreachAttempts": 0,
+    "publicationAttempts": 0
+  },
+  "after": {
+    "events": 0,
+    "snapshots": 0,
+    "receipts": 0,
+    "inFlightMemoryJobs": 1,
+    "messages": 0,
+    "outreachAttempts": 0,
+    "publicationAttempts": 0
+  },
+  "memoryEpochsBefore": [
+    {
+      "contactId": "28df0a8f-9059-4653-b007-f5cfa3060af0",
+      "privacyEpoch": 0
+    },
+    {
+      "contactId": "3c199776-ee15-4988-b9df-4b32b8e20caf",
+      "privacyEpoch": 0
+    },
+    {
+      "contactId": "65e91fbc-9325-4b5d-a65e-9317932ac99c",
+      "privacyEpoch": 0
+    }
+  ],
+  "memoryEpochsAfter": [
+    {
+      "contactId": "28df0a8f-9059-4653-b007-f5cfa3060af0",
+      "privacyEpoch": 1
+    },
+    {
+      "contactId": "3c199776-ee15-4988-b9df-4b32b8e20caf",
+      "privacyEpoch": 1
+    },
+    {
+      "contactId": "65e91fbc-9325-4b5d-a65e-9317932ac99c",
+      "privacyEpoch": 1
+    }
+  ],
+  "purgeJobStatus": "completed",
+  "inFlightJobPreserved": true,
+  "inFlightResultInvalidated": true,
+  "providerEffectsUnchanged": true,
+  "passed": true
+}

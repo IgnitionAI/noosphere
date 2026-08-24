@@ -18,6 +18,11 @@ function harness(role: "viewer" | "operator" = "operator") {
     checksumSha256: "a".repeat(64),
     status: "uploading",
     failureCode: null,
+    extractionProvider: null,
+    extractionDurationMs: null,
+    extractionMetrics: {},
+    extractionWarnings: [],
+    extractedAt: null,
     createdAt: now,
     updatedAt: now,
   };
@@ -75,6 +80,15 @@ describe("research document HTTP routes", () => {
       }),
     );
     expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({
+      document: {
+        extractionProvider: null,
+        extractionDurationMs: null,
+        extractionMetrics: {},
+        extractionWarnings: [],
+        extractedAt: null,
+      },
+    });
     expect(calls).toEqual([`create:${workspaceId}`]);
   });
 

@@ -6,6 +6,7 @@ import {
   type ResearchStage,
 } from "@outbound/domain/gtm/product-research";
 import type {
+  DeferJobRequest,
   JobQueue,
   LeaseJobsRequest,
   LeasedJob,
@@ -18,7 +19,13 @@ import type {
   MarketEvidenceView,
   ResearchStageRunView,
   ResearchAIRun,
+  ResearchWorkItem,
+  IcpVersionView,
 } from "@outbound/application/gtm/product-research-ports";
+import {
+  projectV3ReportProposals,
+  resolveV3ReportRanking,
+} from "@outbound/application/gtm/v3-report-projection";
 
 type StoredJob = Omit<NewJob, "availableAt"> & {
   availableAt: Date;
@@ -40,6 +47,7 @@ export class InMemoryResearchBackend
   readonly outbox: ProductResearchEvent[] = [];
   readonly aiRuns: ResearchAIRun[] = [];
   readonly #evidence: MarketEvidenceView[] = [];
+  readonly #workItems = new Map<string, ResearchWorkItem & { errorCode?: string | null }>();
   readonly proposalReviews: Record<string, unknown>[] = [];
 
   async insert(run: ProductResearchRun): Promise<void> {
@@ -77,7 +85,8 @@ export class InMemoryResearchBackend
           checkpoint.workspaceId === workspaceId &&
           checkpoint.runId === runId &&
           checkpoint.stage === stage &&
-          checkpoint.status === "completed",
+          checkpoint.status === "completed" &&
+          (checkpoint.workItemKey ?? "main") === "main",
       )
       .sort((left, right) => right.attempt - left.attempt);
     return matches[0] ? clone(matches[0]) : null;
@@ -92,7 +101,8 @@ export class InMemoryResearchBackend
         (checkpoint) =>
           checkpoint.workspaceId === workspaceId &&
           checkpoint.runId === runId &&
-          checkpoint.status === "completed",
+          checkpoint.status === "completed" &&
+          (checkpoint.workItemKey ?? "main") === "main",
       )
       .sort((left, right) => left.startedAt.getTime() - right.startedAt.getTime())
       .map(clone);
@@ -102,16 +112,34 @@ export class InMemoryResearchBackend
     workspaceId: string,
     runId: string,
     stage: ResearchStage,
+    workItemKey = "main",
   ): Promise<number> {
     const attempts = [...this.#checkpoints.values()]
       .filter(
         (checkpoint) =>
           checkpoint.workspaceId === workspaceId &&
           checkpoint.runId === runId &&
-          checkpoint.stage === stage,
+          checkpoint.stage === stage &&
+          (checkpoint.workItemKey ?? "main") === workItemKey,
       )
       .map((checkpoint) => checkpoint.attempt);
     return Math.max(0, ...attempts) + 1;
+  }
+
+  async listFanoutCheckpoints(
+    workspaceId: string,
+    runId: string,
+    stage: "market_investigation",
+  ): Promise<readonly ResearchCheckpoint[]> {
+    return [...this.#checkpoints.values()]
+      .filter((checkpoint) =>
+        checkpoint.workspaceId === workspaceId &&
+        checkpoint.runId === runId &&
+        checkpoint.stage === stage &&
+        (checkpoint.workItemKey ?? "main") !== "main" &&
+        checkpoint.status === "completed")
+      .sort((left, right) => left.startedAt.getTime() - right.startedAt.getTime())
+      .map(clone);
   }
 
   async commitRunTransition(
@@ -135,6 +163,7 @@ export class InMemoryResearchBackend
         previous.workspaceId === checkpoint.workspaceId &&
         previous.runId === checkpoint.runId &&
         previous.stage === checkpoint.stage &&
+        (previous.workItemKey ?? "main") === (checkpoint.workItemKey ?? "main") &&
         previous.status === "running" &&
         previous.review === "machine" &&
         id !== checkpoint.id
@@ -148,6 +177,15 @@ export class InMemoryResearchBackend
       }
     }
     if (!this.#checkpoints.has(checkpoint.id)) this.#checkpoints.set(checkpoint.id, clone(checkpoint));
+    if ((checkpoint.workItemKey ?? "main") !== "main") {
+      const key = workItemStorageKey(
+        checkpoint.workspaceId,
+        checkpoint.runId,
+        checkpoint.workItemKey ?? "main",
+      );
+      const item = this.#workItems.get(key);
+      if (item) this.#workItems.set(key, { ...item, status: "running", updatedAt: checkpoint.startedAt });
+    }
     this.outbox.push(...events.map(clone));
   }
 
@@ -157,14 +195,113 @@ export class InMemoryResearchBackend
     aiRun: ResearchAIRun;
     nextJob: NewJob | null;
     events: readonly ProductResearchEvent[];
+    fanout?: {
+      readonly items: readonly ResearchWorkItem[];
+      readonly jobs: readonly NewJob[];
+    };
   }): Promise<void> {
     const existing = this.#checkpoints.get(input.checkpoint.id);
     if (existing?.review === "human_reviewed") throw new Error("CHECKPOINT_HUMAN_REVIEW_LOCKED");
     this.#saveRun(input.run);
     this.#checkpoints.set(input.checkpoint.id, clone(input.checkpoint));
     this.aiRuns.push(clone(input.aiRun));
+    if (
+      input.run.snapshot.brief.researchVersion === 3 &&
+      input.checkpoint.stage === "objective_ranking"
+    ) {
+      const [top] = projectV3ReportProposals(input.checkpoint.output) ?? [];
+      const alreadyPublished = this.publishedVersions.some((candidate) => {
+        const version = candidate as Record<string, unknown>;
+        return version.workspaceId === input.checkpoint.workspaceId &&
+          version.runId === input.checkpoint.runId;
+      });
+      if (top && !alreadyPublished) {
+        const version = this.publishedVersions.length + 1;
+        const versionId = crypto.randomUUID();
+        const proposalId = String(top.id ?? crypto.randomUUID());
+        this.publishedVersions.push(clone({
+          id: versionId,
+          workspaceId: input.checkpoint.workspaceId,
+          runId: input.checkpoint.runId,
+          proposalId,
+          userId: null,
+          version,
+          name: top.name,
+          confidence: top.confidence,
+          criteria: top.criteria,
+          buyingCommittee: top.buyingCommittee,
+          problems: top.problems,
+          signals: top.signals,
+          exclusions: top.exclusions,
+          unknowns: top.unknowns,
+          unresolvedContradictions: [],
+          blockedFindings: [],
+          publishedAt: input.checkpoint.completedAt ?? new Date(),
+        }));
+        this.outbox.push({
+          type: "ICPVersionPublished",
+          runId: input.checkpoint.runId,
+          workspaceId: input.checkpoint.workspaceId,
+          icpId: proposalId,
+          actorUserId: null,
+          versionId,
+          proposalId,
+          version,
+        });
+      }
+    }
+    if (input.fanout) {
+      for (const item of input.fanout.items) {
+        this.#workItems.set(workItemStorageKey(item.workspaceId, item.runId, item.workItemKey), clone(item));
+      }
+      for (const job of input.fanout.jobs) await this.enqueue(job);
+    }
     if (input.nextJob) await this.enqueue(input.nextJob);
     this.outbox.push(...input.events.map(clone));
+  }
+
+  async commitFanoutItemCompleted(input: {
+    checkpoint: ResearchCheckpoint;
+    aiRun: ResearchAIRun;
+    finalizerJob: NewJob;
+  }): Promise<void> {
+    this.#checkpoints.set(input.checkpoint.id, clone(input.checkpoint));
+    this.aiRuns.push(clone(input.aiRun));
+    await this.#finishWorkItem(input.checkpoint, "completed", null, input.finalizerJob);
+  }
+
+  async commitFanoutItemFailed(input: {
+    checkpoint: ResearchCheckpoint;
+    finalizerJob: NewJob;
+  }): Promise<void> {
+    this.#checkpoints.set(input.checkpoint.id, clone(input.checkpoint));
+    await this.#finishWorkItem(
+      input.checkpoint,
+      "failed",
+      input.checkpoint.errorCode,
+      input.finalizerJob,
+    );
+  }
+
+  async #finishWorkItem(
+    checkpoint: ResearchCheckpoint,
+    status: "completed" | "failed",
+    errorCode: string | null,
+    finalizerJob: NewJob,
+  ): Promise<void> {
+    const key = workItemStorageKey(
+      checkpoint.workspaceId,
+      checkpoint.runId,
+      checkpoint.workItemKey ?? "main",
+    );
+    const item = this.#workItems.get(key);
+    if (!item) throw new Error("RESEARCH_WORK_ITEM_NOT_FOUND");
+    this.#workItems.set(key, { ...item, status, errorCode, updatedAt: new Date() });
+    const remaining = [...this.#workItems.values()].some((candidate) =>
+      candidate.workspaceId === checkpoint.workspaceId &&
+      candidate.runId === checkpoint.runId &&
+      !["completed", "failed"].includes(candidate.status));
+    if (!remaining) await this.enqueue(finalizerJob);
   }
 
   async commitStageFailed(
@@ -188,6 +325,15 @@ export class InMemoryResearchBackend
   }): Promise<void> {
     const workflowStages = input.run.workflowStages();
     const fromIndex = workflowStages.indexOf(input.fromStage);
+    for (const [key, item] of this.#workItems) {
+      if (
+        item.workspaceId === input.run.snapshot.workspaceId &&
+        item.runId === input.run.snapshot.id &&
+        workflowStages.indexOf(item.stage) >= fromIndex
+      ) {
+        this.#workItems.delete(key);
+      }
+    }
     for (const [id, checkpoint] of this.#checkpoints) {
       if (
         checkpoint.workspaceId === input.run.snapshot.workspaceId &&
@@ -218,7 +364,7 @@ export class InMemoryResearchBackend
 
   readonly findingReviews: unknown[] = [];
   readonly proposalCorrections: unknown[] = [];
-  readonly publishedVersions: unknown[] = [];
+  readonly publishedVersions: Record<string, unknown>[] = [];
 
   async reviewFinding(input: {
     workspaceId: string;
@@ -248,14 +394,23 @@ export class InMemoryResearchBackend
 
   async publishIcpVersion(input: {
     id: string;
+    icpId: string;
     workspaceId: string;
     runId: string;
     proposalId: string;
     userId: string;
     publishedAt: Date;
-  }): Promise<unknown> {
+  }): Promise<IcpVersionView> {
     this.publishedVersions.push(clone(input));
-    return clone(input);
+    return {
+      ...input,
+      version: 1,
+      name: "",
+      confidence: "0",
+      criteria: {}, buyingCommittee: {}, problems: {}, signals: {}, exclusions: {}, unknowns: {},
+      unresolvedContradictions: [], blockedFindings: [], publishedBy: input.userId,
+      createdAt: input.publishedAt,
+    };
   }
 
   async enqueue(job: NewJob): Promise<{ inserted: boolean }> {
@@ -323,6 +478,19 @@ export class InMemoryResearchBackend
     job.lockedUntil = null;
     job.lastErrorCode = request.errorCode;
     return job.status === "retry" ? "scheduled" : "dead_lettered";
+  }
+
+  async defer(request: DeferJobRequest): Promise<void> {
+    const job = this.#jobs.get(request.jobId);
+    if (!job || job.status !== "running" || job.lockedBy !== request.workerId) {
+      throw new Error("JOB_LEASE_LOST");
+    }
+    job.status = "pending";
+    job.attempts = Math.max(0, job.attempts - 1);
+    job.availableAt = request.availableAt;
+    job.lockedBy = null;
+    job.lockedUntil = null;
+    job.lastErrorCode = request.errorCode;
   }
 
   inspectJobs(): readonly StoredJob[] {
@@ -400,8 +568,14 @@ export class InMemoryResearchBackend
 
   async getReport(workspaceId: string, runId: string) {
     const checkpoints = await this.listCompletedCheckpoints(workspaceId, runId);
+    const stageOutputs = Object.fromEntries(checkpoints.map((item) => [item.stage, item.output]));
+    const run = this.#runs.get(runKey(workspaceId, runId));
+    const forcePartial = run?.status === "partial" && run.brief.researchVersion === 3;
     return {
-      stageOutputs: Object.fromEntries(checkpoints.map((item) => [item.stage, item.output])),
+      stageOutputs: (() => {
+        const ranking = resolveV3ReportRanking(stageOutputs, forcePartial);
+        return ranking ? { ...stageOutputs, objective_ranking: ranking } : stageOutputs;
+      })(),
       evidence: await this.listEvidence({
         workspaceId,
         runId,
@@ -410,8 +584,13 @@ export class InMemoryResearchBackend
       }),
       competitors: [],
       findings: [],
-      versions: [],
-      proposals: [],
+      versions: this.publishedVersions
+        .filter((candidate) => {
+          const version = candidate as Record<string, unknown>;
+          return version.workspaceId === workspaceId && version.runId === runId;
+        })
+        .map(clone),
+      proposals: projectV3ReportProposals(resolveV3ReportRanking(stageOutputs, forcePartial)) ?? [],
     };
   }
 
@@ -424,6 +603,10 @@ export class InMemoryResearchBackend
 
 function runKey(workspaceId: string, runId: string): string {
   return `${workspaceId}:${runId}`;
+}
+
+function workItemStorageKey(workspaceId: string, runId: string, workItemKey: string): string {
+  return `${workspaceId}:${runId}:${workItemKey}`;
 }
 
 function clone<T>(value: T): T {

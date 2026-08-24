@@ -1,0 +1,13 @@
+[
+  {
+    "commandId": "00000000-0000-4000-8000-000000000001",
+    "commitments": [
+      {
+        "id": "commitment-reviewed-001",
+        "recalled": true
+      }
+    ],
+    "criticalViolations": [],
+    "unjustifiedRepetition": false
+  }
+]

@@ -84,4 +84,32 @@ describe("CrawlerClient browser-pool backpressure", () => {
     ).resolves.toEqual([]);
     expect(starts).toBe(3);
   });
+
+  test("classifies a missing polled job as retryable after a crawler restart", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const url = new URL(request.url);
+        if (request.method === "POST" && url.pathname === "/crawl/pages") {
+          return Response.json({ success: true, id: "lost-job" });
+        }
+        return Response.json({ detail: "Job not found" }, { status: 404 });
+      },
+    });
+    servers.push(server);
+    const client = new CrawlerClient({
+      baseUrl: server.url.origin,
+      apiKey: "test",
+      pollIntervalMs: 1,
+    });
+
+    const error = await client
+      .readPages({
+        urls: ["https://example.com"],
+        correlationId: "test",
+        requestKey: "stable-request-key",
+      })
+      .catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ name: "RetryableAgentError", code: "CRAWLER_JOB_LOST" });
+  });
 });

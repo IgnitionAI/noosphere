@@ -65,6 +65,21 @@ importer les profils choisis dans le CRM avec leur provenance complète.
 - Étant donné un candidat supprimé, quand j’importe, alors 409
   `CONTACT_SUPPRESSED`.
 
+## États et erreurs
+
+- loading : progression du run visible et reprenable après navigation ;
+- empty : aucun run — action principale « lancer une recherche » depuis une
+  version publiée ;
+- validation : aucune version ICP publiée sélectionnée ;
+- forbidden : reviewer/viewer sans action lancer/importer, contrôlé côté
+  serveur ;
+- provider indisponible : run `failed` avec `PROVIDER_UNAVAILABLE`, action
+  retry explicite, jamais de liste vide présentée comme un résultat ;
+- conflit métier : 409 à l’import (suppression active, identité existante)
+  avec motif lisible ;
+- reprise : un run échoué se relance sans recréer les candidats déjà
+  importés.
+
 ## Contrats
 
 **Routes UI** : `/w/[workspaceSlug]/prospects/discover`
@@ -79,6 +94,9 @@ importer les profils choisis dans le CRM avec leur provenance complète.
 | GET | `/api/v1/discovery-runs/:runId` | run + candidats |
 | POST | `/api/v1/discovery-runs/:runId/actions/retry` | relancer un run échoué |
 | POST | `/api/v1/discovery-runs/:runId/candidates/:candidateId/actions/import` | importer un candidat |
+
+**Événements sortants** : `ProspectDiscovered` (via l’outbox
+transactionnelle, dispatcher en place depuis le chantier 2).
 
 **Ports externes** : `ProspectSource.searchPeople` (Unipile V1).
 

@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "verifiedAt": "2026-08-23T15:07:58.791Z",
+  "workspaceSlug": "prospect-memory-benchmark",
+  "source": {
+    "workspaceId": "eccfd20e-f834-4bc3-8f7c-120c55264c92",
+    "events": 223,
+    "snapshots": 3,
+    "receipts": 3060,
+    "settings": 1,
+    "inFlightMemoryJobs": 1,
+    "eventDigest": "0b87ec8d925cf184833fa57bcc8224ba",
+    "snapshotDigest": "c9e9febbd62ca798b5e4baa35f6e1e85",
+    "receiptDigest": "a99a613cb02cd5a552cf5634770f2b26",
+    "settingsDigest": "e8ecfb3c887b48bcdd13ac0810faeaa6",
+    "inFlightJobDigest": "2d003a6ecdad6c8fa74f290843fe2313",
+    "messages": 0,
+    "outreachAttempts": 0,
+    "publicationAttempts": 0
+  },
+  "restored": {
+    "workspaceId": "eccfd20e-f834-4bc3-8f7c-120c55264c92",
+    "events": 223,
+    "snapshots": 3,
+    "receipts": 3060,
+    "settings": 1,
+    "inFlightMemoryJobs": 1,
+    "eventDigest": "0b87ec8d925cf184833fa57bcc8224ba",
+    "snapshotDigest": "c9e9febbd62ca798b5e4baa35f6e1e85",
+    "receiptDigest": "a99a613cb02cd5a552cf5634770f2b26",
+    "settingsDigest": "e8ecfb3c887b48bcdd13ac0810faeaa6",
+    "inFlightJobDigest": "2d003a6ecdad6c8fa74f290843fe2313",
+    "messages": 0,
+    "outreachAttempts": 0,
+    "publicationAttempts": 0
+  },
+  "matches": true,
+  "inFlightJobPreserved": true,
+  "providerEffectsDuringVerification": 0,
+  "passed": true
+}

@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import {
   createSequence,
+  OutboundApiError,
   publishSequenceVersion,
   replaceSequenceSteps,
   type SequenceStep,
@@ -35,6 +36,22 @@ export async function publishSequenceAction(
   sequenceId: string,
   _formData: FormData,
 ) {
-  await publishSequenceVersion(workspaceSlug, sequenceId);
+  try {
+    await publishSequenceVersion(workspaceSlug, sequenceId);
+  } catch (error) {
+    if (error instanceof OutboundApiError) {
+      const details = error.details as { errors?: unknown } | null;
+      const errors = Array.isArray(details?.errors) ? details.errors : [];
+      if (errors.length) {
+        const localized = errors.map((item) => {
+          const entry = item as { position?: unknown; code?: unknown; message?: unknown };
+          return `step:${String(entry.position ?? "?")}:${String(entry.code ?? "SEQUENCE_INVALID")}:${String(entry.message ?? error.message)}`;
+        });
+        throw new Error(`${error.code}: ${error.message}\n${localized.join("\n")}`);
+      }
+      throw new Error(`${error.code}: ${error.message}`);
+    }
+    throw error;
+  }
   revalidatePath(`/w/${workspaceSlug}/sequences/${sequenceId}`);
 }

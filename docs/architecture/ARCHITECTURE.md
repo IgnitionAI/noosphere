@@ -30,7 +30,8 @@ Le premier parcours critique est :
 6. approuver la séquence une seule fois ;
 7. exécuter les relances jusqu’à un signal d’arrêt ;
 8. centraliser les réponses dans une inbox ;
-9. soumettre chaque réponse IA à validation humaine ;
+9. laisser l’autopilote répondre dans les bornes de la politique, avec
+   exceptions déterministes remontées dans « À traiter » ;
 10. qualifier, réserver un rendez-vous et suivre l’opportunité jusqu’au revenu.
 
 ## 3. Contraintes de capacité V1
@@ -181,7 +182,7 @@ défaut dans les logs.
 | Restrictions ou évolution des fournisseurs | ports, quotas, circuit breakers, comptes isolés |
 | Doublons de prospects | identités canoniques, matching à confiance, fusions auditables |
 | Envoi après opposition | suppression vérifiée deux fois et verrou transactionnel |
-| Hallucination IA | preuves conservées, claims validés, approbation humaine |
+| Hallucination IA | preuves conservées, claims validés, sorties structurées bornées par la politique |
 | Dérive d’une campagne active | versions immuables et snapshots |
 | Double traitement de webhook/job | clés d’idempotence et contraintes uniques |
 | Mauvaise isolation tenant | workspace obligatoire, repositories scoped, tests dédiés |

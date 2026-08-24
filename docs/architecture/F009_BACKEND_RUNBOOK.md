@@ -9,7 +9,7 @@ LangChain avec Kimi Code.
 ## Démarrer l’infrastructure privée
 
 Le bootstrap de développement génère automatiquement les identifiants locaux
-PostgreSQL, MinIO, SearXNG, crawler, Docling et Better Auth, démarre les
+PostgreSQL, MinIO, SearXNG, crawler et Better Auth, démarre les
 conteneurs et applique les migrations :
 
 ```bash
@@ -22,7 +22,9 @@ pour exécuter réellement les modèles et les embeddings.
 
 En développement, `compose.development.yml` publie les services uniquement sur
 `127.0.0.1`. En production, cet override n’est pas chargé : aucun port de
-ParadeDB, MinIO, SearXNG, Docling ou du crawler n’est publié sur l’hôte.
+ParadeDB, MinIO, SearXNG ou du crawler n’est publié sur l’hôte. L’extraction
+PDF et Office est locale, routée automatiquement par MIME et isolée dans un
+sous-processus Bun. Un scan devient `ocr_required` sans entrer dans le RAG.
 
 La découverte web ne dépend d’aucune API de recherche payante : SearXNG est
 auto-hébergé et DuckDuckGo sert uniquement de fallback. Le crawler ne génère
@@ -66,6 +68,14 @@ domaines publics externes distincts. La politique de prospectabilité filtre
 l’audience demandée, exclut les internal builders, calcule le score final et
 limite le rapport à cinq ICP.
 
+Le workflow V3 termine un dépassement de budget en `partial`, conserve les
+checkpoints et projette un rapport exploitable à partir des recherches déjà
+validées. Les étapes manquantes restent explicites et aucune hypothèse partielle
+n'est publiée. Lorsque `objective_ranking` se termine avec au moins une
+proposition, le rang 1 est automatiquement projeté, approuvé et publié dans une
+`ICPVersion` immuable avec son événement outbox. Le rapport expose alors le lien
+direct vers la découverte de prospects.
+
 `AI_PROVIDER=kimi-code` est la configuration par défaut. Elle utilise
 `ChatOpenAI` comme client OpenAI-compatible avec :
 
@@ -108,8 +118,10 @@ dans l’environnement du worker. Le worker relit la politique du workspace au
 début de chaque étape, donc une modification n’altère pas une invocation déjà
 en cours.
 
-`OPENAI_API_KEY` reste requis indépendamment pour les embeddings documentaires
-en V1. Il n’est pas utilisé par l’agent lorsque `AI_PROVIDER=kimi-code`.
+Les embeddings documentaires n'utilisent plus OpenAI. Ils sont produits par le
+service privé TEI avec Qwen3 Embedding 0.6B en 1 024 dimensions. La variable
+`OPENAI_API_KEY` n'est requise que lorsqu'une route IA sélectionne explicitement
+le provider OpenAI ; elle n'est jamais un fallback de la recherche documentaire.
 
 Les seuls outils exposés aux agents sont `searchWeb`, `readWebPage`,
 `discoverWebsite`, `readWebsitePages`, `searchInternalDocuments` et

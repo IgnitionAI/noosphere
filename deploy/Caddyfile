@@ -1,0 +1,21 @@
+{$PUBLIC_HOST} {
+  encode gzip
+
+  header {
+    -Server
+    X-Content-Type-Options nosniff
+    X-Frame-Options DENY
+    Referrer-Policy strict-origin-when-cross-origin
+  }
+
+  @health path /health/*
+  reverse_proxy @health api:3001
+
+  @api path /api/v1/*
+  reverse_proxy @api api:3001
+
+  @auth path /api/auth/*
+  reverse_proxy @auth web:3000
+
+  reverse_proxy web:3000
+}

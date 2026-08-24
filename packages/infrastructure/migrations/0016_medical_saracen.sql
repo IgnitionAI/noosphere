@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "product_research_runs_one_active_workspace_uq" ON "product_research_runs" USING btree ("workspace_id") WHERE "product_research_runs"."status" in ('queued', 'running', 'paused');

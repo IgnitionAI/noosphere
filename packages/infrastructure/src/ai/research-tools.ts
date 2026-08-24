@@ -1,7 +1,12 @@
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import type { CrawledPage, CrawlerSearchResult } from "./crawler-client";
-import { RetryableAgentError } from "@outbound/application/gtm/product-research-ports";
+import {
+  RetryableAgentError,
+  TerminalAgentError,
+  type ResearchToolRequestRegistry,
+  type ExternalQueryGuard,
+} from "@outbound/application/gtm/product-research-ports";
 import { ResearchBudgetExceededError } from "./research-budget";
 import type { ResearchBudget } from "./research-budget";
 
@@ -33,6 +38,7 @@ export interface ResearchCrawler {
   readPages(input: {
     urls: readonly string[];
     correlationId: string;
+    requestKey?: string;
     signal?: AbortSignal;
   }): Promise<readonly CrawledPage[]>;
   discover(input: {
@@ -78,6 +84,9 @@ export function createResearchTools(input: {
   researchStageRunId?: string;
   signal: AbortSignal;
   recorder?: ResearchToolRunRecorder;
+  registry?: ResearchToolRequestRegistry;
+  externalQueryGuard?: ExternalQueryGuard;
+  sensitiveTerms?: readonly string[];
 }) {
   const state = { consecutiveCrawlerFailures: 0 };
   const searchWeb = tool(
@@ -108,6 +117,7 @@ export function createResearchTools(input: {
         const pages = await input.crawler.readPages({
           urls: [url],
           correlationId: input.correlationId,
+          requestKey: `${input.runId}:${input.researchStageRunId ?? "stage"}:page:${url}`,
           signal: input.signal,
         });
         return JSON.stringify(
@@ -152,6 +162,11 @@ export function createResearchTools(input: {
         const pages = await input.crawler.readPages({
           urls,
           correlationId: input.correlationId,
+          requestKey: await crawlerPageRequestKey(
+            input.runId,
+            input.researchStageRunId ?? "stage",
+            urls,
+          ),
           signal: input.signal,
         });
         return JSON.stringify(pages.map(compactPageForAgent));
@@ -233,23 +248,85 @@ async function executeTool(
   operation: () => Promise<string>,
 ): Promise<string> {
   const startedAt = Date.now();
+  let registryLeaseToken: string | null = null;
   try {
+    if (input.externalQueryGuard && isExternalTool(toolName)) {
+      const authorization = await input.externalQueryGuard.authorize({
+        channel: "web",
+        payload: toolInput,
+        sensitiveTerms: input.sensitiveTerms ?? [],
+      });
+      if (!authorization.allowed) {
+        throw new TerminalAgentError(
+          "EXTERNAL_QUERY_BLOCKED",
+          `Outbound query rejected by DLP policy: ${authorization.reason}`,
+        );
+      }
+    }
+    if (input.registry) {
+      const normalizedInput = normalizeToolInput(toolInput);
+      const normalizedInputHash = await sha256(stableJson(normalizedInput));
+      const claim = await input.registry.claim({
+        workspaceId: input.workspaceId,
+        runId: input.runId,
+        toolName,
+        normalizedInputHash,
+        normalizedInput,
+        now: new Date(),
+        leaseMs: 5 * 60_000,
+      });
+      if (claim.kind === "cache_hit") {
+        await recordCompleted(input, toolName, toolInput, startedAt, claim.output, true);
+        return claim.output;
+      }
+      if (claim.kind === "in_progress") {
+        throw new RetryableAgentError(
+          "RESEARCH_TOOL_REQUEST_IN_PROGRESS",
+          `An identical ${toolName} request is already running until ${claim.retryAt.toISOString()}`,
+        );
+      }
+      registryLeaseToken = claim.leaseToken;
+    }
     const output = await operation();
+    if (input.registry && registryLeaseToken) {
+      await input.registry.complete({
+        leaseToken: registryLeaseToken,
+        output,
+        contentHash: await sha256(output),
+        now: new Date(),
+      });
+    }
     state.consecutiveCrawlerFailures = 0;
-    await input.recorder?.record({
-      workspaceId: input.workspaceId,
-      runId: input.runId,
-      researchStageRunId: input.researchStageRunId ?? null,
-      correlationId: input.correlationId,
-      toolName,
-      status: "completed",
-      toolInput,
-      outputMetadata: { outputCharacters: output.length },
-      latencyMs: Date.now() - startedAt,
-      errorCode: null,
-    });
+    await recordCompleted(input, toolName, toolInput, startedAt, output, false);
     return output;
   } catch (error) {
+    if (error instanceof TerminalAgentError && error.code === "EXTERNAL_QUERY_BLOCKED") {
+      // Never persist the rejected payload: it may contain the exact internal
+      // passage or credential that caused the policy to block the request.
+      await input.recorder?.record({
+        workspaceId: input.workspaceId,
+        runId: input.runId,
+        researchStageRunId: input.researchStageRunId ?? null,
+        correlationId: input.correlationId,
+        toolName,
+        status: "failed",
+        toolInput: { blocked: true },
+        outputMetadata: {},
+        latencyMs: Date.now() - startedAt,
+        errorCode: error.code,
+      });
+      throw error;
+    }
+    if (input.registry && registryLeaseToken) {
+      await input.registry.fail({
+        leaseToken: registryLeaseToken,
+        retryable:
+          error instanceof RetryableAgentError || error instanceof ResearchBudgetExceededError,
+        errorCode: error instanceof Error ? error.name : "TOOL_FAILED",
+        now: new Date(),
+      });
+      registryLeaseToken = null;
+    }
     if (
       error instanceof RetryableAgentError &&
       error.code === "CRAWLER_UNAVAILABLE"
@@ -327,4 +404,65 @@ async function executeTool(
     });
     throw error;
   }
+}
+
+function isExternalTool(toolName: string): boolean {
+  return ["searchWeb", "readWebPage", "discoverWebsite", "readWebsitePages"].includes(toolName);
+}
+
+async function recordCompleted(
+  input: Parameters<typeof createResearchTools>[0],
+  toolName: string,
+  toolInput: Readonly<Record<string, unknown>>,
+  startedAt: number,
+  output: string,
+  cacheHit: boolean,
+): Promise<void> {
+  await input.recorder?.record({
+    workspaceId: input.workspaceId,
+    runId: input.runId,
+    researchStageRunId: input.researchStageRunId ?? null,
+    correlationId: input.correlationId,
+    toolName,
+    status: "completed",
+    toolInput,
+    outputMetadata: { outputCharacters: output.length, cacheHit },
+    latencyMs: Date.now() - startedAt,
+    errorCode: null,
+  });
+}
+
+export function normalizeToolInput(
+  input: Readonly<Record<string, unknown>>,
+): Readonly<Record<string, unknown>> {
+  return normalizeValue(input) as Readonly<Record<string, unknown>>;
+}
+
+function normalizeValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(normalizeValue);
+  if (typeof value === "string") return value.trim().replace(/\s+/g, " ");
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, child]) => [key, normalizeValue(child)]),
+  );
+}
+
+function stableJson(value: unknown): string {
+  return JSON.stringify(value);
+}
+
+async function sha256(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function crawlerPageRequestKey(
+  runId: string,
+  stageRunId: string,
+  urls: readonly string[],
+): Promise<string> {
+  const digest = await sha256(stableJson(urls));
+  return `${runId}:${stageRunId}:pages:${digest}`;
 }

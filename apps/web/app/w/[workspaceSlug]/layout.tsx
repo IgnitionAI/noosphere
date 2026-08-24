@@ -1,7 +1,8 @@
 import { notFound, redirect } from "next/navigation";
 import type { ReactNode } from "react";
 import { AppShell } from "@/components/app-shell";
-import { getSession, listWorkspaces } from "@/lib/api";
+import { acknowledgeHealthAlertAction } from "./integrations/actions";
+import { getSession, getWorkspaceOnboarding, listAccountHealthAlerts, listWorkspaces } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
@@ -18,9 +19,18 @@ export default async function WorkspaceLayout({
   const workspaces = await listWorkspaces();
   const workspace = workspaces.find((candidate) => candidate.slug === workspaceSlug);
   if (!workspace) notFound();
+  const healthAlerts = ["operator", "admin", "owner"].includes(workspace.role)
+    ? await listAccountHealthAlerts(workspaceSlug).then(({ data }) => data.filter((alert) => alert.status === "active").map((alert) => ({
+      ...alert,
+      ...(workspace.role === "admin" || workspace.role === "owner"
+        ? { acknowledgeAction: acknowledgeHealthAlertAction.bind(null, workspaceSlug, alert.id) }
+        : {}),
+    }))).catch(() => [])
+    : [];
+  const onboardingProgress = await getWorkspaceOnboarding(workspace.slug, workspace.id).catch(() => null);
 
   return (
-    <AppShell session={session} workspace={workspace} workspaces={workspaces}>
+    <AppShell healthAlerts={healthAlerts} onboardingProgress={onboardingProgress} session={session} workspace={workspace} workspaces={workspaces}>
       {children}
     </AppShell>
   );

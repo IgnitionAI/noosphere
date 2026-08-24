@@ -1,0 +1,2 @@
+"use client";
+export default function SettingsError({ reset }: { reset: () => void }) { return <section className="panel p-8"><h1 className="text-xl font-semibold text-ink">Impossible de charger les paramètres</h1><p className="mt-2 text-sm text-muted">Aucune modification n’a été appliquée.</p><button className="button button-primary mt-5" onClick={reset} type="button">Réessayer</button></section>; }

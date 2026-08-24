@@ -24,7 +24,7 @@ import {
 import { createProductResearchHttpHandler } from "@outbound/interface/http/product-research-handler";
 import { validOutputFor } from "../fixtures/research-agent-fixtures";
 
-const databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
+const databaseUrl = process.env.TEST_DATABASE_URL;
 const databaseDescribe = databaseUrl ? describe : describe.skip;
 
 databaseDescribe("F-011 human review and publication", () => {
@@ -63,17 +63,26 @@ databaseDescribe("F-011 human review and publication", () => {
         knownCompetitors: [],
         internalDocumentIds: [],
         depth: "standard",
+        researchVersion: 2,
       },
     });
     runId = run.snapshot.id;
   });
 
   afterAll(async () => {
+    await database.client`drop trigger if exists audit_logs_immutable_trg on audit_logs`;
+    await database.client`delete from audit_logs where workspace_id = ${workspaceId}`;
     await database.client`delete from jobs where workspace_id = ${workspaceId}`;
     await database.client`delete from outbox_events where workspace_id = ${workspaceId}`;
+    await database.client`drop trigger if exists icp_versions_immutable_trg on icp_versions`;
+    await database.client`delete from icp_criterion where workspace_id = ${workspaceId}`;
+    await database.client`delete from icp_versions where workspace_id = ${workspaceId}`;
+    await database.client`delete from icps where workspace_id = ${workspaceId}`;
     await database.client`delete from product_research_runs where workspace_id = ${workspaceId}`;
     await database.client`delete from auth_users where id = ${reviewerId}`;
     await database.client`delete from workspaces where id = ${workspaceId}`;
+    await database.client`create trigger icp_versions_immutable_trg before update or delete on icp_versions for each row execute function reject_icp_version_mutation()`;
+    await database.client`create trigger audit_logs_immutable_trg before update or delete on audit_logs for each row execute function reject_audit_log_mutation()`;
     await database.close();
   });
 
@@ -174,6 +183,7 @@ databaseDescribe("F-011 human review and publication", () => {
             knownCompetitors: [],
             internalDocumentIds: [],
             depth: "standard",
+            researchVersion: 2,
           }),
         }),
       )

@@ -7,7 +7,7 @@
 | Workspace | tenant, membres, rôles, invitations | `Workspace`, `WorkspaceMembership` |
 | GTM Strategy | offre, ICP, messages et politique IA versionnés | `Offer`, `ICP`, `MessagingStrategy` |
 | Prospect Intelligence | entreprises, contacts, identités, emplois, signaux, enrichissements | `Company`, `Contact`, `Suppression` |
-| Campaigns | campagne, population, séquence et approbation | `Campaign`, `Sequence`, `CampaignProspect` |
+| Campaigns | campagne, population, séquence et policy d’exécution | `Campaign`, `Sequence`, `CampaignProspect` |
 | Outreach | planification et exécution multicanale | `OutreachAction`, `ConnectedAccount` |
 | Inbox | conversations, messages et qualification des réponses | `Conversation`, `Message` |
 | Pipeline | rendez-vous, opportunités et revenu | `Opportunity`, `Meeting` |
@@ -27,7 +27,7 @@ Rôles V1 :
 - `owner` : contrôle total et transfert de propriété ;
 - `admin` : membres, intégrations, campagnes et politiques ;
 - `operator` : prospects, campagnes, inbox et pipeline ;
-- `reviewer` : approbations et réponses ;
+- `reviewer` : réponses et traitement des exceptions sensibles ;
 - `viewer` : lecture seule.
 
 ### Offer et ICP
@@ -127,8 +127,9 @@ Toute réponse entrante :
 
 1. suspend les enrollments actifs ;
 2. classe l’intention ;
-3. génère éventuellement un brouillon ;
-4. attend une approbation humaine en V1.
+3. génère la réponse dans les bornes de la politique d’autopilote ;
+4. l’envoie sans validation humaine dans le chemin normal (D-003), ou la
+   remonte en exception (F-033) si elle sort des bornes.
 
 ### Opportunity
 
@@ -160,11 +161,12 @@ ParadeDB seulement lorsque la recherche hybride devient nécessaire.
 2. Une campagne active référence une seule version immuable d’offre et d’ICP.
 3. Un contact est unique dans un workspace selon ses identités certaines.
 4. Un contact possède au maximum une séquence active par workspace.
-5. Une séquence doit être approuvée avant son activation.
+5. Une séquence doit être publiée (version immuable valide) avant son
+   activation.
 6. Toute réponse entrante suspend immédiatement l’automatisation.
 7. Une opposition générale bloque tous les canaux.
 8. Chaque donnée enrichie conserve source, date, confiance et preuve.
-9. Chaque message IA conserve preuves, prompt, modèle et décision humaine.
+9. Chaque message IA conserve preuves, prompt, modèle, politique et décision.
 10. Chaque événement fournisseur est traité idempotemment.
 11. Une modification de configuration ne change jamais rétroactivement une
     campagne active.
@@ -182,13 +184,13 @@ ParadeDB seulement lorsque la recherche hybride devient nécessaire.
 | `ContactIdentityVerified` | identité certaine | déduplication |
 | `EmploymentChanged` | nouveau poste observé | signaux/campagnes |
 | `SignalObserved` | signal entreprise/contact | rescoring |
-| `CampaignActivated` | campagne approuvée | enrollment |
-| `SequenceApproved` | validation humaine | planification |
+| `CampaignActivated` | campagne autorisée par sa policy | enrollment |
+| `ApprovalItemApproved`, `ApprovalItemRejected` | décision sur exception autopilote | planification |
 | `OutreachActionDue` | délai atteint | exécution |
 | `OutreachActionAccepted` | fournisseur accepte | analytics |
 | `InboundMessageReceived` | webhook entrant | suspension/classification |
 | `SuppressionRegistered` | refus détecté | annulation actions |
-| `ReplyDraftApproved` | validation humaine | envoi |
+| `ReplyDraftApproved` | réponse validée par la politique ou un humain | envoi |
 | `MeetingBooked` | calendrier confirmé | pipeline |
 | `OpportunityWon` | clôture gagnée | revenu/analytics |
 

@@ -1,4 +1,4 @@
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import type { Database } from "@outbound/infrastructure/database/client";
 import {
   outboxEvents,
@@ -162,6 +162,7 @@ export class PostgresSequenceRepository {
     publishedAt: Date;
   }) {
     return this.db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${input.sequenceId}, 0))`);
       const steps = await tx
         .select()
         .from(sequenceSteps)

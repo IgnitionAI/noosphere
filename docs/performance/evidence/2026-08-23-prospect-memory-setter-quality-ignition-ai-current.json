@@ -1,0 +1,25 @@
+{
+  "generatedAt": "2026-08-23T18:09:37.768Z",
+  "workspaceSlug": "ignition-ai",
+  "labelsPath": "docs/performance/prospect-memory-setter-quality-labels.example.json",
+  "schemaVersion": 1,
+  "minimumCaseCount": 100,
+  "labelledCaseCount": 1,
+  "validCaseCount": 0,
+  "invalidCaseCount": 1,
+  "totalCommitmentCount": 0,
+  "recalledCommitmentCount": 0,
+  "commitmentRecallRate": null,
+  "criticalViolationCount": 0,
+  "unjustifiedRepetitionCaseCount": 0,
+  "unjustifiedRepetitionRate": null,
+  "auditedAiRunCount": 0,
+  "auditedMemoryReceiptCount": 0,
+  "qualityGatePassed": false,
+  "thresholds": {
+    "criticalViolationCount": 0,
+    "minimumCommitmentRecallRate": 0.98,
+    "maximumUnjustifiedRepetitionRateExclusive": 0.01
+  },
+  "interpretation": "PII-free labelled review of durable Setter dry-runs. This report contains counters and audit references only, never prospect messages."
+}

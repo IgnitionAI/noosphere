@@ -5,6 +5,88 @@ import { SystemClock } from "@outbound/application/shared/ports";
 import { ResearchWorker } from "../../apps/worker/src/research-worker";
 
 describe("ResearchWorker job leases", () => {
+  test("maintenance cannot block leasing ready business jobs", async () => {
+    const events: string[] = [];
+    const queue: JobQueue = {
+      async enqueue() { return { inserted: true }; },
+      async lease() { events.push("lease"); return []; },
+      async renewLease() { return true; },
+      async acknowledge() {},
+      async defer() {},
+      async retry() { return "scheduled"; },
+    };
+    const worker = new ResearchWorker(
+      queue,
+      { async process() {} } as unknown as ResearchOrchestrator,
+      { now: () => new Date("2026-08-22T06:00:00.000Z") },
+      { workerId: "worker-test", leaseMs: 60_000, batchSize: 1, pollIntervalMs: 1 },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        async reconcile() {
+          events.push("maintenance-start");
+          await Bun.sleep(25);
+          events.push("maintenance-end");
+          return 0;
+        },
+      },
+    );
+
+    await worker.tick();
+    await Bun.sleep(30);
+
+    expect(events).toEqual(["maintenance-start", "lease", "maintenance-end"]);
+  });
+
+  test("a long maintenance pass cannot monopolize every subsequent worker tick", async () => {
+    let currentTime = new Date("2026-08-22T06:00:00.000Z");
+    let maintenanceRuns = 0;
+    let leaseCalls = 0;
+    const queue: JobQueue = {
+      async enqueue() { return { inserted: true }; },
+      async lease() { leaseCalls += 1; return []; },
+      async renewLease() { return true; },
+      async acknowledge() {},
+      async defer() {},
+      async retry() { return "scheduled"; },
+    };
+    const worker = new ResearchWorker(
+      queue,
+      { async process() {} } as unknown as ResearchOrchestrator,
+      { now: () => currentTime },
+      { workerId: "worker-test", leaseMs: 60_000, batchSize: 1, pollIntervalMs: 1 },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        async reconcile() {
+          maintenanceRuns += 1;
+          currentTime = new Date(currentTime.getTime() + 61_000);
+          return 0;
+        },
+      },
+    );
+
+    await worker.tick();
+    await worker.tick();
+
+    expect(maintenanceRuns).toBe(1);
+    expect(leaseCalls).toBe(2);
+  });
+
   test("renews the lease while a long AI stage is executing", async () => {
     const now = new Date();
     const job: LeasedJob = {
@@ -36,6 +118,7 @@ describe("ResearchWorker job leases", () => {
         return true;
       },
       async acknowledge() {},
+      async defer() {},
       async retry() {
         return "scheduled";
       },
@@ -54,6 +137,79 @@ describe("ResearchWorker job leases", () => {
 
     await worker.tick();
 
+    expect(renewals.length).toBeGreaterThanOrEqual(2);
+    expect(renewals.every((lockedUntil) => lockedUntil.getTime() > now.getTime())).toBe(true);
+  });
+
+  test("keeps a slow Setter command leased independently from the browser", async () => {
+    const now = new Date();
+    const job: LeasedJob = {
+      id: crypto.randomUUID(),
+      workspaceId: crypto.randomUUID(),
+      type: "conversation.command.execute",
+      payload: { commandId: crypto.randomUUID() },
+      idempotencyKey: "conversation:setter:dry-run",
+      correlationId: "setter:test",
+      attempts: 1,
+      maxAttempts: 5,
+      availableAt: now,
+      lockedBy: "setter-command-worker",
+      lockedUntil: new Date(now.getTime() + 90),
+    };
+    let leased = false;
+    let processed = 0;
+    let acknowledged = 0;
+    const renewals: Date[] = [];
+    const queue: JobQueue = {
+      async enqueue() { return { inserted: true }; },
+      async lease(request) {
+        expect(request.types).toEqual(["conversation.command.execute"]);
+        if (leased) return [];
+        leased = true;
+        return [job];
+      },
+      async renewLease(_jobId, _workerId, lockedUntil) {
+        renewals.push(lockedUntil);
+        return true;
+      },
+      async acknowledge() { acknowledged += 1; },
+      async defer() {},
+      async retry() { return "scheduled"; },
+    };
+    const conversationCommandProcessor = {
+      async process() {
+        processed += 1;
+        await Bun.sleep(180);
+        await queue.acknowledge(job.id, job.lockedBy, new Date());
+      },
+    };
+    const worker = new ResearchWorker(
+      queue,
+      { async process() { throw new Error("wrong processor"); } } as unknown as ResearchOrchestrator,
+      new SystemClock(),
+      {
+        workerId: "setter-command-worker",
+        leaseMs: 90,
+        leaseHeartbeatMs: 50,
+        batchSize: 1,
+        pollIntervalMs: 1,
+        jobTypes: ["conversation.command.execute"],
+      },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      conversationCommandProcessor,
+    );
+
+    await worker.tick();
+
+    expect(processed).toBe(1);
+    expect(acknowledged).toBe(1);
     expect(renewals.length).toBeGreaterThanOrEqual(2);
     expect(renewals.every((lockedUntil) => lockedUntil.getTime() > now.getTime())).toBe(true);
   });
@@ -84,6 +240,7 @@ describe("ResearchWorker job leases", () => {
         return true;
       },
       async acknowledge() {},
+      async defer() {},
       async retry() {
         throw new Error("JOB_LEASE_LOST");
       },
@@ -106,5 +263,98 @@ describe("ResearchWorker job leases", () => {
     } finally {
       error.mockRestore();
     }
+  });
+
+  test("routes durable prospect discovery jobs to the enrichment processor", async () => {
+    const now = new Date();
+    const job: LeasedJob = {
+      id: crypto.randomUUID(),
+      workspaceId: crypto.randomUUID(),
+      type: "prospect.discovery.execute",
+      payload: { workspaceId: crypto.randomUUID(), runId: crypto.randomUUID() },
+      idempotencyKey: "prospect-run:initial",
+      correlationId: "prospect:test",
+      attempts: 1,
+      maxAttempts: 3,
+      availableAt: now,
+      lockedBy: "worker-test",
+      lockedUntil: new Date(now.getTime() + 60_000),
+    };
+    let processed = false;
+    const queue: JobQueue = {
+      async enqueue() { return { inserted: true }; },
+      async lease(request) {
+        expect(request.types).toContain("prospect.discovery.execute");
+        return [job];
+      },
+      async renewLease() { return true; },
+      async acknowledge() {},
+      async defer() {},
+      async retry() { return "scheduled"; },
+    };
+    const worker = new ResearchWorker(
+      queue,
+      { async process() { throw new Error("wrong processor"); } } as unknown as ResearchOrchestrator,
+      new SystemClock(),
+      { workerId: "worker-test", leaseMs: 60_000, batchSize: 1, pollIntervalMs: 1 },
+      undefined,
+      { async process() { processed = true; } },
+    );
+
+    await worker.tick();
+    expect(processed).toBe(true);
+  });
+
+  // Regression: ISSUE-002 — long sourcing jobs must not starve prospect decisions.
+  // Found by /qa on 2026-08-13.
+  test("can reserve a worker exclusively for prospect decisions", async () => {
+    const now = new Date();
+    let leasedTypes: readonly string[] = [];
+    const queue: JobQueue = {
+      async enqueue() { return { inserted: true }; },
+      async lease(request) {
+        leasedTypes = request.types;
+        return [];
+      },
+      async renewLease() { return true; },
+      async acknowledge() {},
+      async defer() {},
+      async retry() { return "scheduled"; },
+    };
+    const worker = new ResearchWorker(
+      queue,
+      { async process() {} } as unknown as ResearchOrchestrator,
+      { now: () => now },
+      {
+        workerId: "decision-worker",
+        leaseMs: 60_000,
+        batchSize: 1,
+        pollIntervalMs: 1,
+        jobTypes: ["prospect.decision.execute"],
+      },
+      undefined,
+      { async process() { throw new Error("discovery must stay isolated"); } },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { async process() {} },
+    );
+
+    await worker.tick();
+    expect(leasedTypes).toEqual(["prospect.decision.execute"]);
   });
 });

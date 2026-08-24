@@ -67,6 +67,7 @@ class JobManager:
 
     def __init__(self):
         self._jobs: dict[str, CrawlJob] = {}
+        self._idempotency_keys: dict[str, str] = {}
         self._semaphore = asyncio.Semaphore(settings.max_concurrent_crawls)
         self._lock = asyncio.Lock()
 
@@ -86,8 +87,14 @@ class JobManager:
         include_images: bool = True,
         exclude_patterns: list[str] | None = None,
         include_patterns: list[str] | None = None,
+        idempotency_key: str | None = None,
     ) -> CrawlJob:
         """Create a new crawl job."""
+        if idempotency_key:
+            existing_id = self._idempotency_keys.get(idempotency_key)
+            existing = self._jobs.get(existing_id) if existing_id else None
+            if existing:
+                return existing
         job_id = str(uuid.uuid4())
         job = CrawlJob(
             id=job_id,
@@ -101,7 +108,14 @@ class JobManager:
             event_queue=asyncio.Queue(),
         )
         self._jobs[job_id] = job
+        if idempotency_key:
+            self._idempotency_keys[idempotency_key] = job_id
         return job
+
+    def get_job_by_idempotency_key(self, key: str) -> CrawlJob | None:
+        """Return the current in-memory job for an idempotent request."""
+        job_id = self._idempotency_keys.get(key)
+        return self._jobs.get(job_id) if job_id else None
 
     def get_job(self, job_id: str) -> CrawlJob | None:
         """Get a job by ID."""

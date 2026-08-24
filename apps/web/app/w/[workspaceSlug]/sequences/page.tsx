@@ -1,6 +1,8 @@
 import { Plus, Send } from "lucide-react";
 import Link from "next/link";
-import { listSequences } from "@/lib/api";
+import { CrmPermissionState } from "@/components/crm-states";
+import { listSequenceVersions, listSequences, listWorkspaces, OutboundApiError } from "@/lib/api";
+import { MutationForm } from "../research/[runId]/report/mutation-form";
 import { createSequenceAction } from "./actions";
 
 export const metadata = { title: "Séquences" };
@@ -18,8 +20,18 @@ export default async function SequencesPage({
   params: Promise<{ workspaceSlug: string }>;
 }) {
   const { workspaceSlug } = await params;
-  const sequences = await listSequences(workspaceSlug);
+  const workspace = (await listWorkspaces()).find((item) => item.slug === workspaceSlug);
+  if (!workspace) return <CrmPermissionState resource="les séquences" />;
+  let sequences;
+  try { sequences = await listSequences(workspaceSlug); } catch (error) {
+    if (error instanceof OutboundApiError && (error.status === 401 || error.status === 403)) return <CrmPermissionState resource="les séquences" />;
+    throw error;
+  }
+  const versions = await Promise.all(sequences.data.map(async (sequence) => {
+    try { return (await listSequenceVersions(workspaceSlug, sequence.id)).data; } catch { return []; }
+  }));
   const create = createSequenceAction.bind(null, workspaceSlug);
+  const canEdit = ["operator", "admin", "owner"].includes(workspace.role);
 
   return (
     <>
@@ -42,7 +54,7 @@ export default async function SequencesPage({
               </p>
             ) : (
               <ul className="space-y-2">
-                {sequences.data.map((sequence) => {
+                {sequences.data.map((sequence, index) => {
                   const badge = STATUS_BADGE[sequence.status] ?? STATUS_BADGE.draft!;
                   return (
                     <li key={sequence.id}>
@@ -50,7 +62,7 @@ export default async function SequencesPage({
                         className="flex flex-wrap items-center gap-3 rounded-lg border border-line p-4 hover:border-brand-blue"
                         href={`/w/${workspaceSlug}/sequences/${sequence.id}`}
                       >
-                        <span className="grid h-9 w-9 place-items-center rounded-lg bg-slate-100 text-navy">
+                        <span className="grid h-9 w-9 place-items-center rounded-lg bg-slate-100 text-ink">
                           <Send size={16} />
                         </span>
                         <span className="min-w-0 flex-1">
@@ -60,6 +72,7 @@ export default async function SequencesPage({
                           </span>
                         </span>
                         <span className={badge.className}>{badge.label}</span>
+                        {versions[index]?.length ? <span className="badge">v{versions[index]![0]!.version}</span> : null}
                       </Link>
                     </li>
                   );
@@ -76,7 +89,7 @@ export default async function SequencesPage({
               Nouvelle séquence
             </h2>
           </div>
-          <form action={create} className="panel-body space-y-3">
+          {canEdit ? <MutationForm action={create} className="panel-body space-y-3" successMessage="Brouillon créé.">
             <label className="block text-xs font-semibold text-muted">
               Nom *
               <input className="control mt-1 w-full" name="name" placeholder="Playbook cabinets juridiques" required />
@@ -92,7 +105,7 @@ export default async function SequencesPage({
               Le brouillon est librement modifiable. La publication (admin/owner) crée une
               version immuable validée par canal.
             </p>
-          </form>
+          </MutationForm> : <div className="panel-body"><p className="text-xs text-muted">Votre rôle permet la lecture, mais pas la création ou modification des séquences.</p></div>}
         </aside>
       </div>
     </>

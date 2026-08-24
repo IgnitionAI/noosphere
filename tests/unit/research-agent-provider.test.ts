@@ -1,18 +1,34 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildChatModelFields,
+  LangChainResearchAgentExecutor,
+  downgradeUnsupportedObservedClaims,
   dropUnevidencedCompetitorAnalyses,
   findUnresolvedEvidenceReferences,
   isModelUnavailableError,
   isProviderQuotaError,
   mandatoryBuyerExploration,
+  mergeProductTruthOutputs,
+  modelTierForStage,
+  modelRoutesForCandidates,
   prioritizeCompetitorCandidates,
   readJsonFromFinalMessage,
   resolveResearchModelConfigurationFromEnvironment,
+  reasoningEffortForStage,
   serializeRecoveryContext,
   structuredOutputGraceMs,
+  v3StageDurationMs,
+  v3SynthesisReserveMs,
+  v3SynthesisContextCharacters,
+  v3ToolCallsPerRound,
+  v3StageToolLimits,
   selectModelCandidates,
+  selectToolsForStage,
 } from "@outbound/infrastructure/ai/langchain-research-agent-executor";
+import type { ModelGateway } from "@outbound/application/ai/model-gateway";
+import { ModelRouter } from "@outbound/application/ai/model-router";
+import { WorkspaceStructuredModel } from "@outbound/infrastructure/ai/workspace-structured-model";
+import { validOutputFor } from "../fixtures/research-agent-fixtures";
 
 describe("competitor discovery hand-off", () => {
   test("caps expensive analysis while preserving relation diversity", () => {
@@ -41,13 +57,16 @@ describe("competitor discovery hand-off", () => {
 });
 
 describe("buyer exploration checklist", () => {
-  test("expands a legal product into independently testable organization types", () => {
-    const checklist = mandatoryBuyerExploration({
+  test("is sector-neutral even when the product description names an industry", () => {
+    const legalChecklist = mandatoryBuyerExploration({
       stage: "buyer_landscape_discovery",
       workspaceId: crypto.randomUUID(),
       runId: crypto.randomUUID(),
       researchStageRunId: crypto.randomUUID(),
       correlationId: "test",
+      deadlineAt: null,
+      workItemKey: "main",
+      externalDlpTerms: [],
       brief: {
         productUrl: "https://example.com",
         productName: "Document AI",
@@ -65,10 +84,157 @@ describe("buyer exploration checklist", () => {
       previousOutputs: { product_analysis: { targetHints: ["Legal teams"] } },
     });
 
-    expect(checklist.join(" ")).toContain("notarial offices");
-    expect(checklist.join(" ")).toContain("specialist legal publishers");
-    expect(checklist.join(" ")).toContain("SME compliance teams");
+    const industrialChecklist = mandatoryBuyerExploration({
+      stage: "buyer_landscape_discovery",
+      workspaceId: crypto.randomUUID(),
+      runId: crypto.randomUUID(),
+      researchStageRunId: crypto.randomUUID(),
+      correlationId: "test",
+      deadlineAt: null,
+      workItemKey: "main",
+      externalDlpTerms: [],
+      brief: {
+        productUrl: "https://example.com",
+        productName: "Operations AI",
+        description: "Assistant for industrial maintenance records",
+        geography: "France",
+        languages: ["fr"],
+        salesMotion: "hybrid",
+        knownCompetitors: [],
+        internalDocumentIds: [],
+        depth: "quick",
+        audienceGoal: "end_customers",
+        buyerConstraints: "",
+        researchVersion: 2,
+      },
+      previousOutputs: { product_analysis: { targetHints: ["Factories"] } },
+    });
+
+    expect(legalChecklist).toEqual(industrialChecklist);
+    expect(legalChecklist.join(" ").toLowerCase()).not.toMatch(
+      /law firm|notarial|legal publisher|compliance team/,
+    );
   });
+});
+
+describe("V3 tool isolation", () => {
+  const tools = [
+    "searchWeb",
+    "readWebPage",
+    "discoverWebsite",
+    "readWebsitePages",
+    "searchInternalDocuments",
+    "readInternalDocument",
+  ].map((name) => ({ name })) as never;
+
+  test("an external stage cannot see internal document tools", () => {
+    expect(
+      selectToolsForStage("market_investigation", 3, true, tools).map((tool) => tool.name),
+    ).toEqual(["searchWeb", "readWebPage", "discoverWebsite", "readWebsitePages"]);
+  });
+
+  test("a synthesis stage receives no retrieval tool", () => {
+    expect(selectToolsForStage("objective_ranking", 3, true, tools)).toEqual([]);
+  });
+
+  test("product truth uses one retrieval surface, never both", () => {
+    expect(selectToolsForStage("product_truth", 3, true, tools).map((tool) => tool.name)).toEqual([
+      "searchInternalDocuments",
+      "readInternalDocument",
+    ]);
+    expect(selectToolsForStage("product_truth", 3, false, tools).map((tool) => tool.name)).toEqual([
+      "searchWeb",
+      "readWebPage",
+      "readWebsitePages",
+    ]);
+  });
+});
+
+test("product truth merges public and internal retrieval without evidence-key collisions", () => {
+  const publicOutput = structuredClone(validOutputFor("product_truth")) as Record<string, any>;
+  const internalOutput = structuredClone(validOutputFor("product_truth")) as Record<string, any>;
+  internalOutput.evidence[0].sourceType = "internal_document";
+  internalOutput.evidence[0].sourceRelation = "internal";
+  const merged = mergeProductTruthOutputs(internalOutput as never, publicOutput as never);
+
+  expect(merged.facts.map((fact) => fact.factId)).toEqual([
+    "public:PF01",
+    "internal:PF01",
+  ]);
+  expect(merged.evidence.map((source) => source.evidenceId)).toEqual([
+    "public:V3E01",
+    "internal:V3E01",
+  ]);
+  expect(new Set(merged.facts.flatMap((fact) => fact.evidenceIds)).size).toBe(2);
+});
+
+test("V3 assigns bounded wall-clock budgets per role", () => {
+  expect(v3StageDurationMs("product_truth")).toBe(150_000);
+  expect(v3StageDurationMs("problem_mapping")).toBe(300_000);
+  expect(v3StageDurationMs("organization_discovery")).toBe(480_000);
+  expect(v3StageDurationMs("market_investigation")).toBe(480_000);
+  expect(v3StageDurationMs("buying_context")).toBe(300_000);
+  expect(v3StageDurationMs("icp_composition")).toBe(300_000);
+  expect(v3StageDurationMs("adversarial_review")).toBe(360_000);
+  expect(v3StageDurationMs("objective_ranking")).toBe(90_000);
+});
+
+test("V3 reserves enough of every role budget to produce its structured checkpoint", () => {
+  expect(v3SynthesisReserveMs("product_truth", v3StageDurationMs("product_truth"))).toBe(60_000);
+  expect(
+    v3SynthesisReserveMs(
+      "organization_discovery",
+      v3StageDurationMs("organization_discovery"),
+    ),
+  ).toBe(192_000);
+  expect(v3SynthesisReserveMs("objective_ranking", v3StageDurationMs("objective_ranking"))).toBe(60_000);
+});
+
+test("V3 caps product-reading retrieval independently of the selected depth", () => {
+  expect(v3StageToolLimits("product_truth", {
+    searches: 100,
+    pages: 300,
+    tokens: 2_000_000,
+    durationMs: 75 * 60_000,
+  })).toMatchObject({ searches: 2, pages: 6, tokens: 180_000 });
+});
+
+test("V3 downgrades weakly cited observations without inventing evidence", () => {
+  const raw = {
+    investigations: [{
+      claims: [{
+        dimension: "urgency",
+        status: "observed",
+        confidence: 0.92,
+        evidence: [{ relation: "supports", directness: 2, specificity: 4, evidenceId: "E01" }],
+      }],
+    }],
+    candidate: {
+      state: "priority_for_test",
+      sourcingStatus: "provider_limited",
+    },
+    unknownClaim: {
+      status: "unknown",
+      confidence: 0.8,
+      evidence: [],
+    },
+    buyingContext: {
+      claims: [{ dimension: "budget", status: "inferred" }],
+      budget: { status: "observed", value: "Unknown price" },
+      salesCycle: { status: "unknown", value: "Unknown" },
+    },
+  };
+
+  const sanitized = downgradeUnsupportedObservedClaims(raw) as Record<string, any>;
+  expect(sanitized.investigations[0].claims[0]).toMatchObject({
+    status: "inferred",
+    confidence: 0.65,
+    evidence: [{ evidenceId: "E01" }],
+  });
+  expect(sanitized.buyingContext.budget.status).toBe("inferred");
+  expect(sanitized.unknownClaim.confidence).toBe(0.25);
+  expect(sanitized.candidate.state).toBe("adjacent_experiment");
+  expect(raw.investigations[0]!.claims[0]!.status).toBe("observed");
 });
 
 describe("competitor analysis evidence boundary", () => {
@@ -187,9 +353,164 @@ describe("structured-output recovery context", () => {
     expect(structuredOutputGraceMs("kimi-code", 75 * 60_000)).toBe(300_000);
     expect(structuredOutputGraceMs("openai", 10 * 60_000)).toBe(0);
   });
+
+  test("bounds the evidence transcript for expensive V3 synthesis stages", () => {
+    expect(v3SynthesisContextCharacters("organization_discovery")).toBe(60_000);
+    expect(v3SynthesisContextCharacters("market_investigation")).toBe(80_000);
+    expect(v3SynthesisContextCharacters("problem_mapping")).toBe(100_000);
+  });
+
+  test("bounds tool-plan execution even when a model proposes the schema maximum", () => {
+    expect(v3ToolCallsPerRound("organization_discovery", 1)).toBe(6);
+    expect(v3ToolCallsPerRound("organization_discovery", 2)).toBe(2);
+    expect(v3ToolCallsPerRound("market_investigation", 1)).toBe(4);
+  });
 });
 
 describe("research agent model provider", () => {
+  test("keeps maximum reasoning on the principal route and makes fallbacks bounded", () => {
+    expect(modelRoutesForCandidates("kimi-code", ["k3", "k3-256k"], "max")).toEqual([
+      { provider: "kimi-code", model: "k3", reasoningEffort: "max" },
+      { provider: "kimi-code", model: "k3-256k", reasoningEffort: "low" },
+    ]);
+  });
+
+  test("runs a V3 stage through the bounded workspace runtime when Kimi is selected", async () => {
+    const provider: ModelGateway = {
+      provider: "kimi-code",
+      transport: "chat-completions",
+      invokeStructured: async (request) => ({
+        output: request.parse(validOutputFor("problem_mapping")),
+        metadata: {
+          provider: "kimi-code",
+          transport: "chat-completions",
+          model: request.model,
+          reasoningEffort: request.reasoningEffort,
+          usage: { inputTokens: 10, cachedInputTokens: 0, outputTokens: 20, source: "reported" },
+          latencyMs: 3,
+        },
+      }),
+    };
+    const policy = {
+      find: async () => ({
+        researchModels: ["k3"],
+        synthesisModels: ["k3-256k"],
+        defaultRoutes: [{ provider: "kimi-code" as const, model: "k3", reasoningEffort: "max" as const }],
+        capabilityRoutes: {},
+      }),
+    };
+    const routedModel = new WorkspaceStructuredModel(new ModelRouter([provider]), policy);
+    const executor = new LangChainResearchAgentExecutor({
+      provider: "kimi-code",
+      apiKey: "legacy-path-must-not-be-used",
+      baseUrl: "http://127.0.0.1:1",
+      researchModels: ["k3"],
+      synthesisModels: ["k3-256k"],
+      crawlerServiceUrl: "http://crawler.test",
+      crawlerApiKey: "crawler-test-key",
+      modelPolicyReader: policy,
+      routedModel,
+    });
+    const output = await executor.execute("problem_mapping", {
+      stage: "problem_mapping",
+      workspaceId: crypto.randomUUID(),
+      runId: crypto.randomUUID(),
+      researchStageRunId: crypto.randomUUID(),
+      correlationId: "kimi-bounded-routing-test",
+      deadlineAt: new Date(Date.now() + 60_000).toISOString(),
+      workItemKey: "main",
+      externalDlpTerms: [],
+      brief: {
+        productUrl: "https://example.com",
+        productName: "Noosphere",
+        description: "Autonomous B2B growth platform",
+        geography: "France",
+        languages: ["fr"],
+        salesMotion: "hybrid",
+        knownCompetitors: [],
+        internalDocumentIds: [],
+        depth: "quick",
+        audienceGoal: "end_customers",
+        buyerConstraints: "",
+        researchVersion: 3,
+      },
+      previousOutputs: { product_truth: validOutputFor("product_truth") },
+    });
+
+    expect(output.output).toEqual(validOutputFor("problem_mapping"));
+    expect(output.metadata.provider).toBe("kimi-code");
+    expect(output.metadata.model).toBe("k3");
+    expect(output.metadata.parameters.engine).toBe("bounded-tool-plan");
+  });
+
+  test("runs a V3 synthesis stage through the workspace-selected Codex model", async () => {
+    const provider: ModelGateway = {
+      provider: "codex-cli",
+      transport: "codex-process",
+      invokeStructured: async (request) => ({
+        output: request.parse(validOutputFor("problem_mapping")),
+        metadata: {
+          provider: "codex-cli",
+          transport: "codex-process",
+          model: request.model,
+          reasoningEffort: request.reasoningEffort,
+          usage: { inputTokens: 10, cachedInputTokens: 0, outputTokens: 20, source: "reported" },
+          latencyMs: 3,
+        },
+      }),
+    };
+    const policy = {
+      find: async () => ({
+        researchModels: ["gpt-5.6-luna"],
+        synthesisModels: ["gpt-5.6-luna"],
+        defaultRoutes: [{ provider: "codex-cli" as const, model: "gpt-5.6-luna", reasoningEffort: "xhigh" as const }],
+        capabilityRoutes: {},
+      }),
+    };
+    const routedModel = new WorkspaceStructuredModel(new ModelRouter([provider]), policy);
+    const executor = new LangChainResearchAgentExecutor({
+      provider: "kimi-code",
+      apiKey: "legacy-unused",
+      baseUrl: "https://api.kimi.test/v1",
+      researchModels: ["k3"],
+      synthesisModels: ["k3-256k"],
+      crawlerServiceUrl: "http://crawler.test",
+      crawlerApiKey: "crawler-test-key",
+      modelPolicyReader: policy,
+      routedModel,
+    });
+    const output = await executor.execute("problem_mapping", {
+      stage: "problem_mapping",
+      workspaceId: crypto.randomUUID(),
+      runId: crypto.randomUUID(),
+      researchStageRunId: crypto.randomUUID(),
+      correlationId: "codex-routing-test",
+      deadlineAt: new Date(Date.now() + 60_000).toISOString(),
+      workItemKey: "main",
+      externalDlpTerms: [],
+      brief: {
+        productUrl: "https://example.com",
+        productName: "Noosphere",
+        description: "Autonomous B2B growth platform",
+        geography: "France",
+        languages: ["fr"],
+        salesMotion: "hybrid",
+        knownCompetitors: [],
+        internalDocumentIds: [],
+        depth: "quick",
+        audienceGoal: "end_customers",
+        buyerConstraints: "",
+        researchVersion: 3,
+      },
+      previousOutputs: { product_truth: validOutputFor("product_truth") },
+    });
+
+    expect(output.output).toEqual(validOutputFor("problem_mapping"));
+    expect(output.metadata.provider).toBe("codex-cli");
+    expect(output.metadata.model).toBe("gpt-5.6-luna");
+    expect(output.metadata.parameters.engine).toBe("bounded-tool-plan");
+  });
+
   test("defaults to Kimi Code with its OpenAI-compatible endpoint and models", () => {
     const configuration = resolveResearchModelConfigurationFromEnvironment({
       KIMI_CODE_API_KEY: "test-kimi-key",
@@ -199,27 +520,79 @@ describe("research agent model provider", () => {
       provider: "kimi-code",
       apiKey: "test-kimi-key",
       baseUrl: "https://api.kimi.com/coding/v1",
-      researchModels: ["kimi-for-coding"],
-      synthesisModels: ["kimi-for-coding"],
+      researchModels: ["k3", "k3-256k"],
+      synthesisModels: ["k3-256k", "k3"],
+      defaultRoutes: [
+        { provider: "kimi-code", model: "k3", reasoningEffort: "max" },
+        { provider: "kimi-code", model: "k3-256k", reasoningEffort: "max" },
+      ],
     });
+  });
+
+  test("keeps Codex as the provider-neutral default for workspaces without a policy", () => {
+    const configuration = resolveResearchModelConfigurationFromEnvironment({
+      AI_PROVIDER: "codex-cli",
+      CODEX_SERVICE_HOME: "/tmp/codex-service",
+      CODEX_DEFAULT_MODEL: "gpt-5.6-luna",
+      CODEX_DEFAULT_REASONING_EFFORT: "xhigh",
+    });
+
+    expect(configuration.defaultRoutes).toEqual([
+      { provider: "codex-cli", model: "gpt-5.6-luna", reasoningEffort: "xhigh" },
+      { provider: "codex-cli", model: "gpt-5.4-mini", reasoningEffort: "low" },
+    ]);
+    expect(
+      modelRoutesForCandidates(
+        "kimi-code",
+        configuration.researchModels,
+        "max",
+        configuration.defaultRoutes,
+      ),
+    ).toEqual([
+      { provider: "codex-cli", model: "gpt-5.6-luna", reasoningEffort: "xhigh" },
+      { provider: "codex-cli", model: "gpt-5.4-mini", reasoningEffort: "low" },
+    ]);
+  });
+
+  test("falls back from Codex quota exhaustion to the configured fast Kimi route", () => {
+    const configuration = resolveResearchModelConfigurationFromEnvironment({
+      AI_PROVIDER: "codex-cli",
+      CODEX_SERVICE_HOME: "/tmp/codex-service",
+      CODEX_DEFAULT_MODEL: "gpt-5.6-luna",
+      CODEX_DEFAULT_REASONING_EFFORT: "xhigh",
+      KIMI_CODE_API_KEY: "test-kimi-key",
+      KIMI_FALLBACK_MODELS: "kimi-for-coding-highspeed,k3-256k",
+    });
+
+    expect(configuration.researchModels).toEqual([
+      "gpt-5.6-luna",
+      "gpt-5.4-mini",
+      "kimi-for-coding-highspeed",
+      "k3-256k",
+    ]);
+    expect(configuration.defaultRoutes).toEqual([
+      { provider: "codex-cli", model: "gpt-5.6-luna", reasoningEffort: "xhigh" },
+      { provider: "codex-cli", model: "gpt-5.4-mini", reasoningEffort: "low" },
+      { provider: "kimi-code", model: "kimi-for-coding-highspeed", reasoningEffort: "low" },
+      { provider: "kimi-code", model: "k3-256k", reasoningEffort: "low" },
+    ]);
   });
 
   test("accepts ordered, deduplicated Kimi model fallback lists", () => {
     const configuration = resolveResearchModelConfigurationFromEnvironment({
       KIMI_CODE_API_KEY: "test-kimi-key",
       KIMI_RESEARCH_MODELS:
-        "k3, kimi-for-coding, k3, kimi-for-coding-highspeed",
-      KIMI_SYNTHESIS_MODELS: "kimi-for-coding-highspeed,kimi-for-coding",
+        "k3, k3-256k, k3",
+      KIMI_SYNTHESIS_MODELS: "k3-256k,k3,k3-256k",
     });
 
     expect(configuration.researchModels).toEqual([
       "k3",
-      "kimi-for-coding",
-      "kimi-for-coding-highspeed",
+      "k3-256k",
     ]);
     expect(configuration.synthesisModels).toEqual([
-      "kimi-for-coding-highspeed",
-      "kimi-for-coding",
+      "k3-256k",
+      "k3",
     ]);
   });
 
@@ -230,15 +603,17 @@ describe("research agent model provider", () => {
         apiKey: "test-kimi-key",
         baseUrl: "https://kimi.internal/v1",
       },
-      "kimi-for-coding",
+      "k3",
+      "max",
     );
 
     expect(fields).toEqual({
       apiKey: "test-kimi-key",
-      model: "kimi-for-coding",
+      model: "k3",
       maxRetries: 1,
       streamUsage: true,
       useResponsesApi: false,
+      reasoning: { effort: "max" },
       configuration: { baseURL: "https://kimi.internal/v1" },
     });
     expect("temperature" in fields).toBe(false);
@@ -264,7 +639,7 @@ describe("research agent model provider", () => {
       resolveResearchModelConfigurationFromEnvironment({
         AI_PROVIDER: "moonshot-platform",
       }),
-    ).toThrow("AI_PROVIDER must be one of: kimi-code, openai");
+    ).toThrow("AI_PROVIDER must be one of: kimi-code, codex-cli, openai");
   });
 
   test("falls back only for errors that identify an unavailable model", () => {
@@ -282,7 +657,7 @@ describe("research agent model provider", () => {
     ).toBe(false);
     expect(
       isModelUnavailableError(
-        Object.assign(new Error("Model kimi-for-coding is temporarily unavailable"), {
+        Object.assign(new Error("Model k3-256k is temporarily unavailable"), {
           status: 503,
         }),
       ),
@@ -305,29 +680,65 @@ describe("research agent model provider", () => {
     ).toBe(true);
   });
 
-  test("uses the workspace policy for deep and synthesis stages", () => {
+  test("uses K3 max for principal stages and K3 256k low for executors", () => {
     const defaults = {
       researchModels: ["default-research"],
       synthesisModels: ["default-synthesis"],
     };
     const workspace = {
-      researchModels: ["k3", "kimi-for-coding"],
-      synthesisModels: ["kimi-for-coding-highspeed"],
+      researchModels: ["k3", "k3-256k"],
+      synthesisModels: ["k3-256k", "k3"],
     };
 
-    expect(selectModelCandidates("competitor_analysis", defaults, workspace)).toEqual([
+    expect(selectModelCandidates("organization_discovery", defaults, workspace, 3)).toEqual([
       "k3",
-      "kimi-for-coding",
+      "k3-256k",
     ]);
-    expect(selectModelCandidates("buyer_landscape_discovery", defaults, workspace)).toEqual([
+    expect(selectModelCandidates("adversarial_review", defaults, workspace, 3)).toEqual([
       "k3",
-      "kimi-for-coding",
+      "k3-256k",
     ]);
-    expect(selectModelCandidates("icp_synthesis", defaults, workspace)).toEqual([
-      "kimi-for-coding-highspeed",
+    expect(selectModelCandidates("market_investigation", defaults, workspace, 3)).toEqual([
+      "k3-256k",
+      "k3",
     ]);
-    expect(selectModelCandidates("product_analysis", defaults, null)).toEqual([
-      "default-research",
+    expect(selectModelCandidates("icp_composition", defaults, workspace, 3)).toEqual([
+      "k3",
+      "k3-256k",
     ]);
+    expect(selectModelCandidates("competitor_analysis", defaults, workspace, 2)).toEqual([
+      "k3",
+      "k3-256k",
+    ]);
+    expect(selectModelCandidates("icp_synthesis", defaults, null, 2)).toEqual([
+      "default-synthesis",
+    ]);
+    expect(selectModelCandidates("product_truth", defaults, null, 3)).toEqual([
+      "default-synthesis",
+    ]);
+    expect(modelTierForStage("organization_discovery", 3)).toBe("principal");
+    expect(modelTierForStage("problem_mapping", 3)).toBe("principal");
+    expect(modelTierForStage("buying_context", 3)).toBe("principal");
+    expect(modelTierForStage("icp_composition", 3)).toBe("principal");
+    expect(modelTierForStage("market_investigation", 3)).toBe("executor");
+    expect(reasoningEffortForStage("adversarial_review", 3)).toBe("max");
+    expect(reasoningEffortForStage("market_investigation", 3)).toBe("low");
+  });
+
+  test("sends low reasoning effort to a K3 executor", () => {
+    const fields = buildChatModelFields(
+      {
+        provider: "kimi-code",
+        apiKey: "test-kimi-key",
+        baseUrl: "https://api.kimi.com/coding/v1",
+      },
+      "k3-256k",
+      "low",
+    );
+    expect(fields).toMatchObject({
+      model: "k3-256k",
+      reasoning: { effort: "low" },
+      useResponsesApi: false,
+    });
   });
 });

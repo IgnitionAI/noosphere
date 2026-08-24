@@ -1,24 +1,50 @@
 import { ArrowLeft, Building2, ExternalLink } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getCompany, OutboundApiError } from "@/lib/api";
+import { CrmPermissionState } from "@/components/crm-states";
+import { getCompany, getSignalCollectionRun, listCompanySignals, listWorkspaces, OutboundApiError, type IntentSignal, type SignalCollectionRun } from "@/lib/api";
+import { MutationForm } from "../../research/[runId]/report/mutation-form";
+import { updateCompanyAction } from "../actions";
+import { collectSignalsAction } from "../../signals-actions";
+import { SignalsPanel } from "@/components/signals-panel";
 
 export const metadata = { title: "Entreprise" };
 export const dynamic = "force-dynamic";
 
 export default async function CompanyDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ workspaceSlug: string; companyId: string }>;
+  searchParams: Promise<{ signalRunId?: string }>;
 }) {
   const { workspaceSlug, companyId } = await params;
+  const { signalRunId } = await searchParams;
   let company;
   try {
-    company = await getCompany(workspaceSlug, companyId);
+    [company] = await Promise.all([getCompany(workspaceSlug, companyId)]);
   } catch (error) {
     if (error instanceof OutboundApiError && error.status === 404) notFound();
+    if (error instanceof OutboundApiError && (error.status === 401 || error.status === 403)) {
+      return <CrmPermissionState resource="cette entreprise" />;
+    }
     throw error;
   }
+  let signals: IntentSignal[] = [];
+  let signalRun: SignalCollectionRun | null = null;
+  let signalAccess = true;
+  try { signals = (await listCompanySignals(workspaceSlug, companyId, true)).data; }
+  catch (error) { if (error instanceof OutboundApiError && (error.status === 401 || error.status === 403)) signalAccess = false; else throw error; }
+  if (signalRunId && signalAccess) {
+    try { signalRun = await getSignalCollectionRun(workspaceSlug, signalRunId); }
+    catch (error) { if (!(error instanceof OutboundApiError && (error.status === 403 || error.status === 404))) throw error; }
+  }
+  const workspace = (await listWorkspaces()).find((item) => item.slug === workspaceSlug);
+  const canEdit = workspace ? ["operator", "admin", "owner"].includes(workspace.role) : false;
+  const canCollectSignals = workspace ? ["admin", "owner"].includes(workspace.role) : false;
+  const update = updateCompanyAction.bind(null, workspaceSlug, companyId);
+  const collect = collectSignalsAction.bind(null, workspaceSlug);
+  const signalRequestKey = `company-signals:${companyId}:${company.createdAt}`;
 
   return (
     <>
@@ -31,7 +57,7 @@ export default async function CompanyDetailPage({
           Retour aux entreprises
         </Link>
         <div className="flex flex-wrap items-center gap-3">
-          <span className="grid h-11 w-11 place-items-center rounded-xl bg-slate-100 text-navy">
+          <span className="grid h-11 w-11 place-items-center rounded-xl bg-slate-100 text-ink">
             <Building2 size={20} />
           </span>
           <div>
@@ -98,6 +124,45 @@ export default async function CompanyDetailPage({
           </div>
         </aside>
       </div>
+      {signalAccess ? <SignalsPanel canCollect={canCollectSignals} collectAction={collect} entityId={companyId} entityType="company" requestKey={signalRequestKey} run={signalRun} signals={signals} /> : <section className="panel mt-5" id="signals"><div className="panel-body text-sm text-muted">Les signaux ne sont pas accessibles avec vos droits.</div></section>}
+      {canEdit ? (
+        <section className="panel mt-5">
+          <div className="panel-header">
+            <h2 className="font-semibold">Modifier la fiche</h2>
+          </div>
+          <MutationForm action={update} className="panel-body grid gap-3 sm:grid-cols-2" successMessage="La fiche entreprise a été mise à jour.">
+            <label className="text-xs font-semibold text-muted">
+              Nom *
+              <input className="control mt-1 w-full" name="name" required defaultValue={company.name} />
+            </label>
+            <label className="text-xs font-semibold text-muted">
+              Domaine
+              <input className="control mt-1 w-full" name="domain" defaultValue={company.normalizedDomain ?? ""} />
+            </label>
+            <label className="text-xs font-semibold text-muted">
+              Secteur
+              <input className="control mt-1 w-full" name="sector" defaultValue={company.sector ?? ""} />
+            </label>
+            <label className="text-xs font-semibold text-muted">
+              Localisation
+              <input className="control mt-1 w-full" name="location" defaultValue={company.location ?? ""} />
+            </label>
+            <label className="text-xs font-semibold text-muted">
+              Effectif min
+              <input className="control mt-1 w-full" min="0" name="employeeCountMin" type="number" defaultValue={company.employeeCountMin ?? ""} />
+            </label>
+            <label className="text-xs font-semibold text-muted">
+              Effectif max
+              <input className="control mt-1 w-full" min="0" name="employeeCountMax" type="number" defaultValue={company.employeeCountMax ?? ""} />
+            </label>
+            <label className="text-xs font-semibold text-muted sm:col-span-2">
+              URL LinkedIn
+              <input className="control mt-1 w-full" name="linkedinUrl" type="url" defaultValue={company.linkedinUrl ?? ""} />
+            </label>
+            <button className="button button-signal sm:col-span-2" type="submit">Enregistrer les modifications</button>
+          </MutationForm>
+        </section>
+      ) : null}
     </>
   );
 }

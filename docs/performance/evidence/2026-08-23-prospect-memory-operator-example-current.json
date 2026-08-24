@@ -1,0 +1,21 @@
+{
+  "generatedAt": "2026-08-23T18:09:37.790Z",
+  "responsesPath": "docs/performance/prospect-memory-operator-responses.example.json",
+  "schemaVersion": 1,
+  "participantCount": 1,
+  "validParticipantCount": 1,
+  "invalidParticipantCount": 0,
+  "correctAnswerCount": 5,
+  "answerCount": 5,
+  "comprehensionRate": 1,
+  "criticalMisunderstandingCount": 0,
+  "gatePassed": true,
+  "minimumComprehensionRate": 0.9,
+  "questions": {
+    "drawer_closure": "Fermer le drawer annule-t-il le job ? Réponse attendue : non, seul le polling navigateur s'arrête.",
+    "dry_run_effect": "Le dry-run peut-il envoyer ou réserver ? Réponse attendue : non.",
+    "memory_refresh_effect": "Actualiser la mémoire envoie-t-il un message ? Réponse attendue : non.",
+    "stale_memory_behavior": "Que fait l'automatisation si la mémoire critique est stale ? Réponse attendue : elle attend et expose la raison.",
+    "provider_sent_evidence": "Quel état prouve un envoi provider ? Réponse attendue : la commande sent avec son identifiant provider, pas sending/generated."
+  }
+}

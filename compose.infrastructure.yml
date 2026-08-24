@@ -17,8 +17,68 @@ services:
     restart: unless-stopped
     networks: [outbound-private]
 
+  tei-embedding:
+    image: ${TEI_IMAGE:-ghcr.io/huggingface/text-embeddings-inference:cpu-1.9-grpc@sha256:10a79d66b4f49bd35fe7f61af8b1e3cefe007e36b7f87b11bb58908bb5906301}
+    platform: linux/amd64
+    command:
+      - --model-id
+      - ${TEI_EMBEDDING_RUNTIME_MODEL_ID:-janni-t/qwen3-embedding-0.6b-int8-tei-onnx}
+      - --revision
+      - ${TEI_EMBEDDING_RUNTIME_MODEL_SHA:-8fe0c238c7c48016d28e750413ca492024be3ddf}
+      - --pooling
+      - last-token
+      - --auto-truncate
+      - --tokenization-workers
+      - "1"
+      - --max-batch-tokens
+      - ${TEI_EMBEDDING_MAX_BATCH_TOKENS:-1024}
+      - --max-concurrent-requests
+      - ${TEI_EMBEDDING_MAX_CONCURRENT_REQUESTS:-1}
+      - --max-client-batch-size
+      - ${TEI_EMBEDDING_MAX_CLIENT_BATCH_SIZE:-32}
+    ports:
+      - "127.0.0.1:${TEI_EMBEDDING_HOST_PORT:-8081}:80"
+    volumes:
+      - tei-model-cache:/data
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 3 bash -c '</dev/tcp/127.0.0.1/80'"]
+      interval: 15s
+      timeout: 5s
+      start_period: 120s
+      retries: 20
+    restart: unless-stopped
+    networks: [outbound-private]
+
+  tei-reranker:
+    image: ${TEI_IMAGE:-ghcr.io/huggingface/text-embeddings-inference:cpu-1.9-grpc@sha256:10a79d66b4f49bd35fe7f61af8b1e3cefe007e36b7f87b11bb58908bb5906301}
+    platform: linux/amd64
+    command:
+      - --model-id
+      - ${TEI_RERANKER_RUNTIME_MODEL_ID:-csylabs/bge-reranker-v2-m3-int8-onnx}
+      - --revision
+      - ${TEI_RERANKER_RUNTIME_MODEL_SHA:-eaf5072d7b1a3f1fa584cc7482c7efb8f784dca0}
+      - --auto-truncate
+      - --tokenization-workers
+      - "1"
+      - --max-batch-tokens
+      - ${TEI_RERANKER_MAX_BATCH_TOKENS:-1024}
+      - --max-concurrent-requests
+      - ${TEI_RERANKER_MAX_CONCURRENT_REQUESTS:-1}
+    ports:
+      - "127.0.0.1:${TEI_RERANKER_HOST_PORT:-8082}:80"
+    volumes:
+      - tei-model-cache:/data
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 3 bash -c '</dev/tcp/127.0.0.1/80'"]
+      interval: 15s
+      timeout: 5s
+      start_period: 120s
+      retries: 20
+    restart: unless-stopped
+    networks: [outbound-private]
+
   minio:
-    image: ${MINIO_IMAGE:-minio/minio:latest}
+    image: ${MINIO_IMAGE:-minio/minio:RELEASE.2025-07-23T15-54-02Z}
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:?S3_ACCESS_KEY_ID is required}
@@ -34,7 +94,7 @@ services:
     networks: [outbound-private]
 
   minio-init:
-    image: ${MINIO_MC_IMAGE:-minio/mc:latest}
+    image: ${MINIO_MC_IMAGE:-minio/mc:RELEASE.2025-08-13T08-35-41Z}
     depends_on:
       minio:
         condition: service_healthy
@@ -50,7 +110,7 @@ services:
     networks: [outbound-private]
 
   searxng:
-    image: ${SEARXNG_IMAGE:-searxng/searxng:latest}
+    image: ${SEARXNG_IMAGE:-searxng/searxng:2026.8.16-b2da6b90f}
     environment:
       SEARXNG_BASE_URL: http://searxng:8080/
       SEARXNG_SECRET: ${SEARXNG_SECRET:?SEARXNG_SECRET is required}
@@ -89,23 +149,10 @@ services:
     restart: unless-stopped
     networks: [outbound-private]
 
-  docling:
-    image: ${DOCLING_IMAGE:-ghcr.io/docling-project/docling-serve-cpu:v1.21.0}
-    environment:
-      DOCLING_SERVE_API_KEY: ${DOCLING_API_KEY:?DOCLING_API_KEY is required}
-      DOCLING_SERVE_ENABLE_UI: "0"
-      DOCLING_SERVE_ENG_KIND: local
-      DOCLING_SERVE_ENG_LOC_NUM_WORKERS: 1
-      DOCLING_DEVICE: cpu
-    volumes:
-      - docling-cache:/opt/app-root/src/.cache
-    restart: unless-stopped
-    networks: [outbound-private]
-
 volumes:
   paradedb-data:
   minio-data:
-  docling-cache:
+  tei-model-cache:
 
 networks:
   outbound-private:

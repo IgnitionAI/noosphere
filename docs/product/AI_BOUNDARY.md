@@ -2,40 +2,49 @@
 
 ## Décision
 
-Le produit doit être entièrement utilisable avant l’introduction des modèles
-IA. Les fondations stockent déjà le contexte, les preuves, les décisions et le
-feedback nécessaires, mais aucun use case P0 ne dépend d’une génération.
+Le produit fonctionne en autopilote dans le chemin normal : le Setter IA peut
+rechercher, rédiger, envoyer, relancer, qualifier et proposer un rendez-vous
+lorsque la policy déterministe l’autorise. Une exception explicite (opt-out,
+prix, juridique, sécurité, négociation, quota, compte dégradé) arrête l’action
+et remonte sur la campagne, la conversation ou la configuration concernée.
 
-## Remplacements pré-IA
+## Dégradations déterministes et fallback
 
 | Besoin futur | Fonctionnement initial | Évolution IA |
 |---|---|---|
-| lecture produit | segments réalistes simulés et éditables | détection de segments |
-| score prospect | règles et pondérations de l’ICP | score assisté et explication |
-| personnalisation | variables contrôlées + rédaction humaine | brouillon sourcé |
-| qualification réponse | statut choisi par l’opérateur | classification proposée |
-| réponse | brouillon humain | brouillon IA à approuver |
-| recherche connaissance | filtres et texte PostgreSQL | retrieval hybride/RAG |
-| optimisation campagne | analytics déterministes | recommandations évaluées |
+| lecture produit | brief et sources internes | Deep Agent sourcé, puis ICP publié automatiquement après audit |
+| score prospect | règles d’éligibilité déterministes | score K3 expliqué et preuves conservées |
+| personnalisation | faits contrôlés et policy publiée | message contextualisé envoyé par le Setter |
+| qualification réponse | thread complet et état durable | classification et prochaine action structurées |
+| réponse en campagne | policy, exclusions et compte sain | réponse IA autonome sous policy |
+| réponse hors campagne | pilotage humain uniquement | amélioration de brouillon ou commande Setter explicite, jamais d’automatisme continu |
+| recherche connaissance | filtres workspace et claims sourcés | retrieval hybride lorsque nécessaire |
+| optimisation campagne | métriques déterministes | recommandations évaluées |
+| contenu LinkedIn | stratégie, preuves, cadence et compte vérifiés | recherche, rédaction, audit, critique et publication autonomes ; exception localisée par asset |
+| apprentissage éditorial | agrégation déterministe des réponses et appels attribués | recommandations versionnées consommables uniquement dans les piliers et l'ICP actifs |
+| résultat provider incertain | recherche déterministe par compte, fingerprint et fenêtre | aucun passage modèle et aucun replay automatique |
 
 ## Contrats à prévoir dès le socle
 
 - `AIModelProvider` : exécuter une demande structurée sans exposer un SDK au
   domaine ;
-- `ProductUnderstandingService` : proposer des findings sourcés sans publier
-  l’offre ou l’ICP ;
+- `ProductUnderstandingService` : proposer des findings sourcés ; l’orchestrateur
+  peut publier automatiquement l’ICP lorsque l’audit de preuves et les règles
+  déterministes sont satisfaits ;
 - `KnowledgeRetriever` : retrouver des éléments sourcés indépendamment du
   moteur d’indexation ;
 - `ProspectScoringPolicy` : retourner score, critères, faits et données
   manquantes ;
-- `MessageDraftingService` : produire un brouillon, jamais envoyer ;
-- `ReplyClassificationService` : proposer intention, confiance et escalade ;
+- `MessageDraftingService` : produire un brouillon contextualisé ; l’envoi
+  reste dans le gateway et est revérifié par la policy ;
+- `ReplyClassificationService` : proposer intention, confiance, prochaine
+  action et escalade ;
 - `AIEvaluationRecorder` : enregistrer le résultat attendu, le feedback et les
   métriques.
 
-Les implémentations initiales de scoring, rédaction et classification sont
-déterministes ou humaines. Elles utilisent les mêmes DTO afin d’éviter une
-réécriture des workflows.
+Les fallbacks déterministes utilisent les mêmes DTO que les agents afin de
+préserver le workflow lorsque le fournisseur est indisponible ou qu’une sortie
+est insuffisamment prouvée.
 
 ## Données à conserver avant l’IA
 
@@ -50,24 +59,35 @@ réécriture des workflows.
 ## Garde-fous permanents
 
 1. un modèle ne déclenche jamais directement un envoi ;
-2. une lecture produit ne publie jamais automatiquement une offre ou un ICP ;
+2. une lecture produit ne publie automatiquement un ICP qu’après réussite de
+   l’audit adversarial et de la vérification déterministe des preuves ;
 3. les exclusions, suppressions et permissions restent déterministes ;
 4. un score IA ne rend pas éligible un contact interdit ;
 5. tout texte généré référence les faits et claims utilisés ;
 6. une sortie sans preuve suffisante est bloquée ou escaladée ;
-7. prix, engagement, sécurité, juridique et négociation sensible exigent une
-   validation humaine ;
-8. une recommandation ne modifie jamais une campagne active ;
+7. prix, engagement, sécurité, juridique, négociation sensible et opt-out
+   créent une exception ; aucune réponse automatique implicite n’est envoyée ;
+8. une recommandation ne modifie jamais une campagne active sans action
+   idempotente de l’orchestrateur ;
 9. chaque exécution conserve fournisseur, modèle, prompt, coût, latence et
-   décision humaine.
+   décision (politique appliquée ou exception déterministe).
+10. avant une publication LinkedIn automatique, le serveur relit le compte
+    sélectionné, les claims autorisés, les jours de cadence et le budget
+    hebdomadaire ; le modèle ne peut contourner cette frontière.
+11. l'apprentissage éditorial distingue faits et inférences ; il ne peut ni
+    ajouter un claim ou un canal, ni augmenter une cadence, ni élargir un ICP.
+12. une réponse provider perdue après mutation ne devient jamais un ordre de
+    réessai : OPS-102 décide `matched`, `not_found` ou `ambiguous` à partir
+    d'une preuve provider résoluble et conserve une correlation expurgée.
 
-## Gate de démarrage de la phase IA
+## Conditions d’exploitation de l’IA
 
-La phase IA peut commencer lorsque :
+La phase IA peut fonctionner en production lorsque :
 
 - une campagne déterministe fonctionne de la sélection à la réponse ;
 - les événements analytics et feedback sont fiables ;
 - les corpus de claims et preuves sont validés ;
 - un jeu d’évaluation réel et anonymisé est disponible ;
 - les métriques de référence sans IA sont connues ;
-- le budget, la latence et les seuils d’escalade sont définis.
+- le budget, la latence et les seuils d’exception sont définis ;
+- un dry-run et un canary fournisseur ont été exécutés sur un workspace isolé.

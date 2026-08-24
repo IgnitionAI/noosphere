@@ -1,0 +1,15 @@
+{
+  "generatedAt": "2026-08-24T09:18:11.127Z",
+  "runtime": "Bun 1.3.4",
+  "host": "local-arm64",
+  "concurrency": 1,
+  "command": "bun run benchmark:documents",
+  "scope": "synthetic structured-text fixtures; excludes embeddings and object storage",
+  "results": [
+    { "fixture": "20-page PDF", "bytes": 5971, "provider": "unpdf", "status": "complete", "durationMs": 143, "peakRssMiB": 119.8 },
+    { "fixture": "250-paragraph DOCX", "bytes": 1590, "provider": "docx", "status": "complete", "durationMs": 151, "peakRssMiB": 120.7 },
+    { "fixture": "30-slide PPTX", "bytes": 10589, "provider": "pptx", "status": "complete", "durationMs": 111, "peakRssMiB": 96.3 },
+    { "fixture": "5-sheet 30015-cell XLSX", "bytes": 190350, "provider": "xlsx", "status": "complete", "durationMs": 231, "peakRssMiB": 179.3 }
+  ],
+  "vpsStatus": "pending-after-deployment"
+}

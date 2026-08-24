@@ -5,6 +5,17 @@ const root = resolve(import.meta.dir, "..");
 const sourceRoots = ["packages", "apps"].map((directory) => join(root, directory));
 const files = sourceRoots.flatMap(walk).filter((file) => file.endsWith(".ts"));
 const failures: string[] = [];
+const prospectMemoryPersistenceSymbols = new Set([
+  "prospectMemoryEvents",
+  "prospectMemorySnapshots",
+  "prospectMemoryContextReceipts",
+]);
+const prospectMemoryPersistenceReaders = [
+  "packages/infrastructure/src/prospect-memory/",
+  "packages/infrastructure/src/workspaces/postgres-workspace-data-lifecycle.ts",
+  "packages/infrastructure/src/workspaces/workspace-data-export.ts",
+  "packages/infrastructure/src/database/schema.ts",
+];
 
 const forbiddenDomainImports = [
   "next",
@@ -37,6 +48,22 @@ for (const file of files) {
   if (repoPath.startsWith("packages/interface/") && source.includes("drizzle-orm")) {
     failures.push(`${repoPath}: interface imports Drizzle`);
   }
+  if (!prospectMemoryPersistenceReaders.some((allowed) => repoPath.startsWith(allowed))) {
+    for (const imported of importedSchemaSymbols(source)) {
+      if (prospectMemoryPersistenceSymbols.has(imported)) {
+        failures.push(`${repoPath}: reads Prospect 360 persistence directly instead of using the application ports`);
+      }
+    }
+    if (/\b(?:from|join|update|into|delete\s+from)\s+prospect_memory_(?:events|snapshots|context_receipts)\b/i.test(source)) {
+      failures.push(`${repoPath}: queries Prospect 360 persistence directly instead of using the application ports`);
+    }
+  }
+  if (
+    /\.(?:insert|update)\(prospectDecisions\)/.test(source)
+    && !source.includes("captureProspectDecisionMutation")
+  ) {
+    failures.push(`${repoPath}: mutates prospectDecisions without a transactional Prospect 360 event`);
+  }
 }
 
 if (failures.length) {
@@ -50,4 +77,16 @@ function walk(directory: string): string[] {
     const path = join(directory, entry);
     return statSync(path).isDirectory() ? walk(path) : [path];
   });
+}
+
+function importedSchemaSymbols(source: string): readonly string[] {
+  const symbols: string[] = [];
+  const pattern = /import\s*\{([\s\S]*?)\}\s*from\s*["']@outbound\/infrastructure\/database\/schema["']/g;
+  for (const match of source.matchAll(pattern)) {
+    for (const value of (match[1] ?? "").split(",")) {
+      const name = value.trim().split(/\s+as\s+/)[0]?.trim();
+      if (name) symbols.push(name);
+    }
+  }
+  return symbols;
 }

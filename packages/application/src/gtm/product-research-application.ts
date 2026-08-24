@@ -5,6 +5,7 @@ import type {
 import type {
   ProductResearchRepository,
   ProductResearchViewRepository,
+  IcpVersionView,
 } from "@outbound/application/gtm/product-research-ports";
 import {
   CreateProductResearchRun,
@@ -181,13 +182,14 @@ export class ProductResearchApplication {
     runId: string;
     proposalId: string;
     userId: string;
-  }) {
+  }): Promise<IcpVersionView> {
     const run = await this.get({ workspaceId: input.workspaceId, runId: input.runId });
     if (run.status !== "ready_for_review") {
       throw new Error("PRODUCT_RESEARCH_NOT_READY_FOR_REVIEW");
     }
     return this.repository.publishIcpVersion({
       id: this.ids.generate(),
+      icpId: this.ids.generate(),
       ...input,
       publishedAt: this.clock.now(),
     });

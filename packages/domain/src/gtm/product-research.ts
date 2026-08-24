@@ -8,19 +8,44 @@ export const researchStages = [
   "evidence_review",
 ] as const;
 
+export const v3ResearchStages = [
+  "product_truth",
+  "problem_mapping",
+  "organization_discovery",
+  "market_investigation",
+  "buying_context",
+  "sourcing_validation",
+  "icp_composition",
+  "adversarial_review",
+  "objective_ranking",
+] as const;
+
 export const legacyResearchStages = researchStages.filter(
   (stage) => stage !== "buyer_landscape_discovery",
 );
 
-export type ResearchStage = (typeof researchStages)[number];
+export type ResearchStage =
+  | (typeof researchStages)[number]
+  | (typeof v3ResearchStages)[number];
 export type ProductResearchStatus =
   | "draft"
   | "queued"
   | "running"
   | "paused"
   | "ready_for_review"
+  | "completed"
+  | "partial"
+  | "interrupted"
   | "failed";
 export type ResearchDepth = "quick" | "standard" | "deep";
+
+export function v3RunDurationMs(depth: ResearchDepth): number {
+  return {
+    quick: 30 * 60_000,
+    standard: 60 * 60_000,
+    deep: 90 * 60_000,
+  }[depth];
+}
 
 export interface ProductResearchBrief {
   readonly productUrl: string;
@@ -34,13 +59,20 @@ export interface ProductResearchBrief {
   readonly depth: ResearchDepth;
   readonly audienceGoal?: "end_customers" | "channel_partners" | "both";
   readonly buyerConstraints?: string;
-  readonly researchVersion?: 1 | 2;
+  readonly researchObjective?:
+    | "qualified_conversations"
+    | "fast_revenue"
+    | "strategic_market"
+    | undefined;
+  readonly researchVersion?: 1 | 2 | 3;
 }
 
 export function researchStagesForBrief(
   brief: ProductResearchBrief,
 ): readonly ResearchStage[] {
-  return brief.researchVersion === 1 ? legacyResearchStages : researchStages;
+  if (brief.researchVersion === 1) return legacyResearchStages;
+  if (brief.researchVersion === 3) return v3ResearchStages;
+  return researchStages;
 }
 
 export interface ProductResearchRunSnapshot {
@@ -51,6 +83,8 @@ export interface ProductResearchRunSnapshot {
   readonly activeStage: ResearchStage | null;
   readonly completedStages: readonly ResearchStage[];
   readonly version: number;
+  readonly executionStartedAt: Date | null;
+  readonly deadlineAt: Date | null;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }
@@ -73,6 +107,12 @@ export type ProductResearchEvent =
     }
   | { readonly type: "ProductResearchReadyForReview"; readonly runId: string; readonly workspaceId: string }
   | {
+      readonly type: "ProductResearchCompleted";
+      readonly runId: string;
+      readonly workspaceId: string;
+      readonly outcome: "completed" | "partial";
+    }
+  | {
       readonly type: "ProductResearchMoreRequested";
       readonly runId: string;
       readonly workspaceId: string;
@@ -88,10 +128,12 @@ export type ProductResearchEvent =
     }
   | {
       readonly type: "ICPVersionPublished";
-      readonly runId: string;
+      readonly runId: string | null;
       readonly workspaceId: string;
+      readonly icpId: string;
+      readonly actorUserId: string | null;
       readonly versionId: string;
-      readonly proposalId: string;
+      readonly proposalId: string | null;
       readonly version: number;
     };
 
@@ -132,6 +174,8 @@ export class ProductResearchRun {
       activeStage: null,
       completedStages: [],
       version: 0,
+      executionStartedAt: null,
+      deadlineAt: null,
       createdAt: input.now,
       updatedAt: input.now,
     });
@@ -160,7 +204,10 @@ export class ProductResearchRun {
     if (this.#snapshot.status !== "draft") {
       throw new ProductResearchInvariantError(`Cannot start a run in status ${this.#snapshot.status}`);
     }
-    this.#update({ status: "queued", updatedAt: now });
+    this.#update({
+      status: "queued",
+      updatedAt: now,
+    });
     this.#events.push({
       type: "ProductResearchQueued",
       runId: this.#snapshot.id,
@@ -183,7 +230,18 @@ export class ProductResearchRun {
 
   resume(now: Date): void {
     if (this.#snapshot.status === "queued" || this.#snapshot.status === "running") return;
-    if (this.#snapshot.status === "failed") {
+    const recoverableIncompleteV3 =
+      this.#snapshot.brief.researchVersion === 3
+      && (this.#snapshot.status === "interrupted" || this.#snapshot.status === "partial")
+      && this.#snapshot.completedStages.length < this.workflowStages().length;
+    if (recoverableIncompleteV3) {
+      this.#update({
+        status: "queued",
+        activeStage: null,
+        deadlineAt: new Date(now.getTime() + v3RunDurationMs(this.#snapshot.brief.depth)),
+        updatedAt: now,
+      });
+    } else if (this.#snapshot.status === "failed") {
       this.#update({ status: "queued", activeStage: null, updatedAt: now });
     } else if (this.#snapshot.status === "paused") {
       this.#update({ status: this.#snapshot.activeStage ? "running" : "queued", updatedAt: now });
@@ -210,7 +268,19 @@ export class ProductResearchRun {
       throw new ProductResearchInvariantError(`Cannot begin a stage in status ${this.#snapshot.status}`);
     }
 
-    this.#update({ status: "running", activeStage: stage, updatedAt: now });
+    const startsV3Execution =
+      this.#snapshot.brief.researchVersion === 3 && !this.#snapshot.executionStartedAt;
+    this.#update({
+      status: "running",
+      activeStage: stage,
+      updatedAt: now,
+      ...(startsV3Execution
+        ? {
+            executionStartedAt: now,
+            deadlineAt: new Date(now.getTime() + v3RunDurationMs(this.#snapshot.brief.depth)),
+          }
+        : {}),
+    });
     this.#events.push({
       type: "ResearchStageStarted",
       runId: this.#snapshot.id,
@@ -219,7 +289,11 @@ export class ProductResearchRun {
     });
   }
 
-  completeStage(stage: ResearchStage, now: Date): void {
+  completeStage(
+    stage: ResearchStage,
+    now: Date,
+    terminalOutcome: "completed" | "partial" = "completed",
+  ): void {
     if (this.#snapshot.completedStages.includes(stage)) return;
     if (this.#snapshot.activeStage !== stage) {
       throw new ProductResearchInvariantError(`Stage ${stage} is not active`);
@@ -227,10 +301,21 @@ export class ProductResearchRun {
 
     const completedStages = [...this.#snapshot.completedStages, stage];
     const ready = completedStages.length === this.workflowStages().length;
+    if (
+      terminalOutcome === "partial" &&
+      (this.#snapshot.brief.researchVersion !== 3 || stage !== "objective_ranking")
+    ) {
+      throw new ProductResearchInvariantError(
+        "Only the final V3 stage can complete with a partial report",
+      );
+    }
+    const terminalStatus = this.#snapshot.brief.researchVersion === 3
+      ? terminalOutcome
+      : "ready_for_review";
     this.#update({
       completedStages,
       activeStage: null,
-      status: ready ? "ready_for_review" : "running",
+      status: ready ? terminalStatus : "running",
       updatedAt: now,
     });
     this.#events.push({
@@ -240,11 +325,20 @@ export class ProductResearchRun {
       stage,
     });
     if (ready) {
-      this.#events.push({
-        type: "ProductResearchReadyForReview",
-        runId: this.#snapshot.id,
-        workspaceId: this.#snapshot.workspaceId,
-      });
+      if (this.#snapshot.brief.researchVersion === 3) {
+        this.#events.push({
+          type: "ProductResearchCompleted",
+          runId: this.#snapshot.id,
+          workspaceId: this.#snapshot.workspaceId,
+          outcome: terminalOutcome,
+        });
+      } else {
+        this.#events.push({
+          type: "ProductResearchReadyForReview",
+          runId: this.#snapshot.id,
+          workspaceId: this.#snapshot.workspaceId,
+        });
+      }
     }
   }
 
@@ -259,6 +353,46 @@ export class ProductResearchRun {
       workspaceId: this.#snapshot.workspaceId,
       stage,
       reason,
+    });
+  }
+
+  interrupt(stage: ResearchStage, reason: string, now: Date): void {
+    if (this.#snapshot.brief.researchVersion !== 3) {
+      throw new ProductResearchInvariantError("Only V3 runs can be interrupted");
+    }
+    if (this.#snapshot.activeStage !== stage) {
+      throw new ProductResearchInvariantError(`Stage ${stage} is not active`);
+    }
+    this.#update({ status: "interrupted", activeStage: null, updatedAt: now });
+    this.#events.push({
+      type: "ResearchStageFailed",
+      runId: this.#snapshot.id,
+      workspaceId: this.#snapshot.workspaceId,
+      stage,
+      reason,
+    });
+  }
+
+  finishPartial(stage: ResearchStage, reason: string, now: Date): void {
+    if (this.#snapshot.brief.researchVersion !== 3) {
+      throw new ProductResearchInvariantError("Only V3 runs can finish with a partial report");
+    }
+    if (this.#snapshot.activeStage !== stage) {
+      throw new ProductResearchInvariantError(`Stage ${stage} is not active`);
+    }
+    this.#update({ status: "partial", activeStage: null, updatedAt: now });
+    this.#events.push({
+      type: "ResearchStageFailed",
+      runId: this.#snapshot.id,
+      workspaceId: this.#snapshot.workspaceId,
+      stage,
+      reason,
+    });
+    this.#events.push({
+      type: "ProductResearchCompleted",
+      runId: this.#snapshot.id,
+      workspaceId: this.#snapshot.workspaceId,
+      outcome: "partial",
     });
   }
 
@@ -319,6 +453,7 @@ export interface ResearchCheckpoint {
   readonly workspaceId: string;
   readonly runId: string;
   readonly stage: ResearchStage;
+  readonly workItemKey?: string;
   readonly attempt: number;
   readonly status: ResearchCheckpointStatus;
   readonly review: ResearchCheckpointReview;

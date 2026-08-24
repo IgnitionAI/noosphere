@@ -41,7 +41,8 @@ export async function createResearchMission(
     depth: formData.get("depth"),
     audienceGoal: formData.get("audienceGoal"),
     buyerConstraints: String(formData.get("buyerConstraints") ?? "").trim(),
-    researchVersion: 2,
+    researchObjective: formData.get("researchObjective") ?? "qualified_conversations",
+    researchVersion: 3,
   });
   if (!parsed.success) {
     return {

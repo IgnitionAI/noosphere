@@ -4,7 +4,7 @@ import { ArrowRight, LoaderCircle, LockKeyhole } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
-export function LoginForm() {
+export function LoginForm({ next = "/" }: { next?: string }) {
   const router = useRouter();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -27,14 +27,14 @@ export function LoginForm() {
       setError("Connexion impossible. Vérifiez vos identifiants puis réessayez.");
       return;
     }
-    router.replace("/");
+    router.replace(next);
     router.refresh();
   }
 
   return (
     <form className="mt-7 space-y-4" onSubmit={submit}>
       <label className="block">
-        <span className="mb-2 block text-xs font-semibold text-slate-700">
+        <span className="mb-2 block text-xs font-semibold text-ink">
           Email professionnel
         </span>
         <input
@@ -46,7 +46,7 @@ export function LoginForm() {
         />
       </label>
       <label className="block">
-        <span className="mb-2 block text-xs font-semibold text-slate-700">
+        <span className="mb-2 block text-xs font-semibold text-ink">
           Mot de passe
         </span>
         <div className="relative">

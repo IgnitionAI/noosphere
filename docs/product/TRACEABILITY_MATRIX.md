@@ -28,10 +28,13 @@ Elle ne remplace pas les DTO OpenAPI à écrire avant chaque vertical slice.
 | `inbox.html` | `/w/[workspaceSlug]/inbox` | F-040, F-041, F-042 | conversations, messages, drafts |
 | `pipeline.html` | `/w/[workspaceSlug]/pipeline` | F-043, F-044 | meeting, opportunity, change stage |
 | `knowledge.html` | `/w/[workspaceSlug]/knowledge` | F-050 | sources, documents, claims |
-| `ai-studio.html` | `/w/[workspaceSlug]/ai-studio` | AI-100 à AI-140 | runs, evaluations, prompts, feedback |
+| `ai-studio.html` | `/w/[workspaceSlug]/ai-studio` | AI-100 à AI-140 | livré : jeux, runs shadow, comparaison, prompts immuables, promotion et feedback |
 | `analytics.html` | `/w/[workspaceSlug]/analytics` | F-051 | campaign and pipeline projections |
 | `integrations.html` | `/w/[workspaceSlug]/integrations` | F-035, F-043 | accounts, health, calendar |
 | `settings.html` | `/w/[workspaceSlug]/settings` | F-002, F-053 | members, roles, policies, export |
+| `screen-activity-inbound.html` | `/w/[workspaceSlug]/activity?lens=inbound` | AUT-101 | état du radar, assets et publications LinkedIn |
+| `screen-configuration.html` | `/w/[workspaceSlug]/content/strategy` | AUT-101 | stratégie, cadence, pause et reprise de l'autopilote Content |
+| `screen-configuration.html` | `/w/[workspaceSlug]/content/strategy` | AUT-102 | réponses prouvées, appels attribués et recommandations bornées |
 | `components.html` | Storybook | F-004 | primitives and business components |
 
 ## Features et contrats API existants
@@ -40,7 +43,7 @@ Elle ne remplace pas les DTO OpenAPI à écrire avant chaque vertical slice.
 |---|---|---|
 | F-001 | Better Auth | session contract et erreurs |
 | F-002 | `GET/POST /workspaces`, invitations, members | invitation accept/revoke |
-| F-003 | health endpoints | audit, jobs et dead letters admin |
+| F-003 | health endpoints, `/api/v1/console/jobs`, `/dead-letters`, `/webhooks/rejected`, `/correlations/:id`, requeue | livré : console opérateur, expurgation et relance atomique |
 | F-009 | — | research runs, stages, competitors, evidence and findings |
 | F-010 | `GET/POST /offers`, publish | versions, claims et preuves |
 | F-011 | `GET/POST /icps`, publish | versions et validation critères |
@@ -62,12 +65,16 @@ Elle ne remplace pas les DTO OpenAPI à écrire avant chaque vertical slice.
 | F-040 | inbox conversations/messages | assign, read state et reconcile |
 | F-041 | Unipile webhook | suspension et explicit resume |
 | F-042 | reply draft approve/reject | create et edit draft |
-| F-043 | calendar webhook | meetings et booking actions |
-| F-044 | opportunities, change stage | history et close actions |
-| F-050 | — | sources, documents et claims |
+| F-043 | connexion + meeting types + `GET /calendar-bookings` + actions reschedule/cancel/no-show + webhook signé | livré : identité immuable, historique, fuseaux, UI prospect/pipeline |
+| F-044 | `GET /opportunities`, `POST /opportunities/:id/actions/change-stage` | projection pipeline et historique immuable |
+| F-050 | `GET/POST /knowledge-sources`, validation/retrait, `GET/POST /knowledge-claims` | FTS PostgreSQL, fraîcheur, claims et injection agents |
 | F-051 | campaign/pipeline analytics | export et metric definitions |
-| F-052 | endpoints métier existants | onboarding progress |
+| F-052 | `GET /workspaces/:id/onboarding`, actions `complete`/`skip` | progression 7 étapes, prérequis réels et reprise |
 | F-053 | workspace endpoints | audit read, export et anonymize |
+| AUT-101 | `GET/PUT /api/v1/content/autopilot`, routes Content idées/assets/publications | livré : boucle quotidienne durable et policy finale |
+| AUT-102 | `GET /api/v1/content/learning` | livré : versions immuables, séparation faits/inférences et consommation bornée par le radar |
+| OPS-102 | `GET /api/v1/content/publications` | livré : état de réconciliation durable inclus dans chaque publication inconnue, sans route de replay |
+| PTC-101 | `bun run canary:linkedin` | livré : préflight/publish/verify fail-closed ; verdict réel bloqué jusqu'à autorisation du compte et du hash exacts |
 
 ## Features et événements
 
@@ -81,13 +88,18 @@ Elle ne remplace pas les DTO OpenAPI à écrire avant chaque vertical slice.
 | F-025 | `ContactIdentityVerified` |
 | F-027 | `EmploymentChanged`, `SignalObserved` |
 | F-026 | `SuppressionRegistered` |
-| F-031 | `CampaignActivated` |
-| F-030/F-033 | `SequenceApproved` |
+| F-031 | `CampaignActivated`, `CampaignPaused`, `CampaignResumed`, `CampaignArchived` |
+| F-032 | `CampaignProspectEnrolled` |
+| F-033 | `ApprovalItemApproved`, `ApprovalItemRejected` |
 | F-034 | `OutreachActionDue`, `OutreachActionAccepted` |
+| F-035 | `ConnectedAccountStatusChanged` |
 | F-040/F-041 | `InboundMessageReceived` |
 | F-042 | `ReplyDraftApproved` |
 | F-043 | `MeetingBooked` |
 | F-044 | `OpportunityWon` |
+| AUT-102 | `EditorialLearningVersionDerived` |
+| OPS-102 | `ContentPublicationResultUnknown`, `ContentPublicationReconciled`, `ContentPublicationReconciliationDecided` |
+| PTC-101 | Réutilise les événements Content, engagement, attribution, conversation et booking ; le rapport refuse les preuves simulées |
 
 ## Couverture du prototype
 

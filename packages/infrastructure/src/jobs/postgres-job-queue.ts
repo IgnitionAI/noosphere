@@ -1,4 +1,5 @@
 import type {
+  DeferJobRequest,
   JobQueue,
   LeaseJobsRequest,
   LeasedJob,
@@ -16,6 +17,7 @@ interface JobRow {
   correlation_id: string;
   attempts: number;
   max_attempts: number;
+  priority: number;
   available_at: Date;
   locked_by: string;
   locked_until: Date;
@@ -25,14 +27,14 @@ export class PostgresJobQueue implements JobQueue {
   constructor(private readonly sql: SqlClient) {}
 
   async enqueue(job: NewJob): Promise<{ inserted: boolean }> {
-    const payload = JSON.stringify(job.payload);
+    const payload = this.sql.json(job.payload as never);
     const rows = await this.sql`
       insert into jobs (
         id, workspace_id, type, payload, idempotency_key, correlation_id,
-        max_attempts, available_at
+        max_attempts, priority, available_at
       ) values (
-        ${job.id}, ${job.workspaceId}, ${job.type}, ${payload}::jsonb,
-        ${job.idempotencyKey}, ${job.correlationId}, ${job.maxAttempts}, ${job.availableAt}
+        ${job.id}, ${job.workspaceId}, ${job.type}, ${payload},
+        ${job.idempotencyKey}, ${job.correlationId}, ${job.maxAttempts}, ${job.priority ?? 0}, ${job.availableAt}
       )
       on conflict (workspace_id, type, idempotency_key) do nothing
       returning id
@@ -48,9 +50,31 @@ export class PostgresJobQueue implements JobQueue {
     const typeArrayLiteral = `{${request.types.join(",")}}`;
     const lockedUntil = new Date(request.now.getTime() + request.leaseMs);
     const rows = await this.sql.begin(async (transaction) => {
+      await transaction`
+        update jobs
+        set status = 'dead_lettered',
+            completed_at = ${request.now},
+            locked_at = null,
+            locked_until = null,
+            locked_by = null,
+            last_error_code = coalesce(last_error_code, 'JOB_LEASE_EXHAUSTED'),
+            last_error_message = coalesce(last_error_message, 'Worker lease expired after the maximum number of attempts'),
+            updated_at = ${request.now}
+        where type = any(${typeArrayLiteral}::text[])
+          and status = 'running'
+          and attempts >= max_attempts
+          and (locked_until is null or locked_until <= ${request.now})
+      `;
       return transaction<JobRow[]>`
-        with candidates as (
-          select id
+        with ranked as (
+          select id,
+                 workspace_id,
+                 available_at,
+                 created_at,
+                 row_number() over (
+                   partition by workspace_id
+                   order by priority desc, available_at asc, created_at asc, id asc
+                 ) as workspace_rank
           from jobs
           where type = any(${typeArrayLiteral}::text[])
             and attempts < max_attempts
@@ -58,8 +82,16 @@ export class PostgresJobQueue implements JobQueue {
               (status in ('pending', 'retry') and available_at <= ${request.now})
               or (status = 'running' and locked_until <= ${request.now})
             )
-          order by available_at asc, created_at asc, id asc
-          for update skip locked
+        ), candidates as (
+          select jobs.id
+          from jobs
+          join ranked on ranked.id = jobs.id
+          order by ranked.workspace_rank asc,
+                   jobs.priority desc,
+                   ranked.available_at asc,
+                   ranked.created_at asc,
+                   jobs.id asc
+          for update of jobs skip locked
           limit ${request.limit}
         )
         update jobs
@@ -127,6 +159,26 @@ export class PostgresJobQueue implements JobQueue {
     if (!row) throw new Error("JOB_LEASE_LOST");
     return row.status === "retry" ? "scheduled" : "dead_lettered";
   }
+
+  async defer(request: DeferJobRequest): Promise<void> {
+    const rows = await this.sql`
+      update jobs
+      set status = 'pending',
+          attempts = greatest(attempts - 1, 0),
+          available_at = ${request.availableAt},
+          locked_at = null,
+          locked_until = null,
+          locked_by = null,
+          last_error_code = ${request.errorCode},
+          last_error_message = ${request.errorMessage.slice(0, 4_000)},
+          updated_at = now()
+      where id = ${request.jobId}
+        and status = 'running'
+        and locked_by = ${request.workerId}
+      returning id
+    `;
+    if (rows.length !== 1) throw new Error("JOB_LEASE_LOST");
+  }
 }
 
 function toLeasedJob(row: JobRow): LeasedJob {
@@ -140,6 +192,7 @@ function toLeasedJob(row: JobRow): LeasedJob {
     attempts: row.attempts,
     maxAttempts: row.max_attempts,
     availableAt: row.available_at,
+    priority: row.priority,
     lockedBy: row.locked_by,
     lockedUntil: row.locked_until,
   };

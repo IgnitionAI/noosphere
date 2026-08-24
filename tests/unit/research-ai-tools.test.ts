@@ -1,8 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { RetryableAgentError } from "@outbound/application/gtm/product-research-ports";
+import {
+  RetryableAgentError,
+  TerminalAgentError,
+  type ResearchToolRequestRegistry,
+} from "@outbound/application/gtm/product-research-ports";
+import { DefaultExternalQueryGuard } from "@outbound/infrastructure/ai/external-query-guard";
 import { ResearchBudget, ResearchBudgetExceededError } from "@outbound/infrastructure/ai/research-budget";
 import {
   createResearchTools,
+  normalizeToolInput,
   UnavailableInternalDocumentSearch,
   type ResearchCrawler,
 } from "@outbound/infrastructure/ai/research-tools";
@@ -81,6 +87,127 @@ describe("research AI tools crawler resilience", () => {
 });
 
 describe("research AI tools", () => {
+  test("blocks secrets and internal passages before any external request", async () => {
+    const sensitivePassage = "Confidential roadmap delta seven is reserved for internal review";
+    const guard = new DefaultExternalQueryGuard();
+    expect(await guard.authorize({
+      channel: "web",
+      payload: { query: sensitivePassage },
+      sensitiveTerms: [sensitivePassage],
+    })).toEqual({ allowed: false, reason: "INTERNAL_DOCUMENT_TERM_DETECTED" });
+    expect(await guard.authorize({
+      channel: "web",
+      payload: { query: "api_key=abcdefghijk123456" },
+      sensitiveTerms: [],
+    })).toEqual({ allowed: false, reason: "SECRET_PATTERN_DETECTED" });
+    expect(await guard.authorize({
+      channel: "web",
+      payload: { query: "France document management market" },
+      sensitiveTerms: [sensitivePassage],
+    })).toEqual({ allowed: true });
+  });
+
+  test("redacts a DLP-blocked query from traces and never calls the crawler", async () => {
+    const sensitivePassage = "Confidential roadmap delta seven is reserved for internal review";
+    let crawlerCalls = 0;
+    const recorded: Array<Record<string, unknown>> = [];
+    const tools = createResearchTools({
+      crawler: {
+        async search() {
+          crawlerCalls += 1;
+          return [];
+        },
+        async readPages() {
+          crawlerCalls += 1;
+          return [];
+        },
+        async discover() {
+          crawlerCalls += 1;
+          return [];
+        },
+      },
+      documents: new UnavailableInternalDocumentSearch(),
+      budget: new ResearchBudget({ searches: 1, pages: 1, tokens: 100, durationMs: 60_000 }),
+      workspaceId: crypto.randomUUID(),
+      documentIds: [],
+      runId: crypto.randomUUID(),
+      correlationId: "test",
+      signal: new AbortController().signal,
+      externalQueryGuard: new DefaultExternalQueryGuard(),
+      sensitiveTerms: [sensitivePassage],
+      recorder: {
+        async record(input) {
+          recorded.push(input);
+        },
+      },
+    });
+
+    await expect(tools.find((item) => item.name === "searchWeb")!.invoke({
+      query: sensitivePassage,
+      limit: 1,
+    })).rejects.toBeInstanceOf(TerminalAgentError);
+
+    expect(crawlerCalls).toBe(0);
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]).toMatchObject({
+      status: "failed",
+      errorCode: "EXTERNAL_QUERY_BLOCKED",
+      toolInput: { blocked: true },
+    });
+    expect(JSON.stringify(recorded)).not.toContain(sensitivePassage);
+  });
+
+  test("normalizes equivalent tool inputs before durable cache lookup", () => {
+    expect(normalizeToolInput({ limit: 5, query: "  buyer   workflow " })).toEqual({
+      limit: 5,
+      query: "buyer workflow",
+    });
+  });
+
+  test("reuses a successful tool output without calling the crawler again", async () => {
+    let crawlerCalls = 0;
+    const entries = new Map<string, { output: string; contentHash: string }>();
+    const leases = new Map<string, string>();
+    const registry: ResearchToolRequestRegistry = {
+      async claim(input) {
+        const cached = entries.get(input.normalizedInputHash);
+        if (cached) return { kind: "cache_hit" as const, ...cached };
+        const leaseToken = crypto.randomUUID();
+        leases.set(leaseToken, input.normalizedInputHash);
+        return { kind: "execute" as const, leaseToken };
+      },
+      async complete(input) {
+        const key = leases.get(input.leaseToken)!;
+        entries.set(key, { output: input.output, contentHash: input.contentHash });
+      },
+      async fail() {},
+    };
+    const tools = createResearchTools({
+      crawler: {
+        async search() {
+          crawlerCalls += 1;
+          return [];
+        },
+        async readPages() { return []; },
+        async discover() { return []; },
+      },
+      documents: new UnavailableInternalDocumentSearch(),
+      budget: new ResearchBudget({ searches: 5, pages: 5, tokens: 100, durationMs: 60_000 }),
+      workspaceId: crypto.randomUUID(),
+      documentIds: [],
+      runId: crypto.randomUUID(),
+      correlationId: "test",
+      signal: new AbortController().signal,
+      registry,
+    });
+    const search = tools.find((item) => item.name === "searchWeb")!;
+
+    await search.invoke({ query: "buyer workflow", limit: 1 });
+    await search.invoke({ query: "  buyer   workflow ", limit: 1 });
+
+    expect(crawlerCalls).toBe(1);
+  });
+
   test("bounds page markdown before adding it to the model context", async () => {
     const tools = createResearchTools({
       crawler: {
@@ -126,6 +253,43 @@ describe("research AI tools", () => {
     expect(output.markdown).toHaveLength(20_000);
     expect(output.markdownTruncated).toBe(true);
     expect(output.markdownOriginalCharacters).toBe(25_000);
+  });
+
+  test("hashes selective-page idempotency keys so valid URL batches fit the crawler contract", async () => {
+    const requestKeys: string[] = [];
+    const runId = crypto.randomUUID();
+    const stageRunId = crypto.randomUUID();
+    const tools = createResearchTools({
+      crawler: {
+        async search() { return []; },
+        async readPages(input) {
+          requestKeys.push(input.requestKey ?? "");
+          return [];
+        },
+        async discover() { return []; },
+      },
+      documents: new UnavailableInternalDocumentSearch(),
+      budget: new ResearchBudget({ searches: 1, pages: 8, tokens: 100, durationMs: 60_000 }),
+      workspaceId: crypto.randomUUID(),
+      documentIds: [],
+      runId,
+      researchStageRunId: stageRunId,
+      correlationId: "test",
+      signal: new AbortController().signal,
+    });
+    const read = tools.find((item) => item.name === "readWebsitePages")!;
+    const urls = Array.from({ length: 4 }, (_, index) =>
+      `https://example.com/${index}/${"long-path-segment-".repeat(20)}`,
+    );
+
+    await read.invoke({ urls });
+    await read.invoke({ urls });
+
+    expect(requestKeys).toHaveLength(2);
+    expect(requestKeys[0]).toBe(requestKeys[1]);
+    expect(requestKeys[0]?.startsWith(`${runId}:${stageRunId}:pages:`)).toBe(true);
+    expect(requestKeys[0]!.length).toBeLessThanOrEqual(500);
+    expect(requestKeys[0]).not.toContain("long-path-segment");
   });
 
   test("enforces the web search budget before calling the crawler", async () => {

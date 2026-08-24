@@ -55,6 +55,7 @@ export function validateSequenceSteps(
 ): readonly SequenceValidationError[] {
   const errors: SequenceValidationError[] = [];
   const seenPositions = new Set<number>();
+  const fallbackEdges = new Map<SequenceStepKind, { readonly target: SequenceStepKind; readonly position: number }>();
   for (const step of steps) {
     if (seenPositions.has(step.position)) {
       errors.push({
@@ -128,6 +129,8 @@ export function validateSequenceSteps(
           position: step.position,
           message: "A fallback cannot reuse the step channel (double send risk)",
         });
+      } else {
+        fallbackEdges.set(step.kind, { target: step.fallbackKind, position: step.position });
       }
     }
     if (step.windowStart || step.windowEnd) {
@@ -146,5 +149,70 @@ export function validateSequenceSteps(
       }
     }
   }
+
+  // A fallback is a channel-to-channel edge. Reject cycles up front so a
+  // delivery worker can never bounce between fallbacks for one logical step.
+  const reportedFallbackLoops = new Set<string>();
+  for (const [start] of fallbackEdges) {
+    const path: SequenceStepKind[] = [];
+    const visited = new Set<SequenceStepKind>();
+    let current: SequenceStepKind | undefined = start;
+    while (current) {
+      if (visited.has(current)) {
+        const cycleStart = path.indexOf(current);
+        const cycleKey = path.slice(cycleStart).sort().join(",");
+        if (reportedFallbackLoops.has(cycleKey)) break;
+        reportedFallbackLoops.add(cycleKey);
+        const edge = fallbackEdges.get(current) ?? fallbackEdges.get(start);
+        errors.push({
+          code: "FALLBACK_LOOP",
+          position: edge?.position ?? 0,
+          message: "Fallback channels cannot form a loop",
+        });
+        break;
+      }
+      path.push(current);
+      visited.add(current);
+      current = fallbackEdges.get(current)?.target;
+    }
+  }
   return errors;
+}
+
+export function fitSequenceStepContent(step: SequenceStepInput): SequenceStepInput {
+  if (step.kind === "manual_task") return step;
+  const body = fitText(step.body, CHANNEL_LIMITS[step.kind]);
+  const subject = step.kind === "email" && step.subject
+    ? fitText(step.subject, EMAIL_SUBJECT_LIMIT)
+    : step.subject;
+  return { ...step, body, subject };
+}
+
+function fitText(value: string, limit: number): string {
+  const text = value.trim();
+  if (text.length <= limit) return text;
+  const questionEnd = text.lastIndexOf("?");
+  if (questionEnd >= 0) {
+    const questionStart = Math.max(
+      text.lastIndexOf(".", questionEnd - 1),
+      text.lastIndexOf("!", questionEnd - 1),
+      text.lastIndexOf("\n", questionEnd - 1),
+    ) + 1;
+    const question = text.slice(questionStart, questionEnd + 1).trim();
+    if (question.length < limit - 20) {
+      const intro = truncateAtWord(text.slice(0, questionStart).trim(), limit - question.length - 1);
+      return intro ? `${intro} ${question}` : question;
+    }
+    return `${truncateAtWord(question, limit - 1).replace(/\?+$/, "")}?`;
+  }
+  return truncateAtWord(text, limit);
+}
+
+function truncateAtWord(value: string, limit: number): string {
+  if (value.length <= limit) return value;
+  const slice = value.slice(0, limit).trimEnd();
+  const boundary = slice.lastIndexOf(" ");
+  return (boundary > Math.floor(limit * 0.6) ? slice.slice(0, boundary) : slice)
+    .replace(/[,:;\-]+$/, "")
+    .trimEnd();
 }

@@ -14,6 +14,7 @@ import { notFound } from "next/navigation";
 import { getResearchRun, OutboundApiError } from "@/lib/api";
 import { pauseResearch, resumeResearch, startResearch } from "./actions";
 import { ProgressRefresh } from "./progress-refresh";
+import { canResumeIncompleteResearch, isResearchReportReady } from "./research-progress-state";
 
 const stageLabels: Record<string, string> = {
   product_analysis: "Comprendre le produit",
@@ -23,6 +24,15 @@ const stageLabels: Record<string, string> = {
   segment_synthesis: "Identifier les segments",
   icp_synthesis: "Synthétiser les ICP",
   evidence_review: "Auditer les preuves",
+  product_truth: "Établir la vérité produit",
+  problem_mapping: "Cartographier les problèmes",
+  organization_discovery: "Découvrir les organisations acheteuses",
+  market_investigation: "Vérifier le marché",
+  buying_context: "Comprendre le contexte d’achat",
+  sourcing_validation: "Valider la prospectabilité",
+  icp_composition: "Composer les ICP",
+  adversarial_review: "Contester les conclusions",
+  objective_ranking: "Classer les ICP",
 };
 
 const statusLabels: Record<string, string> = {
@@ -58,6 +68,8 @@ export default async function ResearchProgressPage({
       100,
   );
   const isActive = run.status === "queued" || run.status === "running";
+  const reportReady = isResearchReportReady(run);
+  const resumableIncomplete = canResumeIncompleteResearch(run);
   const failedStage =
     run.stages.find((stage) => stage.stage === run.activeStage) ??
     [...run.stages].reverse().find((stage) => stage.lastErrorCode);
@@ -80,7 +92,15 @@ export default async function ResearchProgressPage({
             <span className="font-mono text-[10px] text-muted">{run.id.slice(0, 13)}</span>
           </div>
           <h1 className="page-title">
-            {run.status === "failed" ? "Étude ICP interrompue" : "Étude ICP en cours"}
+            {run.status === "failed"
+              ? "Étude ICP interrompue"
+              : run.status === "partial" && reportReady
+                ? "Rapport ICP partiel disponible"
+                : resumableIncomplete
+                  ? "Étude ICP à reprendre"
+                : ["completed", "ready_for_review"].includes(run.status)
+                  ? "Étude ICP terminée"
+                  : "Étude ICP en cours"}
           </h1>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-muted">
             Les résultats validés restent disponibles si une source ou une étape échoue.
@@ -101,11 +121,11 @@ export default async function ResearchProgressPage({
                 Reprendre
               </button>
             </form>
-          ) : run.status === "failed" ? (
+          ) : resumableIncomplete ? (
             <form action={resume}>
               <button className="button button-primary" type="submit">
                 <Play size={16} />
-                Réessayer l’étape
+                Reprendre automatiquement
               </button>
             </form>
           ) : isActive ? (
@@ -193,7 +213,7 @@ export default async function ResearchProgressPage({
         </aside>
 
         <div className="space-y-4">
-          {run.status === "failed" ? (
+          {resumableIncomplete ? (
             <section
               className={`rounded-xl border p-5 ${
                 quotaExhausted
@@ -205,7 +225,7 @@ export default async function ResearchProgressPage({
                 <AlertTriangle className="mt-0.5 flex-none" size={19} />
                 <div>
                   <h2 className="font-semibold">
-                    {quotaExhausted ? "Quota Kimi épuisé" : "La recherche est interrompue"}
+                    {quotaExhausted ? "Quota Kimi épuisé" : "La recherche doit reprendre"}
                   </h2>
                   <p className="mt-1 text-xs leading-5">
                     {quotaExhausted
@@ -264,10 +284,11 @@ export default async function ResearchProgressPage({
             <div>
               <strong>Le livrable ICP apparaîtra ici</strong>
               <p className="mt-1 text-xs text-signal-ink/80">
-                Publication et prospection resteront soumises à une validation humaine.
+                Le rapport est vérifié automatiquement. Si le résultat ne vous convient pas,
+                vous pourrez relancer une nouvelle étude.
               </p>
             </div>
-            {run.status === "ready_for_review" ? (
+            {reportReady ? (
               <Link className="button button-signal" href={`/w/${workspaceSlug}/research/${runId}/report`}>
                 Ouvrir le rapport
               </Link>

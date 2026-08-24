@@ -19,7 +19,6 @@ setMissing("S3_ACCESS_KEY_ID", "ignition-dev");
 setMissing("S3_SECRET_ACCESS_KEY", randomSecret());
 setMissing("SEARXNG_SECRET", randomSecret());
 setMissing("CRAWLER_API_KEY", randomSecret());
-setMissing("DOCLING_API_KEY", randomSecret());
 setMissing("BETTER_AUTH_SECRET", randomSecret());
 setMissing("BOOTSTRAP_OWNER_PASSWORD", randomSecret());
 
@@ -28,7 +27,6 @@ await setDevelopmentPort("DEV_MINIO_PORT", [9000, 59000, 59002]);
 await setDevelopmentPort("DEV_MINIO_CONSOLE_PORT", [9001, 59001, 59003]);
 await setDevelopmentPort("DEV_SEARXNG_PORT", [8080, 58080, 58081]);
 await setDevelopmentPort("DEV_CRAWLER_PORT", [8000, 58000, 58001]);
-await setDevelopmentPort("DEV_DOCLING_PORT", [5001, 55001, 55002]);
 
 values.set(
   "DATABASE_URL",
@@ -38,10 +36,6 @@ values.set("S3_ENDPOINT", `http://127.0.0.1:${values.get("DEV_MINIO_PORT")}`);
 values.set(
   "CRAWLER_SERVICE_URL",
   `http://127.0.0.1:${values.get("DEV_CRAWLER_PORT")}`,
-);
-values.set(
-  "DOCLING_SERVICE_URL",
-  `http://127.0.0.1:${values.get("DEV_DOCLING_PORT")}`,
 );
 
 await Bun.write(

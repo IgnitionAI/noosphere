@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-23T19:06:10.987Z",
+  "workspaceSlug": "ignition-ai",
+  "runId": "f9365b73-5709-4bfa-a3b3-489e01d596f2",
+  "realWorkspaceData": true,
+  "shadowOnly": true,
+  "semanticProbe": "deterministic-lexical-v1",
+  "semanticQualityMeasured": false,
+  "semanticModelCalls": 0,
+  "providerEffects": 0,
+  "backfillPages": 740,
+  "selectedContactCount": 140,
+  "projectedSnapshots": 140,
+  "classifiedCriticalSources": 921,
+  "requestedContextCount": 1000,
+  "contextCount": 1000,
+  "cleanedRefreshJobs": 0,
+  "durableCounts": {
+    "event_count": 73442,
+    "snapshot_count": 140,
+    "receipt_count": 1000,
+    "comparison_count": 1000
+  },
+  "privacy": "Output contains aggregate counters only; no contact IDs, messages or source excerpts."
+}

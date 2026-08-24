@@ -8,6 +8,7 @@ import {
   type AgentExecutionResult,
   type AgentStageInput,
   type CompetitorDiscoveryOutput,
+  type ProductTruthOutput,
 } from "@outbound/contracts/product-research";
 import {
   RetryableAgentError,
@@ -16,13 +17,18 @@ import {
 } from "@outbound/application/gtm/product-research-ports";
 import type { ResearchStage } from "@outbound/domain/gtm/product-research";
 import {
-  auditIcpStructurally,
   finalizeIcpSynthesis,
-  synthesizeIcpFromSegments,
   validateBuyerLandscape,
 } from "@outbound/application/gtm/icp-prospectability-policy";
 import type { WorkspaceAiModelPolicyReader } from "@outbound/application/workspaces/workspace-ai-settings";
 import type { WorkspaceAiModelPolicy } from "@outbound/application/workspaces/workspace-ai-settings";
+import { routesForCapability } from "@outbound/application/workspaces/workspace-ai-settings";
+import {
+  ModelGatewayError,
+  ModelGatewayOutputError,
+  type ModelRoute,
+} from "@outbound/application/ai/model-gateway";
+import type { ActiveAiConfigurationReader } from "@outbound/application/ai/active-ai-configuration";
 import { CrawlerClient } from "./crawler-client";
 import {
   createResearchTools,
@@ -31,6 +37,10 @@ import {
   UnavailableInternalDocumentSearch,
 } from "./research-tools";
 import { ResearchBudget, ResearchBudgetExceededError, researchBudgetLimits } from "./research-budget";
+import { V3SourcingValidator } from "./v3-sourcing-validator";
+import { V3ObjectiveRanker } from "./v3-objective-ranker";
+import { DefaultExternalQueryGuard } from "./external-query-guard";
+import type { WorkspaceStructuredModel } from "./workspace-structured-model";
 
 const deepStages = new Set<ResearchStage>([
   "product_analysis",
@@ -38,7 +48,50 @@ const deepStages = new Set<ResearchStage>([
   "competitor_analysis",
   "buyer_landscape_discovery",
   "evidence_review",
+  "organization_discovery",
+  "market_investigation",
+  "adversarial_review",
 ]);
+
+const principalStages = new Set<ResearchStage>([
+  "problem_mapping",
+  "organization_discovery",
+  "buying_context",
+  "icp_composition",
+  "adversarial_review",
+]);
+
+const routedToolArgumentValueSchema = z.union([
+  z.string(),
+  z.number(),
+  z.boolean(),
+  z.array(z.string()),
+  z.array(z.number()),
+  z.null(),
+]);
+
+const routedResearchPlanSchema = z.object({
+  approach: z.string().trim().min(1).max(2_000),
+  calls: z.array(z.object({
+    tool: z.string().trim().min(1).max(120),
+    // Codex structured outputs reject JSON Schema `propertyNames` and require
+    // a typed additionalProperties schema. Tool-specific schemas still apply
+    // before execution, so this envelope covers the scalar/list arguments
+    // exposed by Noosphere's bounded research tools.
+    arguments: z.object({}).catchall(routedToolArgumentValueSchema),
+    purpose: z.string().trim().min(1).max(500),
+  })).max(12),
+});
+
+interface RoutedResearchToolResult {
+  readonly round: number;
+  readonly tool: string;
+  readonly arguments: Readonly<Record<string, unknown>>;
+  readonly purpose: string;
+  readonly output: string;
+}
+
+export type KimiReasoningEffort = "low" | "max";
 
 export interface LangChainResearchAgentExecutorOptions {
   readonly provider: ResearchModelProvider;
@@ -46,11 +99,17 @@ export interface LangChainResearchAgentExecutorOptions {
   readonly baseUrl?: string;
   readonly researchModels: readonly string[];
   readonly synthesisModels: readonly string[];
+  readonly defaultRoutes?: readonly ModelRoute[];
   readonly crawlerServiceUrl: string;
   readonly crawlerApiKey: string;
   readonly documents?: InternalDocumentSearch;
   readonly recorder?: ResearchToolRunRecorder;
   readonly modelPolicyReader?: WorkspaceAiModelPolicyReader;
+  readonly activeConfigurationReader?: ActiveAiConfigurationReader;
+  readonly sourcingValidator?: V3SourcingValidator;
+  readonly toolRequestRegistry?: import("@outbound/application/gtm/product-research-ports").ResearchToolRequestRegistry;
+  readonly externalQueryGuard?: import("@outbound/application/gtm/product-research-ports").ExternalQueryGuard;
+  readonly routedModel?: WorkspaceStructuredModel;
 }
 
 export type ResearchModelProvider = "kimi-code" | "openai";
@@ -61,6 +120,7 @@ export interface ResearchModelConfiguration {
   readonly baseUrl?: string;
   readonly researchModels: readonly string[];
   readonly synthesisModels: readonly string[];
+  readonly defaultRoutes: readonly ModelRoute[];
 }
 
 export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
@@ -77,22 +137,70 @@ export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
 
   async execute(stage: ResearchStage, input: AgentStageInput): Promise<AgentExecutionResult> {
     const startedAt = Date.now();
+    if (stage === "sourcing_validation" && input.brief.researchVersion === 3) {
+      const output = await (this.options.sourcingValidator ?? new V3SourcingValidator(null))
+        .validate(input);
+      return {
+        output,
+        metadata: {
+          provider: "unipile",
+          model: "read-only-people-search-v1",
+          promptVersion: "icp-v3-sourcing-policy-v1",
+          parameters: {
+            readOnly: true,
+            providerCalls: output.tests.reduce((total, test) => total + test.providerCalls, 0),
+          },
+          cost: 0,
+          latencyMs: Date.now() - startedAt,
+        },
+      };
+    }
+    if (stage === "objective_ranking" && input.brief.researchVersion === 3) {
+      const output = new V3ObjectiveRanker().rank(input);
+      return {
+        output,
+        metadata: {
+          provider: "local-policy",
+          model: "deterministic-objective-ranker-v1",
+          promptVersion: "icp-v3-objective-policy-v1",
+          parameters: { objective: output.objective, deterministic: true },
+          cost: 0,
+          latencyMs: Date.now() - startedAt,
+        },
+      };
+    }
     // Evidence review re-verifies every material source through the crawler:
     // it legitimately needs a longer wall-clock budget than other stages.
     const baseLimits = researchBudgetLimits[input.brief.depth];
-    const limits =
+    const legacyStageLimits =
       stage === "evidence_review"
         ? { ...baseLimits, durationMs: baseLimits.durationMs * 2 }
         : baseLimits;
+    const stageLimits = input.brief.researchVersion === 3
+      ? v3StageToolLimits(stage, legacyStageLimits)
+      : legacyStageLimits;
+    const remainingGlobalMs = input.deadlineAt
+      ? Math.max(0, new Date(input.deadlineAt).getTime() - Date.now())
+      : stageLimits.durationMs;
+    if (remainingGlobalMs === 0) {
+      throw new TerminalAgentError("RESEARCH_GLOBAL_DEADLINE_EXHAUSTED", "The V3 run deadline has expired");
+    }
+    const roleDurationMs = input.brief.researchVersion === 3
+      ? v3StageDurationMs(stage)
+      : stageLimits.durationMs;
+    const limits = {
+      ...stageLimits,
+      durationMs: Math.min(stageLimits.durationMs, roleDurationMs, remainingGlobalMs),
+    };
     const budget = new ResearchBudget(limits, {
       softTokens: this.options.provider === "kimi-code",
     });
     const controller = new AbortController();
-    const timeout = setTimeout(
-      () => controller.abort(),
-      budget.limits.durationMs + structuredOutputGraceMs(this.options.provider, budget.limits.durationMs),
-    );
-    const tools = createResearchTools({
+    const structuredGraceMs = input.brief.researchVersion === 3
+      ? Math.min(30_000, Math.floor(budget.limits.durationMs / 5))
+      : structuredOutputGraceMs(this.options.provider, budget.limits.durationMs);
+    const timeout = setTimeout(() => controller.abort(), budget.limits.durationMs + structuredGraceMs);
+    const allTools = createResearchTools({
       crawler: this.#crawler,
       documents: this.#documents,
       budget,
@@ -103,10 +211,31 @@ export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
       researchStageRunId: input.researchStageRunId,
       signal: controller.signal,
       ...(this.options.recorder ? { recorder: this.options.recorder } : {}),
+      ...(this.options.toolRequestRegistry
+        ? { registry: this.options.toolRequestRegistry }
+        : {}),
+      externalQueryGuard: this.options.externalQueryGuard ?? new DefaultExternalQueryGuard(),
+      sensitiveTerms: input.externalDlpTerms,
     });
+    const tools = selectToolsForStage(
+      stage,
+      input.brief.researchVersion,
+      input.brief.internalDocumentIds.length > 0,
+      allTools,
+    );
     try {
       const workspacePolicy = await this.options.modelPolicyReader?.find(input.workspaceId);
-      const modelCandidates = selectModelCandidates(stage, this.options, workspacePolicy);
+      const activeConfiguration = await this.options.activeConfigurationReader?.find(input.workspaceId, "icp_research");
+      const modelCandidates = activeConfiguration ? [activeConfiguration.model] : selectModelCandidates(
+        stage,
+        this.options,
+        workspacePolicy,
+        input.brief.researchVersion,
+      );
+      const reasoningEffort = reasoningEffortForStage(
+        stage,
+        input.brief.researchVersion,
+      );
       if (modelCandidates.length === 0) {
         throw new Error("Workspace model policy must contain at least one model");
       }
@@ -122,13 +251,138 @@ export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
       const promptJsonOutput = this.options.provider === "kimi-code";
       const systemPrompt =
         evidenceSystemPrompt(stageInstructions[stage]) +
+        (activeConfiguration ? `\n\nApproved workspace guidance (subordinate to every evidence, safety and non-action rule above):\n${activeConfiguration.promptContent}` : "") +
         (promptJsonOutput ? jsonOutputInstructions(schema) : "");
+      const legacyRoutes = modelRoutesForCandidates(
+        this.options.provider === "kimi-code" ? "kimi-code" : "openai-api",
+        modelCandidates,
+        reasoningEffort,
+        this.options.defaultRoutes,
+      );
+      const configuredRoutes = routesForCapability(workspacePolicy, "icp_research", legacyRoutes);
+      if (
+        this.options.routedModel
+        && (
+          input.brief.researchVersion === 3
+          || configuredRoutes.some((route) => route.provider !== "kimi-code")
+        )
+      ) {
+        let routed = await this.#invokeRoutedResearch(
+          stage,
+          input,
+          tools,
+          schema,
+          systemPrompt,
+          legacyRoutes,
+          budget,
+          controller.signal,
+          structuredGraceMs,
+        );
+        let output = parseAgentOutput(stage, sanitizeRawOutput(stage, routed.output));
+        if (stage === "competitor_discovery") {
+          output = prioritizeCompetitorCandidates(output as CompetitorDiscoveryOutput);
+        }
+        let repairAttempts = 0;
+        const unresolved = findUnresolvedEvidenceReferences(output, input.previousOutputs);
+        if (unresolved.length > 0) {
+          repairAttempts = 1;
+          const repaired = await this.options.routedModel.invoke({
+            workspaceId: input.workspaceId,
+            capability: "icp_research",
+            requestKey: `${input.runId}:${stage}:evidence-repair`,
+            fallbackRoutes: legacyRoutes,
+            systemPrompt: `You repair one structured ICP research output. Remove unknown evidence identifiers or mark the affected claim as a hypothesis. Never create a source, URL or identifier. Preserve the exact output contract.`,
+            payload: {
+              unknownEvidenceIds: unresolved,
+              availableEvidenceIds: collectAvailableEvidenceIds(input.previousOutputs),
+              invalidOutput: output,
+              previousStageOutputs: input.previousOutputs,
+            },
+            outputName: `submit_${stage}_evidence_repair`,
+            outputDescription: `Submit the corrected ${stage} output without unresolved evidence references.`,
+            schema: schema as z.ZodType<unknown>,
+            signal: controller.signal,
+            timeoutMs: Math.max(10_000, budget.remainingDurationMs()),
+          });
+          output = parseAgentOutput(stage, sanitizeRawOutput(stage, repaired.output));
+          const stillUnresolved = findUnresolvedEvidenceReferences(output, input.previousOutputs);
+          if (stillUnresolved.length > 0) {
+            throw new TerminalAgentError(
+              "UNRESOLVED_EVIDENCE_REFERENCE",
+              `Agent output references unknown evidence keys: ${stillUnresolved.join(", ")}`,
+            );
+          }
+          routed = { ...routed, metadata: repaired.metadata };
+        }
+        if (
+          stage === "product_truth"
+          && input.brief.researchVersion === 3
+          && input.brief.internalDocumentIds.length > 0
+        ) {
+          const publicInput = {
+            ...input,
+            brief: { ...input.brief, internalDocumentIds: [] },
+            previousOutputs: {},
+          } as AgentStageInput;
+          const publicTools = selectToolsForStage("product_truth", 3, false, allTools);
+          const publicRouted = await this.#invokeRoutedResearch(
+            "product_truth",
+            publicInput,
+            publicTools,
+            schema,
+            systemPrompt,
+            legacyRoutes,
+            budget,
+            controller.signal,
+            structuredGraceMs,
+          );
+          const publicOutput = parseAgentOutput(
+            "product_truth",
+            sanitizeRawOutput("product_truth", publicRouted.output),
+          );
+          output = mergeProductTruthOutputs(
+            output as ProductTruthOutput,
+            publicOutput as ProductTruthOutput,
+          );
+        }
+        output = validateResearchBusinessOutput(stage, input, output) as AgentExecutionResult["output"];
+        budget.recordTokens(
+          (routed.metadata.usage.inputTokens ?? 0)
+          + (routed.metadata.usage.outputTokens ?? 0),
+        );
+        return {
+          output,
+          metadata: {
+            provider: routed.metadata.provider,
+            model: routed.metadata.model,
+            promptVersion: activeConfiguration ? `icp-research-v${activeConfiguration.promptVersion}` : "icp-research-v3-provider-neutral",
+            parameters: {
+              ...(activeConfiguration ? { aiConfigurationId: activeConfiguration.configurationId, promptVersionId: activeConfiguration.promptVersionId } : {}),
+              depth: input.brief.depth,
+              engine: "bounded-tool-plan",
+              structuredOutput: "model-gateway",
+              modelPolicySource: workspacePolicy ? "workspace" : "environment",
+              providerAttempt: routed.providerAttempt,
+              fallbackReason: routed.fallbackReason,
+              modelTier: modelTierForStage(stage, input.brief.researchVersion),
+              reasoningEffort: routed.metadata.reasoningEffort,
+              evidenceRepairAttempts: repairAttempts,
+              toolRounds: routed.toolRounds,
+              budget: budget.snapshot(),
+            },
+            cost: null,
+            latencyMs: Date.now() - startedAt,
+          },
+        };
+      }
       let result: unknown;
       let modelName = modelCandidates[0]!;
       let fallbackCount = 0;
       for (const [index, candidate] of modelCandidates.entries()) {
         modelName = candidate;
-        const model = new ChatOpenAI(buildChatModelFields(this.options, candidate));
+        const model = new ChatOpenAI(
+          buildChatModelFields(this.options, candidate, reasoningEffort),
+        );
         try {
           result = deepStages.has(stage)
             ? await this.#invokeDeep(stage, model, tools, schema, invocation, controller.signal, systemPrompt, promptJsonOutput, input.brief.depth)
@@ -154,7 +408,7 @@ export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
         structuredRecoveryAttempts = 1;
         const recovered = await this.#recoverStructuredOutput(
           stage,
-          new ChatOpenAI(buildChatModelFields(this.options, modelName)),
+          new ChatOpenAI(buildChatModelFields(this.options, modelName, reasoningEffort)),
           schema,
           result,
           input.previousOutputs,
@@ -171,7 +425,7 @@ export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
         repairAttempts = 1;
         const repaired = await this.#repairEvidenceReferences(
           stage,
-          new ChatOpenAI(buildChatModelFields(this.options, modelName)),
+          new ChatOpenAI(buildChatModelFields(this.options, modelName, reasoningEffort)),
           schema,
           output,
           unresolved,
@@ -179,7 +433,7 @@ export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
           controller.signal,
           promptJsonOutput,
         );
-        output = parseAgentOutput(stage, repaired);
+        output = parseAgentOutput(stage, sanitizeRawOutput(stage, repaired));
         const stillUnresolved = findUnresolvedEvidenceReferences(
           output,
           input.previousOutputs,
@@ -190,6 +444,55 @@ export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
             `Agent output references unknown evidence keys: ${stillUnresolved.join(", ")}`,
           );
         }
+      }
+      if (
+        stage === "product_truth" &&
+        input.brief.researchVersion === 3 &&
+        input.brief.internalDocumentIds.length > 0
+      ) {
+        const publicInput = {
+          ...input,
+          brief: { ...input.brief, internalDocumentIds: [] },
+          previousOutputs: {},
+        } as AgentStageInput;
+        const publicTools = selectToolsForStage("product_truth", 3, false, allTools);
+        const publicResult = await this.#invokeStructured(
+          "product_truth",
+          new ChatOpenAI(buildChatModelFields(this.options, modelName, reasoningEffort)),
+          publicTools,
+          schema,
+          { messages: [{ role: "user", content: buildTask("product_truth", publicInput) }] },
+          controller.signal,
+          systemPrompt,
+          promptJsonOutput,
+        );
+        budget.recordTokens(readTotalTokens(publicResult));
+        let publicOutput: unknown;
+        try {
+          publicOutput = parseAgentOutput(
+            "product_truth",
+            promptJsonOutput
+              ? readJsonFromFinalMessage(publicResult)
+              : readStructuredResponse(publicResult),
+          );
+        } catch (error) {
+          if (!promptJsonOutput) throw error;
+          publicOutput = parseAgentOutput(
+            "product_truth",
+            await this.#recoverStructuredOutput(
+              "product_truth",
+              new ChatOpenAI(buildChatModelFields(this.options, modelName, reasoningEffort)),
+              schema,
+              publicResult,
+              {},
+              controller.signal,
+            ),
+          );
+        }
+        output = mergeProductTruthOutputs(
+          output as ProductTruthOutput,
+          publicOutput as ProductTruthOutput,
+        );
       }
       if (stage === "icp_synthesis") {
         try {
@@ -224,8 +527,9 @@ export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
         metadata: {
           provider: this.options.provider,
           model: modelName,
-          promptVersion: "icp-research-v2-buyer-landscape",
+          promptVersion: activeConfiguration ? `icp-research-v${activeConfiguration.promptVersion}` : "icp-research-v2-buyer-landscape",
           parameters: {
+            ...(activeConfiguration ? { aiConfigurationId: activeConfiguration.configurationId, promptVersionId: activeConfiguration.promptVersionId } : {}),
             ...(this.options.provider === "openai" ? { temperature: 0 } : {}),
             depth: input.brief.depth,
             engine: deepStages.has(stage) ? "createDeepAgent" : "createAgent",
@@ -233,6 +537,8 @@ export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
             modelPolicySource: workspacePolicy ? "workspace" : "environment",
             modelCandidates,
             modelFallbacks: fallbackCount,
+            modelTier: modelTierForStage(stage, input.brief.researchVersion),
+            reasoningEffort,
             structuredRecoveryAttempts,
             evidenceRepairAttempts: repairAttempts,
             budget: budget.snapshot(),
@@ -248,6 +554,27 @@ export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
       ) {
         throw error;
       }
+      if (controller.signal.aborted) {
+        throw new TerminalAgentError(
+          "RESEARCH_BUDGET_EXHAUSTED",
+          "Research stage time budget exhausted while waiting for the model",
+        );
+      }
+      if (error instanceof ModelGatewayError) {
+        if (error.code === "AI_PROVIDER_QUOTA_EXHAUSTED") {
+          throw new TerminalAgentError("MODEL_PROVIDER_QUOTA_EXHAUSTED", error.message);
+        }
+        if (error.code === "AI_PROVIDER_OUTPUT_INVALID") {
+          const detail = error instanceof ModelGatewayOutputError
+            ? error.validationMessage.slice(0, 4_000)
+            : error.message;
+          throw new RetryableAgentError("MODEL_OUTPUT_INVALID", detail);
+        }
+        if (["AI_PROVIDER_TIMEOUT", "AI_PROVIDER_CATALOG_UNAVAILABLE", "AI_PROVIDER_INVOCATION_FAILED"].includes(error.code)) {
+          throw new RetryableAgentError("MODEL_PROVIDER_UNAVAILABLE", error.message);
+        }
+        throw new TerminalAgentError("AGENT_EXECUTION_FAILED", error.message);
+      }
       if (error instanceof ResearchBudgetExceededError || controller.signal.aborted) {
         throw new TerminalAgentError(
           "RESEARCH_BUDGET_EXHAUSTED",
@@ -255,23 +582,6 @@ export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
         );
       }
       if (isProviderQuotaError(error)) {
-        const fallbackOutput = deterministicQuotaFallback(stage, input);
-        if (fallbackOutput !== null) {
-          return {
-            output: fallbackOutput,
-            metadata: {
-              provider: "local-policy",
-              model: "deterministic-quota-fallback-v1",
-              promptVersion: "icp-deterministic-quota-fallback-v1",
-              parameters: {
-                fallbackReason: "MODEL_PROVIDER_QUOTA_EXHAUSTED",
-                semanticEvidenceReviewRequired: stage === "evidence_review",
-              },
-              cost: 0,
-              latencyMs: Date.now() - startedAt,
-            },
-          };
-        }
         throw new TerminalAgentError(
           "MODEL_PROVIDER_QUOTA_EXHAUSTED",
           errorMessage(error),
@@ -286,10 +596,176 @@ export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
     }
   }
 
+  async #invokeRoutedResearch(
+    stage: ResearchStage,
+    input: AgentStageInput,
+    tools: readonly ReturnType<typeof createResearchTools>[number][],
+    schema: (typeof agentContracts)[ResearchStage]["output"],
+    systemPrompt: string,
+    fallbackRoutes: readonly ModelRoute[],
+    budget: ResearchBudget,
+    signal: AbortSignal,
+    structuredGraceMs: number,
+  ) {
+    if (!this.options.routedModel) throw new Error("ROUTED_RESEARCH_MODEL_REQUIRED");
+    const task = buildTask(stage, input);
+    const descriptors = describeResearchTools(tools);
+    const collected: RoutedResearchToolResult[] = [];
+    const seen = new Set<string>();
+    let providerAttempt = 1;
+    let fallbackReason: string | null = null;
+    let finalMetadata = null as null | Awaited<ReturnType<WorkspaceStructuredModel["invoke"]>>["metadata"];
+    const maxRounds = tools.length === 0 ? 0 : 2;
+    const synthesisReserveMs = input.brief.researchVersion === 3
+      ? v3SynthesisReserveMs(stage, budget.limits.durationMs)
+      : 0;
+
+    collection: for (let round = 1; round <= maxRounds; round += 1) {
+      const remainingMs = budget.remainingDurationMs();
+      if (remainingMs === 0) throw new ResearchBudgetExceededError("durationMs");
+      if (remainingMs <= synthesisReserveMs) break;
+      const plan = await this.options.routedModel.invoke({
+        workspaceId: input.workspaceId,
+        capability: "icp_research",
+        requestKey: `${input.runId}:${stage}:${input.researchStageRunId}:tool-plan:${round}`,
+        fallbackRoutes: fallbackRoutes.map((route) => ({
+          ...route,
+          reasoningEffort: "low" as const,
+        })),
+        systemPrompt: [
+          "You plan a bounded read-only evidence collection round for one ICP research stage.",
+          "Choose only tools in the supplied catalog and conform exactly to each input schema.",
+          "Round 1 should discover sources or internal passages. Round 2 should read only the most relevant URLs or passages revealed by round 1.",
+          "Never contact a person, mutate external state, include credentials, or invent a URL or chunk identifier.",
+          "Use no more calls than necessary. An empty calls array is valid when previous stage evidence is sufficient.",
+        ].join("\n"),
+        payload: {
+          stage,
+          task,
+          round,
+          availableTools: descriptors,
+          priorToolEvidence: round === 1 ? [] : serializeRecoveryContext(collected, 100_000),
+        },
+        outputName: "submit_research_tool_plan",
+        outputDescription: "Submit the next bounded set of read-only research tool calls.",
+        schema: routedResearchPlanSchema,
+        signal,
+        timeoutMs: Math.min(5 * 60_000, remainingMs - synthesisReserveMs),
+      });
+      providerAttempt = plan.providerAttempt;
+      fallbackReason = plan.fallbackReason;
+      finalMetadata = plan.metadata;
+      for (const call of plan.output.calls.slice(0, v3ToolCallsPerRound(stage, round))) {
+        if (budget.remainingDurationMs() <= synthesisReserveMs) break collection;
+        const candidate = tools.find((tool) => tool.name === call.tool);
+        if (!candidate) {
+          collected.push({
+            round,
+            tool: call.tool,
+            arguments: call.arguments,
+            purpose: call.purpose,
+            output: JSON.stringify({ error: "Tool is not available for this stage" }),
+          });
+          continue;
+        }
+        const key = `${call.tool}:${stableResearchJson(call.arguments)}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        let parsedArguments: unknown;
+        try {
+          parsedArguments = (candidate.schema as z.ZodType).parse(call.arguments);
+        } catch (error) {
+          collected.push({
+            round,
+            tool: call.tool,
+            arguments: call.arguments,
+            purpose: call.purpose,
+            output: JSON.stringify({ error: "Invalid tool arguments", detail: errorMessage(error).slice(0, 1_000) }),
+          });
+          continue;
+        }
+        const raw = await (candidate as unknown as {
+          invoke(value: unknown, options?: { signal?: AbortSignal }): Promise<unknown>;
+        }).invoke(parsedArguments, { signal });
+        collected.push({
+          round,
+          tool: call.tool,
+          arguments: call.arguments,
+          purpose: call.purpose,
+          output: compactToolOutput(raw),
+        });
+      }
+    }
+
+    const remainingMs = budget.remainingDurationMs();
+    const synthesisWindowMs = remainingMs + structuredGraceMs;
+    if (synthesisWindowMs === 0) throw new ResearchBudgetExceededError("durationMs");
+    const parseStageOutput = (value: unknown) =>
+      parseAgentOutput(stage, sanitizeRawOutput(stage, value));
+    const collectedToolEvidence = serializeRecoveryContext(
+      collected,
+      v3SynthesisContextCharacters(stage),
+    );
+    const synthesisRequest = {
+      workspaceId: input.workspaceId,
+      capability: "icp_research" as const,
+      fallbackRoutes,
+      systemPrompt: [
+        systemPrompt,
+        "The read-only evidence collection has already been executed by the application.",
+        "Synthesize the required stage output only from the task, previous stage outputs and collected tool evidence below.",
+        "Never claim that an unavailable or failed tool call succeeded. Unsupported statements must be omitted or explicitly marked as hypotheses where the contract permits.",
+      ].join("\n\n"),
+      payload: { stage, task, collectedToolEvidence },
+      outputName: `submit_${stage}`,
+      outputDescription: `Submit the evidence-grounded structured output for ${stage}.`,
+      schema: schema as z.ZodType<unknown>,
+      parse: parseStageOutput,
+      signal,
+      timeoutMs: Math.min(8 * 60_000, synthesisWindowMs),
+    };
+    let synthesis;
+    try {
+      synthesis = await this.options.routedModel.invoke({
+        ...synthesisRequest,
+        requestKey: `${input.runId}:${stage}:${input.researchStageRunId}:synthesis`,
+      });
+    } catch (error) {
+      if (!(error instanceof ModelGatewayOutputError)) throw error;
+      const repairWindowMs = budget.remainingDurationMs() + structuredGraceMs;
+      if (repairWindowMs <= 0) throw error;
+      synthesis = await this.options.routedModel.invoke({
+        ...synthesisRequest,
+        requestKey: `${input.runId}:${stage}:${input.researchStageRunId}:structured-repair`,
+        systemPrompt: [
+          systemPrompt,
+          "Repair the supplied draft so it satisfies the output contract exactly.",
+          "Preserve supported facts and citations, remove invalid or unsupported fields, and never invent evidence.",
+          "Return only the corrected structured output through the required tool.",
+        ].join("\n\n"),
+        payload: {
+          stage,
+          task,
+          invalidDraft: serializeRecoveryContext(error.rawOutput, 60_000),
+          validationError: error.validationMessage.slice(0, 8_000),
+          collectedToolEvidence,
+        },
+        timeoutMs: Math.min(4 * 60_000, repairWindowMs),
+      });
+    }
+    return {
+      ...synthesis,
+      providerAttempt: synthesis.providerAttempt ?? providerAttempt,
+      fallbackReason: synthesis.fallbackReason ?? fallbackReason,
+      metadata: synthesis.metadata ?? finalMetadata!,
+      toolRounds: maxRounds,
+    };
+  }
+
   async #invokeDeep(
     stage: ResearchStage,
     model: ChatOpenAI,
-    tools: ReturnType<typeof createResearchTools>,
+    tools: readonly ReturnType<typeof createResearchTools>[number][],
     schema: (typeof agentContracts)[ResearchStage]["output"],
     invocation: { messages: { role: "user"; content: string }[] },
     signal: AbortSignal,
@@ -329,7 +805,7 @@ export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
   async #invokeStructured(
     stage: ResearchStage,
     model: ChatOpenAI,
-    tools: ReturnType<typeof createResearchTools>,
+    tools: readonly ReturnType<typeof createResearchTools>[number][],
     schema: (typeof agentContracts)[ResearchStage]["output"],
     invocation: { messages: { role: "user"; content: string }[] },
     signal: AbortSignal,
@@ -436,20 +912,67 @@ Return exactly one JSON object and no commentary.${jsonOutputInstructions(schema
   }
 }
 
-export function deterministicQuotaFallback(
+function describeResearchTools(
+  tools: readonly ReturnType<typeof createResearchTools>[number][],
+): readonly Readonly<Record<string, unknown>>[] {
+  return tools.map((candidate) => {
+    let inputSchema: unknown = {};
+    try {
+      inputSchema = z.toJSONSchema(candidate.schema as z.ZodType);
+    } catch {
+      inputSchema = { type: "object" };
+    }
+    return {
+      name: candidate.name,
+      description: candidate.description,
+      inputSchema,
+    };
+  });
+}
+
+function compactToolOutput(value: unknown): string {
+  const raw = typeof value === "string" ? value : JSON.stringify(value);
+  if (raw.length <= 30_000) return raw;
+  return `${raw.slice(0, 29_950)}\n[tool output truncated]`;
+}
+
+function stableResearchJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableResearchJson).join(",")}]`;
+  if (!value || typeof value !== "object") return JSON.stringify(value);
+  return `{${Object.entries(value as Record<string, unknown>)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, child]) => `${JSON.stringify(key)}:${stableResearchJson(child)}`)
+    .join(",")}}`;
+}
+
+function validateResearchBusinessOutput(
   stage: ResearchStage,
   input: AgentStageInput,
-): AgentExecutionResult["output"] | null {
+  output: unknown,
+): unknown {
   if (stage === "icp_synthesis") {
-    return synthesizeIcpFromSegments({
-      brief: input.brief,
-      previousOutputs: input.previousOutputs,
-    });
+    try {
+      return finalizeIcpSynthesis({
+        brief: input.brief,
+        previousOutputs: input.previousOutputs,
+        output,
+      });
+    } catch (error) {
+      throw new TerminalAgentError("ICP_NOT_PROSPECTABLE", errorMessage(error));
+    }
   }
-  if (stage === "evidence_review") {
-    return auditIcpStructurally({ previousOutputs: input.previousOutputs });
+  if (stage === "buyer_landscape_discovery") {
+    try {
+      return validateBuyerLandscape({
+        brief: input.brief,
+        previousOutputs: input.previousOutputs,
+        output,
+      });
+    } catch (error) {
+      throw new TerminalAgentError("BUYER_LANDSCAPE_NOT_EVIDENCED", errorMessage(error));
+    }
   }
-  return null;
+  return output;
 }
 
 export function findUnresolvedEvidenceReferences(
@@ -537,9 +1060,78 @@ export function dropUnevidencedCompetitorAnalyses(rawOutput: unknown): unknown {
 }
 
 function sanitizeRawOutput(stage: ResearchStage, rawOutput: unknown): unknown {
-  return stage === "competitor_analysis"
+  const competitorSafe = stage === "competitor_analysis"
     ? dropUnevidencedCompetitorAnalyses(rawOutput)
     : rawOutput;
+  return ["market_investigation", "buying_context", "icp_composition"].includes(stage)
+    ? downgradeUnsupportedObservedClaims(competitorSafe)
+    : competitorSafe;
+}
+
+/**
+ * A model may overstate the semantic strength of a real citation. This policy
+ * never creates or upgrades evidence: it only downgrades an "observed" claim
+ * when the cited links do not satisfy the contract's directness threshold.
+ */
+export function downgradeUnsupportedObservedClaims(rawOutput: unknown): unknown {
+  const output = structuredClone(rawOutput);
+  walkRecords(output, (record) => {
+    if (record.status === "observed" && Array.isArray(record.evidence)) {
+      const directlyObserved = record.evidence.some((candidate) => {
+        if (!candidate || typeof candidate !== "object") return false;
+        const link = candidate as Record<string, unknown>;
+        return link.relation === "supports" &&
+          typeof link.directness === "number" && link.directness >= 3 &&
+          typeof link.specificity === "number" && link.specificity >= 2;
+      });
+      if (!directlyObserved) {
+        record.status = "inferred";
+        if (typeof record.confidence === "number") {
+          record.confidence = Math.min(record.confidence, 0.65);
+        }
+      }
+    }
+    if (
+      record.status === "unknown" &&
+      typeof record.confidence === "number" &&
+      record.confidence > 0.25
+    ) {
+      record.confidence = 0.25;
+    }
+    if (record.state === "priority_for_test" && record.sourcingStatus !== "verified") {
+      record.state = "adjacent_experiment";
+    }
+
+    if (!Array.isArray(record.claims)) return;
+    for (const [field, dimension] of [
+      ["budget", "budget"],
+      ["salesCycle", "sales_cycle"],
+    ] as const) {
+      const value = record[field];
+      if (!value || typeof value !== "object" || !("status" in value)) continue;
+      const observed = record.claims.some((candidate) =>
+        Boolean(candidate) &&
+        typeof candidate === "object" &&
+        (candidate as Record<string, unknown>).dimension === dimension &&
+        (candidate as Record<string, unknown>).status === "observed",
+      );
+      if (!observed && (value as Record<string, unknown>).status === "observed") {
+        (value as Record<string, unknown>).status = "inferred";
+      }
+    }
+  });
+  return output;
+}
+
+function walkRecords(value: unknown, visitor: (record: Record<string, unknown>) => void): void {
+  if (Array.isArray(value)) {
+    for (const item of value) walkRecords(item, visitor);
+    return;
+  }
+  if (!value || typeof value !== "object") return;
+  const record = value as Record<string, unknown>;
+  visitor(record);
+  for (const child of Object.values(record)) walkRecords(child, visitor);
 }
 
 export function serializeRecoveryContext(value: unknown, maxCharacters = 200_000): string {
@@ -597,6 +1189,10 @@ export function createLangChainResearchAgentExecutorFromEnvironment(
   documents?: InternalDocumentSearch,
   recorder?: ResearchToolRunRecorder,
   modelPolicyReader?: WorkspaceAiModelPolicyReader,
+  sourcingValidator?: V3SourcingValidator,
+  toolRequestRegistry?: import("@outbound/application/gtm/product-research-ports").ResearchToolRequestRegistry,
+  activeConfigurationReader?: ActiveAiConfigurationReader,
+  routedModel?: WorkspaceStructuredModel,
 ): LangChainResearchAgentExecutor {
   const model = resolveResearchModelConfigurationFromEnvironment(process.env);
   return new LangChainResearchAgentExecutor({
@@ -605,9 +1201,11 @@ export function createLangChainResearchAgentExecutorFromEnvironment(
     crawlerApiKey: requiredEnvironment("CRAWLER_API_KEY"),
     ...(documents ? { documents } : {}),
     ...(recorder ? { recorder } : {}),
-    ...(model.provider === "kimi-code" && modelPolicyReader
-      ? { modelPolicyReader }
-      : {}),
+    ...(sourcingValidator ? { sourcingValidator } : {}),
+    ...(toolRequestRegistry ? { toolRequestRegistry } : {}),
+    ...(modelPolicyReader ? { modelPolicyReader } : {}),
+    ...(activeConfigurationReader ? { activeConfigurationReader } : {}),
+    ...(routedModel ? { routedModel } : {}),
   });
 }
 
@@ -618,16 +1216,71 @@ export function selectModelCandidates(
     "researchModels" | "synthesisModels"
   >,
   workspacePolicy: WorkspaceAiModelPolicy | null | undefined,
+  researchVersion: 1 | 2 | 3 | undefined = 3,
 ): readonly string[] {
-  return deepStages.has(stage)
+  return modelTierForStage(stage, researchVersion) === "principal"
     ? workspacePolicy?.researchModels ?? defaults.researchModels
     : workspacePolicy?.synthesisModels ?? defaults.synthesisModels;
+}
+
+export function modelTierForStage(
+  stage: ResearchStage,
+  researchVersion: 1 | 2 | 3 | undefined,
+): "principal" | "executor" {
+  if (researchVersion === 3) {
+    return principalStages.has(stage) ? "principal" : "executor";
+  }
+  return deepStages.has(stage) ? "principal" : "executor";
+}
+
+export function reasoningEffortForStage(
+  stage: ResearchStage,
+  researchVersion: 1 | 2 | 3 | undefined,
+): KimiReasoningEffort {
+  return modelTierForStage(stage, researchVersion) === "principal" ? "max" : "low";
+}
+
+export function modelRoutesForCandidates(
+  provider: ModelRoute["provider"],
+  models: readonly string[],
+  principalEffort: ModelRoute["reasoningEffort"],
+  defaultRoutes: readonly ModelRoute[] = [],
+): readonly ModelRoute[] {
+  return models.map((model, index) => {
+    const configuredRoute = defaultRoutes.find((route) => route.model === model);
+    return {
+      provider: configuredRoute?.provider ?? provider,
+      model,
+      reasoningEffort: index === 0
+        ? configuredRoute?.reasoningEffort ?? principalEffort
+        : "low",
+    };
+  });
 }
 
 export function resolveResearchModelConfigurationFromEnvironment(
   environment: Readonly<Record<string, string | undefined>>,
 ): ResearchModelConfiguration {
-  const provider = (environment.AI_PROVIDER?.trim() || "kimi-code") as ResearchModelProvider;
+  const requestedProvider = environment.AI_PROVIDER?.trim()
+    || (!environment.KIMI_CODE_API_KEY && environment.CODEX_SERVICE_HOME ? "codex-cli" : "kimi-code");
+  if (requestedProvider === "codex-cli") {
+    const policy = resolveResearchModelPolicyFromEnvironment(environment);
+    return {
+      // Legacy ChatOpenAI paths are bypassed whenever this compatibility
+      // configuration is created. All production compositions inject the
+      // provider-neutral WorkspaceStructuredModel.
+      provider: "kimi-code",
+      apiKey: "unused-provider-neutral-runtime",
+      baseUrl: environment.KIMI_CODE_BASE_URL?.trim() || "https://api.kimi.com/coding/v1",
+      researchModels: policy.researchModels,
+      synthesisModels: policy.synthesisModels,
+      defaultRoutes: policy.defaultRoutes ?? [],
+    };
+  }
+  const provider = requestedProvider as ResearchModelProvider;
+  if (provider !== "kimi-code" && provider !== "openai") {
+    throw new Error(`AI_PROVIDER must be one of: kimi-code, codex-cli, openai`);
+  }
   const policy = resolveResearchModelPolicyFromEnvironment(environment);
   if (provider === "kimi-code") {
     return {
@@ -636,50 +1289,103 @@ export function resolveResearchModelConfigurationFromEnvironment(
       baseUrl:
         environment.KIMI_CODE_BASE_URL?.trim() ||
         "https://api.kimi.com/coding/v1",
-      ...policy,
+      researchModels: policy.researchModels,
+      synthesisModels: policy.synthesisModels,
+      defaultRoutes: policy.defaultRoutes ?? [],
     };
   }
   if (provider === "openai") {
     return {
       provider,
       apiKey: requiredEnvironmentFrom(environment, "OPENAI_API_KEY"),
-      ...policy,
+      researchModels: policy.researchModels,
+      synthesisModels: policy.synthesisModels,
+      defaultRoutes: policy.defaultRoutes ?? [],
     };
   }
-  throw new Error(`AI_PROVIDER must be one of: kimi-code, openai`);
+  throw new Error(`AI_PROVIDER must be one of: kimi-code, codex-cli, openai`);
 }
 
 export function resolveResearchModelPolicyFromEnvironment(
   environment: Readonly<Record<string, string | undefined>>,
 ): WorkspaceAiModelPolicy {
-  const provider = environment.AI_PROVIDER?.trim() || "kimi-code";
+  const provider = environment.AI_PROVIDER?.trim()
+    || (!environment.KIMI_CODE_API_KEY && environment.CODEX_SERVICE_HOME ? "codex-cli" : "kimi-code");
   if (provider === "kimi-code") {
+    const researchModels = modelCandidatesFromEnvironment(
+      environment,
+      "KIMI_RESEARCH_MODELS",
+      "KIMI_RESEARCH_MODEL",
+      ["k3", "k3-256k"],
+    );
+    const synthesisModels = modelCandidatesFromEnvironment(
+      environment,
+      "KIMI_SYNTHESIS_MODELS",
+      "KIMI_SYNTHESIS_MODEL",
+      ["k3-256k", "k3"],
+    );
     return {
-      researchModels: modelCandidatesFromEnvironment(
-        environment,
-        "KIMI_RESEARCH_MODELS",
-        "KIMI_RESEARCH_MODEL",
-        ["kimi-for-coding"],
-      ),
-      synthesisModels: modelCandidatesFromEnvironment(
-        environment,
-        "KIMI_SYNTHESIS_MODELS",
-        "KIMI_SYNTHESIS_MODEL",
-        ["kimi-for-coding"],
-      ),
+      researchModels,
+      synthesisModels,
+      defaultRoutes: researchModels.map((model) => ({
+        provider: "kimi-code" as const,
+        model,
+        reasoningEffort: "max" as const,
+      })),
+      capabilityRoutes: {},
     };
   }
   if (provider === "openai") {
+    const researchModel = requiredEnvironmentFrom(environment, "OPENAI_RESEARCH_MODEL");
+    const synthesisModel = requiredEnvironmentFrom(environment, "OPENAI_SYNTHESIS_MODEL");
     return {
-      researchModels: [
-        requiredEnvironmentFrom(environment, "OPENAI_RESEARCH_MODEL"),
-      ],
-      synthesisModels: [
-        requiredEnvironmentFrom(environment, "OPENAI_SYNTHESIS_MODEL"),
-      ],
+      researchModels: [researchModel],
+      synthesisModels: [synthesisModel],
+      defaultRoutes: [{ provider: "openai-api", model: researchModel, reasoningEffort: "high" }],
+      capabilityRoutes: {},
     };
   }
-  throw new Error(`AI_PROVIDER must be one of: kimi-code, openai`);
+  if (provider === "codex-cli") {
+    const model = environment.CODEX_DEFAULT_MODEL?.trim() || "gpt-5.6-luna";
+    const requestedEffort = environment.CODEX_DEFAULT_REASONING_EFFORT?.trim() || "xhigh";
+    const reasoningEffort = ["low", "medium", "high", "xhigh", "max", "ultra"].includes(requestedEffort)
+      ? requestedEffort as ModelRoute["reasoningEffort"]
+      : "xhigh";
+    const codexFallbackModels = modelCandidatesFromEnvironment(
+      environment,
+      "CODEX_FALLBACK_MODELS",
+      "CODEX_FALLBACK_MODEL",
+      ["gpt-5.4-mini"],
+    ).filter((fallbackModel) => fallbackModel !== model);
+    const kimiFallbackModels = environment.KIMI_CODE_API_KEY
+      ? modelCandidatesFromEnvironment(
+          environment,
+          "KIMI_FALLBACK_MODELS",
+          "KIMI_FALLBACK_MODEL",
+          ["kimi-for-coding-highspeed"],
+        )
+      : [];
+    const candidates = [...new Set([model, ...codexFallbackModels, ...kimiFallbackModels])];
+    return {
+      researchModels: candidates,
+      synthesisModels: candidates,
+      defaultRoutes: [
+        { provider: "codex-cli", model, reasoningEffort },
+        ...codexFallbackModels.map((fallbackModel) => ({
+          provider: "codex-cli" as const,
+          model: fallbackModel,
+          reasoningEffort: "low" as const,
+        })),
+        ...kimiFallbackModels.map((fallbackModel) => ({
+          provider: "kimi-code" as const,
+          model: fallbackModel,
+          reasoningEffort: "low" as const,
+        })),
+      ],
+      capabilityRoutes: {},
+    };
+  }
+  throw new Error(`AI_PROVIDER must be one of: kimi-code, codex-cli, openai`);
 }
 
 export function buildChatModelFields(
@@ -688,6 +1394,7 @@ export function buildChatModelFields(
     "provider" | "apiKey" | "baseUrl"
   >,
   model: string,
+  reasoningEffort: KimiReasoningEffort = "max",
 ): ChatOpenAIFields {
   return {
     apiKey: configuration.apiKey,
@@ -695,6 +1402,9 @@ export function buildChatModelFields(
     maxRetries: 1,
     streamUsage: true,
     useResponsesApi: false,
+    ...(configuration.provider === "kimi-code"
+      ? { reasoning: { effort: reasoningEffort } }
+      : {}),
     ...(configuration.provider === "openai" ? { temperature: 0 } : {}),
     ...(configuration.baseUrl
       ? { configuration: { baseURL: configuration.baseUrl } }
@@ -772,13 +1482,31 @@ const stageInstructions: Readonly<Record<ResearchStage, string>> = {
   competitor_analysis:
     "Analyze the discovered competitors. Delegate independent competitor investigations when useful and compare positioning, customer stories, served industries, workflows, strengths and evidence-backed gaps. Do not reduce the market to technical platform buyers.",
   buyer_landscape_discovery:
-    "Discover the real buyer landscape from external market evidence. For each competitor and status-quo alternative, research customer stories, industry pages, use cases, recurring workflows, corpus types and buying roles. Search for prospectable industry taxonomies and observable trigger signals. Before ranking, expand every promising umbrella market into independently prospectable organization types with distinct firmographics and buying committees. A combined segment such as law firms plus in-house legal departments is invalid: evaluate them separately. Do not bury regulated professional offices, specialist publishers or SME compliance teams inside generic legal/professional-services labels; investigate them as separate hypotheses and keep them only when externally evidenced. Explicitly classify every segment as end_customer, channel_partner or internal_builder, and evaluate both ability to build internally and willingness to buy. The product's own domain may support product fit but must never support marketEvidenceIds. Cover multiple plausible verticals before ranking; do not simply repeat the product landing page.",
+    "Discover the real buyer landscape from external market evidence. For each competitor and status-quo alternative, research customer stories, industry pages, use cases, recurring workflows, corpus types and buying roles. Search for prospectable industry taxonomies and observable trigger signals. Expand an umbrella market only when distinct organization types have materially different firmographics, workflows or buying committees. Explicitly classify every segment as end_customer, channel_partner or internal_builder, and evaluate both ability to build internally and willingness to buy. The product's own domain may support product fit but must never support marketEvidenceIds. Cover multiple plausible evidence routes before ranking; do not simply repeat the product landing page.",
   segment_synthesis:
-    "Synthesize distinct, actionable market segments primarily from buyer_landscape_discovery. Preserve buyer type, industries, recurring workflows, build-vs-buy assessment, prospecting filters and external market evidence. Split different organization types and buying committees into separate segments; do not merge law firms with in-house legal teams or materially different regulated professions into one generic segment.",
+    "Synthesize distinct, actionable market segments primarily from buyer_landscape_discovery. Preserve buyer type, industries, recurring workflows, build-vs-buy assessment, prospecting filters and external market evidence. Split organizations only when their firmographics, workflows or buying committees differ materially; never split or merge them merely to reach a target count.",
   icp_synthesis:
-    "Produce exactly five prospectable ICP proposals for the requested audience when five evidenced segments exist. Include buyer type, firmographics, NACE or industry terms, company size, geography, job titles, search keywords, observable triggers, exclusions and unknowns. Score product fit, pain, recurrence, budget, urgency, reachability, build ability, willingness to buy and evidence strength. Preserve portfolio diversity: when the buyer landscape evidences a specialist long-tail segment from the mandatory exploration checklist, include at least one such segment instead of filling all five slots with adjacent large-enterprise markets. For a legal/compliance product, the five proposals should cover at least four separately evidenced organization types from that checklist. A product landing page is never market-demand evidence. Internal builders are not valid primary ICPs.",
+    "Produce zero to five prospectable ICP proposals for the requested audience. Zero is valid when evidence is insufficient. Include buyer type, firmographics, industry terms, company size, geography, job titles, search keywords, observable triggers, exclusions and unknowns. Preserve distinct product fit, market evidence and sourcing criteria. A product landing page is never market-demand evidence. Internal builders are not valid primary ICPs. Never add a proposal merely to reach a target count.",
   evidence_review:
     "Audit every material finding against its cited source and audit commercial usefulness. Reject circular market claims supported only by the product's own site, reject buyer segments without external demand evidence or searchable prospecting criteria, identify contradictions, and state whether the resulting ICPs are ready for human review.",
+  product_truth:
+    "Build the product truth without ranking or recommending any market. Separate available, planned, claimed, unknown and contradicted facts. Extract 15 to 25 decision-relevant capabilities, constraints, positioning statements and workflows; omit navigation copy and repeated marketing claims. Industry examples from product content are positioning hints only. Return durable evidence capsules with source relation, evidence kind and origin family.",
+  problem_mapping:
+    "Map product facts into sector-neutral problem frames. Describe actor, workflow, recurrence, corpus, failure cost, current alternative and constraints. Use only supplied product facts. Do not name or infer organization types and do not perform market ranking.",
+  organization_discovery:
+    "Discover up to eight organization hypotheses from four evidence routes: named adoption, status-quo alternatives, buyer-side signals and adjacent workflow transfer. Every hypothesis must identify its originating problem, origin, assumptions, validation queries and falsification queries. Product-content audiences receive no ranking advantage. Do not rank candidates.",
+  market_investigation:
+    "Investigate organization hypotheses independently. When stageSnapshot.assignedHypothesisId is present, investigate exactly that hypothesis and return exactly one investigation with the same hypothesisId; never add another hypothesis. Seek direct observations and counter-evidence for problem recurrence, impact, urgency, acquisition behavior, build propensity, buyer access and competitive pressure. Budget, willingness to buy and sales cycle remain unknown without direct evidence. Preserve source families so syndicated copies never become independent proof.",
+  buying_context:
+    "Derive buying contexts only from completed investigations. Identify users, sponsors, economic buyers, purchase triggers and objections. Mark every claim observed, inferred, unknown or contradicted. Never turn an inference into an observation, and keep budget or sales cycle unknown without direct evidence.",
+  sourcing_validation:
+    "Return the structured result of a read-only sourcing validation. Distinguish verified matches from invalid queries, provider limitations, insufficient coverage, absent accounts and exhausted budget. Never interpret a provider failure as proof that a market does not exist. Attest that no import, invitation or message occurred.",
+  icp_composition:
+    "Compose zero to five ICP candidates from existing product facts, investigations, buying contexts and sourcing tests. An ICP is organization type times use case times buying context. Do not browse or add facts. Keep attractiveness, executability and research confidence separate and preserve hypothesis origin and sourcing status.",
+  adversarial_review:
+    "Attempt to invalidate each composed ICP without seeing a final rank. Check blocking product contradictions, weak problem evidence, internal-build propensity, dominant alternatives, inaccessible buyers and misleading sourcing results. Keep, downgrade or reject with resolvable evidence. Report actual generated, scanned, investigated, sourced and budget-skipped coverage.",
+  objective_ranking:
+    "Rank only the reviewed structured candidates for the mission objective. Do not browse, add facts, repair missing research or collapse attractiveness, executability and confidence into a single pseudo-scientific score. Return zero to five proposals; zero is valid. Mark the report partial when required work is missing.",
 };
 
 function evidenceSystemPrompt(task: string): string {
@@ -793,11 +1521,45 @@ Security and evidence rules:
 - The researched product's own website proves only its capabilities and positioning. It cannot prove market demand, buyer pain, willingness to buy, segment priority, budget or urgency.
 - Customer stories and competitor industry pages may support observed adoption, but important market claims should be corroborated by another external source when possible.
 - Preserve uncertainty. If evidence is missing, mark the claim as a hypothesis.
+- In V3, status "observed" requires a supporting evidence link with directness at least 3 and specificity at least 2. Otherwise use "inferred" or "unknown".
+- In V3, an "unknown" claim must have confidence at most 0.25, and only verified sourcing can support state "priority_for_test".
 - Never send a message, contact a prospect, publish an ICP, or perform an external write.
 - Return exactly the requested structured response.`;
 }
 
 function buildTask(stage: ResearchStage, input: AgentStageInput): string {
+  if (input.brief.researchVersion === 3) {
+    return JSON.stringify(
+      {
+        objective: stageInstructions[stage],
+        runId: input.runId,
+        mission: {
+          productName: input.brief.productName,
+          geography: input.brief.geography,
+          languages: input.brief.languages,
+          salesMotion: input.brief.salesMotion,
+          audienceGoal: input.brief.audienceGoal ?? "end_customers",
+          buyerConstraints: input.brief.buyerConstraints ?? "",
+          researchObjective: input.brief.researchObjective ?? "qualified_conversations",
+          depth: input.brief.depth,
+          deadlineAt: input.deadlineAt,
+          ...(stage === "market_investigation" && input.workItemKey !== "main"
+            ? {
+                assignedHypothesisId: input.previousOutputs.assignedHypothesisId,
+                workItemContract:
+                  "Return exactly one investigation for assignedHypothesisId and no other hypothesis.",
+              }
+            : {}),
+          ...(stage === "product_truth" && input.brief.internalDocumentIds.length === 0
+            ? { productUrl: input.brief.productUrl }
+            : {}),
+        },
+        stageSnapshot: input.previousOutputs,
+      },
+      null,
+      2,
+    );
+  }
   return JSON.stringify(
     {
       objective: stageInstructions[stage],
@@ -805,7 +1567,7 @@ function buildTask(stage: ResearchStage, input: AgentStageInput): string {
       brief: input.brief,
       audiencePolicy: audiencePolicy(input.brief.audienceGoal ?? "end_customers"),
       buyerConstraints: input.brief.buyerConstraints ?? "",
-      mandatoryBuyerExploration:
+      explorationPolicy:
         stage === "buyer_landscape_discovery" || stage === "icp_synthesis"
           ? mandatoryBuyerExploration(input)
           : [],
@@ -816,21 +1578,34 @@ function buildTask(stage: ResearchStage, input: AgentStageInput): string {
   );
 }
 
-export function mandatoryBuyerExploration(input: AgentStageInput): readonly string[] {
-  const productContext = JSON.stringify({
-    description: input.brief.description,
-    productAnalysis: input.previousOutputs.product_analysis,
-  }).toLowerCase();
-  const checklist = [
-    "Expand every broad market into separately searchable organization types; never merge organizations with different firmographics or buying committees.",
-    "For every required organization type, run a dedicated market query before broad catch-all queries, then either return an externally evidenced segment or explain its rejection in marketUnknowns.",
-  ];
-  if (/legal|jurid|avocat|compliance|conformit/.test(productContext)) {
-    checklist.push(
-      "Research law firms, in-house legal departments, notarial offices, specialist legal publishers, consulting firms, and SME compliance teams as six separate hypotheses. Do not combine them in one buyer segment.",
-    );
+export function selectToolsForStage(
+  stage: ResearchStage,
+  researchVersion: 1 | 2 | 3 | undefined,
+  hasInternalDocuments: boolean,
+  tools: readonly ReturnType<typeof createResearchTools>[number][],
+): readonly ReturnType<typeof createResearchTools>[number][] {
+  if (researchVersion !== 3) return [...tools];
+  const internalNames = new Set(["searchInternalDocuments", "readInternalDocument"]);
+  const externalNames = new Set(["searchWeb", "readWebPage", "discoverWebsite", "readWebsitePages"]);
+  if (stage === "product_truth") {
+    const allowed = hasInternalDocuments
+      ? internalNames
+      : new Set(["searchWeb", "readWebPage", "readWebsitePages"]);
+    return tools.filter((candidate) => allowed.has(candidate.name));
   }
-  return checklist;
+  if (["organization_discovery", "market_investigation", "adversarial_review"].includes(stage)) {
+    return tools.filter((candidate) => externalNames.has(candidate.name));
+  }
+  return [];
+}
+
+export function mandatoryBuyerExploration(input: AgentStageInput): readonly string[] {
+  void input;
+  return [
+    "Expand every broad market into separately searchable organization types; never merge organizations with different firmographics or buying committees.",
+    "Derive organization hypotheses from observed workflows, alternatives, adoption signals and adjacent transfers; never from a hidden sector checklist.",
+    "Investigate a hypothesis only when its evidence route is explicit, and record its rejection when falsifying evidence wins.",
+  ];
 }
 
 export function structuredOutputGraceMs(
@@ -841,6 +1616,68 @@ export function structuredOutputGraceMs(
   return Math.min(5 * 60_000, Math.max(2 * 60_000, Math.floor(researchDurationMs / 4)));
 }
 
+export function v3StageDurationMs(stage: ResearchStage): number {
+  const durations: Partial<Record<ResearchStage, number>> = {
+    product_truth: 150_000,
+    problem_mapping: 300_000,
+    organization_discovery: 480_000,
+    market_investigation: 480_000,
+    buying_context: 300_000,
+    sourcing_validation: 180_000,
+    icp_composition: 300_000,
+    adversarial_review: 360_000,
+    objective_ranking: 90_000,
+  };
+  return durations[stage] ?? Number.MAX_SAFE_INTEGER;
+}
+
+export function v3SynthesisReserveMs(stage: ResearchStage, durationMs: number): number {
+  void stage;
+  return Math.min(
+    Math.max(0, durationMs - 30_000),
+    Math.max(60_000, Math.floor(durationMs * 0.4)),
+  );
+}
+
+export function v3SynthesisContextCharacters(stage: ResearchStage): number {
+  const limits: Partial<Record<ResearchStage, number>> = {
+    organization_discovery: 60_000,
+    market_investigation: 80_000,
+    adversarial_review: 80_000,
+  };
+  return limits[stage] ?? 100_000;
+}
+
+export function v3ToolCallsPerRound(stage: ResearchStage, round: number): number {
+  const limits: Partial<Record<ResearchStage, readonly [number, number]>> = {
+    product_truth: [2, 1],
+    organization_discovery: [6, 2],
+    market_investigation: [4, 2],
+    adversarial_review: [4, 2],
+  };
+  return limits[stage]?.[round === 1 ? 0 : 1] ?? 4;
+}
+
+export function v3StageToolLimits(
+  stage: ResearchStage,
+  base: { searches: number; pages: number; tokens: number; durationMs: number },
+) {
+  const caps: Partial<Record<ResearchStage, { searches: number; pages: number; tokens: number }>> = {
+    product_truth: { searches: 2, pages: 6, tokens: 180_000 },
+    organization_discovery: { searches: 10, pages: 30, tokens: 300_000 },
+    market_investigation: { searches: 20, pages: 60, tokens: 500_000 },
+    adversarial_review: { searches: 8, pages: 20, tokens: 250_000 },
+  };
+  const cap = caps[stage];
+  if (!cap) return base;
+  return {
+    ...base,
+    searches: Math.min(base.searches, cap.searches),
+    pages: Math.min(base.pages, cap.pages),
+    tokens: Math.min(base.tokens, cap.tokens),
+  };
+}
+
 function audiencePolicy(goal: "end_customers" | "channel_partners" | "both"): string {
   if (goal === "end_customers") {
     return "Return end-user organizations that buy the outcome. Do not rank agencies, systems integrators, consultants reselling the product, or internal AI engineering teams as ICPs.";
@@ -849,6 +1686,54 @@ function audiencePolicy(goal: "end_customers" | "channel_partners" | "both"): st
     return "Return channel partners that can repeatedly resell, implement or operate the product for their own clients; do not mix them with end-user buyers.";
   }
   return "Research end customers and channel partners, classify them explicitly, and keep internal builders excluded from the final ICP list.";
+}
+
+export function mergeProductTruthOutputs(
+  internal: ProductTruthOutput,
+  publicOutput: ProductTruthOutput,
+): ProductTruthOutput {
+  const internalNamespaced = namespaceProductTruth(internal, "internal");
+  const publicNamespaced = namespaceProductTruth(publicOutput, "public");
+  return parseAgentOutput("product_truth", {
+    productSummary: `${publicNamespaced.productSummary}\n\nInternal product facts: ${internalNamespaced.productSummary}`,
+    facts: [
+      ...publicNamespaced.facts.slice(0, 15),
+      ...internalNamespaced.facts.slice(0, 15),
+    ],
+    unknowns: uniqueStrings([
+      ...publicNamespaced.unknowns,
+      ...internalNamespaced.unknowns,
+    ]).slice(0, 20),
+    evidence: [
+      ...publicNamespaced.evidence,
+      ...internalNamespaced.evidence,
+    ],
+  }) as ProductTruthOutput;
+}
+
+function namespaceProductTruth(
+  output: ProductTruthOutput,
+  namespace: "internal" | "public",
+): ProductTruthOutput {
+  const evidenceIds = new Map(
+    output.evidence.map((source) => [source.evidenceId, `${namespace}:${source.evidenceId}`]),
+  );
+  return {
+    ...output,
+    facts: output.facts.map((fact) => ({
+      ...fact,
+      factId: `${namespace}:${fact.factId}`,
+      evidenceIds: fact.evidenceIds.map((id) => evidenceIds.get(id) ?? `${namespace}:${id}`),
+    })),
+    evidence: output.evidence.map((source) => ({
+      ...source,
+      evidenceId: evidenceIds.get(source.evidenceId)!,
+    })),
+  };
+}
+
+function uniqueStrings(values: readonly string[]): string[] {
+  return [...new Set(values.filter(Boolean))];
 }
 
 function readStructuredResponse(result: unknown): unknown {

@@ -111,6 +111,7 @@ export class CrawlerClient {
   async readPages(input: {
     urls: readonly string[];
     correlationId: string;
+    requestKey?: string;
     signal?: AbortSignal;
   }): Promise<readonly CrawledPage[]> {
     return this.#withPageReadSlot(input.signal, async () => {
@@ -120,6 +121,7 @@ export class CrawlerClient {
           urls: input.urls,
           includeImages: false,
           correlationId: input.correlationId,
+          ...(input.requestKey ? { idempotencyKey: input.requestKey } : {}),
         }),
         ...(input.signal ? { signal: input.signal } : {}),
       });
@@ -151,6 +153,7 @@ export class CrawlerClient {
       const response = await this.#request(
         `/crawl/${jobId}`,
         signal ? { signal } : {},
+        "CRAWLER_JOB_LOST",
       );
       const status = statusResponseSchema.parse(await response.json());
       if (status.status === "completed") return status.result?.data ?? [];
@@ -165,7 +168,11 @@ export class CrawlerClient {
     throw new RetryableAgentError("CRAWLER_ABORTED", "Crawler request was aborted");
   }
 
-  async #request(path: string, init: RequestInit = {}): Promise<Response> {
+  async #request(
+    path: string,
+    init: RequestInit = {},
+    notFoundCode?: string,
+  ): Promise<Response> {
     const signal = init.signal ?? AbortSignal.timeout(this.#requestTimeoutMs);
     for (let attempt = 0; attempt < this.#busyRetryAttempts; attempt += 1) {
       let response: Response;
@@ -191,6 +198,9 @@ export class CrawlerClient {
         throw new RetryableAgentError("CRAWLER_UNAVAILABLE", `Crawler returned ${response.status}`);
       }
       if (!response.ok) {
+        if (response.status === 404 && notFoundCode) {
+          throw new RetryableAgentError(notFoundCode, "The crawler lost its in-memory job; the request can be replayed safely");
+        }
         throw new TerminalAgentError("CRAWLER_REQUEST_REJECTED", `Crawler returned ${response.status}`);
       }
       return response;

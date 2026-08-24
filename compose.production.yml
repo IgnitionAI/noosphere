@@ -1,0 +1,273 @@
+name: ignition-outbound
+
+services:
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    command: ["bun", "dist/migrate/migrate.js"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@database:5432/${POSTGRES_DB:-ignition_outbound}
+    depends_on:
+      database:
+        condition: service_healthy
+    restart: "no"
+    networks: [outbound-private]
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    command: ["bun", "dist/backend/api/src/index.js"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@database:5432/${POSTGRES_DB:-ignition_outbound}
+      S3_ENDPOINT: http://minio:9000
+      CRAWLER_SERVICE_URL: http://crawler:8000
+      CODEX_SERVICE_HOME: /var/lib/noosphere-codex
+      PORT: "3001"
+    volumes:
+      - codex-service-home:/var/lib/noosphere-codex
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+      crawler:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:3001/health/ready').then(r => { if (!r.ok) process.exit(1) })"]
+      interval: 15s
+      timeout: 5s
+      start_period: 15s
+      retries: 10
+    restart: unless-stopped
+    networks: [outbound-private]
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    env_file: .env
+    environment:
+      OUTBOUND_API_URL: http://api:3001
+      HOSTNAME: 0.0.0.0
+      PORT: "3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:3000/login').then(r => { if (!r.ok) process.exit(1) })"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 10
+    restart: unless-stopped
+    networks: [outbound-private]
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    command: ["bun", "dist/backend/worker/src/index.js"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@database:5432/${POSTGRES_DB:-ignition_outbound}
+      S3_ENDPOINT: http://minio:9000
+      CRAWLER_SERVICE_URL: http://crawler:8000
+      TEI_EMBEDDING_GRPC_ADDRESS: tei-embedding:80
+      TEI_RERANKER_GRPC_ADDRESS: tei-reranker:80
+      TEI_PROTO_PATH: /app/packages/infrastructure/src/embeddings/tei.proto
+      CODEX_SERVICE_HOME: /var/lib/noosphere-codex
+      WORKER_EXCLUDED_JOB_TYPES: prospect.decision.execute,conversation.command.execute,prospect.memory.refresh,prospect.memory.backfill
+    volumes:
+      - codex-service-home:/var/lib/noosphere-codex
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+      crawler:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [outbound-private]
+
+  decision-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    command: ["bun", "dist/backend/worker/src/index.js"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@database:5432/${POSTGRES_DB:-ignition_outbound}
+      S3_ENDPOINT: http://minio:9000
+      CRAWLER_SERVICE_URL: http://crawler:8000
+      TEI_EMBEDDING_GRPC_ADDRESS: tei-embedding:80
+      TEI_RERANKER_GRPC_ADDRESS: tei-reranker:80
+      TEI_PROTO_PATH: /app/packages/infrastructure/src/embeddings/tei.proto
+      CODEX_SERVICE_HOME: /var/lib/noosphere-codex
+      WORKER_ID: prospect-decision-worker
+      WORKER_JOB_TYPES: prospect.decision.execute
+      WORKER_DISABLE_MAINTENANCE: "true"
+      WORKER_DISABLE_OUTBOX: "true"
+      WORKER_DISABLE_OUTREACH_SCHEDULER: "true"
+    volumes:
+      - codex-service-home:/var/lib/noosphere-codex
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+      crawler:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [outbound-private]
+
+  setter-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    command: ["bun", "dist/backend/worker/src/index.js"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@database:5432/${POSTGRES_DB:-ignition_outbound}
+      S3_ENDPOINT: http://minio:9000
+      CRAWLER_SERVICE_URL: http://crawler:8000
+      TEI_EMBEDDING_GRPC_ADDRESS: tei-embedding:80
+      TEI_RERANKER_GRPC_ADDRESS: tei-reranker:80
+      TEI_PROTO_PATH: /app/packages/infrastructure/src/embeddings/tei.proto
+      CODEX_SERVICE_HOME: /var/lib/noosphere-codex
+      WORKER_ID: setter-command-worker
+      WORKER_JOB_TYPES: conversation.command.execute
+      JOB_BATCH_SIZE: "2"
+      JOB_POLL_INTERVAL_MS: "250"
+      WORKER_DISABLE_MAINTENANCE: "true"
+      WORKER_DISABLE_OUTBOX: "true"
+      WORKER_DISABLE_OUTREACH_SCHEDULER: "true"
+    volumes:
+      - codex-service-home:/var/lib/noosphere-codex
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+      crawler:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [outbound-private]
+
+  memory-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    command: ["bun", "dist/backend/worker/src/index.js"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@database:5432/${POSTGRES_DB:-ignition_outbound}
+      S3_ENDPOINT: http://minio:9000
+      CRAWLER_SERVICE_URL: http://crawler:8000
+      TEI_EMBEDDING_GRPC_ADDRESS: tei-embedding:80
+      TEI_RERANKER_GRPC_ADDRESS: tei-reranker:80
+      TEI_PROTO_PATH: /app/packages/infrastructure/src/embeddings/tei.proto
+      CODEX_SERVICE_HOME: /var/lib/noosphere-codex
+      WORKER_ID: prospect-memory-worker
+      WORKER_JOB_TYPES: prospect.memory.refresh,prospect.memory.backfill
+      JOB_BATCH_SIZE: "2"
+      JOB_POLL_INTERVAL_MS: "500"
+      JOB_LEASE_MS: "120000"
+      JOB_HEARTBEAT_MS: "30000"
+      WORKER_DISABLE_MAINTENANCE: "true"
+      WORKER_DISABLE_OUTBOX: "true"
+      WORKER_DISABLE_OUTREACH_SCHEDULER: "true"
+    volumes:
+      - codex-service-home:/var/lib/noosphere-codex
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+      crawler:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [outbound-private]
+
+  proxy:
+    image: caddy:2.10.0-alpine
+    environment:
+      PUBLIC_HOST: ${PUBLIC_HOST:?PUBLIC_HOST is required}
+    ports:
+      - "${HTTP_BIND:-0.0.0.0}:80:80"
+      - "${HTTPS_BIND:-0.0.0.0}:443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      web:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [outbound-private]
+
+  backup-postgres:
+    image: paradedb/paradedb:v0.23.5
+    profiles: [backup]
+    env_file: .env
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        mkdir -p /backups/postgres
+        pg_dump --host database --username ${POSTGRES_USER:-postgres} \
+          --dbname ${POSTGRES_DB:-ignition_outbound} --format custom --no-owner --no-acl \
+          > /backups/postgres/ignition_outbound_$$(date -u +%Y%m%dT%H%M%SZ).dump
+    volumes:
+      - ${BACKUP_DIR:?BACKUP_DIR is required}:/backups
+    depends_on:
+      database:
+        condition: service_healthy
+    networks: [outbound-private]
+
+  backup-minio:
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    profiles: [backup]
+    env_file: .env
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        mkdir -p /backups/minio
+        mc alias set local http://minio:9000 "$${S3_ACCESS_KEY_ID}" "$${S3_SECRET_ACCESS_KEY}"
+        mc mirror --overwrite local/"$${S3_BUCKET}" /backups/minio/latest
+    volumes:
+      - ${BACKUP_DIR:?BACKUP_DIR is required}:/backups
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks: [outbound-private]
+
+  codex-auth:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    profiles: [codex-auth]
+    command: ["codex", "login", "--device-auth"]
+    environment:
+      CODEX_HOME: /var/lib/noosphere-codex
+      HOME: /var/lib/noosphere-codex
+    stdin_open: true
+    tty: true
+    volumes:
+      - codex-service-home:/var/lib/noosphere-codex
+    networks: [outbound-private]
+
+volumes:
+  caddy-data:
+  caddy-config:
+  codex-service-home:
+
+networks:
+  outbound-private:
+    driver: bridge

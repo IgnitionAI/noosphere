@@ -1,0 +1,12 @@
+[
+  {
+    "participantId": "operator-001",
+    "answers": [
+      { "questionId": "drawer_closure", "correct": true },
+      { "questionId": "dry_run_effect", "correct": true },
+      { "questionId": "memory_refresh_effect", "correct": true },
+      { "questionId": "stale_memory_behavior", "correct": true },
+      { "questionId": "provider_sent_evidence", "correct": true }
+    ]
+  }
+]

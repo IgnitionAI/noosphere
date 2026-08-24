@@ -62,7 +62,11 @@ canonique, des coordonnées vérifiées ou non, et un historique d’emplois.
 
 ## États et erreurs
 
+- loading : skeleton de la liste et de la fiche ;
+- empty : aucun contact — action principale « créer un contact » ou importer
+  (F-022) ;
 - validation (nom vide, email malformé, deux emplois courants) ;
+- forbidden : reviewer/viewer en lecture seule, contrôles serveur inchangés ;
 - conflit d’empreinte d’identité (409 avec le contact existant) ;
 - isolation workspace (404).
 
@@ -82,7 +86,7 @@ canonique, des coordonnées vérifiées ou non, et un historique d’emplois.
 | POST | `/api/v1/contacts/:contactId/actions/suppress` | suppression persistante |
 
 **Événements sortants** : `ContactCreated`, `ContactEmploymentChanged`,
-`ContactSuppressed`.
+`SuppressionRegistered`.
 
 ## Données et confidentialité
 

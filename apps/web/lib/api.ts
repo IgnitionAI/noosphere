@@ -1,4 +1,6 @@
 import "server-only";
+import { outboundApiUrl } from "./outbound-api-url";
+export { outboundApiUrl } from "./outbound-api-url";
 import { cookies } from "next/headers";
 
 export interface Session {
@@ -22,11 +24,995 @@ export interface Workspace {
   readonly lastSelectedAt: string | null;
 }
 
+export type WorkspaceOnboardingStep = "workspace" | "product" | "icp" | "sending_account" | "calendar" | "prerequisites" | "autopilot";
+export interface WorkspaceOnboardingProgress {
+  readonly workspaceId: string;
+  readonly currentStep: WorkspaceOnboardingStep | null;
+  readonly completed: boolean;
+  readonly completedCount: number;
+  readonly steps: readonly {
+    readonly key: WorkspaceOnboardingStep;
+    readonly position: number;
+    readonly title: string;
+    readonly description: string;
+    readonly optional: boolean;
+    readonly status: "pending" | "completed" | "skipped";
+    readonly canMutate: boolean;
+    readonly requiredRole: "member" | "owner_or_admin";
+    readonly prerequisite: { readonly satisfied: boolean; readonly code: string; readonly message: string; readonly href: string };
+    readonly actorUserId: string | null;
+    readonly completedAt: string | null;
+  }[];
+  readonly nextAction: { readonly label: string; readonly href: string };
+}
+
+export type WorkspaceRole = Workspace["role"];
+export type WorkspaceMemberStatus = "active" | "disabled";
+
+export type AttentionItem = {
+  readonly id: string;
+  readonly type: "account" | "job" | "campaign" | "decision" | "conversation";
+  readonly severity: "info" | "warning" | "critical";
+  readonly message: string;
+  readonly resourceId: string | null;
+  readonly resourceHref: string | null;
+  readonly ageSeconds: number;
+  readonly action: { readonly label: string; readonly href: string } | null;
+  readonly correlationId: string | null;
+  readonly createdAt: string;
+};
+
+export type NoosphereLens = "inbound" | "symbiosis" | "outbound";
+export type ActivityInteractionType = "reply" | "comment" | "reaction" | "mention";
+export type EngineOperationalStatus = "not_configured" | "idle" | "running" | "degraded" | "paused";
+export interface EngineOperationalState {
+  readonly status: EngineOperationalStatus;
+  readonly label: string;
+  readonly summary: string;
+  readonly lastActivityAt: string | null;
+  readonly nextAction: { readonly label: string; readonly href: string } | null;
+}
+
+export interface NextOutcome {
+  readonly id: string;
+  readonly type: "publication" | "research" | "conversation" | "call";
+  readonly source: "inbound" | "outbound" | "mixed" | "unknown";
+  readonly label: string;
+  readonly detail: string;
+  readonly expectedAt: string | null;
+  readonly href: string;
+}
+
+export interface WorkspaceOperationalSummary {
+  readonly asOf: string;
+  readonly counts: { readonly activeCampaigns: number; readonly prospects: number; readonly contactedProspects: number; readonly publishedContents: number; readonly openConversations: number; readonly openOpportunities: number; readonly bookedCalls: number; readonly attention: number };
+  readonly attention: readonly AttentionItem[];
+  readonly jobs: { readonly active: number; readonly failed: number; readonly running: readonly { readonly id: string; readonly type: string; readonly status: string; readonly updatedAt: string }[] };
+  readonly nextAutomaticResearch: string | null;
+  readonly accountHealth: { readonly connected: number; readonly degraded: number; readonly disconnected: number; readonly activeAlerts: number };
+  readonly engines: { readonly inbound: EngineOperationalState; readonly outbound: EngineOperationalState };
+  readonly nextOutcomes: readonly NextOutcome[];
+  readonly attentionPagination: { readonly nextCursor: string | null };
+}
+
+export interface ActivityWorkspacePage {
+  readonly lens: NoosphereLens;
+  readonly asOf: string;
+  readonly state: "not_configured" | "idle" | "active" | "attention";
+  readonly quality: "fresh" | "partial" | "stale";
+  readonly headline: string;
+  readonly counters: readonly { readonly key: string; readonly label: string; readonly value: number }[];
+  readonly items: readonly {
+    readonly id: string;
+    readonly kind: "campaign" | "job" | "conversation" | "call" | "publication" | "signal";
+    readonly source: "inbound" | "outbound" | "mixed" | "unknown";
+    readonly status: "pending" | "running" | "completed" | "attention";
+    readonly title: string;
+    readonly detail: string;
+    readonly occurredAt: string;
+    readonly href: string;
+    readonly correlationId: string | null;
+  }[];
+  readonly pagination: { readonly nextCursor: string | null };
+}
+
+export interface EditorialStrategySnapshot {
+  readonly audience: { readonly name: string; readonly summary: string; readonly awareness: "unaware" | "problem_aware" | "solution_aware" | "product_aware" | "mixed" };
+  readonly pillars: readonly { readonly name: string; readonly promise: string; readonly proofTypes: readonly string[] }[];
+  readonly voice: { readonly traits: readonly string[]; readonly avoid: readonly string[] };
+  readonly formats: readonly ("linkedin_text" | "linkedin_document" | "linkedin_image" | "linkedin_video")[];
+  readonly cadence: { readonly postsPerWeek: number; readonly preferredDays: readonly number[]; readonly timezone: string };
+  readonly callsToAction: readonly string[];
+  readonly allowedClaimIds: readonly string[];
+  readonly forbiddenTopics: readonly string[];
+}
+
+export interface EditorialStrategy {
+  readonly id: string;
+  readonly name: string;
+  readonly offerId: string;
+  readonly offerVersionId: string;
+  readonly icpId: string;
+  readonly icpVersionId: string;
+  readonly currentVersion: number;
+  readonly draft: EditorialStrategySnapshot;
+  readonly derivation: { readonly provider: string; readonly model: string; readonly promptVersion: string; readonly aiRunId: string | null };
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export type ContentIdeaStatus = "discovered" | "shortlisted" | "briefed" | "discarded" | "expired";
+export interface ContentIdeaEvidence {
+  readonly key: string;
+  readonly type: "offer_claim" | "knowledge_claim" | "conversation_message" | "public_web";
+  readonly sourceRef: string;
+  readonly canonicalUrl: string | null;
+  readonly title: string;
+  readonly excerpt: string;
+  readonly contentHash: string;
+  readonly collectedAt: string;
+}
+export interface ContentIdea {
+  readonly id: string;
+  readonly status: ContentIdeaStatus;
+  readonly angle: string;
+  readonly rationale: string;
+  readonly audience: string;
+  readonly pillar: string;
+  readonly priority: number;
+  readonly freshnessUntil: string;
+  readonly firstSeenAt: string;
+  readonly lastSeenAt: string;
+  readonly sources: readonly ContentIdeaEvidence[];
+}
+export interface ContentIdeaDiscoveryRun {
+  readonly id: string;
+  readonly status: "queued" | "running" | "completed" | "partial" | "failed";
+  readonly trigger: "manual" | "daily";
+  readonly cursor: number;
+  readonly queryCount: number;
+  readonly sourceCount: number;
+  readonly ideaCount: number;
+  readonly queryLimit: number;
+  readonly sourceLimit: number;
+  readonly deadlineAt: string;
+  readonly lastErrorCode: string | null;
+  readonly lastErrorMessage: string | null;
+  readonly createdAt: string;
+  readonly completedAt: string | null;
+}
+
+export interface ContentGenerationRun {
+  readonly id: string;
+  readonly ideaId: string;
+  readonly assetId: string;
+  readonly assetVersionId: string | null;
+  readonly status: "queued" | "running" | "ready" | "blocked" | "failed";
+  readonly stage: "brief" | "writer" | "audit" | "critic" | "completed";
+  readonly instruction: string | null;
+  readonly lastErrorCode: string | null;
+  readonly lastErrorMessage: string | null;
+  readonly createdAt: string;
+  readonly completedAt: string | null;
+}
+
+export interface ContentAssetVersion {
+  readonly id: string;
+  readonly assetId: string;
+  readonly briefId: string;
+  readonly version: number;
+  readonly body: string;
+  readonly draft: {
+    readonly hook: string;
+    readonly body: string;
+    readonly callToAction: string | null;
+    readonly factualClaims: readonly { readonly statement: string; readonly sourceKeys: readonly string[] }[];
+    readonly opinionStatements: readonly string[];
+    readonly mediaPlan?: ContentMediaPlan;
+  };
+  readonly audit: {
+    readonly reviewedClaims: readonly { readonly statement: string; readonly sourceKeys: readonly string[]; readonly verdict: "supported" | "unsupported"; readonly reason: string }[];
+    readonly ungroundedStatements: readonly string[];
+    readonly forbiddenTopicMatches: readonly string[];
+  };
+  readonly critique: {
+    readonly genericPhrases: readonly string[];
+    readonly repeatedConcepts: readonly string[];
+    readonly callToActionAligned: boolean;
+    readonly distinctFromHistory: boolean;
+    readonly issues: readonly { readonly severity: "advice" | "blocker"; readonly code: string; readonly message: string }[];
+    readonly summary: string;
+  };
+  readonly readiness: { readonly ready: boolean; readonly blockers: readonly string[] };
+  readonly media: ContentMedia | null;
+  readonly createdAt: string;
+}
+
+export interface ContentAsset {
+  readonly id: string;
+  readonly ideaId: string;
+  readonly type: LinkedinContentFormat;
+  readonly status: "draft" | "ready" | "blocked";
+  readonly latestVersion: number;
+  readonly latest: ContentAssetVersion | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface ContentPublication {
+  readonly id: string;
+  readonly assetId: string;
+  readonly assetVersionId: string;
+  readonly network: "linkedin";
+  readonly provider: "unipile";
+  readonly status: "scheduled" | "retry" | "publishing" | "published" | "unknown" | "failed" | "cancelled";
+  readonly scheduledFor: string;
+  readonly contentSnapshot: { readonly assetVersionId: string; readonly body: string; readonly contentHash: string; readonly format: LinkedinContentFormat; readonly media: readonly ContentMedia[] };
+  readonly policySnapshot: { readonly schemaVersion: 1; readonly policyVersion: "linkedin-publishing-v1"; readonly network: "linkedin"; readonly assetReady: true; readonly strategyVersionId: string; readonly claimsGate: "passed" };
+  readonly accountSnapshot: { readonly provider: "unipile"; readonly providerAccountId: string; readonly displayName: string; readonly selectionVersion: string; readonly observedAt: string };
+  readonly attempts: number;
+  readonly maxAttempts: number;
+  readonly providerPostId: string | null;
+  readonly providerSocialId: string | null;
+  readonly providerUrl: string | null;
+  readonly lastErrorCode: string | null;
+  readonly lastErrorMessage: string | null;
+  readonly publishedAt: string | null;
+  readonly cancelledAt: string | null;
+  readonly unknownAt: string | null;
+  readonly reconciliation: {
+    readonly status: "pending" | "searching" | "matched" | "not_found" | "ambiguous" | "error";
+    readonly attempts: number;
+    readonly maxAttempts: number;
+    readonly candidatesCount: number;
+    readonly nextAttemptAt: string | null;
+    readonly startedAt: string | null;
+    readonly completedAt: string | null;
+    readonly lastErrorCode: string | null;
+    readonly correlationId: string;
+  } | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export type LinkedinContentFormat = "linkedin_text" | "linkedin_image" | "linkedin_document" | "linkedin_video";
+export interface ContentMediaPlan {
+  readonly format: LinkedinContentFormat;
+  readonly visualTone: "editorial" | "technical" | "bold" | "minimal";
+  readonly title: string | null;
+  readonly subtitle: string | null;
+  readonly altText: string | null;
+  readonly slides: readonly {
+    readonly title: string;
+    readonly body: string;
+    readonly layout?: "auto" | "cover" | "insight" | "checklist" | "framework" | "comparison" | "process" | "closing";
+    readonly kicker?: string | null;
+    readonly callout?: string | null;
+    readonly items?: readonly { readonly label: string; readonly text: string }[];
+  }[];
+  readonly scenes: readonly { readonly title: string; readonly body: string; readonly durationSeconds: number }[];
+}
+export interface ContentMedia {
+  readonly id: string;
+  readonly kind: "image" | "document" | "video";
+  readonly objectKey: string;
+  readonly mimeType: "image/png" | "application/pdf" | "video/mp4";
+  readonly filename: string;
+  readonly checksumSha256: string;
+  readonly sizeBytes: number;
+  readonly width: number | null;
+  readonly height: number | null;
+  readonly pageCount: number | null;
+  readonly durationSeconds: number | null;
+  readonly altText: string;
+}
+export interface ContentBrandKit {
+  readonly workspaceId: string;
+  readonly version: number;
+  readonly snapshot: {
+    readonly brandName: string;
+    readonly tagline: string | null;
+    readonly websiteUrl: string | null;
+    readonly brandDescription: string | null;
+    readonly logo: {
+      readonly objectKey: string;
+      readonly mimeType: "image/png";
+      readonly checksumSha256: string;
+      readonly width: number;
+      readonly height: number;
+      readonly previewDataUrl: string;
+      readonly sourceFileName: string;
+    } | null;
+    readonly colors: { readonly primary: string; readonly accent: string; readonly background: string; readonly text: string };
+    readonly paletteMetadata: {
+      readonly generatedBy: "manual" | "detected" | "ai";
+      readonly sources: readonly ("landing_page" | "logo" | "description" | "manual")[];
+      readonly rationale: string | null;
+    };
+    readonly typography: "inter" | "space_grotesk" | "system";
+    readonly enabledFormats: readonly LinkedinContentFormat[];
+    readonly weeklyMix: Record<LinkedinContentFormat, number>;
+    readonly imageStyle: "editorial" | "technical" | "bold" | "minimal";
+    readonly videoMode: "motion_graphics";
+    readonly voice: {
+      readonly traits: readonly string[];
+      readonly avoid: readonly string[];
+      readonly preferredVocabulary: readonly string[];
+    };
+  };
+  readonly updatedAt: string | null;
+}
+export interface ContentPerformance {
+  readonly formats: readonly { readonly format: LinkedinContentFormat; readonly publications: number; readonly impressions: number; readonly reactions: number; readonly comments: number; readonly reposts: number; readonly engagementRate: number | null }[];
+  readonly observedAt: string;
+}
+
+export interface ContentAutopilot {
+  readonly configured: boolean;
+  readonly enabled: boolean;
+  readonly localTime: string;
+  readonly timezone: string;
+  readonly publicationTimes: readonly string[];
+  readonly publicationDays: readonly number[];
+  readonly postsPerWeek: number;
+  readonly lastRunAt: string | null;
+  readonly nextRunAt: string | null;
+  readonly nextPublicationAt: string | null;
+  readonly queuedIdeas: number;
+  readonly generatingAssets: number;
+  readonly readyAssets: number;
+  readonly scheduledPublications: number;
+  readonly blockedAssets: number;
+  readonly exceptions: number;
+}
+
+export interface EditorialLearningVersion {
+  readonly id: string;
+  readonly strategyVersionId: string;
+  readonly version: number;
+  readonly facts: readonly EditorialLearningEvidence[];
+  readonly inferences: readonly EditorialLearningEvidence[];
+  readonly recommendations: readonly {
+    readonly action: "prioritize";
+    readonly audience: string;
+    readonly pillar: string;
+    readonly angle: string;
+    readonly score: number;
+    readonly rationale: string;
+    readonly evidenceRefs: readonly string[];
+  }[];
+  readonly bounds: { readonly icpVersionId: string; readonly allowedPillars: readonly string[]; readonly allowedClaimIds: readonly string[]; readonly formats: readonly string[]; readonly postsPerWeek: number };
+  readonly modelVersion: string;
+  readonly windowStartedAt: string;
+  readonly windowEndedAt: string;
+  readonly createdAt: string;
+}
+
+export interface EditorialLearningEvidence {
+  readonly kind: "response" | "booking";
+  readonly certainty: "fact" | "inference";
+  readonly pillar: string;
+  readonly angle: string;
+  readonly sourceRef: string;
+  readonly sourceHref: string;
+  readonly occurredAt: string;
+}
+
+export interface SocialContentItem {
+  readonly id: string;
+  readonly publicationId: string | null;
+  readonly origin: "internal" | "external";
+  readonly providerPostId: string;
+  readonly socialId: string | null;
+  readonly text: string;
+  readonly url: string | null;
+  readonly publishedAt: string | null;
+  readonly status: "observed" | "unavailable";
+  readonly impressions: number | null;
+  readonly reactions: number | null;
+  readonly comments: number | null;
+  readonly reposts: number | null;
+  readonly metricsObservedAt: string | null;
+  readonly firstSeenAt: string;
+  readonly lastSeenAt: string;
+}
+
+export interface SocialContentSyncStatus {
+  readonly status: "not_configured" | "idle" | "syncing" | "error";
+  readonly backfillComplete: boolean;
+  readonly lastSuccessAt: string | null;
+  readonly nextSyncAt: string | null;
+  readonly lastErrorCode: string | null;
+  readonly lastErrorMessage: string | null;
+}
+
+export interface SocialInteraction {
+  readonly id: string;
+  readonly socialContentId: string;
+  readonly publicationId: string | null;
+  readonly postText: string;
+  readonly postUrl: string | null;
+  readonly type: "comment" | "reply" | "reaction" | "mention";
+  readonly providerInteractionId: string;
+  readonly parentProviderInteractionId: string | null;
+  readonly direction: "owner" | "incoming" | "unknown";
+  readonly actorProviderId: string | null;
+  readonly actorName: string | null;
+  readonly actorHeadline: string | null;
+  readonly actorProfileUrl: string | null;
+  readonly body: string | null;
+  readonly reaction: string | null;
+  readonly mentionedProviderId: string | null;
+  readonly mentionedName: string | null;
+  readonly status: "observed" | "removed";
+  readonly occurredAt: string | null;
+  readonly firstSeenAt: string;
+  readonly lastSeenAt: string;
+  readonly removedAt: string | null;
+}
+
+export interface SocialEngagementSyncStatus {
+  readonly status: "not_configured" | "idle" | "syncing" | "error";
+  readonly observed: number;
+  readonly incoming: number;
+  readonly lastSuccessAt: string | null;
+  readonly nextSyncAt: string | null;
+  readonly lastErrorCode: string | null;
+  readonly lastErrorMessage: string | null;
+}
+
+export interface AttributionTouch {
+  readonly id: string;
+  readonly kind: "identity" | "conversation" | "campaign" | "booking" | "opportunity";
+  readonly certainty: "evidence" | "inference" | "unknown";
+  readonly rule: string;
+  readonly modelVersion: string;
+  readonly confidence: number;
+  readonly proofType: string;
+  readonly proofRef: string | null;
+  readonly proofHref: string | null;
+  readonly contactId: string | null;
+  readonly contactName: string | null;
+  readonly conversationId: string | null;
+  readonly campaignId: string | null;
+  readonly campaignName: string | null;
+  readonly bookingId: string | null;
+  readonly bookingStartAt: string | null;
+  readonly opportunityId: string | null;
+  readonly position: "first" | "last" | "first_and_last" | "middle" | null;
+  readonly occurredAt: string;
+}
+
+export interface AttributionJourney {
+  readonly interaction: { readonly id: string; readonly type: "comment" | "reply" | "reaction" | "mention"; readonly actorName: string | null; readonly actorProfileUrl: string | null; readonly body: string | null; readonly reaction: string | null; readonly occurredAt: string };
+  readonly source: { readonly socialContentId: string; readonly publicationId: string | null; readonly text: string; readonly url: string | null };
+  readonly resolution: "resolved" | "ambiguous" | "unknown" | "excluded";
+  readonly touches: readonly AttributionTouch[];
+}
+
+export interface SetupReadinessItem {
+  readonly key: "product" | "icp" | "accounts" | "automation" | "calendar" | "knowledge";
+  readonly label: string;
+  readonly state: "ready" | "optional" | "attention" | "missing";
+  readonly reason: string;
+  readonly action: { readonly label: string; readonly href: string } | null;
+  readonly requiredForLaunch: boolean;
+}
+
+export interface SetupReadinessView {
+  readonly ready: boolean;
+  readonly asOf: string;
+  readonly items: readonly SetupReadinessItem[];
+}
+
+export interface WorkspaceConversationView {
+  readonly id: string;
+  readonly kind: "message_thread" | "social_thread";
+  readonly source: "inbound" | "outbound" | "mixed" | "unknown";
+  readonly contactId: string;
+  readonly firstName: string;
+  readonly lastName: string;
+  readonly campaignId: string | null;
+  readonly campaignName: string | null;
+  readonly connectedAccountId: string | null;
+  readonly accountName: string | null;
+  readonly channel: "linkedin" | "email" | "whatsapp";
+  readonly origin: "campaign" | "outside_campaign";
+  readonly automationMode: "setter" | "human" | "disabled";
+  readonly subject: string | null;
+  readonly status: string;
+  readonly unreadCount: number;
+  readonly socialEventCount: number;
+  readonly lastMessage: { readonly body: string; readonly direction: string; readonly at: string } | null;
+  readonly lastMessageAt: string;
+}
+
+export interface WorkspaceConversationDetail extends WorkspaceConversationView {
+  readonly messages: readonly {
+    readonly id: string;
+    readonly providerMessageId: string;
+    readonly direction: "inbound" | "outbound";
+    readonly senderType: string;
+    readonly body: string;
+    readonly at: string;
+  }[];
+  readonly socialEvents: readonly {
+    readonly id: string;
+    readonly type: "comment" | "reply" | "mention";
+    readonly actorName: string | null;
+    readonly body: string;
+    readonly at: string;
+    readonly postText: string;
+    readonly postUrl: string | null;
+    readonly proofHref: string;
+  }[];
+  readonly decision: { readonly intent: string; readonly confidence: number; readonly action: string; readonly rationale: string; readonly createdAt: string } | null;
+  readonly latestCommand: {
+    readonly id: string;
+    readonly mode: "manual" | "setter";
+    readonly executionMode: "live" | "dry_run";
+    readonly status: string;
+    readonly generatedBody: string | null;
+    readonly generationMetadata: Readonly<Record<string, unknown>>;
+    readonly errorMessage: string | null;
+    readonly createdAt: string;
+  } | null;
+}
+
+export interface WorkspaceConversationPage {
+  readonly data: readonly WorkspaceConversationView[];
+  readonly pagination: { readonly page: number; readonly pageSize: number; readonly total: number; readonly hasNext: boolean };
+  readonly sync: {
+    readonly totalAccounts: number;
+    readonly readyAccounts: number;
+    readonly backfillingAccounts: number;
+    readonly errorAccounts: number;
+    readonly lastSuccessAt: string | null;
+  };
+}
+
+export async function getOperationalSummary(workspaceSlug: string, input: { attentionCursor?: string; attentionLimit?: number } = {}): Promise<WorkspaceOperationalSummary> {
+  const params = new URLSearchParams();
+  if (input.attentionCursor) params.set("attentionCursor", input.attentionCursor);
+  if (input.attentionLimit) params.set("attentionLimit", String(input.attentionLimit));
+  return crmFetch(workspaceSlug, `/api/v1/workspace/operational-summary${params.size ? `?${params}` : ""}`);
+}
+
+export async function getEditorialStrategy(workspaceSlug: string): Promise<EditorialStrategy | null> {
+  try {
+    return await crmFetch(workspaceSlug, "/api/v1/content/strategy");
+  } catch (error) {
+    if (error instanceof OutboundApiError && error.status === 404) return null;
+    throw error;
+  }
+}
+
+export async function deriveEditorialStrategy(workspaceSlug: string, requestKey: string): Promise<EditorialStrategy> {
+  return crmFetch(workspaceSlug, "/api/v1/content/strategy/derive", { method: "POST", body: { requestKey } });
+}
+
+export async function publishEditorialStrategy(workspaceSlug: string, requestKey: string): Promise<{ readonly id: string; readonly version: number }> {
+  return crmFetch(workspaceSlug, "/api/v1/content/strategy/publish", { method: "POST", body: { requestKey } });
+}
+
+export async function getContentAutopilot(workspaceSlug: string): Promise<ContentAutopilot> {
+  return crmFetch(workspaceSlug, "/api/v1/content/autopilot");
+}
+
+export async function configureContentAutopilot(workspaceSlug: string, input: { requestKey: string; enabled: boolean; localTime: string; timezone: string; publicationTimes?: readonly string[]; publicationDays?: readonly number[] }): Promise<ContentAutopilot> {
+  return crmFetch(workspaceSlug, "/api/v1/content/autopilot", { method: "PUT", body: input });
+}
+
+export async function getContentBrandKit(workspaceSlug: string): Promise<ContentBrandKit> {
+  return crmFetch(workspaceSlug, "/api/v1/content/brand-kit");
+}
+
+export async function updateContentBrandKit(workspaceSlug: string, input: { requestKey: string; brandKit: ContentBrandKit["snapshot"] }): Promise<ContentBrandKit> {
+  return crmFetch(workspaceSlug, "/api/v1/content/brand-kit", { method: "PUT", body: input });
+}
+
+export async function importContentBrandLogo(workspaceSlug: string, input: { requestKey: string; fileName: string; mimeType: "image/png" | "image/jpeg" | "image/webp"; dataBase64: string }): Promise<ContentBrandKit> {
+  return crmFetch(workspaceSlug, "/api/v1/content/brand-kit/logo-import", { method: "POST", body: input });
+}
+
+export interface ContentBrandDirection {
+  readonly brandKit: ContentBrandKit;
+  readonly contrast: {
+    readonly textOnBackground: number;
+    readonly backgroundOnPrimary: number;
+    readonly accentOnPrimary: number;
+  };
+  readonly metadata: {
+    readonly provider: string;
+    readonly model: string;
+    readonly promptVersion: string;
+    readonly aiRunId: string | null;
+  } | null;
+}
+
+export async function generateContentBrandDirection(workspaceSlug: string, input: {
+  requestKey: string;
+  landingPageUrl?: string | null;
+  description?: string | null;
+  useLogo?: boolean;
+}): Promise<ContentBrandDirection> {
+  return crmFetch(workspaceSlug, "/api/v1/content/brand-kit/generate-direction", { method: "POST", body: input });
+}
+
+export async function getContentPerformance(workspaceSlug: string): Promise<ContentPerformance> {
+  return crmFetch(workspaceSlug, "/api/v1/content/performance");
+}
+
+export async function getEditorialLearning(workspaceSlug: string): Promise<EditorialLearningVersion | null> {
+  try {
+    return await crmFetch(workspaceSlug, "/api/v1/content/learning");
+  } catch (error) {
+    if (error instanceof OutboundApiError && error.status === 404) return null;
+    throw error;
+  }
+}
+
+export async function listContentIdeas(workspaceSlug: string, input: { cursor?: string; status?: ContentIdeaStatus; limit?: number } = {}): Promise<{ data: readonly ContentIdea[]; nextCursor: string | null }> {
+  const params = new URLSearchParams();
+  if (input.cursor) params.set("cursor", input.cursor);
+  if (input.status) params.set("status", input.status);
+  if (input.limit) params.set("limit", String(input.limit));
+  return crmFetch(workspaceSlug, `/api/v1/content/ideas${params.size ? `?${params}` : ""}`);
+}
+
+export async function discoverContentIdeas(workspaceSlug: string, requestKey: string): Promise<ContentIdeaDiscoveryRun> {
+  return crmFetch(workspaceSlug, "/api/v1/content/ideas/discover", { method: "POST", body: { requestKey } });
+}
+
+export async function getContentIdeaDiscoveryRun(workspaceSlug: string, runId: string): Promise<ContentIdeaDiscoveryRun | null> {
+  try { return await crmFetch(workspaceSlug, `/api/v1/content/idea-discovery-runs/${runId}`); }
+  catch (error) { if (error instanceof OutboundApiError && error.status === 404) return null; throw error; }
+}
+
+export async function getContentIdeaDetail(workspaceSlug: string, ideaId: string): Promise<{ readonly idea: ContentIdea; readonly asset: ContentAsset | null; readonly publication: ContentPublication | null }> {
+  return crmFetch(workspaceSlug, `/api/v1/content/ideas/${ideaId}`);
+}
+
+export async function generateContentFromIdea(workspaceSlug: string, ideaId: string, requestKey: string): Promise<ContentGenerationRun> {
+  return crmFetch(workspaceSlug, `/api/v1/content/ideas/${ideaId}/brief`, { method: "POST", body: { requestKey } });
+}
+
+export async function improveContentAsset(workspaceSlug: string, assetId: string, requestKey: string, instruction?: string): Promise<ContentGenerationRun> {
+  return crmFetch(workspaceSlug, `/api/v1/content/assets/${assetId}/improve`, { method: "POST", body: { requestKey, ...(instruction?.trim() ? { instruction: instruction.trim() } : {}) } });
+}
+
+export async function getContentGenerationRun(workspaceSlug: string, runId: string): Promise<ContentGenerationRun | null> {
+  try { return await crmFetch(workspaceSlug, `/api/v1/content/generation-runs/${runId}`); }
+  catch (error) { if (error instanceof OutboundApiError && error.status === 404) return null; throw error; }
+}
+
+export async function listContentPublications(workspaceSlug: string, cursor?: string): Promise<{ readonly data: readonly ContentPublication[]; readonly nextCursor: string | null }> {
+  const params = new URLSearchParams();
+  if (cursor) params.set("cursor", cursor);
+  return crmFetch(workspaceSlug, `/api/v1/content/publications${params.size ? `?${params}` : ""}`);
+}
+
+export async function listSocialContent(workspaceSlug: string, cursor?: string): Promise<{ readonly data: readonly SocialContentItem[]; readonly nextCursor: string | null }> {
+  const params = new URLSearchParams();
+  if (cursor) params.set("cursor", cursor);
+  return crmFetch(workspaceSlug, `/api/v1/content/social-posts${params.size ? `?${params}` : ""}`);
+}
+
+export async function getSocialContentSyncStatus(workspaceSlug: string): Promise<SocialContentSyncStatus> {
+  return crmFetch(workspaceSlug, "/api/v1/content/social-posts/status");
+}
+
+export async function listSocialInteractions(workspaceSlug: string, cursor?: string): Promise<{ readonly data: readonly SocialInteraction[]; readonly nextCursor: string | null }> {
+  const params = new URLSearchParams({ status: "observed" });
+  if (cursor) params.set("cursor", cursor);
+  return crmFetch(workspaceSlug, `/api/v1/content/interactions?${params}`);
+}
+
+export async function getSocialEngagementSyncStatus(workspaceSlug: string): Promise<SocialEngagementSyncStatus> {
+  return crmFetch(workspaceSlug, "/api/v1/content/interactions/status");
+}
+
+export async function listAttributionJourneys(workspaceSlug: string, input: { cursor?: string; interactionId?: string; bookingId?: string; limit?: number } = {}): Promise<{ readonly data: readonly AttributionJourney[]; readonly nextCursor: string | null }> {
+  const params = new URLSearchParams();
+  if (input.cursor) params.set("cursor", input.cursor);
+  if (input.interactionId) params.set("interactionId", input.interactionId);
+  if (input.bookingId) params.set("bookingId", input.bookingId);
+  if (input.limit) params.set("limit", String(input.limit));
+  return crmFetch(workspaceSlug, `/api/v1/attribution/journeys${params.size ? `?${params}` : ""}`);
+}
+
+export async function scheduleContentPublication(workspaceSlug: string, assetId: string, requestKey: string, scheduledFor: string): Promise<ContentPublication> {
+  return crmFetch(workspaceSlug, `/api/v1/content/assets/${assetId}/schedule`, { method: "POST", body: { requestKey, scheduledFor } });
+}
+
+export async function rescheduleContentPublication(workspaceSlug: string, publicationId: string, requestKey: string, scheduledFor: string): Promise<ContentPublication> {
+  return crmFetch(workspaceSlug, `/api/v1/content/publications/${publicationId}/reschedule`, { method: "POST", body: { requestKey, scheduledFor } });
+}
+
+export async function cancelContentPublication(workspaceSlug: string, publicationId: string, requestKey: string): Promise<ContentPublication> {
+  return crmFetch(workspaceSlug, `/api/v1/content/publications/${publicationId}/cancel`, { method: "POST", body: { requestKey } });
+}
+
+export async function getActivity(workspaceSlug: string, lens: NoosphereLens, cursor?: string, interactionType?: ActivityInteractionType): Promise<ActivityWorkspacePage> {
+  const params = new URLSearchParams({ lens });
+  if (cursor) params.set("cursor", cursor);
+  if (interactionType) params.set("interactionType", interactionType);
+  return crmFetch(workspaceSlug, `/api/v1/activity?${params}`);
+}
+
+export async function getSetupReadiness(workspaceSlug: string): Promise<SetupReadinessView> {
+  return crmFetch(workspaceSlug, "/api/v1/workspace/setup-readiness");
+}
+
+export async function getCampaignWorkspaceView(workspaceSlug: string, campaignId: string): Promise<{ campaign: CampaignDetail; autopilot: CampaignAutopilotDashboard; engagement: CampaignEngagementOverview; population: { total: number; eligible: number; contacted: number; replies: number }; nextAction: { label: string; href: string } | null; timeline: readonly { key: string; label: string; status: "done" | "active" | "pending" | "attention" }[] }> {
+  return crmFetch(workspaceSlug, `/api/v1/campaigns/${campaignId}/workspace-view`);
+}
+
+export async function listWorkspaceConversations(workspaceSlug: string, filters: { channel?: string; scope?: string; source?: string; search?: string; period?: string; read?: string; campaignId?: string; page?: number; pageSize?: number } = {}): Promise<WorkspaceConversationPage> {
+  const params = new URLSearchParams();
+  if (filters.channel) params.set("channel", filters.channel);
+  if (filters.scope) params.set("scope", filters.scope);
+  if (filters.source) params.set("source", filters.source);
+  if (filters.search) params.set("search", filters.search);
+  if (filters.period) params.set("period", filters.period);
+  if (filters.read) params.set("read", filters.read);
+  if (filters.campaignId) params.set("campaignId", filters.campaignId);
+  if (filters.page) params.set("page", String(filters.page));
+  if (filters.pageSize) params.set("pageSize", String(filters.pageSize));
+  return crmFetch(workspaceSlug, `/api/v1/conversations${params.size ? `?${params.toString()}` : ""}`);
+}
+
+export async function getWorkspaceConversation(workspaceSlug: string, conversationId: string): Promise<WorkspaceConversationDetail> {
+  return crmFetch(workspaceSlug, `/api/v1/conversations/${conversationId}`);
+}
+
+export async function setConversationAutomationMode(
+  workspaceSlug: string,
+  conversationId: string,
+  mode: "setter" | "human" | "disabled",
+): Promise<{ id: string; campaignId: string | null; automationMode: "setter" | "human" | "disabled" }> {
+  return crmFetch(workspaceSlug, `/api/v1/conversations/${conversationId}/automation`, {
+    method: "PATCH",
+    body: { mode },
+  });
+}
+
+export interface WorkspaceMember {
+  readonly workspaceId: string;
+  readonly userId: string;
+  readonly email: string;
+  readonly name: string;
+  readonly role: WorkspaceRole;
+  readonly status: WorkspaceMemberStatus;
+  readonly joinedAt: string;
+  readonly lastSelectedAt: string | null;
+}
+
+export interface WorkspaceInvitation {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly email: string;
+  readonly proposedRole: WorkspaceRole;
+  readonly status: "pending" | "accepted" | "revoked" | "expired";
+  readonly expiresAt: string;
+  readonly invitedBy: string | null;
+  readonly acceptedBy: string | null;
+  readonly acceptedAt: string | null;
+  readonly revokedAt: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly emailDelivery?: "sent" | "failed" | "not_configured";
+}
+
+export interface WorkspaceDataPolicy {
+  readonly sending: { readonly timezone: string; readonly activeDays: readonly number[]; readonly windowStart: string; readonly windowEnd: string };
+  readonly channelLimits: { readonly linkedin: number; readonly email: number; readonly whatsapp: number };
+  readonly retention: {
+    readonly invitationsDays: number;
+    readonly jobsDays: number;
+    readonly auditDays: number;
+    readonly memoryEventsDays: number;
+    readonly memorySnapshotsDays: number;
+    readonly memoryReceiptsDays: number;
+  };
+}
+
+export interface WorkspaceDataExport {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly requestKey: string;
+  readonly status: "pending" | "processing" | "completed" | "failed";
+  readonly sizeBytes: number | null;
+  readonly checksumSha256: string | null;
+  readonly requestedBy: string | null;
+  readonly expiresAt: string | null;
+  readonly completedAt: string | null;
+  readonly failureCode: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly downloadUrl?: string | null;
+}
+
+export interface WorkspaceAuditLog {
+  readonly id: string;
+  readonly actorUserId: string | null;
+  readonly actorName: string | null;
+  readonly actorEmail: string | null;
+  readonly action: string;
+  readonly subjectType: string;
+  readonly subjectId: string;
+  readonly changes: unknown;
+  readonly correlationId: string | null;
+  readonly createdAt: string;
+}
+
+export type ConsoleJobStatus = "pending" | "running" | "retry" | "completed" | "dead_lettered";
+export interface ConsoleJob {
+  readonly id: string;
+  readonly type: string;
+  readonly status: ConsoleJobStatus;
+  readonly attempts: number;
+  readonly maxAttempts: number;
+  readonly correlationId: string;
+  readonly payloadPreview: unknown;
+  readonly lastErrorCode: string | null;
+  readonly lastErrorMessage: string | null;
+  readonly availableAt: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+export interface RejectedWebhook {
+  readonly id: string;
+  readonly provider: string;
+  readonly providerEventId: string;
+  readonly eventType: string;
+  readonly reasonCode: string | null;
+  readonly reason: string | null;
+  readonly payloadPreview: unknown;
+  readonly receivedAt: string;
+}
+export interface CorrelationTrace {
+  readonly correlationId: string;
+  readonly jobs: readonly ConsoleJob[];
+  readonly events: readonly { readonly id: string; readonly aggregateType: string; readonly aggregateId: string; readonly eventType: string; readonly payloadPreview: unknown; readonly attempts: number; readonly publishedAt: string | null; readonly createdAt: string }[];
+  readonly audit: readonly { readonly id: string; readonly actorUserId: string | null; readonly action: string; readonly subjectType: string; readonly subjectId: string; readonly changes: unknown; readonly createdAt: string }[];
+}
+
+export type KnowledgeSourceType = "product_document" | "proof" | "customer_case" | "objection_response";
+export type KnowledgeSourceStatus = "draft" | "validated" | "expired" | "withdrawn";
+export interface KnowledgeSource {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly type: KnowledgeSourceType;
+  readonly title: string;
+  readonly content: string | null;
+  readonly researchDocumentId: string | null;
+  readonly authorName: string;
+  readonly publishedAt: string;
+  readonly freshnessUntil: string | null;
+  readonly status: KnowledgeSourceStatus;
+  readonly effectiveStatus: KnowledgeSourceStatus;
+  readonly withdrawalReason: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface KnowledgeClaim {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly claim: string;
+  readonly status: "draft" | "validated";
+  readonly effectiveStatus: "draft" | "validated" | "needs_resourcing";
+  readonly offerClaimId: string | null;
+  readonly sources: readonly KnowledgeSource[];
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface EvaluationDataset {
+  readonly id: string;
+  readonly capability: EvaluationAiCapability;
+  readonly name: string;
+  readonly description: string | null;
+  readonly rubricVersion: string;
+  readonly version: number;
+  readonly caseCount: number;
+  readonly createdAt: string;
+}
+export interface AiPromptVersion {
+  readonly id: string;
+  readonly capability: EvaluationAiCapability;
+  readonly version: number;
+  readonly content: string;
+  readonly previousVersionId: string | null;
+  readonly createdAt: string;
+}
+export interface AiConfiguration {
+  readonly configuration: {
+    readonly id: string;
+    readonly capability: EvaluationAiCapability;
+    readonly provider: AiProviderId;
+    readonly model: string;
+    readonly promptVersionId: string;
+    readonly status: "candidate" | "shadow" | "active" | "retired";
+    readonly promotedAt: string | null;
+    readonly createdAt: string;
+  };
+  readonly prompt: AiPromptVersion;
+}
+export interface EvaluationRun {
+  readonly id: string;
+  readonly datasetId: string;
+  readonly configurationId: string;
+  readonly requestKey: string;
+  readonly status: "queued" | "running" | "completed" | "partial" | "failed";
+  readonly totalCases: number;
+  readonly completedCases: number;
+  readonly failedCases: number;
+  readonly aggregateScores: Readonly<Record<string, number>>;
+  readonly totalCost: string | null;
+  readonly totalLatencyMs: number | null;
+  readonly createdAt: string;
+  readonly completedAt: string | null;
+}
+export interface EvaluationRunDetail extends EvaluationRun {
+  readonly results: readonly {
+    readonly id: string;
+    readonly evaluationCaseId: string;
+    readonly aiRunId: string | null;
+    readonly status: "pending" | "completed" | "failed";
+    readonly output: unknown;
+    readonly scores: Readonly<Record<string, number>>;
+    readonly errorCode: string | null;
+  }[];
+}
+
 export interface WorkspaceAiSettings {
   readonly researchModels: readonly string[];
   readonly synthesisModels: readonly string[];
+  readonly defaultRoutes: readonly AiModelRoute[];
+  readonly capabilityRoutes: Readonly<Partial<Record<AiCapability, readonly AiModelRoute[]>>>;
   readonly source: "workspace" | "environment";
   readonly updatedAt: string | null;
+}
+
+export type AiProviderId = "kimi-code" | "codex-cli" | "openai-api";
+export type AiReasoningEffort = "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
+export type AiCapability =
+  | "icp_research"
+  | "content_strategy"
+  | "content_idea"
+  | "content_brief"
+  | "content_writer"
+  | "content_audit"
+  | "content_critic"
+  | "brand_direction"
+  | "channel_strategy"
+  | "prospect_decision"
+  | "message_generation"
+  | "setter"
+  | "evaluation";
+export type EvaluationAiCapability = Extract<AiCapability, "icp_research" | "message_generation" | "setter">;
+
+export interface AiModelRoute {
+  readonly provider: AiProviderId;
+  readonly model: string;
+  readonly reasoningEffort: AiReasoningEffort;
+}
+
+export interface AiModelCatalog {
+  readonly providers: readonly {
+    readonly provider: AiProviderId;
+    readonly status: "healthy" | "degraded" | "quota_exhausted" | "authentication_required" | "unavailable";
+    readonly models: readonly {
+      readonly id: string;
+      readonly displayName: string;
+      readonly reasoningEfforts: readonly AiReasoningEffort[];
+      readonly structuredOutput: "supported" | "unsupported" | "unknown";
+    }[];
+    readonly observedAt: string;
+    readonly errorCode: string | null;
+  }[];
 }
 
 export interface ProductResearchBrief {
@@ -41,12 +1027,26 @@ export interface ProductResearchBrief {
   readonly depth: "quick" | "standard" | "deep";
   readonly audienceGoal: "end_customers" | "channel_partners" | "both";
   readonly buyerConstraints: string;
-  readonly researchVersion: 1 | 2;
+  readonly researchObjective?:
+    | "qualified_conversations"
+    | "fast_revenue"
+    | "strategic_market"
+    | undefined;
+  readonly researchVersion: 1 | 2 | 3;
 }
 
 export interface ResearchRun {
   readonly id: string;
-  readonly status: "draft" | "queued" | "running" | "paused" | "ready_for_review" | "failed";
+  readonly status:
+    | "draft"
+    | "queued"
+    | "running"
+    | "paused"
+    | "ready_for_review"
+    | "completed"
+    | "partial"
+    | "interrupted"
+    | "failed";
   readonly activeStage: string | null;
   readonly brief: ProductResearchBrief;
   readonly completedStages: readonly string[];
@@ -85,8 +1085,13 @@ export interface ResearchDocument {
   readonly contentType: string;
   readonly sizeBytes: number;
   readonly checksumSha256: string;
-  readonly status: "uploading" | "uploaded" | "processing" | "ready" | "failed";
+  readonly status: "uploading" | "uploaded" | "processing" | "ready" | "partial" | "ocr_required" | "failed";
   readonly failureCode: string | null;
+  readonly extractionProvider: "unpdf" | "docx" | "pptx" | "xlsx" | "html" | "text" | null;
+  readonly extractionDurationMs: number | null;
+  readonly extractionMetrics: Readonly<Record<string, unknown>>;
+  readonly extractionWarnings: readonly string[];
+  readonly extractedAt: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -112,16 +1117,43 @@ export interface ResearchReport {
   readonly versions: readonly Record<string, unknown>[];
 }
 
-export interface IcpVersionView {
+export interface IcpVersion {
   readonly id: string;
-  readonly runId: string;
-  readonly proposalId: string;
+  readonly workspaceId: string;
+  readonly icpId: string;
+  readonly runId: string | null;
+  readonly proposalId: string | null;
   readonly version: number;
   readonly name: string;
-  readonly unknowns: readonly unknown[];
-  readonly unresolvedContradictions: readonly unknown[];
-  readonly blockedFindings: readonly { findingId: string; statement: string; reason: string | null }[];
+  readonly confidence: number;
+  readonly criteria: unknown;
+  readonly buyingCommittee: unknown;
+  readonly problems: unknown;
+  readonly signals: unknown;
+  readonly exclusions: unknown;
+  readonly unknowns: unknown;
+  readonly unresolvedContradictions: unknown;
+  readonly blockedFindings: unknown;
+  readonly publishedBy: string | null;
   readonly publishedAt: string;
+  readonly createdAt: string;
+}
+
+/** Compatibility name retained for report publication responses. */
+export type IcpVersionView = IcpVersion;
+
+export interface Icp {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly name: string;
+  readonly currentVersion: number;
+  readonly deletedAt: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface IcpDetail extends Icp {
+  readonly versions: readonly IcpVersion[];
 }
 
 export class OutboundApiError extends Error {
@@ -129,6 +1161,7 @@ export class OutboundApiError extends Error {
     readonly status: number,
     readonly code: string,
     message: string,
+    readonly details: unknown = null,
   ) {
     super(message);
     this.name = "OutboundApiError";
@@ -148,6 +1181,233 @@ export async function listWorkspaces(): Promise<readonly Workspace[]> {
   return ((await response.json()) as { data: Workspace[] }).data;
 }
 
+export async function createWorkspace(input: { name: string; slug?: string }): Promise<Workspace> {
+  return crmFetch("", "/api/v1/workspaces", { method: "POST", body: input });
+}
+
+export async function getWorkspaceOnboarding(workspaceSlug: string, workspaceId: string): Promise<WorkspaceOnboardingProgress> {
+  return crmFetch(workspaceSlug, `/api/v1/workspaces/${workspaceId}/onboarding`);
+}
+
+export async function completeWorkspaceOnboardingStep(workspaceSlug: string, workspaceId: string, step: WorkspaceOnboardingStep): Promise<WorkspaceOnboardingProgress> {
+  return crmFetch(workspaceSlug, `/api/v1/workspaces/${workspaceId}/onboarding/steps/${step}/actions/complete`, { method: "POST", body: {} });
+}
+
+export async function skipWorkspaceOnboardingStep(workspaceSlug: string, workspaceId: string, step: WorkspaceOnboardingStep): Promise<WorkspaceOnboardingProgress> {
+  return crmFetch(workspaceSlug, `/api/v1/workspaces/${workspaceId}/onboarding/steps/${step}/actions/skip`, { method: "POST", body: {} });
+}
+
+export async function listWorkspaceMembers(
+  workspaceSlug: string,
+  workspaceId: string,
+): Promise<readonly WorkspaceMember[]> {
+  const response = await crmFetch<{ data: WorkspaceMember[] }>(workspaceSlug, `/api/v1/workspaces/${workspaceId}/members`);
+  return response.data;
+}
+
+export async function listWorkspaceInvitations(
+  workspaceSlug: string,
+  workspaceId: string,
+): Promise<readonly WorkspaceInvitation[]> {
+  const response = await crmFetch<{ data: WorkspaceInvitation[] }>(workspaceSlug, `/api/v1/workspaces/${workspaceId}/invitations`);
+  return response.data;
+}
+
+export async function inviteWorkspaceMember(
+  workspaceSlug: string,
+  workspaceId: string,
+  input: { email: string; role: WorkspaceRole },
+): Promise<WorkspaceInvitation> {
+  return crmFetch(workspaceSlug, `/api/v1/workspaces/${workspaceId}/invitations`, { method: "POST", body: input });
+}
+
+export async function acceptWorkspaceInvitation(invitationId: string): Promise<{
+  invitation: WorkspaceInvitation;
+  member: WorkspaceMember;
+}> {
+  return crmFetch("", `/api/v1/invitations/${invitationId}/actions/accept`, { method: "POST", body: {} });
+}
+
+export async function revokeWorkspaceInvitation(
+  workspaceSlug: string,
+  invitationId: string,
+): Promise<void> {
+  await crmFetch(workspaceSlug, `/api/v1/invitations/${invitationId}/actions/revoke`, { method: "POST", body: {} });
+}
+
+export async function changeWorkspaceMemberRole(
+  workspaceSlug: string,
+  workspaceId: string,
+  userId: string,
+  role: WorkspaceRole,
+): Promise<void> {
+  await crmFetch(workspaceSlug, `/api/v1/workspaces/${workspaceId}/members/${userId}/actions/change-role`, { method: "POST", body: { role } });
+}
+
+export async function setWorkspaceMemberStatus(
+  workspaceSlug: string,
+  workspaceId: string,
+  userId: string,
+  status: WorkspaceMemberStatus,
+): Promise<void> {
+  await crmFetch(workspaceSlug, `/api/v1/workspaces/${workspaceId}/members/${userId}/actions/set-status`, { method: "POST", body: { status } });
+}
+
+export async function updateWorkspaceProfile(workspaceSlug: string, workspaceId: string, name: string): Promise<Workspace> {
+  return crmFetch(workspaceSlug, `/api/v1/workspaces/${workspaceId}`, { method: "PATCH", body: { name } });
+}
+
+export async function getWorkspaceDataPolicy(workspaceSlug: string, workspaceId: string, includeRetention: boolean): Promise<WorkspaceDataPolicy> {
+  const [sending, limits, retention] = await Promise.all([
+    crmFetch<{ sending: WorkspaceDataPolicy["sending"] }>(workspaceSlug, `/api/v1/workspaces/${workspaceId}/sending-preferences`),
+    crmFetch<{ channelLimits: WorkspaceDataPolicy["channelLimits"] }>(workspaceSlug, `/api/v1/workspaces/${workspaceId}/channel-limits`),
+    includeRetention
+      ? crmFetch<{ retention: WorkspaceDataPolicy["retention"] }>(workspaceSlug, `/api/v1/workspaces/${workspaceId}/retention-policy`)
+      : Promise.resolve({ retention: { invitationsDays: 90, jobsDays: 90, auditDays: 365, memoryEventsDays: 365, memorySnapshotsDays: 90, memoryReceiptsDays: 90 } }),
+  ]);
+  return { sending: sending.sending, channelLimits: limits.channelLimits, retention: retention.retention };
+}
+
+export async function updateWorkspaceSendingPreferences(workspaceSlug: string, workspaceId: string, sending: WorkspaceDataPolicy["sending"]): Promise<void> {
+  await crmFetch(workspaceSlug, `/api/v1/workspaces/${workspaceId}/sending-preferences`, { method: "PUT", body: { sending } });
+}
+
+export async function updateWorkspaceChannelLimits(workspaceSlug: string, workspaceId: string, channelLimits: WorkspaceDataPolicy["channelLimits"]): Promise<void> {
+  await crmFetch(workspaceSlug, `/api/v1/workspaces/${workspaceId}/channel-limits`, { method: "PUT", body: { channelLimits } });
+}
+
+export async function updateWorkspaceRetentionPolicy(workspaceSlug: string, workspaceId: string, retention: WorkspaceDataPolicy["retention"], confirmation: string): Promise<void> {
+  await crmFetch(workspaceSlug, `/api/v1/workspaces/${workspaceId}/retention-policy`, { method: "PUT", body: { retention, confirmation } });
+}
+
+export async function requestWorkspaceDataExport(workspaceSlug: string, workspaceId: string, requestKey: string): Promise<WorkspaceDataExport> {
+  return crmFetch(workspaceSlug, `/api/v1/workspaces/${workspaceId}/actions/export`, { method: "POST", body: { requestKey } });
+}
+
+export async function getWorkspaceDataExport(workspaceSlug: string, exportId: string): Promise<WorkspaceDataExport> {
+  return crmFetch(workspaceSlug, `/api/v1/exports/${exportId}`);
+}
+
+export async function anonymizeWorkspaceContact(workspaceSlug: string, contactId: string, confirmation: string): Promise<void> {
+  await crmFetch(workspaceSlug, `/api/v1/contacts/${contactId}/actions/anonymize`, { method: "POST", body: { confirmation } });
+}
+
+export async function listWorkspaceAuditLogs(workspaceSlug: string, filters: { action?: string; actorUserId?: string; from?: string; to?: string; limit?: number } = {}): Promise<readonly WorkspaceAuditLog[]> {
+  const query = new URLSearchParams();
+  if (filters.action) query.set("action", filters.action);
+  if (filters.actorUserId) query.set("actorUserId", filters.actorUserId);
+  if (filters.from) query.set("from", filters.from);
+  if (filters.to) query.set("to", filters.to);
+  query.set("limit", String(filters.limit ?? 50));
+  const response = await crmFetch<{ data: WorkspaceAuditLog[] }>(workspaceSlug, `/api/v1/audit-logs?${query.toString()}`);
+  return response.data;
+}
+
+export async function listConsoleJobs(workspaceSlug: string, filters: { statuses?: readonly string[]; type?: string; from?: string; to?: string; limit?: number } = {}): Promise<readonly ConsoleJob[]> {
+  const query = consoleQuery(filters);
+  for (const status of filters.statuses ?? []) query.append("status", status);
+  return (await crmFetch<{ data: ConsoleJob[] }>(workspaceSlug, `/api/v1/console/jobs?${query}`)).data;
+}
+export async function listConsoleDeadLetters(workspaceSlug: string, filters: { type?: string; from?: string; to?: string; limit?: number } = {}): Promise<readonly ConsoleJob[]> {
+  return (await crmFetch<{ data: ConsoleJob[] }>(workspaceSlug, `/api/v1/console/dead-letters?${consoleQuery(filters)}`)).data;
+}
+export async function listConsoleRejectedWebhooks(workspaceSlug: string, filters: { from?: string; to?: string; limit?: number } = {}): Promise<readonly RejectedWebhook[]> {
+  return (await crmFetch<{ data: RejectedWebhook[] }>(workspaceSlug, `/api/v1/console/webhooks/rejected?${consoleQuery(filters)}`)).data;
+}
+export async function traceConsoleCorrelation(workspaceSlug: string, correlationId: string): Promise<CorrelationTrace> {
+  return crmFetch(workspaceSlug, `/api/v1/console/correlations/${encodeURIComponent(correlationId)}`);
+}
+export async function requeueConsoleJob(workspaceSlug: string, jobId: string): Promise<ConsoleJob & { requeued: true }> {
+  return crmFetch(workspaceSlug, `/api/v1/console/jobs/${jobId}/actions/requeue`, { method: "POST", body: {} });
+}
+
+function consoleQuery(filters: { type?: string; from?: string; to?: string; limit?: number }): URLSearchParams {
+  const query = new URLSearchParams({ limit: String(filters.limit ?? 50) });
+  if (filters.type) query.set("type", filters.type);
+  if (filters.from) query.set("from", filters.from);
+  if (filters.to) query.set("to", filters.to);
+  return query;
+}
+
+export async function listKnowledgeSources(workspaceSlug: string, filters: { type?: KnowledgeSourceType; status?: KnowledgeSourceStatus; fresh?: boolean } = {}): Promise<readonly KnowledgeSource[]> {
+  const query = new URLSearchParams();
+  if (filters.type) query.set("type", filters.type);
+  if (filters.status) query.set("status", filters.status);
+  if (filters.fresh !== undefined) query.set("fresh", String(filters.fresh));
+  const response = await crmFetch<{ data: KnowledgeSource[] }>(workspaceSlug, `/api/v1/knowledge-sources${query.size ? `?${query}` : ""}`);
+  return response.data;
+}
+
+export async function createKnowledgeSource(workspaceSlug: string, input: { type: KnowledgeSourceType; title: string; content: string | null; researchDocumentId: string | null; authorName: string; publishedAt: string; freshnessUntil: string | null }): Promise<KnowledgeSource> {
+  return crmFetch(workspaceSlug, "/api/v1/knowledge-sources", { method: "POST", body: input });
+}
+
+export async function validateKnowledgeSource(workspaceSlug: string, sourceId: string): Promise<KnowledgeSource> {
+  return crmFetch(workspaceSlug, `/api/v1/knowledge-sources/${sourceId}/actions/validate`, { method: "POST", body: {} });
+}
+
+export async function withdrawKnowledgeSource(workspaceSlug: string, sourceId: string, reason: string): Promise<KnowledgeSource> {
+  return crmFetch(workspaceSlug, `/api/v1/knowledge-sources/${sourceId}/actions/withdraw`, { method: "POST", body: { reason } });
+}
+
+export async function listKnowledgeClaims(workspaceSlug: string): Promise<readonly KnowledgeClaim[]> {
+  const response = await crmFetch<{ data: KnowledgeClaim[] }>(workspaceSlug, "/api/v1/knowledge-claims");
+  return response.data;
+}
+
+export async function createKnowledgeClaim(workspaceSlug: string, input: { claim: string; offerClaimId: string | null; sourceIds: readonly string[] }): Promise<KnowledgeClaim> {
+  return crmFetch(workspaceSlug, "/api/v1/knowledge-claims", { method: "POST", body: input });
+}
+
+export async function validateKnowledgeClaim(workspaceSlug: string, claimId: string): Promise<KnowledgeClaim> {
+  return crmFetch(workspaceSlug, `/api/v1/knowledge-claims/${claimId}/actions/validate`, { method: "POST", body: {} });
+}
+
+export async function listEvaluationDatasets(workspaceSlug: string): Promise<readonly EvaluationDataset[]> {
+  return (await crmFetch<{ data: EvaluationDataset[] }>(workspaceSlug, "/api/v1/evaluation-datasets")).data;
+}
+
+export async function createEvaluationDataset(workspaceSlug: string, input: { capability: EvaluationAiCapability; name: string; description?: string | null; rubricVersion: string; cases: readonly { name: string; input: unknown; expected: Record<string, unknown>; criteria?: Record<string, unknown>; authorizedKnowledgeClaimIds?: readonly string[] }[] }): Promise<EvaluationDataset> {
+  return crmFetch(workspaceSlug, "/api/v1/evaluation-datasets", { method: "POST", body: input });
+}
+
+export async function createAiPromptVersion(workspaceSlug: string, input: { capability: EvaluationAiCapability; content: string }): Promise<AiPromptVersion> {
+  return crmFetch(workspaceSlug, "/api/v1/ai-prompt-versions", { method: "POST", body: input });
+}
+
+export async function listAiConfigurations(workspaceSlug: string): Promise<readonly AiConfiguration[]> {
+  return (await crmFetch<{ data: AiConfiguration[] }>(workspaceSlug, "/api/v1/ai-configurations")).data;
+}
+
+export async function createAiConfiguration(workspaceSlug: string, input: { capability: EvaluationAiCapability; provider: AiProviderId; model: string; promptVersionId: string; status?: "candidate" | "shadow" }): Promise<AiConfiguration["configuration"]> {
+  return crmFetch(workspaceSlug, "/api/v1/ai-configurations", { method: "POST", body: input });
+}
+
+export async function listEvaluationRuns(workspaceSlug: string): Promise<readonly EvaluationRun[]> {
+  return (await crmFetch<{ data: EvaluationRun[] }>(workspaceSlug, "/api/v1/evaluation-runs")).data;
+}
+
+export async function getEvaluationRun(workspaceSlug: string, runId: string): Promise<EvaluationRunDetail> {
+  return crmFetch(workspaceSlug, `/api/v1/evaluation-runs/${runId}`);
+}
+
+export async function requestEvaluationRun(workspaceSlug: string, input: { datasetId: string; configurationId: string; requestKey: string }): Promise<EvaluationRun> {
+  return crmFetch(workspaceSlug, "/api/v1/evaluation-runs", { method: "POST", body: input });
+}
+
+export async function compareEvaluationRuns(workspaceSlug: string, leftRunId: string, rightRunId: string): Promise<{ left: EvaluationRun; right: EvaluationRun; recommendation: { decision: "consider_candidate" | "keep_baseline"; requiresHumanApproval: true; autoApplied: false; explanation: string } }> {
+  const query = new URLSearchParams({ left: leftRunId, right: rightRunId });
+  return crmFetch(workspaceSlug, `/api/v1/evaluation-runs/compare?${query}`);
+}
+
+export async function promoteAiConfiguration(workspaceSlug: string, configurationId: string): Promise<AiConfiguration["configuration"]> {
+  return crmFetch(workspaceSlug, `/api/v1/ai-configurations/${configurationId}/actions/promote`, { method: "POST", body: {} });
+}
+
+export async function recordAiFeedback(workspaceSlug: string, aiRunId: string, input: { rating: -1 | 1; reason: string | null }): Promise<unknown> {
+  return crmFetch(workspaceSlug, `/api/v1/ai-runs/${aiRunId}/feedback`, { method: "POST", body: input });
+}
+
 export async function getWorkspaceAiSettings(
   workspaceSlug: string,
 ): Promise<WorkspaceAiSettings> {
@@ -158,7 +1418,7 @@ export async function getWorkspaceAiSettings(
 
 export async function updateWorkspaceAiSettings(
   workspaceSlug: string,
-  settings: Pick<WorkspaceAiSettings, "researchModels" | "synthesisModels">,
+  settings: Pick<WorkspaceAiSettings, "defaultRoutes" | "capabilityRoutes">,
 ): Promise<WorkspaceAiSettings> {
   const response = await apiFetch("/api/v1/workspace-ai-settings", {
     method: "PUT",
@@ -167,6 +1427,295 @@ export async function updateWorkspaceAiSettings(
   });
   if (!response.ok) await throwApiError(response);
   return (await response.json()) as WorkspaceAiSettings;
+}
+
+export async function getAiModelCatalog(workspaceSlug: string): Promise<AiModelCatalog> {
+  const response = await apiFetch("/api/v1/ai/models", { workspaceSlug });
+  if (!response.ok) await throwApiError(response);
+  return (await response.json()) as AiModelCatalog;
+}
+
+export type CalendarConnection =
+  | { readonly connected: false }
+  | {
+      readonly connected: true;
+      readonly id: string;
+      readonly provider: "calcom";
+      readonly bookingUrl: string;
+      readonly apiConfigured: boolean;
+      readonly automationReady: boolean;
+      readonly eventType: { readonly id: number; readonly slug: string; readonly title: string } | null;
+      readonly username: string | null;
+      readonly timeZone: string | null;
+      readonly webhookRegistered: boolean;
+      readonly lastVerifiedAt: string | null;
+      readonly lastErrorCode: string | null;
+      readonly status: "active" | "disabled";
+      readonly webhookUrl: string;
+      readonly updatedAt: string;
+    };
+
+export interface CalendarMeetingType {
+  readonly id: string;
+  readonly providerEventTypeId: number;
+  readonly slug: string;
+  readonly title: string;
+  readonly lengthMinutes: number;
+  readonly bookingUrl: string;
+  readonly timeZone: string;
+  readonly isDefault: boolean;
+  readonly active: boolean;
+}
+export interface CalendarBooking {
+  readonly id: string;
+  readonly contactId: string | null;
+  readonly campaignId: string | null;
+  readonly campaignName: string | null;
+  readonly source: "inbound" | "outbound" | "mixed" | "unknown";
+  readonly attribution: {
+    readonly certainty: "inference" | "none";
+    readonly firstTouch: CalendarBookingAttributionTouch | null;
+    readonly lastTouch: CalendarBookingAttributionTouch | null;
+    readonly touches: readonly CalendarBookingAttributionTouch[];
+  };
+  readonly opportunityId: string | null;
+  readonly opportunityStage: string | null;
+  readonly contactName: string | null;
+  readonly status: string;
+  readonly attendeeName: string | null;
+  readonly attendeeEmail: string | null;
+  readonly attendeePhone: string | null;
+  readonly attendeeTimeZone: string;
+  readonly organizerTimeZone: string;
+  readonly startAt: string;
+  readonly endAt: string | null;
+  readonly meetingUrl: string | null;
+  readonly cancellationReason: string | null;
+  readonly noShowAt: string | null;
+  readonly rescheduleCount: number;
+  readonly meetingType: CalendarMeetingType | null;
+  readonly history: readonly { readonly id: string; readonly action: string; readonly fromStatus: string | null; readonly toStatus: string; readonly previousStartAt: string | null; readonly newStartAt: string | null; readonly reason: string | null; readonly source: string; readonly createdAt: string }[];
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface CalendarBookingAttributionTouch {
+  readonly id: string;
+  readonly interactionId: string;
+  readonly type: "comment" | "reply" | "mention";
+  readonly position: "first" | "last" | "first_and_last" | "middle";
+  readonly certainty: "inference";
+  readonly confidence: number;
+  readonly rule: string;
+  readonly proofType: string;
+  readonly proofHref: string;
+  readonly actorName: string | null;
+  readonly body: string | null;
+  readonly occurredAt: string;
+  readonly socialContentId: string;
+  readonly postText: string;
+  readonly postUrl: string | null;
+}
+
+export async function getCalendarConnection(
+  workspaceSlug: string,
+): Promise<CalendarConnection> {
+  return crmFetch(workspaceSlug, "/api/v1/calendar-connection");
+}
+
+export async function updateCalendarConnection(
+  workspaceSlug: string,
+  input: { provider: "calcom"; bookingUrl: string; apiKey?: string },
+): Promise<CalendarConnection> {
+  return crmFetch(workspaceSlug, "/api/v1/calendar-connection", {
+    method: "PUT",
+    body: input,
+  });
+}
+
+export async function disconnectCalendar(
+  workspaceSlug: string,
+): Promise<void> {
+  return crmFetch(workspaceSlug, "/api/v1/calendar-connection", { method: "DELETE" });
+}
+
+export async function listCalendarMeetingTypes(workspaceSlug: string): Promise<readonly CalendarMeetingType[]> {
+  return (await crmFetch<{ data: CalendarMeetingType[] }>(workspaceSlug, "/api/v1/calendar-connection/meeting-types")).data;
+}
+export async function updateCalendarMeetingTypes(workspaceSlug: string, input: { providerEventTypeIds: readonly number[]; defaultProviderEventTypeId: number }): Promise<readonly CalendarMeetingType[]> {
+  return (await crmFetch<{ data: CalendarMeetingType[] }>(workspaceSlug, "/api/v1/calendar-connection/meeting-types", { method: "PUT", body: input })).data;
+}
+export async function listCalendarBookings(workspaceSlug: string, filters: { contactId?: string; opportunityId?: string; limit?: number } = {}): Promise<readonly CalendarBooking[]> {
+  const query = new URLSearchParams({ limit: String(filters.limit ?? 100) });
+  if (filters.contactId) query.set("contactId", filters.contactId);
+  if (filters.opportunityId) query.set("opportunityId", filters.opportunityId);
+  return (await crmFetch<{ data: CalendarBooking[] }>(workspaceSlug, `/api/v1/calendar-bookings?${query}`)).data;
+}
+export async function rescheduleCalendarBooking(workspaceSlug: string, bookingId: string, input: { start: string; reason: string; requestKey: string }): Promise<unknown> {
+  return crmFetch(workspaceSlug, `/api/v1/calendar-bookings/${bookingId}/actions/reschedule`, { method: "POST", body: input });
+}
+export async function cancelCalendarBooking(workspaceSlug: string, bookingId: string, input: { reason: string; requestKey: string }): Promise<unknown> {
+  return crmFetch(workspaceSlug, `/api/v1/calendar-bookings/${bookingId}/actions/cancel`, { method: "POST", body: input });
+}
+export async function markCalendarBookingNoShow(workspaceSlug: string, bookingId: string, input: { reason: string; requestKey: string }): Promise<unknown> {
+  return crmFetch(workspaceSlug, `/api/v1/calendar-bookings/${bookingId}/actions/no-show`, { method: "POST", body: input });
+}
+
+export type ChannelConnectionChannel = "linkedin" | "email" | "whatsapp";
+
+export interface ChannelConnection<TChannel extends ChannelConnectionChannel = ChannelConnectionChannel> {
+  readonly channel: TChannel;
+  readonly connected: boolean;
+  readonly selectedAccountId: string | null;
+  readonly selectedDisplayName: string | null;
+  readonly accounts: readonly {
+    readonly id: string;
+    readonly name: string;
+    readonly channel: TChannel;
+    readonly healthy: boolean;
+    readonly selected: boolean;
+  }[];
+}
+
+export type WhatsAppChannelConnection = ChannelConnection<"whatsapp">;
+
+export async function getChannelConnection<TChannel extends ChannelConnectionChannel>(
+  workspaceSlug: string,
+  channel: TChannel,
+): Promise<ChannelConnection<TChannel>> {
+  return crmFetch(workspaceSlug, `/api/v1/channel-connections/${channel}`);
+}
+
+export async function selectChannelAccount(
+  workspaceSlug: string,
+  channel: ChannelConnectionChannel,
+  providerAccountId: string,
+): Promise<void> {
+  await crmFetch(workspaceSlug, `/api/v1/channel-connections/${channel}`, {
+    method: "PUT",
+    body: { providerAccountId },
+  });
+}
+
+export async function getWhatsAppChannelConnection(
+  workspaceSlug: string,
+): Promise<WhatsAppChannelConnection> {
+  return getChannelConnection(workspaceSlug, "whatsapp");
+}
+
+export async function selectWhatsAppChannelAccount(
+  workspaceSlug: string,
+  providerAccountId: string,
+): Promise<void> {
+  await selectChannelAccount(workspaceSlug, "whatsapp", providerAccountId);
+}
+
+export interface PipelineOpportunity {
+  readonly id: string;
+  readonly contactId: string;
+  readonly campaignId: string | null;
+  readonly stage: "qualified" | "meeting_requested" | "meeting_booked" | "meeting_no_show" | "meeting_completed" | "won" | "lost";
+  readonly column: "qualified" | "meeting" | "follow_up" | "closed";
+  readonly amount?: number | null;
+  readonly currency?: string | null;
+  readonly probability: number;
+  readonly ownerUserId?: string | null;
+  readonly nextAction: string | null;
+  readonly expectedCloseDate?: string | null;
+  readonly closedAt?: string | null;
+  readonly lostReason?: string | null;
+  readonly lostComment?: string | null;
+  readonly offerVersionId?: string | null;
+  readonly firstName: string;
+  readonly lastName: string;
+  readonly companyName: string | null;
+  readonly jobTitle: string | null;
+  readonly campaignName: string | null;
+  readonly icpName: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly meeting: {
+    readonly status: string;
+    readonly startAt: string;
+    readonly endAt: string | null;
+    readonly meetingUrl: string | null;
+  } | null;
+  readonly history: readonly {
+    readonly id: string;
+    readonly fromStage: string | null;
+    readonly toStage: string;
+    readonly source: string;
+    readonly reason: string | null;
+    readonly createdAt: string;
+  }[];
+}
+
+export interface PipelineView {
+  readonly data: readonly PipelineOpportunity[];
+  readonly metrics: {
+    readonly total: number;
+    readonly qualified: number;
+    readonly meetings: number;
+    readonly followUp: number;
+    readonly won: number;
+  };
+}
+
+export async function getPipeline(workspaceSlug: string): Promise<PipelineView> {
+  return crmFetch(workspaceSlug, "/api/v1/pipeline/view");
+}
+
+export async function changeOpportunityStage(
+  workspaceSlug: string,
+  opportunityId: string,
+  input: { stage: PipelineOpportunity["stage"]; reason?: string },
+): Promise<void> {
+  await crmFetch(workspaceSlug, `/api/v1/opportunities/${opportunityId}/actions/change-stage`, {
+    method: "POST",
+    body: input,
+  });
+}
+
+export interface PipelineForecastRow {
+  readonly period: string;
+  readonly stage: string;
+  readonly ownerUserId: string | null;
+  readonly amount?: number;
+  readonly weightedRevenue?: number;
+  readonly count: number;
+}
+export async function updateOpportunity(workspaceSlug: string, opportunityId: string, input: {
+  amount?: number | null;
+  currency?: string | null;
+  probability?: number;
+  ownerUserId?: string | null;
+  nextAction?: string | null;
+  expectedCloseDate?: string | null;
+}): Promise<PipelineOpportunity> {
+  return crmFetch(workspaceSlug, `/api/v1/opportunities/${opportunityId}`, { method: "PATCH", body: input });
+}
+export async function closeOpportunity(workspaceSlug: string, opportunityId: string, input: {
+  stage: "won" | "lost";
+  amount?: number | null;
+  currency?: string | null;
+  offerVersionId?: string | null;
+  lostReason?: string | null;
+  lostComment?: string | null;
+}): Promise<PipelineOpportunity> {
+  return crmFetch(workspaceSlug, `/api/v1/opportunities/${opportunityId}/actions/close`, { method: "POST", body: input });
+}
+export async function reopenOpportunity(workspaceSlug: string, opportunityId: string): Promise<PipelineOpportunity> {
+  return crmFetch(workspaceSlug, `/api/v1/opportunities/${opportunityId}/actions/reopen`, { method: "POST", body: {} });
+}
+export async function getPipelineForecast(workspaceSlug: string, options: { from?: string; to?: string } = {}): Promise<{ data: PipelineForecastRow[] }> {
+  const query = new URLSearchParams();
+  if (options.from) query.set("from", new Date(options.from).toISOString());
+  if (options.to) query.set("to", new Date(options.to).toISOString());
+  const suffix = query.toString();
+  return crmFetch(workspaceSlug, `/api/v1/pipeline/forecast${suffix ? `?${suffix}` : ""}`);
+}
+export async function listLostReasons(workspaceSlug: string, workspaceId: string): Promise<{ data: { key: string; label: string }[] }> {
+  return crmFetch(workspaceSlug, `/api/v1/workspaces/${workspaceId}/lost-reasons`);
 }
 
 export async function createResearchRun(
@@ -267,6 +1816,23 @@ export async function getResearchReport(
   });
   if (!response.ok) await throwApiError(response);
   return (await response.json()) as ResearchReport;
+}
+
+export type SuppressionIdentityType = "email" | "linkedin" | "phone" | "whatsapp";
+export type SuppressionChannel = "global" | "email" | "linkedin" | "whatsapp";
+
+export interface Suppression {
+  readonly id: string;
+  readonly channel: SuppressionChannel;
+  readonly identityType: SuppressionIdentityType | null;
+  readonly normalizedValue: string | null;
+  readonly reason: string | null;
+  readonly contactId: string | null;
+  readonly createdBy: string | null;
+  readonly liftedAt: string | null;
+  readonly liftedBy: string | null;
+  readonly liftJustification: string | null;
+  readonly createdAt: string;
 }
 
 export async function reviewIcpProposal(
@@ -374,6 +1940,11 @@ export interface ContactDetail {
   readonly id: string;
   readonly firstName: string;
   readonly lastName: string;
+  readonly source?: string;
+  readonly createdAt?: string;
+  readonly updatedAt?: string;
+  readonly photoUrl?: string | null;
+  readonly preferredChannel?: string | null;
   readonly status: "active" | "suppressed";
   readonly identities: readonly {
     readonly id: string;
@@ -393,6 +1964,431 @@ export interface ContactDetail {
   }[];
 }
 
+export type SignalType = "hiring" | "funding" | "job_change" | "leadership_change" | "geographic_expansion" | "public_activity" | "technology" | "competitor";
+export type SignalEntityType = "company" | "contact";
+export type SignalConfidence = "high" | "medium" | "low";
+export interface IntentSignal {
+  readonly id: string;
+  readonly signalType: SignalType;
+  readonly entityType: SignalEntityType;
+  readonly entityId: string;
+  readonly companyId: string | null;
+  readonly contactId: string | null;
+  readonly source: string;
+  readonly sources: readonly string[];
+  readonly providerEventId: string | null;
+  readonly evidenceUrl: string | null;
+  readonly evidenceSnippet: string | null;
+  readonly observedAt: string;
+  readonly expiresAt: string;
+  readonly confidence: SignalConfidence;
+  readonly legalBasis: string;
+  readonly sourceAuthorized: boolean;
+}
+export type SignalCollectionRunStatus = "queued" | "running" | "succeeded" | "partial" | "failed";
+export interface SignalCollectionRun {
+  readonly id: string;
+  readonly workspaceId?: string;
+  readonly companyId: string | null;
+  readonly contactId: string | null;
+  readonly requestKey: string;
+  readonly status: SignalCollectionRunStatus;
+  readonly source: string;
+  readonly errorCode: string | null;
+  readonly errorMessage: string | null;
+  readonly startedAt: string | null;
+  readonly completedAt: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export type EnrichmentObservationStatus = "found" | "probable" | "verified" | "invalid";
+export type EnrichmentConfidence = "high" | "medium" | "low" | "none";
+export type EnrichmentPhoneKind = "public_company" | "personal";
+export interface EnrichmentObservation {
+  readonly id: string;
+  readonly field: string;
+  readonly value: string;
+  readonly normalizedValue: string;
+  readonly status: EnrichmentObservationStatus;
+  readonly confidence: EnrichmentConfidence;
+  readonly source: string;
+  readonly provider: string | null;
+  readonly evidenceUrl: string | null;
+  readonly evidenceSnippet: string | null;
+  readonly phoneKind: EnrichmentPhoneKind | null;
+  readonly observedAt: string;
+  readonly expiresAt: string | null;
+}
+export type EnrichmentJobStatus = "queued" | "running" | "succeeded" | "failed";
+export interface EnrichmentJob {
+  readonly id: string;
+  readonly entityType: "contact" | "company";
+  readonly entityId: string;
+  readonly requestKey: string;
+  readonly status: EnrichmentJobStatus;
+  readonly provider: string;
+  readonly attempts: number;
+  readonly maxAttempts: number;
+  readonly errorCode: string | null;
+  readonly errorMessage: string | null;
+  readonly correlationId: string;
+  readonly startedAt: string | null;
+  readonly completedAt: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+export interface EnrichmentJobDetail extends EnrichmentJob {
+  readonly observations: readonly EnrichmentObservation[];
+}
+
+export interface ProspectActivity {
+  readonly id: string;
+  readonly campaignId: string | null;
+  readonly channel: "linkedin" | "email" | "whatsapp";
+  readonly source: "outreach_action" | "conversation";
+  readonly direction: "inbound" | "outbound";
+  readonly senderType: string;
+  readonly status: string;
+  readonly stepKind: string | null;
+  readonly subject: string | null;
+  readonly body: string | null;
+  readonly occurredAt: string;
+  readonly errorCode: string | null;
+  readonly errorMessage: string | null;
+}
+
+export interface ProspectViewSummary extends ContactSummary {
+  readonly channels: { readonly linkedin: boolean; readonly email: boolean; readonly whatsapp: boolean };
+  readonly icpMatches: readonly {
+    readonly campaignId: string;
+    readonly campaignName: string;
+    readonly channel: "linkedin" | "email" | "whatsapp" | null;
+    readonly icpVersionId: string;
+    readonly icpName: string;
+    readonly score: number | null;
+    readonly effectiveScore: number | null;
+    readonly socialBoost: number;
+    readonly eligible: boolean;
+    readonly candidateId: string;
+    readonly headline: string | null;
+    readonly companyName: string | null;
+    readonly scoreExplanation?: unknown;
+  }[];
+  readonly aiOpinion: {
+    readonly score: number | null;
+    readonly summary: string;
+    readonly strengths: readonly string[];
+    readonly risks: readonly string[];
+    readonly recommendedAngle: string | null;
+  } | null;
+  readonly socialSignalAssessment: {
+    readonly evaluatedAt: string;
+    readonly baseScore: number | null;
+    readonly socialBoost: number;
+    readonly effectiveScore: number | null;
+    readonly openLinkedinConversation: boolean;
+    readonly decisionImpact: "boosted" | "conversation_open" | "none";
+    readonly eligibleSignals: readonly {
+      readonly id: string;
+      readonly type: "comment" | "reply" | "mention";
+      readonly summary: string;
+      readonly occurredAt: string;
+      readonly contribution: number;
+      readonly identityRule: string;
+      readonly identityConfidence: number;
+      readonly proofHref: string;
+    }[];
+    readonly ignoredSignals: readonly {
+      readonly id: string;
+      readonly type: "comment" | "reply" | "mention" | "reaction";
+      readonly occurredAt: string;
+      readonly reason: "reaction_inert" | "not_incoming" | "removed" | "identity_not_exact" | "expired";
+      readonly explanation: string;
+      readonly proofHref: string;
+    }[];
+  };
+  readonly meeting: {
+    readonly status: "requested" | "booked" | "cancelled" | "no_show" | "completed";
+    readonly startAt: string;
+    readonly endAt: string | null;
+    readonly meetingUrl: string | null;
+    readonly updatedAt: string;
+  } | null;
+  readonly opportunity: {
+    readonly stage: string;
+    readonly nextAction: string | null;
+    readonly updatedAt: string;
+  } | null;
+  readonly latestActivity: ProspectActivity | null;
+  readonly conversation: {
+    readonly id: string;
+    readonly campaignId: string | null;
+    readonly channel: "linkedin" | "email" | "whatsapp";
+    readonly status: string;
+    readonly unreadCount: number;
+    readonly lastMessageAt: string;
+    readonly lastMessage: {
+      readonly direction: string;
+      readonly senderType: string;
+      readonly body: string;
+      readonly occurredAt: string;
+    } | null;
+    readonly decision: {
+      readonly intent: string;
+      readonly confidence: number;
+      readonly action: string;
+      readonly rationale: string;
+      readonly provider: string | null;
+      readonly model: string | null;
+      readonly createdAt: string;
+    } | null;
+    readonly latestCommand: {
+      readonly mode: string;
+      readonly executionMode: "live" | "dry_run";
+      readonly status: string;
+      readonly generatedBody: string | null;
+      readonly generationMetadata: Readonly<Record<string, unknown>>;
+      readonly errorCode: string | null;
+      readonly createdAt: string;
+    } | null;
+  } | null;
+}
+
+export interface ProspectViewDetail extends ProspectViewSummary {
+  readonly identities: ContactDetail["identities"];
+  readonly employments: ContactDetail["employments"];
+  readonly activity: readonly ProspectActivity[];
+  readonly nextDecision: ProspectDecisionView | null;
+  readonly decisions: readonly ProspectDecisionView[];
+  readonly conversation: (NonNullable<ProspectViewSummary["conversation"]> & {
+    readonly messages: readonly {
+      readonly id?: string;
+      readonly direction: string;
+      readonly senderType: string;
+      readonly body: string;
+      readonly occurredAt: string;
+      readonly decision: ProspectViewSummary["conversation"] extends infer _T ? unknown : never;
+    }[];
+    readonly commands: readonly {
+      readonly id: string;
+      readonly mode: string;
+      readonly executionMode: "live" | "dry_run";
+      readonly status: string;
+      readonly requestedBody: string | null;
+      readonly generatedBody: string | null;
+      readonly generationMetadata: Readonly<Record<string, unknown>>;
+      readonly errorCode: string | null;
+      readonly errorMessage: string | null;
+      readonly createdAt: string;
+    }[];
+  }) | null;
+}
+
+export type ProspectMemoryCapability =
+  | "setter_campaign"
+  | "draft_improvement"
+  | "scoring"
+  | "outbound_drafting"
+  | "call_preparation"
+  | "inbound_aggregate";
+export type ProspectMemoryState = "fresh" | "refreshing" | "stale" | "budget_blocked" | "failed" | "anonymized";
+export interface ProspectMemoryRefreshJob {
+  readonly id: string;
+  readonly status: "pending" | "running" | "retry" | "completed" | "dead_lettered";
+  readonly attempts: number;
+  readonly maxAttempts: number;
+  readonly availableAt: string;
+  readonly lockedUntil: string | null;
+  readonly completedAt: string | null;
+  readonly lastErrorCode: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+export interface ProspectMemoryStatus {
+  readonly enabled: boolean;
+  readonly mode: "disabled" | "shadow" | "active";
+  readonly status: ProspectMemoryState;
+  readonly snapshotId: string | null;
+  readonly snapshotVersion: number | null;
+  readonly generatedAt: string | null;
+  readonly watermark: number;
+  readonly latestSequence: number;
+  readonly pendingEventCount: number;
+  readonly privacyEpoch: number;
+  readonly job: ProspectMemoryRefreshJob | null;
+  readonly sentEffect: false;
+  readonly asOf: string;
+}
+export interface ProspectMemorySource {
+  readonly eventId: string;
+  readonly sourceKind: string;
+  readonly excerpt: string | null;
+}
+export interface ProspectMemoryAssertionView {
+  readonly id: string;
+  readonly nature: "hypothesis" | "recommendation";
+  readonly statement: string;
+  readonly confidence: number;
+  readonly sources: readonly ProspectMemorySource[];
+  readonly validUntil: string | null;
+}
+export interface ProspectMemoryView {
+  readonly capability: ProspectMemoryCapability;
+  readonly mode: "shadow" | "active";
+  readonly status: ProspectMemoryState;
+  readonly snapshotId: string | null;
+  readonly snapshotVersion: number | null;
+  readonly generatedAt: string | null;
+  readonly relationshipSummary: string | null;
+  readonly recommendedTone: string | null;
+  readonly facts: Readonly<{
+    confirmedNeeds: readonly ProspectMemorySource[];
+    objections: readonly ProspectMemorySource[];
+    commitments: readonly ProspectMemorySource[];
+    topicsCovered: readonly ProspectMemorySource[];
+    doNotRepeat: readonly ProspectMemorySource[];
+    openQuestions: readonly ProspectMemorySource[];
+  }>;
+  readonly hypotheses: readonly ProspectMemoryAssertionView[];
+  readonly recommendations: readonly ProspectMemoryAssertionView[];
+  readonly contradictions: readonly string[];
+  readonly missingInformation: readonly string[];
+  readonly automaticActionAllowed: boolean;
+  readonly waitCode: "WAIT_MEMORY_STALE" | "WAIT_MEMORY_BUDGET" | null;
+  readonly sourceCount: number;
+  readonly excludedSourceCount: number;
+  readonly estimatedTokens: number;
+  readonly sentEffect: false;
+  readonly asOf: string;
+}
+
+export interface ProspectDecisionView {
+  readonly id: string;
+  readonly campaignId: string | null;
+  readonly outreachActionId: string | null;
+  readonly kind: string;
+  readonly reason: string;
+  readonly observation: unknown;
+  readonly proposedAction: "send" | "wait" | "research" | "pause" | "stop" | "handoff" | null;
+  readonly dueAt: string;
+  readonly priority: number;
+  readonly status: string;
+  readonly attempts: number;
+  readonly maxAttempts: number;
+  readonly correlationId: string;
+  readonly result: unknown;
+  readonly policyDecision: unknown;
+  readonly lastErrorCode: string | null;
+  readonly lastErrorMessage: string | null;
+  readonly startedAt: string | null;
+  readonly completedAt: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export async function listProspectViews(
+  workspaceSlug: string,
+  filters: {
+    search?: string;
+    icpVersionId?: string;
+    campaignId?: string;
+    campaignScope?: "in_campaign" | "outside_campaign";
+    channel?: string;
+    status?: "active" | "suppressed";
+    period?: "today" | "7d" | "30d" | "90d";
+  } = {},
+): Promise<{
+  data: ProspectViewSummary[];
+  filters: {
+    icps: { id: string; name: string }[];
+    campaigns: { id: string; name: string; channel: "linkedin" | "email" | "whatsapp" }[];
+  };
+}> {
+  const query = new URLSearchParams({ limit: "100" });
+  if (filters.search) query.set("search", filters.search);
+  if (filters.icpVersionId) query.set("icpVersionId", filters.icpVersionId);
+  if (filters.campaignId) query.set("campaignId", filters.campaignId);
+  if (filters.campaignScope) query.set("campaignScope", filters.campaignScope);
+  if (filters.channel) query.set("channel", filters.channel);
+  if (filters.status) query.set("status", filters.status);
+  if (filters.period) query.set("period", filters.period);
+  return crmFetch(workspaceSlug, `/api/v1/prospects?${query.toString()}`);
+}
+
+export async function getProspectView(
+  workspaceSlug: string,
+  contactId: string,
+): Promise<ProspectViewDetail> {
+  return crmFetch(workspaceSlug, `/api/v1/prospects/${contactId}`);
+}
+
+export async function getProspectMemoryStatus(
+  workspaceSlug: string,
+  contactId: string,
+): Promise<ProspectMemoryStatus> {
+  return crmFetch(workspaceSlug, `/api/v1/prospects/${contactId}/memory-status`);
+}
+
+export async function getProspectMemoryView(
+  workspaceSlug: string,
+  contactId: string,
+  capability: ProspectMemoryCapability = "call_preparation",
+): Promise<ProspectMemoryView> {
+  const query = new URLSearchParams({ capability });
+  return crmFetch(workspaceSlug, `/api/v1/prospects/${contactId}/memory-view?${query}`);
+}
+
+export async function refreshProspectMemory(
+  workspaceSlug: string,
+  contactId: string,
+  requestKey = crypto.randomUUID(),
+): Promise<{ inserted: boolean; job: ProspectMemoryRefreshJob | null; sentEffect: false }> {
+  return crmFetch(workspaceSlug, `/api/v1/prospects/${contactId}/memory/actions/refresh`, {
+    method: "POST",
+    body: { requestKey },
+  });
+}
+
+export async function requestProspectDryRun(
+  workspaceSlug: string,
+  contactId: string,
+  reason: string,
+  campaignId: string | null = null,
+): Promise<{ decisionId: string; status: string; dryRun: true }> {
+  return crmFetch(workspaceSlug, `/api/v1/prospects/${contactId}/actions/dry-run`, {
+    method: "POST",
+    body: { reason, requestKey: crypto.randomUUID(), ...(campaignId ? { campaignId } : {}) },
+  });
+}
+
+export async function sendConversationCommand(
+  workspaceSlug: string,
+  conversationId: string,
+  input: {
+    mode: "manual" | "setter";
+    body?: string;
+    executionMode?: "live" | "dry_run";
+    idempotencyKey?: string;
+  },
+): Promise<{ id: string; status: string; executionMode: "live" | "dry_run" }> {
+  return crmFetch(workspaceSlug, `/api/v1/conversations/${conversationId}/messages`, {
+    method: "POST",
+    body: { ...input, idempotencyKey: input.idempotencyKey ?? crypto.randomUUID() },
+  });
+}
+
+export async function improveConversationDraft(
+  workspaceSlug: string,
+  conversationId: string,
+  draft: string,
+): Promise<{ body: string; metadata: { provider: string; model: string; promptVersion: string } }> {
+  return crmFetch(workspaceSlug, `/api/v1/conversations/${conversationId}/draft-improvements`, {
+    method: "POST",
+    body: { draft },
+  });
+}
+
 async function crmFetch<T>(
   workspaceSlug: string,
   pathname: string,
@@ -410,11 +2406,27 @@ async function crmFetch<T>(
 
 export async function listCompanies(
   workspaceSlug: string,
-  search?: string,
+  options: {
+    search?: string | undefined;
+    sector?: string | undefined;
+    location?: string | undefined;
+    employeeCountMin?: number | undefined;
+    employeeCountMax?: number | undefined;
+    cursor?: string | undefined;
+    limit?: number | undefined;
+  } | string = {},
 ): Promise<{ data: Company[]; nextCursor: string | null }> {
+  const normalized = typeof options === "string" ? { search: options } : options;
+  const params = new URLSearchParams({ limit: String(normalized.limit ?? 50) });
+  if (normalized.search) params.set("search", normalized.search);
+  if (normalized.sector) params.set("sector", normalized.sector);
+  if (normalized.location) params.set("location", normalized.location);
+  if (normalized.employeeCountMin !== undefined) params.set("employeeCountMin", String(normalized.employeeCountMin));
+  if (normalized.employeeCountMax !== undefined) params.set("employeeCountMax", String(normalized.employeeCountMax));
+  if (normalized.cursor) params.set("cursor", normalized.cursor);
   return crmFetch(
     workspaceSlug,
-    `/api/v1/companies${search ? `?search=${encodeURIComponent(search)}&limit=50` : "?limit=50"}`,
+    `/api/v1/companies?${params.toString()}`,
   );
 }
 
@@ -432,6 +2444,25 @@ export async function createCompany(
   return crmFetch(workspaceSlug, "/api/v1/companies", { method: "POST", body: input });
 }
 
+export async function updateCompany(
+  workspaceSlug: string,
+  companyId: string,
+  input: {
+    name?: string;
+    domain?: string | null;
+    sector?: string | null;
+    employeeCountMin?: number | null;
+    employeeCountMax?: number | null;
+    location?: string | null;
+    linkedinUrl?: string | null;
+  },
+): Promise<Company> {
+  return crmFetch(workspaceSlug, `/api/v1/companies/${companyId}`, {
+    method: "PATCH",
+    body: input,
+  });
+}
+
 export async function getCompany(
   workspaceSlug: string,
   companyId: string,
@@ -441,11 +2472,16 @@ export async function getCompany(
 
 export async function listContacts(
   workspaceSlug: string,
-  search?: string,
+  options: { search?: string | undefined; companyId?: string | undefined; cursor?: string | undefined; limit?: number | undefined } | string = {},
 ): Promise<{ data: ContactSummary[]; nextCursor: string | null }> {
+  const normalized = typeof options === "string" ? { search: options } : options;
+  const params = new URLSearchParams({ limit: String(normalized.limit ?? 50) });
+  if (normalized.search) params.set("search", normalized.search);
+  if (normalized.companyId) params.set("companyId", normalized.companyId);
+  if (normalized.cursor) params.set("cursor", normalized.cursor);
   return crmFetch(
     workspaceSlug,
-    `/api/v1/contacts${search ? `?search=${encodeURIComponent(search)}&limit=50` : "?limit=50"}`,
+    `/api/v1/contacts?${params.toString()}`,
   );
 }
 
@@ -466,6 +2502,70 @@ export async function getContact(
   contactId: string,
 ): Promise<ContactDetail> {
   return crmFetch(workspaceSlug, `/api/v1/contacts/${contactId}`);
+}
+
+export async function listSignals(
+  workspaceSlug: string,
+  options: { signalType?: SignalType; entityType?: SignalEntityType; entityId?: string; includeExpired?: boolean } = {},
+): Promise<{ data: IntentSignal[] }> {
+  const params = new URLSearchParams();
+  if (options.signalType) params.set("signalType", options.signalType);
+  if (options.entityType) params.set("entityType", options.entityType);
+  if (options.entityId) params.set("entityId", options.entityId);
+  if (options.includeExpired) params.set("includeExpired", "true");
+  const query = params.toString();
+  return crmFetch(workspaceSlug, `/api/v1/signals${query ? `?${query}` : ""}`);
+}
+
+export async function listCompanySignals(workspaceSlug: string, companyId: string, includeExpired = true): Promise<{ data: IntentSignal[] }> {
+  return crmFetch(workspaceSlug, `/api/v1/companies/${companyId}/signals${includeExpired ? "?includeExpired=true" : ""}`);
+}
+
+export async function listContactSignals(workspaceSlug: string, contactId: string, includeExpired = true): Promise<{ data: IntentSignal[] }> {
+  return crmFetch(workspaceSlug, `/api/v1/contacts/${contactId}/signals${includeExpired ? "?includeExpired=true" : ""}`);
+}
+
+export async function collectSignals(
+  workspaceSlug: string,
+  input: { companyId?: string; contactId?: string; requestKey: string; signalTypes?: readonly SignalType[] },
+): Promise<SignalCollectionRun> {
+  return crmFetch(workspaceSlug, "/api/v1/signals/actions/collect", { method: "POST", body: input });
+}
+
+export async function getSignalCollectionRun(workspaceSlug: string, runId: string): Promise<SignalCollectionRun> {
+  return crmFetch(workspaceSlug, `/api/v1/signal-collection-runs/${runId}`);
+}
+
+export async function getContactEnrichment(workspaceSlug: string, contactId: string): Promise<{ data: EnrichmentObservation[] }> {
+  return crmFetch(workspaceSlug, `/api/v1/contacts/${contactId}/enrichment`);
+}
+
+export async function enrichContact(workspaceSlug: string, contactId: string, requestKey: string): Promise<EnrichmentJob> {
+  return crmFetch(workspaceSlug, `/api/v1/contacts/${contactId}/actions/enrich`, { method: "POST", body: { requestKey } });
+}
+
+export async function getEnrichmentJob(workspaceSlug: string, jobId: string): Promise<EnrichmentJobDetail> {
+  return crmFetch(workspaceSlug, `/api/v1/enrichment-jobs/${jobId}`);
+}
+
+export async function retryEnrichmentJob(workspaceSlug: string, jobId: string): Promise<EnrichmentJob> {
+  return crmFetch(workspaceSlug, `/api/v1/enrichment-jobs/${jobId}/actions/retry`, { method: "POST", body: {} });
+}
+
+export async function updateContact(
+  workspaceSlug: string,
+  contactId: string,
+  input: {
+    firstName?: string;
+    lastName?: string;
+    photoUrl?: string | null;
+    preferredChannel?: string | null;
+  },
+): Promise<ContactDetail> {
+  return crmFetch(workspaceSlug, `/api/v1/contacts/${contactId}`, {
+    method: "PATCH",
+    body: input,
+  });
 }
 
 export async function addContactIdentity(
@@ -501,22 +2601,736 @@ export async function suppressContact(
   });
 }
 
-export interface PublishedIcpVersion {
+export async function listSuppressions(
+  workspaceSlug: string,
+  options: { channel?: SuppressionChannel; cursor?: string; limit?: number } = {},
+): Promise<{ data: Suppression[]; nextCursor: string | null }> {
+  const params = new URLSearchParams({ limit: String(options.limit ?? 50) });
+  if (options.channel) params.set("channel", options.channel);
+  if (options.cursor) params.set("cursor", options.cursor);
+  return crmFetch(workspaceSlug, `/api/v1/suppressions?${params.toString()}`);
+}
+
+export async function createSuppression(
+  workspaceSlug: string,
+  input: {
+    identityType: SuppressionIdentityType;
+    value: string;
+    channel: SuppressionChannel;
+    reason?: string | null;
+  },
+): Promise<Suppression> {
+  return crmFetch(workspaceSlug, "/api/v1/suppressions", { method: "POST", body: input });
+}
+
+export async function checkSuppression(
+  workspaceSlug: string,
+  input: {
+    identityType: SuppressionIdentityType;
+    value: string;
+    channel: SuppressionChannel;
+  },
+): Promise<{ eligible: boolean; suppressionId: string | null; channel: string | null; reason: string | null }> {
+  return crmFetch(workspaceSlug, "/api/v1/suppressions/check", { method: "POST", body: input });
+}
+
+export async function liftSuppression(
+  workspaceSlug: string,
+  suppressionId: string,
+  justification: string,
+): Promise<Suppression> {
+  return crmFetch(workspaceSlug, `/api/v1/suppressions/${suppressionId}/actions/lift`, {
+    method: "POST",
+    body: { justification },
+  });
+}
+
+export type ImportRowStatus = "valid" | "invalid" | "duplicate" | "suppressed" | "created" | "failed";
+
+export interface ImportRow {
   readonly id: string;
-  readonly runId: string;
-  readonly proposalId: string;
+  readonly lineNumber: number;
+  readonly rawData: unknown;
+  readonly normalizedData: unknown;
+  readonly status: ImportRowStatus;
+  readonly reason: string | null;
+  readonly companyId: string | null;
+  readonly contactId: string | null;
+}
+
+export interface ImportBatch {
+  readonly id: string;
+  readonly filename: string;
+  readonly status: string;
+  readonly previewedAt: string | null;
+  readonly appliedAt: string | null;
+  readonly completedAt: string | null;
+  readonly totals: Readonly<Record<string, number>>;
+  readonly createdAt: string;
+  readonly rows: readonly ImportRow[];
+}
+
+export async function createImport(
+  workspaceSlug: string,
+  input: { filename: string; content: string; mapping?: Readonly<Record<string, string>> },
+): Promise<ImportBatch> {
+  return crmFetch(workspaceSlug, "/api/v1/imports", { method: "POST", body: input });
+}
+
+export async function getImportPreview(workspaceSlug: string, importId: string): Promise<ImportBatch> {
+  return crmFetch(workspaceSlug, `/api/v1/imports/${importId}/preview`);
+}
+
+export async function getImport(workspaceSlug: string, importId: string): Promise<ImportBatch> {
+  return crmFetch(workspaceSlug, `/api/v1/imports/${importId}`);
+}
+
+export async function applyImport(workspaceSlug: string, importId: string): Promise<ImportBatch> {
+  return crmFetch(workspaceSlug, `/api/v1/imports/${importId}/actions/apply`, {
+    method: "POST",
+    body: {},
+  });
+}
+
+export type MergeMatchType = "certain" | "probable";
+export type MergeCandidateStatus = "pending" | "approved" | "rejected";
+
+export interface MergeCandidate {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly primaryContactId: string;
+  readonly secondaryContactId: string;
+  readonly pairKey: string;
+  readonly matchType: MergeMatchType;
+  readonly status: MergeCandidateStatus;
+  readonly signals: Readonly<Record<string, unknown>>;
+  readonly decisionReason: string | null;
+  readonly decidedBy: string | null;
+  readonly decidedAt: string | null;
+  readonly createdAt: string;
+  readonly contacts: readonly ContactSummary[];
+}
+
+export interface ContactMerge {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly survivorContactId: string;
+  readonly mergedContactId: string;
+  readonly candidateId: string | null;
+  readonly status: "active" | "undone";
+  readonly mergedAt: string;
+  readonly mergedBy: string | null;
+  readonly undoneAt: string | null;
+  readonly undoneBy: string | null;
+}
+
+export async function listMergeCandidates(workspaceSlug: string): Promise<MergeCandidate[]> {
+  return crmFetch(workspaceSlug, "/api/v1/merge-candidates");
+}
+
+export async function getMergeCandidate(workspaceSlug: string, candidateId: string): Promise<MergeCandidate> {
+  return crmFetch(workspaceSlug, `/api/v1/merge-candidates/${candidateId}`);
+}
+
+export async function approveMergeCandidate(workspaceSlug: string, candidateId: string): Promise<ContactMerge> {
+  return crmFetch(workspaceSlug, `/api/v1/merge-candidates/${candidateId}/actions/approve`, {
+    method: "POST",
+    body: {},
+  });
+}
+
+export async function rejectMergeCandidate(
+  workspaceSlug: string,
+  candidateId: string,
+  reason?: string | null,
+): Promise<MergeCandidate> {
+  return crmFetch(workspaceSlug, `/api/v1/merge-candidates/${candidateId}/actions/reject`, {
+    method: "POST",
+    body: { reason: reason || null },
+  });
+}
+
+export async function listContactMerges(workspaceSlug: string, contactId: string): Promise<ContactMerge[]> {
+  return crmFetch(workspaceSlug, `/api/v1/contacts/${contactId}/merges`);
+}
+
+export async function undoContactMerge(workspaceSlug: string, contactId: string): Promise<ContactMerge> {
+  return crmFetch(workspaceSlug, `/api/v1/contacts/${contactId}/actions/undo-merge`, {
+    method: "POST",
+    body: {},
+  });
+}
+
+export type MessagingChannel = "linkedin" | "email" | "whatsapp";
+export interface MessagingTemplate {
+  readonly channel: MessagingChannel;
+  readonly body: string;
+  readonly subject?: string;
+  readonly maxLength?: number;
+  readonly cta?: string;
+  readonly constraints?: Readonly<Record<string, unknown>>;
+}
+export interface MessagingStrategyRules {
+  readonly tone: string;
+  readonly angle: string;
+  readonly templates: readonly MessagingTemplate[];
+  readonly allowedClaimIds: readonly string[];
+  readonly offerVersionId?: string;
+  readonly constraints?: Readonly<Record<string, unknown>>;
+}
+export interface MessagingStrategyVersion {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly strategyId: string;
+  readonly version: number;
+  readonly rules: MessagingStrategyRules;
+  readonly publishedBy: string | null;
+  readonly publishedAt: string;
+  readonly createdAt?: string;
+}
+export interface MessagingStrategy {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly name: string;
+  readonly currentVersion: number;
+  readonly draftRules: MessagingStrategyRules;
+  readonly deletedAt: string | null;
+  readonly versions?: readonly MessagingStrategyVersion[];
+}
+export interface AIPolicyRules {
+  readonly firstContactRequiresHumanApproval?: boolean;
+  readonly responsesRequireHumanApproval?: boolean;
+  readonly followUpsMayBeAutomated: boolean;
+  readonly escalationRules?: Readonly<Record<string, unknown>>;
+}
+export interface AIPolicyVersion {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly policyId: string;
+  readonly version: number;
+  readonly rules: AIPolicyRules;
+  readonly publishedBy: string | null;
+  readonly publishedAt: string;
+  readonly createdAt?: string;
+}
+export interface AIPolicy {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly name: string;
+  readonly currentVersion: number;
+  readonly draftRules: AIPolicyRules;
+  readonly deletedAt: string | null;
+  readonly versions?: readonly AIPolicyVersion[];
+}
+
+export async function listMessagingStrategies(workspaceSlug: string): Promise<{ data: MessagingStrategy[] }> {
+  return crmFetch(workspaceSlug, "/api/v1/messaging-strategies");
+}
+export async function createMessagingStrategy(workspaceSlug: string, input: { name: string; rules: MessagingStrategyRules }): Promise<MessagingStrategy> {
+  return crmFetch(workspaceSlug, "/api/v1/messaging-strategies", { method: "POST", body: input });
+}
+export async function getMessagingStrategy(workspaceSlug: string, strategyId: string): Promise<MessagingStrategy> {
+  return crmFetch(workspaceSlug, `/api/v1/messaging-strategies/${strategyId}`);
+}
+export async function updateMessagingStrategy(workspaceSlug: string, strategyId: string, input: { name?: string; rules?: MessagingStrategyRules }): Promise<MessagingStrategy> {
+  return crmFetch(workspaceSlug, `/api/v1/messaging-strategies/${strategyId}`, { method: "PATCH", body: input });
+}
+export async function publishMessagingStrategy(workspaceSlug: string, strategyId: string): Promise<MessagingStrategyVersion> {
+  return crmFetch(workspaceSlug, `/api/v1/messaging-strategies/${strategyId}/actions/publish`, { method: "POST", body: {} });
+}
+export async function listAIPolicies(workspaceSlug: string): Promise<{ data: AIPolicy[] }> {
+  return crmFetch(workspaceSlug, "/api/v1/ai-policies");
+}
+export async function createAIPolicy(workspaceSlug: string, input: { name: string; rules: AIPolicyRules }): Promise<AIPolicy> {
+  return crmFetch(workspaceSlug, "/api/v1/ai-policies", { method: "POST", body: input });
+}
+export async function updateAIPolicy(workspaceSlug: string, policyId: string, input: { name?: string; rules?: AIPolicyRules }): Promise<AIPolicy> {
+  return crmFetch(workspaceSlug, `/api/v1/ai-policies/${policyId}`, { method: "PATCH", body: input });
+}
+export async function publishAIPolicy(workspaceSlug: string, policyId: string): Promise<AIPolicyVersion> {
+  return crmFetch(workspaceSlug, `/api/v1/ai-policies/${policyId}/actions/publish`, { method: "POST", body: {} });
+}
+
+export async function getAIPolicy(workspaceSlug: string, policyId: string): Promise<AIPolicy> {
+  return crmFetch(workspaceSlug, `/api/v1/ai-policies/${policyId}`);
+}
+
+export type ApprovalItemStatus = "pending" | "approved" | "rejected" | "invalidated";
+export type ApprovalDecision = "approve" | "reject";
+
+export interface ApprovalItem {
+  readonly id: string;
+  readonly campaignId: string | null;
+  readonly contactId: string | null;
+  readonly enrollmentId: string | null;
+  readonly itemType: string;
+  readonly channel: string;
+  readonly stepPosition: number | null;
+  readonly contentOriginal: unknown;
+  readonly contentEdited: unknown;
+  readonly context: Readonly<Record<string, unknown>>;
+  readonly sourceUpdatedAt: string | null;
+  readonly status: ApprovalItemStatus;
+  readonly decisionBy: string | null;
+  readonly decidedAt: string | null;
+  readonly rejectionJustification: string | null;
+  readonly invalidationReason: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface ApprovalBulkDecisionResult {
+  readonly approved: readonly string[];
+  readonly rejected: readonly string[];
+  readonly invalidated: readonly string[];
+  readonly conflicts: readonly { itemId: string; code: string }[];
+}
+
+export async function listApprovalItems(
+  workspaceSlug: string,
+  options: { campaignId?: string; status?: ApprovalItemStatus; limit?: number } = {},
+): Promise<{ data: ApprovalItem[] }> {
+  const params = new URLSearchParams();
+  if (options.campaignId) params.set("campaignId", options.campaignId);
+  if (options.status) params.set("status", options.status);
+  if (options.limit) params.set("limit", String(options.limit));
+  const query = params.toString();
+  return crmFetch(workspaceSlug, `/api/v1/approval-items${query ? `?${query}` : ""}`);
+}
+
+export async function getApprovalItem(workspaceSlug: string, itemId: string): Promise<ApprovalItem> {
+  return crmFetch(workspaceSlug, `/api/v1/approval-items/${itemId}`);
+}
+
+export async function editApprovalItem(workspaceSlug: string, itemId: string, contentEdited: unknown): Promise<ApprovalItem> {
+  return crmFetch(workspaceSlug, `/api/v1/approval-items/${itemId}`, {
+    method: "PATCH",
+    body: { contentEdited },
+  });
+}
+
+export async function approveApprovalItem(workspaceSlug: string, itemId: string): Promise<ApprovalItem> {
+  return crmFetch(workspaceSlug, `/api/v1/approval-items/${itemId}/actions/approve`, { method: "POST", body: {} });
+}
+
+export async function rejectApprovalItem(workspaceSlug: string, itemId: string, justification: string): Promise<ApprovalItem> {
+  return crmFetch(workspaceSlug, `/api/v1/approval-items/${itemId}/actions/reject`, {
+    method: "POST",
+    body: { justification },
+  });
+}
+
+export async function bulkDecideApprovalItems(
+  workspaceSlug: string,
+  input: { itemIds: readonly string[]; decision: ApprovalDecision; justification?: string },
+): Promise<ApprovalBulkDecisionResult> {
+  return crmFetch(workspaceSlug, "/api/v1/approval-items/actions/bulk-decide", {
+    method: "POST",
+    body: input,
+  });
+}
+
+export type OfferClaimValidationStatus = "hypothesis" | "sourced" | "validated" | "invalidated";
+
+export interface OfferClaim {
+  readonly id?: string;
+  readonly claim: string;
+  readonly validationStatus: OfferClaimValidationStatus;
+  readonly evidenceUri: string | null;
+}
+
+export interface Offer {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly name: string;
+  readonly status: "draft" | "archived";
+  readonly currentVersion: number;
+  readonly category: string;
+  readonly valueProposition: string;
+  readonly targetAudience: string;
+  readonly pricing: unknown;
+  readonly commercialRules: unknown;
+  readonly constraints: unknown;
+  readonly claims: readonly OfferClaim[];
+  readonly objections: unknown;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly deletedAt?: string | null;
+}
+
+export interface OfferVersion {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly offerId: string;
   readonly version: number;
   readonly name: string;
-  readonly confidence: number;
-  readonly unknowns: readonly unknown[];
+  readonly category: string;
+  readonly valueProposition: string;
+  readonly targetAudience: string;
+  readonly pricing: unknown;
+  readonly commercialRules: unknown;
+  readonly constraints: unknown;
+  readonly objections: unknown;
+  readonly claims: readonly OfferClaim[];
+  readonly publishedBy: string | null;
   readonly publishedAt: string;
+  readonly createdAt: string;
 }
+
+export interface OfferDetail extends Offer {
+  readonly versions: readonly OfferVersion[];
+}
+
+export interface Campaign {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly name: string;
+  readonly objective: string;
+  readonly status: "draft" | "active" | "paused" | "archived";
+  readonly offerVersionId: string;
+  readonly icpVersionId: string;
+  readonly messagingStrategyVersionId: string;
+  readonly aiPolicyVersionId: string;
+  readonly sequenceVersionId: string;
+  readonly createdBy: string | null;
+  readonly activatedBy: string | null;
+  readonly activatedAt: string | null;
+  readonly pausedAt: string | null;
+  readonly archivedAt: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface CampaignPreflight {
+  readonly ok: boolean;
+  readonly blockers: readonly { code: string; reference: string; versionId: string; message: string }[];
+  readonly warnings: readonly { code: string; message: string }[];
+}
+
+export type OutreachActionStatus = "planned" | "awaiting_approval" | "due" | "sending" | "sent" | "failed" | "cancelled" | "suspended";
+export interface OutreachAction {
+  readonly id: string;
+  readonly campaignId: string;
+  readonly enrollmentId: string;
+  readonly contactId: string;
+  readonly sequenceVersionId: string;
+  readonly approvalItemId: string | null;
+  readonly connectedAccountId: string | null;
+  readonly stepPosition: number;
+  readonly channel: string;
+  readonly recipient: string;
+  readonly subject: string | null;
+  readonly status: OutreachActionStatus;
+  readonly idempotencyKey: string;
+  readonly scheduledAt: string;
+  readonly attemptCount: number;
+  readonly maxAttempts: number;
+  readonly nextAttemptAt: string | null;
+  readonly lastErrorCode: string | null;
+  readonly lastErrorMessage: string | null;
+  readonly providerMessageId: string | null;
+  readonly sentAt: string | null;
+  readonly responseReceivedAt: string | null;
+  readonly cancelledAt: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export type AnalyticsDimension = "campaign" | "icp" | "channel" | "role" | "signal";
+export interface AnalyticsQuery {
+  readonly from?: string;
+  readonly to?: string;
+  readonly campaignId?: string;
+  readonly icpVersionId?: string;
+  readonly channel?: string;
+  readonly role?: string;
+  readonly signalType?: string;
+}
+export interface AnalyticsFunnel {
+  readonly period: { readonly from: string; readonly to: string };
+  readonly metrics: {
+    readonly prospectsFound: number;
+    readonly profilesEnriched: number;
+    readonly actionsPlanned: number;
+    readonly attempts: number;
+    readonly actionsSent: number;
+    readonly actionsAccepted: number;
+    readonly responded: number;
+    readonly positiveReplies: number;
+    readonly meetingsBooked: number;
+    readonly opportunities: number;
+    readonly revenue: number;
+  };
+}
+export interface AnalyticsBreakdownRow {
+  readonly key: string;
+  readonly label: string;
+  readonly prospectsFound: number | null;
+  readonly profilesEnriched: number | null;
+  readonly actionsPlanned: number | null;
+  readonly attempts: number | null;
+  readonly actionsSent: number | null;
+  readonly actionsAccepted: number | null;
+  readonly responded: number | null;
+  readonly positiveReplies: number | null;
+  readonly meetingsBooked: number | null;
+  readonly opportunities: number | null;
+  readonly revenue: number | null;
+}
+export interface AnalyticsBreakdown {
+  readonly period: { readonly from: string; readonly to: string };
+  readonly dimension: AnalyticsDimension;
+  readonly data: readonly AnalyticsBreakdownRow[];
+}
+export interface AnalyticsCosts {
+  readonly period?: { readonly from: string; readonly to: string };
+  readonly totalAiCost: number;
+  readonly costPerProspect: number;
+  readonly costPerMeeting: number;
+}
+function analyticsParams(options: AnalyticsQuery = {}): string {
+  const params = new URLSearchParams();
+  if (options.from) params.set("from", normalizeAnalyticsDate(options.from, false));
+  if (options.to) params.set("to", normalizeAnalyticsDate(options.to, true));
+  for (const key of ["campaignId", "icpVersionId", "channel", "role", "signalType"] as const) if (options[key]) params.set(key, options[key]!);
+  return params.toString();
+}
+function normalizeAnalyticsDate(value: string, _end: boolean): string {
+  const date = value.length === 10
+    // Keep the API's [from,to) semantics: a date-only `to` is midnight at
+    // the start of that date, so the selected end date remains exclusive.
+    ? new Date(`${value}T00:00:00.000Z`)
+    : new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toISOString();
+}
+export async function getAnalyticsFunnel(workspaceSlug: string, options: AnalyticsQuery = {}): Promise<AnalyticsFunnel> {
+  const query = analyticsParams(options);
+  return crmFetch(workspaceSlug, `/api/v1/analytics/funnel${query ? `?${query}` : ""}`);
+}
+export async function getAnalyticsBreakdown(workspaceSlug: string, dimension: AnalyticsDimension, options: AnalyticsQuery = {}): Promise<AnalyticsBreakdown> {
+  const query = analyticsParams({ ...options });
+  return crmFetch(workspaceSlug, `/api/v1/analytics/breakdown?dimension=${dimension}${query ? `&${query}` : ""}`);
+}
+export async function getAnalyticsCosts(workspaceSlug: string, options: AnalyticsQuery = {}): Promise<AnalyticsCosts> {
+  const query = analyticsParams(options);
+  return crmFetch(workspaceSlug, `/api/v1/analytics/costs${query ? `?${query}` : ""}`);
+}
+export async function exportAnalyticsCsv(workspaceSlug: string, options: AnalyticsQuery = {}, dimension?: AnalyticsDimension): Promise<string> {
+  const query = analyticsParams(options);
+  const full = `${query}${dimension ? `${query ? "&" : ""}dimension=${dimension}` : ""}`;
+  const response = await apiFetch(`/api/v1/analytics/export${full ? `?${full}` : ""}`, { workspaceSlug });
+  if (!response.ok) await throwApiError(response);
+  return response.text();
+}
+
+export type ConnectedAccountStatus = "pending" | "connected" | "degraded" | "disconnected" | "unknown";
+export interface ConnectedAccount {
+  readonly id: string;
+  readonly provider: "unipile";
+  readonly providerAccountId: string;
+  readonly displayName: string | null;
+  readonly status: ConnectedAccountStatus;
+  readonly capabilities: Readonly<Record<string, unknown>>;
+  readonly quotas: Readonly<Record<string, unknown>>;
+  readonly lastErrorCode: string | null;
+  readonly lastErrorMessage: string | null;
+  readonly lastCheckedAt: string | null;
+  readonly disconnectedAt: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+export async function listConnectedAccounts(workspaceSlug: string): Promise<{ data: ConnectedAccount[] }> { return crmFetch(workspaceSlug, "/api/v1/connected-accounts"); }
+export async function connectConnectedAccount(workspaceSlug: string, input: { providerAccountId: string; displayName?: string; accessToken: string }): Promise<ConnectedAccount> { return crmFetch(workspaceSlug, "/api/v1/connected-accounts", { method: "POST", body: { provider: "unipile", ...input } }); }
+export async function checkConnectedAccount(workspaceSlug: string, accountId: string): Promise<ConnectedAccount> { return crmFetch(workspaceSlug, `/api/v1/connected-accounts/${accountId}/actions/check`, { method: "POST", body: {} }); }
+export async function reconnectConnectedAccount(workspaceSlug: string, accountId: string): Promise<ConnectedAccount> { return crmFetch(workspaceSlug, `/api/v1/connected-accounts/${accountId}/actions/reconnect`, { method: "POST", body: {} }); }
+export async function disconnectConnectedAccount(workspaceSlug: string, accountId: string): Promise<ConnectedAccount> {
+  return crmFetch(workspaceSlug, `/api/v1/connected-accounts/${accountId}`, { method: "DELETE" });
+}
+
+export type OnboardingChannel = "email" | "linkedin" | "whatsapp";
+export type OnboardingStep = "initiation" | "callback" | "verification";
+export type OnboardingStatus = "initiated" | "awaiting_callback" | "verifying" | "completed" | "failed" | "expired";
+export interface ConnectionOnboarding {
+  readonly id: string;
+  readonly provider?: "unipile";
+  readonly channel: OnboardingChannel;
+  readonly step: OnboardingStep;
+  readonly status: OnboardingStatus;
+  readonly hostedUrl?: string | null;
+  readonly providerAccountId?: string | null;
+  readonly errorCode?: string | null;
+  readonly errorMessage?: string | null;
+  readonly expiresAt: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+export interface AccountQuotaChannel {
+  readonly channel: OnboardingChannel;
+  readonly sentToday: number;
+  readonly limit: number | null;
+  readonly percentage: number | null;
+  readonly state: "ok" | "near_limit" | "reached" | "unlimited";
+}
+export interface AccountQuota {
+  readonly accountId: string;
+  readonly referenceDate: string;
+  readonly timezone: "UTC";
+  readonly channels: readonly AccountQuotaChannel[];
+}
+export interface AccountHealthAlert {
+  readonly id: string;
+  readonly connectedAccountId: string;
+  readonly status: "active" | "acknowledged" | "resolved";
+  readonly reasonCode?: string | null;
+  readonly reasonMessage?: string | null;
+  readonly acknowledgedBy?: string | null;
+  readonly acknowledgedAt?: string | null;
+  readonly resolvedAt?: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+export interface AccountSuspensionImpact {
+  readonly accountId: string;
+  readonly campaigns: readonly { readonly campaignId: string; readonly campaignName: string; readonly suspendedActions: number }[];
+}
+export async function startConnectedAccountOnboarding(workspaceSlug: string, channel: OnboardingChannel): Promise<ConnectionOnboarding> {
+  return crmFetch(workspaceSlug, "/api/v1/connected-accounts/onboarding", { method: "POST", body: { channel } });
+}
+export async function getConnectedAccountOnboarding(workspaceSlug: string, onboardingId: string): Promise<ConnectionOnboarding> {
+  return crmFetch(workspaceSlug, `/api/v1/connected-accounts/onboarding/${onboardingId}`);
+}
+export async function getConnectedAccountQuotas(workspaceSlug: string, accountId: string): Promise<AccountQuota> {
+  return crmFetch(workspaceSlug, `/api/v1/connected-accounts/${accountId}/quotas`);
+}
+export async function getConnectedAccountImpact(workspaceSlug: string, accountId: string): Promise<AccountSuspensionImpact> {
+  return crmFetch(workspaceSlug, `/api/v1/connected-accounts/${accountId}/impact`);
+}
+export async function listAccountHealthAlerts(workspaceSlug: string): Promise<{ data: AccountHealthAlert[] }> {
+  return crmFetch(workspaceSlug, "/api/v1/account-health-alerts");
+}
+export async function acknowledgeAccountHealthAlert(workspaceSlug: string, alertId: string): Promise<AccountHealthAlert> {
+  return crmFetch(workspaceSlug, `/api/v1/account-health-alerts/${alertId}/actions/acknowledge`, { method: "POST", body: {} });
+}
+
+export type CampaignProspectStatus = "candidate" | "selected" | "excluded" | "enrolled";
+export interface CampaignProspectExplanation {
+  readonly facts: readonly Record<string, unknown>[];
+  readonly missing: readonly Record<string, unknown>[];
+  readonly exclusions: readonly Record<string, unknown>[];
+}
+export interface ManagedCampaignProspect {
+  readonly id: string;
+  readonly campaignId: string;
+  readonly contactId: string;
+  readonly status: CampaignProspectStatus;
+  readonly score: number;
+  readonly explanation: CampaignProspectExplanation;
+  readonly exclusionReason: string | null;
+  readonly selectedAt: string | null;
+  readonly excludedAt: string | null;
+  readonly enrolledAt: string | null;
+  readonly contact?: {
+    readonly firstName: string;
+    readonly lastName: string;
+    readonly status: string;
+    readonly preferredChannel: string | null;
+    readonly employment: { readonly title?: string | null; readonly company?: { readonly name?: string | null } | null } | null;
+    readonly company?: { readonly name?: string | null } | null;
+  };
+}
+export interface CampaignEnrollment { readonly id: string; readonly campaignId: string; readonly contactId: string; readonly sequenceVersionId: string; readonly status: string; readonly enrolledAt: string; }
+export async function listCampaignProspects(workspaceSlug: string, campaignId: string): Promise<{ data: ManagedCampaignProspect[] }> { return crmFetch(workspaceSlug, `/api/v1/campaigns/${campaignId}/prospects`); }
+export async function selectCampaignProspects(workspaceSlug: string, campaignId: string, contactIds: readonly string[]): Promise<{ data: ManagedCampaignProspect[] }> { return crmFetch(workspaceSlug, `/api/v1/campaigns/${campaignId}/prospects/select`, { method: "POST", body: { contactIds } }); }
+export async function getCampaignProspectExplanation(workspaceSlug: string, campaignId: string, contactId: string): Promise<ManagedCampaignProspect> { return crmFetch(workspaceSlug, `/api/v1/campaigns/${campaignId}/prospects/${contactId}/explanation`); }
+export async function enrollCampaignProspect(workspaceSlug: string, campaignId: string, contactId: string): Promise<CampaignEnrollment> { return crmFetch(workspaceSlug, `/api/v1/campaigns/${campaignId}/prospects/${contactId}/actions/enroll`, { method: "POST", body: {} }); }
+export async function excludeCampaignProspect(workspaceSlug: string, campaignId: string, contactId: string, reason: string): Promise<ManagedCampaignProspect> { return crmFetch(workspaceSlug, `/api/v1/campaigns/${campaignId}/prospects/${contactId}/actions/exclude`, { method: "POST", body: { reason } }); }
+
+export async function listManagedCampaigns(workspaceSlug: string): Promise<{ data: Campaign[] }> {
+  return crmFetch(workspaceSlug, "/api/v1/campaigns");
+}
+export async function createCampaign(workspaceSlug: string, input: Omit<Campaign, "id" | "workspaceId" | "status" | "createdBy" | "activatedBy" | "activatedAt" | "pausedAt" | "archivedAt" | "createdAt" | "updatedAt">): Promise<Campaign> {
+  return crmFetch(workspaceSlug, "/api/v1/campaigns", { method: "POST", body: input });
+}
+export async function getManagedCampaign(workspaceSlug: string, campaignId: string): Promise<Campaign> {
+  return crmFetch(workspaceSlug, `/api/v1/campaigns/${campaignId}`);
+}
+export async function updateCampaign(workspaceSlug: string, campaignId: string, input: Partial<Pick<Campaign, "name" | "objective" | "offerVersionId" | "icpVersionId" | "messagingStrategyVersionId" | "aiPolicyVersionId" | "sequenceVersionId">>): Promise<Campaign> {
+  return crmFetch(workspaceSlug, `/api/v1/campaigns/${campaignId}`, { method: "PATCH", body: input });
+}
+export async function preflightCampaign(workspaceSlug: string, campaignId: string): Promise<CampaignPreflight> {
+  return crmFetch(workspaceSlug, `/api/v1/campaigns/${campaignId}/actions/preflight`, { method: "POST", body: {} });
+}
+export async function campaignTransition(workspaceSlug: string, campaignId: string, transition: "activate" | "pause" | "resume" | "archive"): Promise<Campaign> {
+  return crmFetch(workspaceSlug, `/api/v1/campaigns/${campaignId}/actions/${transition}`, { method: "POST", body: {} });
+}
+
+export async function listCampaignActions(workspaceSlug: string, campaignId: string, status?: OutreachActionStatus): Promise<{ data: OutreachAction[] }> {
+  const query = status ? `?status=${encodeURIComponent(status)}` : "";
+  return crmFetch(workspaceSlug, `/api/v1/campaigns/${campaignId}/actions${query}`);
+}
+
+export async function getOutreachAction(workspaceSlug: string, actionId: string): Promise<OutreachAction> {
+  return crmFetch(workspaceSlug, `/api/v1/actions/${actionId}`);
+}
+
+export async function cancelOutreachAction(workspaceSlug: string, actionId: string): Promise<OutreachAction> {
+  return crmFetch(workspaceSlug, `/api/v1/actions/${actionId}/actions/cancel`, { method: "POST", body: {} });
+}
+
+export async function retryOutreachAction(workspaceSlug: string, actionId: string): Promise<OutreachAction> {
+  return crmFetch(workspaceSlug, `/api/v1/actions/${actionId}/actions/retry`, { method: "POST", body: {} });
+}
+
+export async function listOffers(workspaceSlug: string): Promise<{ data: Offer[] }> {
+  return crmFetch(workspaceSlug, "/api/v1/offers");
+}
+
+export async function createOffer(
+  workspaceSlug: string,
+  input: { name: string; category?: string; targetAudience?: string },
+): Promise<Offer> {
+  return crmFetch(workspaceSlug, "/api/v1/offers", { method: "POST", body: input });
+}
+
+export async function getOffer(workspaceSlug: string, offerId: string): Promise<OfferDetail> {
+  return crmFetch(workspaceSlug, `/api/v1/offers/${offerId}`);
+}
+
+export async function updateOfferDraft(
+  workspaceSlug: string,
+  offerId: string,
+  fields: Readonly<Record<string, unknown>>,
+): Promise<Offer> {
+  return crmFetch(workspaceSlug, `/api/v1/offers/${offerId}`, { method: "PATCH", body: fields });
+}
+
+export async function publishOfferVersion(
+  workspaceSlug: string,
+  offerId: string,
+): Promise<OfferVersion> {
+  return crmFetch(workspaceSlug, `/api/v1/offers/${offerId}/actions/publish`, { method: "POST" });
+}
+
+export async function listOfferVersions(
+  workspaceSlug: string,
+  offerId: string,
+): Promise<{ data: OfferVersion[] }> {
+  return crmFetch(workspaceSlug, `/api/v1/offers/${offerId}/versions`);
+}
+
+/** Legacy list retained for discovery; canonical pages use listIcps. */
+export type PublishedIcpVersion = IcpVersion;
 
 export interface DiscoveryRun {
   readonly id: string;
+  readonly workspaceId?: string;
   readonly icpVersionId: string;
   readonly provider: string;
-  readonly filters: { keywords?: string; category?: string; limit?: number };
+  readonly filters: Readonly<Record<string, unknown>> & {
+    readonly keywords?: string;
+    readonly category?: string;
+    readonly limit?: number;
+  };
   readonly status: "running" | "completed" | "failed";
   readonly errorCode: string | null;
   readonly errorMessage: string | null;
@@ -527,19 +3341,59 @@ export interface DiscoveryRun {
 
 export interface DiscoveryCandidate {
   readonly id: string;
+  readonly runId: string;
+  /** Provenance discriminator returned by the discovery API. */
+  readonly source: "discovery";
   readonly fullName: string;
   readonly headline: string | null;
   readonly linkedinUrl: string | null;
   readonly location: string | null;
   readonly companyName: string | null;
+  readonly companyWebsite: string | null;
+  readonly companyDomain: string | null;
+  readonly channels: {
+    readonly linkedin: DiscoveryChannel;
+    readonly email: DiscoveryChannel;
+    readonly whatsapp: DiscoveryChannel;
+  };
   readonly icpFit: { matches: string[]; gaps: string[] };
   readonly importedContactId: string | null;
 }
 
+export interface DiscoveryChannel {
+  readonly value: string | null;
+  readonly normalizedValue: string | null;
+  readonly status: "verified" | "found" | "unverified" | "unavailable";
+  readonly confidence: "high" | "medium" | "low" | "none";
+  readonly source: string | null;
+  readonly evidenceUrl?: string | null;
+  readonly evidenceSnippet?: string | null;
+  readonly observedAt?: string | null;
+}
+
 export async function listIcpVersions(
   workspaceSlug: string,
-): Promise<{ data: PublishedIcpVersion[] }> {
+): Promise<{ data: IcpVersion[] }> {
   return crmFetch(workspaceSlug, "/api/v1/icp-versions");
+}
+
+export async function getIcpVersion(workspaceSlug: string, versionId: string): Promise<IcpVersion> {
+  return crmFetch(workspaceSlug, `/api/v1/icp-versions/${versionId}`);
+}
+
+export async function listIcps(workspaceSlug: string): Promise<{ data: Icp[] }> {
+  return crmFetch(workspaceSlug, "/api/v1/icps");
+}
+
+export async function getIcp(workspaceSlug: string, icpId: string): Promise<IcpDetail> {
+  return crmFetch(workspaceSlug, `/api/v1/icps/${icpId}`);
+}
+
+export async function publishNextIcpVersion(
+  workspaceSlug: string,
+  icpId: string,
+): Promise<IcpVersion> {
+  return crmFetch(workspaceSlug, `/api/v1/icps/${icpId}/actions/publish`, { method: "POST" });
 }
 
 export async function launchDiscoveryRun(
@@ -613,6 +3467,8 @@ export interface SequenceStep {
 
 export interface SequenceVersion {
   readonly id: string;
+  readonly sequenceId: string;
+  readonly workspaceId?: string;
   readonly version: number;
   readonly steps: readonly SequenceStep[];
   readonly publishedAt: string;
@@ -666,8 +3522,403 @@ export async function publishSequenceVersion(
   });
 }
 
-export function outboundApiUrl(pathname: string): URL {
-  return new URL(pathname, process.env.OUTBOUND_API_URL ?? "http://127.0.0.1:3001");
+export interface CampaignSummary {
+  readonly id: string;
+  readonly name: string;
+  readonly status: "draft" | "active" | "paused" | "completed" | "archived";
+  readonly prospectCount: number;
+  readonly autopilotPolicy: CampaignAutopilotPolicy;
+  readonly automationStage: "sourcing" | "enriching" | "composing" | "scheduled" | "running" | "completed" | "attention";
+  readonly automationErrorCode: string | null;
+  readonly automationErrorMessage: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly icpVersionId: string;
+  readonly icpRunId: string;
+  readonly icpName: string;
+  readonly icpConfidence: string;
+  readonly planId: string | null;
+  readonly assessmentId: string | null;
+  readonly channel: "linkedin" | "email" | "whatsapp" | null;
+  readonly assessmentRecommendation: "recommended" | "optional" | "unsuitable" | null;
+  readonly assessmentScore: number | null;
+  readonly sequenceId: string;
+  readonly sequenceVersionId: string | null;
+  readonly sequenceName: string;
+  readonly sequenceStatus: "draft" | "published" | "archived";
+  readonly discoveryRunId: string;
+  readonly discoveryStatus: "running" | "completed" | "failed" | null;
+  readonly discoveryErrorCode: string | null;
+  readonly discoveryErrorMessage: string | null;
+}
+
+export interface CampaignAutopilotPolicy {
+  readonly version: 1;
+  readonly enabled: boolean;
+  readonly executionMode: "dry_run" | "live";
+  readonly schedule: {
+    readonly activeDays: readonly number[];
+    readonly windowStart: string;
+    readonly windowEnd: string;
+    readonly timezoneMode: "recipient" | "workspace";
+    readonly fallbackTimezone: string;
+  };
+  readonly email: {
+    readonly language: "auto" | "fr" | "en";
+    readonly firstMessageInstructions: string | null;
+    readonly followUpInstructions: string | null;
+    readonly followUpDelaysBusinessDays: readonly number[];
+    readonly autoReplyEnabled: boolean;
+    readonly replyDelayMinutes: number;
+    readonly replyInstructions: string | null;
+    readonly bookingUrl: string | null;
+    readonly stopOnHumanActivity: boolean;
+  };
+}
+
+export interface CampaignProspect {
+  readonly candidateId: string;
+  readonly contactId: string | null;
+  readonly state: "candidate" | "imported" | "excluded";
+  readonly score: number | null;
+  readonly eligible: boolean;
+  readonly exclusionReason: string | null;
+  readonly personalizedSteps: readonly unknown[];
+  readonly fullName: string;
+  readonly headline: string | null;
+  readonly linkedinUrl: string | null;
+  readonly location: string | null;
+  readonly companyName: string | null;
+  readonly companyWebsite: string | null;
+  readonly providerData: Readonly<Record<string, unknown>>;
+  readonly channels: DiscoveryCandidate["channels"];
+  readonly icpFit: DiscoveryCandidate["icpFit"];
+}
+
+export interface WhatsappSourcingPool {
+  readonly shared: true;
+  readonly status: "not_started" | "scheduled" | "running" | "completed" | "partial" | "failed" | "action_required";
+  readonly localDate: string | null;
+  readonly lastPassAt: string | null;
+  readonly nextPassAt: string | null;
+  readonly contactsAssignedToday: number;
+  readonly admissibleObserved: number;
+  readonly verificationPending: number;
+  readonly verifiedObserved: number;
+  readonly pageAttempts: number;
+  readonly pageLimit: number;
+  readonly verificationAttempts: number;
+  readonly verificationLimit: number;
+  readonly actionRequired: boolean;
+  readonly errorCode: string | null;
+}
+
+export interface CampaignDetail extends CampaignSummary {
+  readonly icpCriteria: unknown;
+  readonly buyingCommittee: unknown;
+  readonly signals: unknown;
+  readonly discoveryFilters: unknown;
+  readonly assessmentRationale: string | null;
+  readonly assessmentMetrics: unknown;
+  readonly assessmentEvidence: unknown;
+  readonly steps: readonly SequenceStep[];
+  readonly prospects: readonly CampaignProspect[];
+  readonly sourcingPool: WhatsappSourcingPool | null;
+}
+
+export type ProspectEngagementState =
+  | "not_contacted"
+  | "sent"
+  | "replied"
+  | "qualified"
+  | "refused"
+  | "meeting";
+
+export interface CampaignReplyDecision {
+  readonly messageId: string;
+  readonly intent: "positive" | "question" | "objection" | "not_interested" | "unsubscribe" | "meeting_request" | "other";
+  readonly confidence: number;
+  readonly action: "reply" | "stop" | "booking";
+  readonly rationale: string;
+  readonly provider: string | null;
+  readonly model: string | null;
+  readonly promptVersion: string | null;
+  readonly createdAt: string;
+}
+
+export interface CampaignAutomatedReply {
+  readonly id: string;
+  readonly inboundMessageId: string;
+  readonly body: string;
+  readonly status: string;
+  readonly providerRequestId: string | null;
+  readonly errorCode: string | null;
+  readonly errorMessage: string | null;
+  readonly sentAt: string | null;
+  readonly createdAt: string;
+}
+
+export interface CampaignConversationMessage {
+  readonly id: string;
+  readonly providerMessageId: string | null;
+  readonly direction: "inbound" | "outbound";
+  readonly senderType: string;
+  readonly body: string;
+  readonly occurredAt: string;
+  readonly source: "conversation" | "outreach_action";
+  readonly decision: CampaignReplyDecision | null;
+  readonly automatedReply: CampaignAutomatedReply | null;
+}
+
+export interface CampaignProspectEngagement {
+  readonly campaignId: string;
+  readonly candidateId: string;
+  readonly contactId: string | null;
+  readonly conversationId: string | null;
+  readonly fullName: string;
+  readonly headline: string | null;
+  readonly companyName: string | null;
+  readonly score: number | null;
+  readonly eligible: boolean;
+  readonly state: ProspectEngagementState;
+  readonly lastMessage: Omit<CampaignConversationMessage, "decision" | "automatedReply"> | null;
+  readonly lastActivityAt: string;
+  readonly decision: CampaignReplyDecision | null;
+  readonly automatedReply: CampaignAutomatedReply | null;
+  readonly enrollment: {
+    readonly status: string;
+    readonly suspensionReason: string | null;
+    readonly suspendedAt: string | null;
+  } | null;
+  readonly sentCount: number;
+  readonly pendingFollowUps: number;
+  readonly cancelledFollowUps: number;
+  readonly relaunchesCancelled: boolean;
+  readonly opportunity: { readonly stage: string; readonly nextAction: string | null } | null;
+}
+
+export interface CampaignEngagementOverview {
+  readonly campaignId: string;
+  readonly metrics: {
+    readonly targeted: number;
+    readonly contacted: number;
+    readonly replies: number;
+    readonly hot: number;
+    readonly meetings: number;
+  };
+  readonly prospects: readonly CampaignProspectEngagement[];
+}
+
+export interface CampaignAutopilotDashboard {
+  readonly campaignId: string;
+  readonly health: "working" | "healthy" | "attention" | "paused" | "completed";
+  readonly currentStep: "research" | "enrichment" | "composition" | "outreach" | "setter" | "meeting" | "completed" | "attention";
+  readonly counts: {
+    readonly discovered: number;
+    readonly eligible: number;
+    readonly enrolled: number;
+    readonly scheduled: number;
+    readonly sent: number;
+    readonly replies: number;
+    readonly setterReplies: number;
+    readonly offeredMeetings: number;
+    readonly bookedMeetings: number;
+  };
+  readonly exceptions: readonly {
+    readonly code: string;
+    readonly message: string;
+    readonly count: number;
+    readonly lastOccurredAt: string | null;
+  }[];
+  readonly updatedAt: string;
+}
+
+export interface CampaignConversationDetail {
+  readonly campaignId: string;
+  readonly conversationId: string;
+  readonly contactId: string;
+  readonly candidateId: string | null;
+  readonly fullName: string;
+  readonly headline: string | null;
+  readonly companyName: string | null;
+  readonly channel: "linkedin" | "email" | "whatsapp";
+  readonly status: string;
+  readonly lastMessageAt: string;
+  readonly messages: readonly CampaignConversationMessage[];
+  readonly decision: CampaignReplyDecision | null;
+  readonly automatedReply: CampaignAutomatedReply | null;
+  readonly enrollment: CampaignProspectEngagement["enrollment"];
+  readonly pendingFollowUps: number;
+  readonly cancelledFollowUps: number;
+  readonly relaunchesCancelled: boolean;
+  readonly opportunity: CampaignProspectEngagement["opportunity"];
+  readonly meeting: {
+    readonly status: string;
+    readonly timeZone: string | null;
+    readonly proposedSlots: readonly {
+      readonly position: number;
+      readonly start: string;
+      readonly label: string;
+    }[];
+    readonly selectedSlotStart: string | null;
+    readonly bookedStartAt: string | null;
+    readonly meetingUrl: string | null;
+  } | null;
+}
+
+export async function listCampaigns(
+  workspaceSlug: string,
+): Promise<{ data: CampaignSummary[] }> {
+  return crmFetch(workspaceSlug, "/api/v1/campaigns");
+}
+
+export async function getCampaign(
+  workspaceSlug: string,
+  campaignId: string,
+): Promise<CampaignDetail> {
+  return crmFetch(workspaceSlug, `/api/v1/campaigns/${campaignId}`);
+}
+
+export async function getCampaignAutopilotPolicy(
+  workspaceSlug: string,
+  campaignId: string,
+): Promise<{ policy: CampaignAutopilotPolicy; editable: boolean; executionModeEditable: boolean }> {
+  return crmFetch(workspaceSlug, `/api/v1/campaigns/${campaignId}/autopilot-policy`);
+}
+
+export async function updateCampaignAutopilotPolicy(
+  workspaceSlug: string,
+  campaignId: string,
+  patch: Partial<CampaignAutopilotPolicy>,
+): Promise<{ policy: CampaignAutopilotPolicy; editable: boolean; executionModeEditable: boolean }> {
+  return crmFetch(workspaceSlug, `/api/v1/campaigns/${campaignId}/autopilot-policy`, {
+    method: "PATCH",
+    body: patch,
+  });
+}
+
+export async function getCampaignEngagement(
+  workspaceSlug: string,
+  campaignId: string,
+): Promise<CampaignEngagementOverview> {
+  return crmFetch(workspaceSlug, `/api/v1/campaigns/${campaignId}/conversations`);
+}
+
+export async function getCampaignAutopilotDashboard(
+  workspaceSlug: string,
+  campaignId: string,
+): Promise<CampaignAutopilotDashboard> {
+  return crmFetch(workspaceSlug, `/api/v1/campaigns/${campaignId}/autopilot-dashboard`);
+}
+
+export async function getCampaignConversation(
+  workspaceSlug: string,
+  campaignId: string,
+  conversationId: string,
+): Promise<CampaignConversationDetail> {
+  return crmFetch(
+    workspaceSlug,
+    `/api/v1/campaigns/${campaignId}/conversations/${conversationId}`,
+  );
+}
+
+export async function restartCampaignDiscovery(
+  workspaceSlug: string,
+  campaignId: string,
+): Promise<DiscoveryRun> {
+  return crmFetch(workspaceSlug, `/api/v1/campaigns/${campaignId}/actions/discover`, {
+    method: "POST",
+    body: {},
+  });
+}
+
+export interface ChannelAssessmentView {
+  readonly id: string;
+  readonly planId: string;
+  readonly channel: "linkedin" | "email" | "whatsapp";
+  readonly status: "pending" | "running" | "completed" | "failed";
+  readonly recommendation: "recommended" | "optional" | "unsuitable" | null;
+  readonly score: number | null;
+  readonly strategy: Record<string, unknown>;
+  readonly metrics: Record<string, unknown>;
+  readonly evidence: readonly {
+    readonly url: string | null;
+    readonly title: string;
+    readonly excerpt: string;
+    readonly kind: string;
+  }[];
+  readonly rationale: string | null;
+  readonly errorCode: string | null;
+  readonly errorMessage: string | null;
+}
+
+export interface ProspectingPlanSummary {
+  readonly id: string;
+  readonly icpVersionId: string;
+  readonly icpName: string;
+  readonly icpRunId: string;
+  readonly name: string;
+  readonly status: "assessing" | "ready" | "archived";
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface ProspectingPlanDetail extends ProspectingPlanSummary {
+  readonly assessments: readonly ChannelAssessmentView[];
+  readonly campaigns: readonly {
+    readonly id: string;
+    readonly channel: "linkedin" | "email" | "whatsapp" | null;
+    readonly name: string;
+    readonly status: "draft" | "active" | "paused" | "completed" | "archived";
+    readonly sequenceId: string;
+    readonly prospectCount: number;
+  }[];
+}
+
+export async function listProspectingPlans(
+  workspaceSlug: string,
+): Promise<{ data: ProspectingPlanSummary[] }> {
+  return crmFetch(workspaceSlug, "/api/v1/prospecting-plans");
+}
+
+export async function getProspectingPlan(
+  workspaceSlug: string,
+  planId: string,
+): Promise<ProspectingPlanDetail> {
+  return crmFetch(workspaceSlug, `/api/v1/prospecting-plans/${planId}`);
+}
+
+export async function enableProspectingChannel(
+  workspaceSlug: string,
+  planId: string,
+  channel: "linkedin" | "email" | "whatsapp",
+): Promise<{ campaignId: string }> {
+  return crmFetch(
+    workspaceSlug,
+    `/api/v1/prospecting-plans/${planId}/channels/${channel}/actions/enable`,
+    { method: "POST", body: {} },
+  );
+}
+
+export async function retryChannelAssessment(
+  workspaceSlug: string,
+  assessmentId: string,
+): Promise<ChannelAssessmentView> {
+  return crmFetch(
+    workspaceSlug,
+    `/api/v1/channel-assessments/${assessmentId}/actions/retry`,
+    { method: "POST", body: {} },
+  );
+}
+
+export async function archiveChannelCampaign(
+  workspaceSlug: string,
+  campaignId: string,
+): Promise<void> {
+  return crmFetch(workspaceSlug, `/api/v1/campaigns/${campaignId}/actions/archive`, {
+    method: "POST",
+    body: {},
+  });
 }
 
 async function apiFetch(
@@ -694,11 +3945,12 @@ async function apiFetch(
 
 async function throwApiError(response: Response): Promise<never> {
   const body = (await response.json().catch(() => null)) as
-    | { code?: string; detail?: string; message?: string }
+    | { code?: string; detail?: string; message?: string; errors?: unknown; field?: unknown; blockedClaimIds?: unknown; blockers?: unknown; warnings?: unknown; campaignId?: unknown; campaignName?: unknown; reason?: unknown; channel?: unknown; suppressionId?: unknown; contactId?: unknown }
     | null;
   throw new OutboundApiError(
     response.status,
     body?.code ?? "UPSTREAM_ERROR",
     body?.detail ?? body?.message ?? "Le serveur n’a pas pu traiter la demande.",
+    body ? { errors: body.errors, field: body.field, blockedClaimIds: body.blockedClaimIds, blockers: body.blockers, warnings: body.warnings, campaignId: body.campaignId, campaignName: body.campaignName, reason: body.reason, channel: body.channel, suppressionId: body.suppressionId, contactId: body.contactId } : null,
   );
 }

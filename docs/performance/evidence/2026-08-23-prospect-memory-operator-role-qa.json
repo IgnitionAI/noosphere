@@ -1,0 +1,68 @@
+{
+  "generatedAt": "2026-08-23T20:08:32Z",
+  "schemaVersion": 1,
+  "fixture": {
+    "kind": "synthetic",
+    "workspaceSlug": "setter-quality-20260823-v2",
+    "containsPersonalData": false
+  },
+  "operator": {
+    "role": "operator",
+    "browserUiUsed": true,
+    "drawerClosedBeforeCompletion": true,
+    "navigationOccurredWhileJobActive": true,
+    "resultVisibleAfterReopen": true,
+    "consoleErrorCount": 0
+  },
+  "command": {
+    "id": "20d2eadc-4dd8-4edb-a8e7-d20ba1ea9403",
+    "executionMode": "dry_run",
+    "status": "generated",
+    "jobContinuedAfterNavigation": true,
+    "markerExpected": "NS-001-Q",
+    "markerRecalled": true,
+    "providerRequestId": null,
+    "sentAt": null
+  },
+  "memory": {
+    "snapshotId": "e0ad0996-b99d-4e7e-b70d-924feaea31c1",
+    "snapshotVersion": 1,
+    "watermark": 150854,
+    "receiptId": "2a3ad89d-43a6-4980-86f5-f5114613d30f",
+    "receiptResolvable": true,
+    "aiRunId": "7002149d-b308-4a65-8f0a-40557f94955f",
+    "aiRunResolvable": true
+  },
+  "runtime": {
+    "provider": "codex-cli",
+    "model": "gpt-5.6-luna",
+    "reasoningEffort": "xhigh",
+    "agentLifetime": "transient-per-job"
+  },
+  "effects": {
+    "messagesBefore": 36,
+    "messagesAfter": 36,
+    "outreachAttempts": 0,
+    "providerEffects": 0
+  },
+  "regression": {
+    "discovered": true,
+    "cause": "A raw postgres-js interpolation attempted to serialize a Date in the semantic budget boundary.",
+    "fix": "Use Drizzle gte(aiRuns.createdAt, input.since) so the timestamp is encoded by the column type.",
+    "test": "reads the semantic refresh budget with a typed timestamp boundary",
+    "integrationSuite": {
+      "passed": 153,
+      "failed": 0
+    }
+  },
+  "artifacts": {
+    "localScreenshot": ".gstack/qa-reports/screenshots/operator-dry-run-after-reopen.png"
+  },
+  "gates": {
+    "technicalOperatorJourney": "passed",
+    "durabilityAcrossDrawerClosure": "passed",
+    "zeroProviderEffect": "passed",
+    "prospectMemoryRecall": "passed",
+    "humanComprehension": "not_measured"
+  }
+}

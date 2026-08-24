@@ -6,8 +6,25 @@ node_modules/
 .next/
 dist/
 coverage/
+playwright-report/
+test-results/
+__pycache__/
+.pytest_cache/
+.venv/
+*.py[cod]
 *.tsbuildinfo
 *.log
 .env
 .env.*
 !.env.example
+!deploy/.env.production.example
+
+# Python
+__pycache__/
+*.pyc
+
+# Agent tool dirs
+.aionrs/
+.claude/
+.codex/
+.kimi/

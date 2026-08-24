@@ -15,7 +15,3 @@ services:
   crawler:
     ports:
       - "127.0.0.1:${DEV_CRAWLER_PORT:-58000}:8000"
-
-  docling:
-    ports:
-      - "127.0.0.1:${DEV_DOCLING_PORT:-55001}:5001"

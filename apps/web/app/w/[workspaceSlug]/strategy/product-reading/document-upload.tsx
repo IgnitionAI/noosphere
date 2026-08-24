@@ -1,20 +1,46 @@
 "use client";
 
 import { Check, FileText, LoaderCircle, UploadCloud, X } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { confirmDocumentUpload, getDocumentStatus, prepareDocumentUpload } from "./actions";
 
 type UploadedDocument = {
   id: string;
   filename: string;
-  status: "processing" | "ready" | "failed";
+  status: "processing" | "ready" | "partial" | "ocr_required" | "failed";
+  failureCode: string | null;
+  warnings: readonly string[];
 };
 
-export function DocumentUpload({ workspaceSlug }: { workspaceSlug: string }) {
+export function DocumentUpload({ workspaceSlug, initialDocuments }: {
+  workspaceSlug: string;
+  initialDocuments: readonly UploadedDocument[];
+}) {
   const inputRef = useRef<HTMLInputElement>(null);
-  const [documents, setDocuments] = useState<UploadedDocument[]>([]);
+  const [documents, setDocuments] = useState<UploadedDocument[]>([...initialDocuments]);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const pendingIds = documents.filter((document) => document.status === "processing").map((document) => document.id);
+    if (!pendingIds.length) return;
+    const interval = setInterval(() => {
+      void Promise.all(pendingIds.map((id) => getDocumentStatus(workspaceSlug, id))).then((fresh) => {
+        setDocuments((current) => current.map((document) => {
+          const match = fresh.find((candidate) => candidate?.id === document.id);
+          if (!match || ["uploading", "uploaded", "processing"].includes(match.status)) return document;
+          if (!["ready", "partial", "ocr_required", "failed"].includes(match.status)) return document;
+          return {
+            ...document,
+            status: match.status as UploadedDocument["status"],
+            failureCode: match.failureCode,
+            warnings: match.extractionWarnings,
+          };
+        }));
+      }).catch(() => undefined);
+    }, 2_000);
+    return () => clearInterval(interval);
+  }, [documents, workspaceSlug]);
 
   async function upload(file: File) {
     setUploading(true);
@@ -36,23 +62,32 @@ export function DocumentUpload({ workspaceSlug }: { workspaceSlug: string }) {
       await confirmDocumentUpload(workspaceSlug, intent.document.id);
       setDocuments((current) => [
         ...current.filter((item) => item.id !== intent.document.id),
-        { id: intent.document.id, filename: intent.document.filename, status: "processing" },
+        { id: intent.document.id, filename: intent.document.filename, status: "processing", failureCode: null, warnings: [] },
       ]);
       for (let attempt = 0; attempt < 90; attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, 2_000));
         const document = await getDocumentStatus(workspaceSlug, intent.document.id);
-        if (document?.status === "ready") {
+        if (document?.status === "ready" || document?.status === "partial") {
+          const completedStatus: UploadedDocument["status"] = document.status;
           setDocuments((current) =>
             current.map((item) =>
-              item.id === intent.document.id ? { ...item, status: "ready" } : item,
+              item.id === intent.document.id
+                ? { ...item, status: completedStatus, failureCode: document.failureCode, warnings: document.extractionWarnings }
+                : item,
             ),
           );
           break;
         }
+        if (document?.status === "ocr_required") {
+          setDocuments((current) => current.map((item) => item.id === intent.document.id
+            ? { ...item, status: "ocr_required", failureCode: document.failureCode, warnings: document.extractionWarnings }
+            : item));
+          throw new Error("Ce PDF est une image : un fichier avec du texte sélectionnable est nécessaire.");
+        }
         if (document?.status === "failed") {
           setDocuments((current) =>
             current.map((item) =>
-              item.id === intent.document.id ? { ...item, status: "failed" } : item,
+              item.id === intent.document.id ? { ...item, status: "failed", failureCode: document.failureCode, warnings: document.extractionWarnings } : item,
             ),
           );
           throw new Error("L’extraction du document a échoué.");
@@ -69,7 +104,7 @@ export function DocumentUpload({ workspaceSlug }: { workspaceSlug: string }) {
   return (
     <div>
       {documents
-        .filter((document) => document.status === "ready")
+        .filter((document) => document.status === "ready" || document.status === "partial")
         .map((document) => (
           <input key={document.id} name="internalDocumentIds" type="hidden" value={document.id} />
         ))}
@@ -99,9 +134,9 @@ export function DocumentUpload({ workspaceSlug }: { workspaceSlug: string }) {
             <div className="flex items-center gap-3 rounded-lg border border-line p-3" key={document.id}>
               <FileText className="text-brand-blue" size={17} />
               <span className="min-w-0 flex-1 truncate text-xs font-semibold">{document.filename}</span>
-              <span className="inline-flex items-center gap-1 text-[11px] text-muted">
-                {document.status === "ready" ? <Check size={13} /> : <LoaderCircle className={document.status === "processing" ? "animate-spin" : ""} size={13} />}
-                {document.status === "ready" ? "Prêt" : document.status === "failed" ? "Échec" : "Indexation"}
+              <span className="inline-flex items-center gap-1 text-[11px] text-muted" title={documentFailureDetail(document)}>
+                {document.status === "ready" || document.status === "partial" ? <Check size={13} /> : <LoaderCircle className={document.status === "processing" ? "animate-spin" : ""} size={13} />}
+                {documentStatusLabel(document.status)}
               </span>
               <button
                 aria-label={`Retirer ${document.filename}`}
@@ -116,10 +151,25 @@ export function DocumentUpload({ workspaceSlug }: { workspaceSlug: string }) {
       ) : null}
       {error ? <p className="mt-2 text-xs text-danger">{error}</p> : null}
       <p className="mt-2 text-xs text-muted">
-        PDF, Office, HTML, Markdown ou texte · 50 Mo maximum · 20 documents.
+        PDF avec texte, DOCX, PPTX, XLSX, HTML, Markdown ou texte · 50 Mio maximum · 20 documents.
       </p>
     </div>
   );
+}
+
+function documentFailureDetail(document: UploadedDocument): string {
+  if (document.status === "ocr_required") return "Le fichier ne contient pas de texte sélectionnable et ne sera pas utilisé par l’IA.";
+  if (document.status === "partial") return document.warnings.join(" · ") || "Une partie du document seulement a été extraite.";
+  if (document.status === "failed") return document.failureCode ?? "Échec de l’extraction.";
+  return "";
+}
+
+function documentStatusLabel(status: UploadedDocument["status"]): string {
+  if (status === "ready") return "Prêt";
+  if (status === "partial") return "Partiel";
+  if (status === "ocr_required") return "OCR nécessaire";
+  if (status === "failed") return "Échec";
+  return "Indexation";
 }
 
 async function sha256(file: File): Promise<string> {

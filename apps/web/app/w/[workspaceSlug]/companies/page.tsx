@@ -1,6 +1,9 @@
 import { Building2, Plus } from "lucide-react";
 import Link from "next/link";
-import { listCompanies } from "@/lib/api";
+import { CursorPagination } from "@/components/cursor-pagination";
+import { CrmPermissionState } from "@/components/crm-states";
+import { listCompanies, listWorkspaces, OutboundApiError } from "@/lib/api";
+import { cursorStackValue, paginationHref, parseCursorStack } from "@/lib/crm-pagination";
 import { createCompanyAction } from "./actions";
 
 export const metadata = { title: "Entreprises" };
@@ -11,12 +14,48 @@ export default async function CompaniesPage({
   searchParams,
 }: {
   params: Promise<{ workspaceSlug: string }>;
-  searchParams: Promise<{ search?: string }>;
+  searchParams: Promise<{
+    search?: string;
+    sector?: string;
+    location?: string;
+    employeeCountMin?: string;
+    employeeCountMax?: string;
+    cursor?: string;
+  }>;
 }) {
   const { workspaceSlug } = await params;
-  const { search } = await searchParams;
-  const companies = await listCompanies(workspaceSlug, search);
+  const { search, sector, location, employeeCountMin: minRaw, employeeCountMax: maxRaw, cursor } = await searchParams;
+  const employeeCountMin = parseEmployeeCount(minRaw);
+  const employeeCountMax = parseEmployeeCount(maxRaw);
+  const cursorStack = parseCursorStack(cursor);
+  const currentCursor = cursorStack.at(-1);
+  let companies;
+  try {
+    companies = await listCompanies(workspaceSlug, {
+      search,
+      sector,
+      location,
+      employeeCountMin,
+      employeeCountMax,
+      cursor: currentCursor,
+      limit: 50,
+    });
+  } catch (error) {
+    if (error instanceof OutboundApiError && (error.status === 401 || error.status === 403)) {
+      return <CrmPermissionState resource="les entreprises" />;
+    }
+    throw error;
+  }
+  const workspace = (await listWorkspaces()).find((item) => item.slug === workspaceSlug);
+  const canEdit = workspace ? ["operator", "admin", "owner"].includes(workspace.role) : false;
   const create = createCompanyAction.bind(null, workspaceSlug);
+  const pathname = `/w/${workspaceSlug}/companies`;
+  const previousHref = cursorStack.length
+    ? paginationHref(pathname, { search, sector, location, employeeCountMin: minRaw, employeeCountMax: maxRaw, cursor: cursorStackValue(cursorStack.slice(0, -1)) })
+    : undefined;
+  const nextHref = companies.nextCursor
+    ? paginationHref(pathname, { search, sector, location, employeeCountMin: minRaw, employeeCountMax: maxRaw, cursor: cursorStackValue([...cursorStack, companies.nextCursor]) })
+    : undefined;
 
   return (
     <>
@@ -33,14 +72,19 @@ export default async function CompaniesPage({
       <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
         <section className="panel">
           <div className="panel-header">
-            <form className="flex flex-1 gap-2" action={`/w/${workspaceSlug}/companies`} method="get">
+            <form className="flex flex-1 flex-wrap gap-2" action={`/w/${workspaceSlug}/companies`} method="get">
               <input
-                className="control min-w-0 flex-1"
+                className="control min-w-[12rem] flex-1"
                 name="search"
                 placeholder="Rechercher une entreprise…"
                 defaultValue={search ?? ""}
               />
+              <input className="control min-w-[10rem] flex-1" name="sector" placeholder="Secteur" defaultValue={sector ?? ""} />
+              <input className="control min-w-[10rem] flex-1" name="location" placeholder="Localisation" defaultValue={location ?? ""} />
+              <input className="control w-28" min="0" name="employeeCountMin" placeholder="Effectif min" type="number" defaultValue={minRaw ?? ""} />
+              <input className="control w-28" min="0" name="employeeCountMax" placeholder="Effectif max" type="number" defaultValue={maxRaw ?? ""} />
               <button className="button" type="submit">Filtrer</button>
+              {search || sector || location || minRaw || maxRaw ? <Link className="button" href={`/w/${workspaceSlug}/companies`}>Réinitialiser</Link> : null}
             </form>
           </div>
           <div className="panel-body overflow-x-auto">
@@ -84,9 +128,10 @@ export default async function CompaniesPage({
               </table>
             )}
           </div>
+          <CursorPagination nextHref={nextHref} page={cursorStack.length + 1} previousHref={previousHref} />
         </section>
 
-        <aside className="panel">
+        {canEdit ? <aside className="panel">
           <div className="panel-header">
             <h2 className="flex items-center gap-2 font-semibold">
               <Plus size={15} className="text-brand-blue" />
@@ -119,8 +164,14 @@ export default async function CompaniesPage({
               fiche existante.
             </p>
           </form>
-        </aside>
+        </aside> : null}
       </div>
     </>
   );
+}
+
+function parseEmployeeCount(value: string | undefined): number | undefined {
+  if (!value || !/^\d+$/.test(value)) return undefined;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : undefined;
 }

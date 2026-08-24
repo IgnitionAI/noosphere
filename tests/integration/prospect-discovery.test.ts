@@ -2,22 +2,27 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { CreateProductResearchRun } from "@outbound/application/gtm/product-research-use-cases";
+import type { ProspectEnricher } from "@outbound/application/crm/prospect-enrichment-ports";
+import type { JobQueue, NewJob } from "@outbound/application/jobs/job-queue";
 import { CryptoIdGenerator, SystemClock } from "@outbound/application/shared/ports";
+import type { ProspectChannel } from "@outbound/domain/crm/prospect-channels";
 import { createDatabase } from "@outbound/infrastructure/database/client";
 import { PostgresProductResearchRepository } from "@outbound/infrastructure/gtm/postgres-product-research-repository";
 import {
   ProviderUnavailableError,
   type ProspectSource,
+  type ProspectSourceCandidate,
 } from "@outbound/infrastructure/crm/unipile-prospect-source";
 import {
   authUsers,
   icpProposals,
+  icps,
   icpVersions,
   workspaces,
 } from "@outbound/infrastructure/database/schema";
 import { createDiscoveryHttpHandler } from "@outbound/interface/http/discovery-handler";
 
-const databaseUrl = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
+const databaseUrl = process.env.TEST_DATABASE_URL;
 const databaseDescribe = databaseUrl ? describe : describe.skip;
 
 databaseDescribe("F-023 prospect discovery", () => {
@@ -32,10 +37,12 @@ databaseDescribe("F-023 prospect discovery", () => {
     role: "operator" as "operator" | "viewer",
   };
   let provider: FakeProspectSource;
+  let enricher: ProspectEnricher | null = null;
   const handle = createDiscoveryHttpHandler({
     contextResolver: { async resolve() { return context; } },
     database: database.db,
     prospectSource: () => provider,
+    prospectEnricher: () => enricher,
   });
   let versionId: string;
 
@@ -88,9 +95,13 @@ databaseDescribe("F-023 prospect discovery", () => {
       unknowns: ["Budget"],
     });
     versionId = crypto.randomUUID();
+    await database.db.insert(icps).values({
+      id: versionId, workspaceId, name: "Cabinets juridiques français", currentVersion: 1,
+    });
     await database.db.insert(icpVersions).values({
       id: versionId,
       workspaceId,
+      icpId: versionId,
       runId: run.snapshot.id,
       proposalId,
       version: 1,
@@ -110,16 +121,22 @@ databaseDescribe("F-023 prospect discovery", () => {
   });
 
   afterAll(async () => {
+    await database.client`drop trigger if exists audit_logs_immutable_trg on audit_logs`;
+    await database.client`delete from audit_logs where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`delete from prospect_discovery_candidates where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`delete from prospect_discovery_runs where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`delete from contact_suppressions where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`delete from contacts where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`delete from companies where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`delete from outbox_events where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
+    await database.client`drop trigger if exists icp_versions_immutable_trg on icp_versions`;
     await database.client`delete from icp_versions where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
+    await database.client`delete from icps where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`delete from product_research_runs where workspace_id in (${workspaceId}, ${otherWorkspaceId})`;
     await database.client`delete from auth_users where id = ${userId}`;
     await database.client`delete from workspaces where id in (${workspaceId}, ${otherWorkspaceId})`;
+    await database.client`create trigger icp_versions_immutable_trg before update or delete on icp_versions for each row execute function reject_icp_version_mutation()`;
+    await database.client`create trigger audit_logs_immutable_trg before update or delete on audit_logs for each row execute function reject_audit_log_mutation()`;
     await database.close();
   });
 
@@ -159,6 +176,29 @@ databaseDescribe("F-023 prospect discovery", () => {
         linkedinUrl: "https://www.linkedin.com/in/marion-delacroix/",
         location: "Paris, France",
         companyName: "Cabinet Delacroix",
+        channels: {
+          linkedin: {
+            value: "https://www.linkedin.com/in/marion-delacroix/",
+            normalizedValue: "linkedin.com/in/marion-delacroix",
+            status: "verified",
+            confidence: "high",
+            source: "unipile_linkedin_profile",
+          },
+          email: {
+            value: "marion@cabinet-delacroix.fr",
+            normalizedValue: "marion@cabinet-delacroix.fr",
+            status: "found",
+            confidence: "medium",
+            source: "linkedin_contact_info",
+          },
+          whatsapp: {
+            value: "+33 6 12 34 56 78",
+            normalizedValue: "+33612345678",
+            status: "verified",
+            confidence: "high",
+            source: "unipile_whatsapp_profile",
+          },
+        },
         providerData: { providerId: "li_1" },
       },
       {
@@ -184,6 +224,22 @@ databaseDescribe("F-023 prospect discovery", () => {
     expect(run.filters.category).toBe("people");
     expect(run.filters.keywords).toContain("legal");
     expect(run.candidateCount).toBe(2);
+    const discoveredEvents = await database.client<{ count: number }[]>`
+      select count(*)::int as count
+      from outbox_events
+      where workspace_id = ${workspaceId}
+        and event_type = 'ProspectDiscovered'
+        and payload->>'runId' = ${run.id}
+    `;
+    expect(discoveredEvents[0]?.count).toBe(2);
+    const discoveryAudits = await database.client<{ count: number }[]>`
+      select count(*)::int as count
+      from audit_logs
+      where workspace_id = ${workspaceId}
+        and action = 'ProspectDiscovered'
+        and changes->>'runId' = ${run.id}
+    `;
+    expect(discoveryAudits[0]?.count).toBe(2);
 
     const detail = await handle(
       new Request(`http://localhost/api/v1/discovery-runs/${run.id}`),
@@ -191,12 +247,14 @@ databaseDescribe("F-023 prospect discovery", () => {
     const body = (await detail.json()) as {
       candidates: Array<{
         id: string;
+        source: string;
         fullName: string;
         icpFit: { matches: string[]; gaps: string[] };
       }>;
     };
     const marion = body.candidates.find((candidate) => candidate.fullName === "Marion Delacroix")!;
     const john = body.candidates.find((candidate) => candidate.fullName === "John Smith")!;
+    expect(marion.source).toBe("discovery");
     expect(marion.icpFit.matches.join(" ")).toContain("France");
     expect(john.icpFit.gaps.length).toBeGreaterThan(0);
 
@@ -207,7 +265,7 @@ databaseDescribe("F-023 prospect discovery", () => {
     );
     expect(imported.status).toBe(201);
     const contact = (await imported.json()) as { id: string; source: string };
-    expect(contact.source).toBe("provider");
+    expect(contact.source).toBe("discovery");
 
     const contactDetail = await handle(
       new Request(`http://localhost/api/v1/contacts/${contact.id}`),
@@ -219,6 +277,12 @@ databaseDescribe("F-023 prospect discovery", () => {
     expect(
       contactBody.identities.find((identity) => identity.type === "linkedin")?.normalizedValue,
     ).toBe("linkedin.com/in/marion-delacroix");
+    expect(
+      contactBody.identities.find((identity) => identity.type === "email")?.normalizedValue,
+    ).toBe("marion@cabinet-delacroix.fr");
+    expect(
+      contactBody.identities.find((identity) => identity.type === "whatsapp")?.normalizedValue,
+    ).toBe("+33612345678");
     expect(contactBody.employments[0]?.companyName).toBe("Cabinet Delacroix");
     expect(contactBody.employments[0]?.isCurrent).toBe(true);
 
@@ -281,6 +345,138 @@ databaseDescribe("F-023 prospect discovery", () => {
     const retried = await postJson(`/api/v1/discovery-runs/${run.id}/actions/retry`, {});
     expect(retried.status).toBe(200);
     expect(((await retried.json()) as { status: string }).status).toBe("completed");
+
+    provider = new FakeProspectSource(new ProviderUnavailableError("Unipile still down", 503));
+    const bounded = (await (await postJson(`/api/v1/icp-versions/${versionId}/discovery-runs`, {})).json()) as { id: string };
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const retry = await postJson(`/api/v1/discovery-runs/${bounded.id}/actions/retry`, {});
+      expect(retry.status).toBe(200);
+      expect(((await retry.json()) as { status: string }).status).toBe("failed");
+    }
+    const exhausted = await postJson(`/api/v1/discovery-runs/${bounded.id}/actions/retry`, {});
+    expect(exhausted.status).toBe(409);
+    expect(((await exhausted.json()) as { code: string }).code).toBe("DISCOVERY_RETRY_EXHAUSTED");
+  });
+
+  test("runtime scheduling returns immediately and persists a durable discovery job", async () => {
+    const jobs: NewJob[] = [];
+    const jobQueue: JobQueue = {
+      async enqueue(job) {
+        jobs.push(job);
+        return { inserted: true };
+      },
+      async lease() { return []; },
+      async renewLease() { return true; },
+      async acknowledge() {},
+      async defer() {},
+      async retry() { return "scheduled"; },
+    };
+    const asyncHandle = createDiscoveryHttpHandler({
+      contextResolver: { async resolve() { return context; } },
+      database: database.db,
+      prospectSource: () => provider,
+      prospectEnricher: () => enricher,
+      jobQueue,
+    });
+    const launchRequest = () =>
+      new Request(`http://localhost/api/v1/icp-versions/${versionId}/discovery-runs`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ limit: 25 }),
+      });
+    let runId: string | null = null;
+    try {
+      const response = await asyncHandle(launchRequest());
+      expect(response.status).toBe(202);
+      const run = (await response.json()) as { id: string; status: string };
+      runId = run.id;
+      expect(run.status).toBe("running");
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0]).toMatchObject({
+        workspaceId,
+        type: "prospect.discovery.execute",
+        payload: { workspaceId, runId: run.id },
+        maxAttempts: 3,
+      });
+
+      const duplicateResponse = await asyncHandle(launchRequest());
+      expect(duplicateResponse.status).toBe(200);
+      const duplicateRun = (await duplicateResponse.json()) as { id: string; status: string };
+      expect(duplicateRun).toMatchObject({ id: run.id, status: "running" });
+      expect(jobs).toHaveLength(1);
+
+      const detail = await asyncHandle(
+        new Request(`http://localhost/api/v1/discovery-runs/${run.id}`),
+      );
+      expect(((await detail.json()) as { status: string }).status).toBe("running");
+    } finally {
+      if (runId) {
+        await database.client`
+          update prospect_discovery_runs
+          set status = 'failed', completed_at = now()
+          where workspace_id = ${workspaceId} and id = ${runId}
+        `;
+      }
+    }
+  });
+
+  test("LinkedIn discovery stays person-first and never invokes public web enrichment", async () => {
+    provider = new FakeProspectSource(
+      [{
+        fullName: "Claire Martin",
+        headline: "Managing Partner",
+        linkedinUrl: "https://www.linkedin.com/in/claire-martin/",
+        location: "Paris, France",
+        companyName: "Martin Conseil",
+        providerData: { providerId: "li_claire" },
+      }],
+    );
+    let enrichmentCalls = 0;
+    enricher = {
+      async enrich() {
+        enrichmentCalls += 1;
+        throw new Error("LINKEDIN_DISCOVERY_MUST_NOT_ENRICH_CONTACTS");
+      },
+    };
+
+    const run = (await (
+      await postJson(`/api/v1/icp-versions/${versionId}/discovery-runs`, { limit: 1 })
+    ).json()) as { id: string };
+    enricher = null;
+    const detail = (await (
+      await handle(new Request(`http://localhost/api/v1/discovery-runs/${run.id}`))
+    ).json()) as {
+      candidates: Array<{
+        id: string;
+        companyWebsite: string | null;
+        companyDomain: string | null;
+        channels: {
+          linkedin: ProspectChannel;
+          email: ProspectChannel;
+          whatsapp: ProspectChannel;
+        };
+      }>;
+    };
+    const candidate = detail.candidates[0]!;
+    expect(enrichmentCalls).toBe(0);
+    expect(candidate.companyWebsite).toBeNull();
+    expect(candidate.companyDomain).toBeNull();
+    expect(candidate.channels.linkedin.status).toBe("found");
+    expect(candidate.channels.email.status).toBe("unavailable");
+    expect(candidate.channels.whatsapp.status).toBe("unavailable");
+
+    const imported = await postJson(
+      `/api/v1/discovery-runs/${run.id}/candidates/${candidate.id}/actions/import`,
+      {},
+    );
+    expect(imported.status).toBe(201);
+    const contact = (await imported.json()) as { id: string };
+    const contactDetail = (await (
+      await handle(new Request(`http://localhost/api/v1/contacts/${contact.id}`))
+    ).json()) as {
+      identities: Array<{ type: string; normalizedValue: string }>;
+    };
+    expect(contactDetail.identities.map((identity) => identity.type)).toEqual(["linkedin"]);
   });
 
   test("a viewer cannot launch or import", async () => {
@@ -294,19 +490,23 @@ databaseDescribe("F-023 prospect discovery", () => {
 class FakeProspectSource implements ProspectSource {
   constructor(
     private readonly outcome:
-      | readonly {
-          fullName: string;
-          headline: string | null;
-          linkedinUrl: string | null;
-          location: string | null;
-          companyName: string | null;
-          providerData: Readonly<Record<string, unknown>>;
-        }[]
+      | readonly ProspectSourceCandidate[]
       | ProviderUnavailableError,
+    private readonly whatsappVerification?: ProspectChannel,
   ) {}
 
   async searchPeople() {
     if (this.outcome instanceof ProviderUnavailableError) throw this.outcome;
     return this.outcome;
+  }
+
+  async verifyWhatsappNumber(phone: string): Promise<ProspectChannel> {
+    return this.whatsappVerification ?? {
+      value: phone,
+      normalizedValue: phone,
+      status: "unverified",
+      confidence: "low",
+      source: "unipile_whatsapp_check",
+    };
   }
 }

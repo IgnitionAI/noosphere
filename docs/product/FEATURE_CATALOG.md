@@ -12,6 +12,42 @@
 Les identifiants sont stables. Une feature peut être divisée en tâches
 techniques sans changer son identifiant produit.
 
+## État d’implémentation (au 9 août 2026)
+
+| Feature | État | Note |
+|---|---|---|
+| F-001 | livré | login, sessions, bootstrap owner, redirection workspace |
+| F-002 | livré | création multi-workspace, invitations, équipe, rôles, désactivation, audit et dernier owner protégés |
+| F-003 | livré | moteur durable + console opérateur workspace, corrélations expurgées, webhooks rejetés et relance idempotente auditée |
+| F-004 | livré | shell Next.js, navigation par rôle |
+| F-009 | livré | workflow V2/V3, rapport sourcé, publication ICP |
+| F-010 | livré | offres, versions immuables, claims |
+| F-011 | livré | ICP canonique + versions + critères structurés |
+| F-012 | livré | stratégie et politique de supervision, écran dédié |
+| F-020 | livré | entreprises, provenance par champ |
+| F-021 | livré | contacts, identités, emplois |
+| F-022 | livré | import CSV prévisualisé et idempotent |
+| F-023 | livré | découverte Unipile, import avec provenance |
+| F-024 | livré | candidats de fusion, merge réversible |
+| F-025 | livré | enrichissement à la demande, jobs idempotents, provenance par champ, vérification email, couverture |
+| F-026 | livré | suppressions, éligibilité canal, lift justifié |
+| F-027 | livré | signaux typés avec expiration, déduplication multi-sources, collecte idempotente |
+| F-030 | livré | éditeur de séquences, versions immuables |
+| F-031 | livré | campagnes, snapshot immuable, préflight |
+| F-032 | livré | scoring déterministe, enrollment, plans de prospection |
+| F-033 | livré | file d’exceptions/approbations autopilote |
+| F-034 | livré | scheduler, tentatives, idempotence d’envoi |
+| F-035 | livré | comptes Unipile, capacités, webhooks, onboarding guidé, quotas par canal, alertes de dégradation |
+| F-040 | livré | conversations campagne + Inbox globale (D-006) |
+| F-041 | livré | suspension sur réponse, reprise automatique bornée |
+| F-042 | livré (socle) | classification K3, réponses autonomes |
+| F-043 | livré | Cal.com : types multiples, rendez-vous immuables, déplacement/annulation/no-show, historique, fuseaux et UI prospect/pipeline |
+| F-044 | livré | opportunités, historique d’étapes immuable, édition, clôture won/lost, prévisions pondérées |
+| F-050 | livré | sources/claims validés, PostgreSQL FTS, fraîcheur/retrait, agents bornés aux preuves autorisées |
+| F-051 | livré | entonnoir déterministe, breakdowns 5 dimensions, coûts et export owner/admin |
+| F-052 | non commencé | page stub de redirection ; fiche DoR prête (parcours 7 étapes) |
+| F-053 | livré | paramètres unifiés, limites de dispatch, rétention/purge, export 72 h, anonymisation et audit filtrable |
+
 ## Epic 1 — Socle multi-workspace
 
 ### F-001 — Authentification et sessions (`P0`)
@@ -32,9 +68,8 @@ routes, expiration et révocation.
 **Dépendances** : Better Auth, PostgreSQL.  
 **Surface** : `/login`, shell applicatif.
 
-**État backend** : tables et runtime Better Auth, révocation de session,
-inscription fermée par défaut et bootstrap owner implémentés. La page login et
-la redirection vers le dernier workspace restent dans la tranche Next.js.
+**État** : livré — runtime Better Auth, page login, redirection vers le
+dernier workspace, bootstrap owner (voir le tableau d’implémentation).
 
 ### F-002 — Workspaces, membres et rôles (`P0`)
 
@@ -56,9 +91,13 @@ la redirection vers le dernier workspace restent dans la tranche Next.js.
 **Dépendances** : F-001.  
 **Surface** : `/onboarding`, `/w/[workspaceSlug]/settings`.
 
-**État backend** : workspaces, memberships, rôles, désactivation et résolution
-du slug de route implémentés pour F-009. Invitations, administration des
-membres, audit des rôles et protection du dernier owner restent à livrer.
+**État** : livré — création et sélection multi-workspace, invitation avec lien
+copiable, acceptation/révocation, administration des membres, rôles et statuts,
+audit transactionnel et protection du dernier owner. Les responsables du
+pipeline sont résolus en noms lisibles via l’annuaire des membres.
+
+**Spécification** :
+[`F-002-WORKSPACES-MEMBERS.md`](features/F-002-WORKSPACES-MEMBERS.md).
 
 ### F-003 — Audit, jobs et outbox (`P0`)
 
@@ -77,7 +116,12 @@ retries bornés, dead letters, idempotence et corrélation.
 - les logs excluent secrets et données personnelles non nécessaires.
 
 **Dépendances** : F-001, F-002.  
-**Surface** : health endpoints, administration technique.
+**Surface** : health endpoints, API `/api/v1/console/*`, page
+`/w/[workspaceSlug]/settings/console` et administration technique filtrée par
+rôle. Les webhooks non authentifiés ne conservent que leur hash et leur motif.
+
+**Spécification** (console opérateur) :
+[`F-003-OPERATOR-CONSOLE.md`](features/F-003-OPERATOR-CONSOLE.md).
 
 ### F-004 — Design system et shell applicatif (`P0`)
 
@@ -143,6 +187,9 @@ preuves, objections, prix communicables, contraintes et publication immuable.
 **Dépendances** : F-002, F-003.  
 **Surface** : `/w/[workspaceSlug]/offers`.
 
+**Spécification** :
+[`F-010-OFFERS.md`](features/F-010-OFFERS.md).
+
 ### F-011 — Revue ICP et versions publiées (`P0`)
 
 **Valeur** : définir précisément les entreprises et personnes à cibler.
@@ -176,11 +223,16 @@ templates par canal, variables autorisées, règles d’approbation et escalade.
 - une version publiée est immuable ;
 - les variables inconnues ou non résolues bloquent l’approbation ;
 - chaque canal possède ses longueurs, CTA et contraintes ;
-- le premier contact et toute réponse restent soumis à validation humaine ;
+- le premier contact et les réponses restent supervisés par la politique
+  d’autopilote : envoi sans validation humaine dans le chemin normal (D-003),
+  exceptions remontées en file F-033 ;
 - aucune génération par modèle n’est requise dans cette feature.
 
 **Dépendances** : F-010, F-011.  
 **Surface** : offres, séquences, campagne builder.
+
+**Spécification** :
+[`F-012-MESSAGING-STRATEGY.md`](features/F-012-MESSAGING-STRATEGY.md).
 
 ## Epic 3 — CRM et intelligence prospect
 
@@ -202,6 +254,9 @@ identifiants externes, contacts liés et historique.
 **Dépendances** : F-002, F-003.  
 **Surface** : entreprises et détail entreprise.
 
+**Spécification** :
+[`F-020-COMPANIES.md`](features/F-020-COMPANIES.md).
+
 ### F-021 — Contacts, identités et emplois (`P0`)
 
 **Valeur** : suivre une personne malgré ses changements d’employeur.
@@ -220,6 +275,9 @@ emplois historisés, préférence de canal et provenance.
 **Dépendances** : F-020.  
 **Surface** : prospects et détail prospect.
 
+**Spécification** :
+[`F-021-CONTACTS.md`](features/F-021-CONTACTS.md).
+
 ### F-022 — Import manuel et CSV (`P0`)
 
 **Valeur** : alimenter le CRM avant tout connecteur de sourcing.
@@ -236,6 +294,9 @@ rapport de lignes acceptées/rejetées et traitement idempotent.
 - la provenance `manual` ou `csv` est conservée.
 
 **Dépendances** : F-020, F-021, F-024, F-026.
+
+**Spécification** :
+[`F-022-CSV-IMPORT.md`](features/F-022-CSV-IMPORT.md).
 
 ### F-023 — Découverte de prospects (`P0`)
 
@@ -256,6 +317,9 @@ prévisualisation des candidats, provenance et import sélectionné.
 **Dépendances** : F-011, F-020, F-021, F-026.  
 **Surface** : `/w/[workspaceSlug]/prospects/discover`.
 
+**Spécification** :
+[`F-023-PROSPECT-DISCOVERY.md`](features/F-023-PROSPECT-DISCOVERY.md).
+
 ### F-024 — Déduplication et fusion réversible (`P0`)
 
 **Valeur** : préserver un CRM propre sans perdre de données.
@@ -273,6 +337,9 @@ annulation.
 
 **Dépendances** : F-003, F-021.
 
+**Spécification** :
+[`F-024-DEDUP-MERGE.md`](features/F-024-DEDUP-MERGE.md).
+
 ### F-025 — Enrichissement et vérification (`P0`)
 
 **Valeur** : compléter les profils et trouver des coordonnées professionnelles.
@@ -289,6 +356,9 @@ vérification, fraîcheur, confiance, coût et reprise asynchrone.
 - les coûts et quotas fournisseurs sont mesurables.
 
 **Dépendances** : F-003, F-020, F-021, F-024.
+
+**Spécification** :
+[`F-025-ENRICHMENT.md`](features/F-025-ENRICHMENT.md).
 
 ### F-026 — Suppressions et éligibilité canal (`P0`)
 
@@ -308,6 +378,9 @@ d’éligibilité, justification et audit.
 
 **Dépendances** : F-003, F-021.
 
+**Spécification** :
+[`F-026-SUPPRESSIONS.md`](features/F-026-SUPPRESSIONS.md).
+
 ### F-027 — Signaux entreprise et contact (`P1`)
 
 **Valeur** : prioriser selon des événements observables.
@@ -325,25 +398,37 @@ source, date d’observation, expiration et niveau de confiance.
 
 **Dépendances** : F-020, F-021, F-023.
 
+**Spécification** :
+[`F-027-INTENT-SIGNALS.md`](features/F-027-INTENT-SIGNALS.md).
+
 ## Epic 4 — Campagnes et exécution
 
 ### F-030 — Séquences multicanales versionnées (`P0`)
 
 **Valeur** : composer un playbook reproductible.
 
-**Périmètre** : étapes linéaires, LinkedIn/email/WhatsApp/tâche manuelle, délais,
-conditions, fenêtres, fallback, templates, validation et publication.
+**Périmètre** : étapes linéaires, LinkedIn/email/WhatsApp, politique
+d’autopilote par campagne, délais en jours ouvrés, fuseau destinataire,
+conditions, fenêtres, fallback, personnalisation juste-à-temps, validation et
+publication.
 
 **Critères d’acceptation**
 
 - une séquence brouillon est modifiable et prévisualisable ;
 - une publication crée une SequenceVersion immuable ;
 - chaque étape possède au moins un canal éligible ou une tâche manuelle ;
-- une séquence invalide ou non approuvée ne peut pas être activée ;
+- une séquence invalide ne peut pas être activée par l’autopilote ;
 - les fallbacks n’entraînent jamais deux envois pour la même étape logique.
+- une relance n’est rédigée qu’au moment où elle devient exécutable ;
+- une étape attend la livraison des étapes précédentes ;
+- la fenêtre d’envoi est recalculée juste avant le transport ;
+- une réponse ou activité humaine annule les réponses automatiques concurrentes.
 
 **Dépendances** : F-012, F-026.  
 **Surface** : séquences.
+
+**Spécification** :
+[`F-030-SEQUENCES.md`](features/F-030-SEQUENCES.md).
 
 ### F-031 — Campagne et snapshot immuable (`P0`)
 
@@ -356,7 +441,7 @@ archivage.
 **Critères d’acceptation**
 
 - le builder n’accepte que des versions publiées ;
-- le préflight vérifie population, canaux, comptes, suppressions et approbation ;
+- le preflight automatique vérifie population, canaux, comptes et suppressions ;
 - l’activation fige toutes les références de versions ;
 - une campagne active ne peut pas être modifiée rétroactivement ;
 - pause et reprise ne recréent pas les actions déjà exécutées.
@@ -364,13 +449,16 @@ archivage.
 **Dépendances** : F-010, F-011, F-012, F-030, F-035.  
 **Surface** : campagnes, builder et détail.
 
+**Spécification** :
+[`F-031-CAMPAIGNS.md`](features/F-031-CAMPAIGNS.md).
+
 ### F-032 — Population, priorité et enrollment (`P0`)
 
 **Valeur** : sélectionner les bons prospects et maîtriser leur entrée en
 campagne.
 
 **Périmètre initial** : filtres déterministes, score pondéré par critères ICP,
-explication, sélection manuelle, conflits et enrollment.
+explication, sélection automatique, conflits et enrollment.
 
 **Critères d’acceptation**
 
@@ -383,23 +471,27 @@ explication, sélection manuelle, conflits et enrollment.
 **Dépendances** : F-023, F-026, F-031.  
 **Surface** : campagne builder, campagne détail, approvals.
 
-### F-033 — File d’approbation (`P0`)
+### F-033 — File d’exceptions autopilote (`P0`)
 
-**Valeur** : superviser efficacement les actions sensibles.
+**Valeur** : rendre visibles les rares actions que l’autopilote ne peut pas
+terminer sans inventer un résultat.
 
-**Périmètre** : lots, aperçu contextualisé, édition, validation, rejet,
-justification, filtres et permissions.
+**Périmètre** : compte déconnecté, identité ambiguë, livraison inconnue, quota
+persistant, aperçu contextualisé, reprise et arrêt global.
 
 **Critères d’acceptation**
 
-- chaque item montre prospect, entreprise, canal, étape, contenu et preuves ;
-- un reviewer peut modifier puis approuver un item ;
-- un contenu obsolète après changement de données retourne en revue ;
-- les décisions en lot ne masquent pas les items devenus invalides ;
-- chaque décision est auditée.
+- le chemin normal ne crée aucun item ;
+- chaque exception montre prospect, entreprise, canal, étape et erreur ;
+- une livraison de statut inconnu n’est jamais rejouée automatiquement ;
+- une reconnexion permet une reprise idempotente ;
+- chaque transition est auditée.
 
 **Dépendances** : F-031, F-032.  
 **Surface** : `/w/[workspaceSlug]/approvals`.
+
+**Spécification** :
+[`F-033-APPROVALS.md`](features/F-033-APPROVALS.md).
 
 ### F-034 — Scheduler et actions d’outreach (`P0`)
 
@@ -410,13 +502,16 @@ attempts, retries, idempotence, pause et annulation.
 
 **Critères d’acceptation**
 
-- aucune action n’est envoyée sans approbation requise ;
+- aucune action n’est envoyée sans preflight et snapshot immuable ;
 - suppression, réponse et santé du compte sont revérifiées avant exécution ;
 - une clé d’idempotence protège chaque action logique ;
 - un rate limit décale l’action sans la dupliquer ;
 - une action annulée ne peut plus être exécutée par un job déjà livré.
 
 **Dépendances** : F-003, F-026, F-033, F-035.
+
+**Spécification** :
+[`F-034-SCHEDULER.md`](features/F-034-SCHEDULER.md).
 
 ### F-035 — Comptes connectés et santé fournisseurs (`P0`)
 
@@ -436,25 +531,42 @@ capacités, quotas, erreurs, reconnexion et webhooks.
 **Dépendances** : F-002, F-003.  
 **Surface** : `/w/[workspaceSlug]/integrations`.
 
-## Epic 5 — Inbox et revenu
+**Spécifications** :
+[`F-035-CONNECTED-ACCOUNTS.md`](features/F-035-CONNECTED-ACCOUNTS.md)
+(socle livré) ;
+[`F-035-SUITE-ONBOARDING-ALERTS.md`](features/F-035-SUITE-ONBOARDING-ALERTS.md)
+(onboarding guidé, quotas par canal, alertes de dégradation — livré).
 
-### F-040 — Inbox unifiée (`P1`)
+## Epic 5 — Conversations et revenu
 
-**Valeur** : traiter les conversations multicanales depuis un seul écran.
+### F-040 — Conversations contextualisées dans la campagne (`P0`)
 
-**Périmètre** : conversations par canal/compte, vue regroupée par contact,
-messages entrants/sortants, filtres, unread et assignation.
+**Valeur** : observer chaque conversation et sa décision IA sans quitter la
+campagne qui l’a produite.
+
+**Périmètre initial** : projection PostgreSQL regroupée par contact, compteurs
+de campagne, dernier message, messages entrants/sortants, décision K3, réponse
+automatique, relances annulées et opportunité.
 
 **Critères d’acceptation**
 
 - les threads fournisseurs restent identifiables et ordonnés ;
 - les événements reçus deux fois ne créent pas deux messages ;
-- une conversation affiche la campagne et le prospect liés ;
+- un clic prospect ouvre un panneau latéral sans quitter la campagne ;
+- les cinq compteurs sont calculés depuis la projection persistée et dédupliqués
+  entre les campagnes techniques mono-canal ;
+- l’état et la dernière activité sont visibles dans la liste des prospects ;
+- la décision K3, sa confiance, le modèle, la réponse automatique et
+  l’annulation des relances sont auditables dans le panneau ;
 - un message non rattaché est conservé dans une file de réconciliation ;
 - les permissions workspace s’appliquent aux recherches et compteurs.
 
 **Dépendances** : F-021, F-035.  
-**Surface** : `/w/[workspaceSlug]/inbox`.
+**Surface** : `/w/[workspaceSlug]/campaigns/plans/[planId]?prospect=[contactId]`.
+
+L’Inbox globale et les unread sont livrés (D-006) : la Messagerie synchronise
+aussi les conversations hors campagne. Seule l’assignation d’équipe reste
+différée jusqu’à ce que le volume multi-campagnes la rende nécessaire.
 
 ### F-041 — Suspension immédiate sur réponse (`P0`)
 
@@ -470,24 +582,25 @@ annulation des actions futures et résolution de course.
 - une action concurrente revérifie la suspension dans la transaction finale ;
 - les actions futures sont annulées de manière idempotente ;
 - l’opérateur voit la cause et l’heure de suspension ;
-- la reprise exige une action humaine explicite.
+- la reprise est automatique après une réponse de suivi ; une opposition reste
+  irréversible sans levée explicite de suppression.
 
 **Dépendances** : F-003, F-034, F-040.
 
-### F-042 — Réponse humaine et brouillons (`P1`)
+### F-042 — Qualification et réponse autonomes (`P1`)
 
-**Valeur** : répondre vite tout en gardant le contrôle.
+**Valeur** : qualifier et faire avancer une conversation sans intervention.
 
-**Périmètre initial** : rédaction manuelle, brouillons, édition, approbation,
-envoi idempotent, notes et feedback. La génération IA est différée.
+**Périmètre initial** : classification K3 avec contexte, arrêt, réponse courte,
+proposition de réservation, envoi idempotent et opportunité.
 
 **Critères d’acceptation**
 
-- un brouillon n’est jamais envoyé sans action explicite du reviewer ;
-- le contexte de conversation complet est visible pendant la rédaction ;
-- une nouvelle réponse entrante invalide un brouillon devenu obsolète ;
+- une opposition ou un refus bloque les relances avant tout appel IA ;
+- le contexte de conversation complet est fourni à l’agent ;
+- une réponse automatique est liée au message entrant qui l’a déclenchée ;
 - l’envoi utilise le même thread et compte lorsque le fournisseur le permet ;
-- rejet, édition et approbation sont audités.
+- la décision, le modèle et l’envoi sont audités.
 
 **Dépendances** : F-033, F-034, F-040, F-041.
 
@@ -508,6 +621,24 @@ meeting, participants, statut et rattachement.
 
 **Dépendances** : F-003, F-040.
 
+**Implémentation actuelle** : connexion Cal.com par workspace, synchronisation
+de plusieurs types d’événement et lecture native des disponibilités.
+Pour un événement public, le Setter fonctionne immédiatement sans secret ; une
+clé API optionnelle est validée puis chiffrée pour les événements privés et
+l’enregistrement automatique du webhook. K3 propose trois créneaux réels et ne
+réserve qu’après un choix explicite, avec le lien signé en secours. Les
+événements sont dédupliqués. Déplacement, annulation et no-show mettent à jour
+le même identifiant interne sous verrou transactionnel, alimentent un historique
+append-only, arrêtent les relances et mettent à jour l’opportunité. Les fuseaux
+prospect/organisateur sont affichés explicitement sur la fiche prospect et dans
+le pipeline. L’OAuth Cal.com reste une extension produit indépendante.
+
+**Surface** : `/w/[workspaceSlug]/settings/calendar`, fiche prospect et tiroir
+pipeline ; API `/calendar-bookings` et `/calendar-connection/meeting-types`.
+
+**Spécification** (complétion : déplacements/annulations UI, no-shows,
+multi types, OAuth) : [`F-043-CALENDAR.md`](features/F-043-CALENDAR.md).
+
 ### F-044 — Pipeline et opportunités (`P1`)
 
 **Valeur** : suivre la prospection jusqu’au revenu gagné ou perdu.
@@ -525,6 +656,18 @@ action, clôture, motif de perte et historique.
 
 **Dépendances** : F-020, F-021, F-040, F-043.  
 **Surface** : `/w/[workspaceSlug]/pipeline`.
+
+**Implémentation actuelle** : vue workspace en quatre colonnes, métriques,
+rattachement prospect/campagne/ICP/rendez-vous, transitions automatiques depuis
+le Setter et le calendrier, historique immuable (trigger PostgreSQL), édition
+(montant, devise, probabilité, responsable, prochaine action, clôture estimée),
+clôture dédiée `won`/`lost` avec champs exigés (422), verrouillage après
+clôture et réouverture owner/admin auditée, motifs de perte normalisés par
+workspace, prévisions de revenu pondéré déterministes, redaction des montants
+pour les viewers.
+
+**Spécification** (complétion : édition, clôture, prévisions) :
+[`F-044-PIPELINE.md`](features/F-044-PIPELINE.md).
 
 ## Epic 6 — Pilotage et administration
 
@@ -546,6 +689,9 @@ statut d’indexation et liens vers offres. Pas de RAG requis.
 **Dépendances** : F-003, F-010.  
 **Surface** : `/w/[workspaceSlug]/knowledge`.
 
+**Spécification** :
+[`F-050-KNOWLEDGE-SOURCES.md`](features/F-050-KNOWLEDGE-SOURCES.md).
+
 ### F-051 — Événements analytics et dashboards (`P1`)
 
 **Valeur** : mesurer acquisition, exécution, réponse, rendez-vous et revenu.
@@ -564,9 +710,16 @@ signal/canal/variante, attribution et export.
 **Dépendances** : F-003, F-031, F-034, F-040, F-044.  
 **Surface** : dashboard et analytics.
 
+**Spécification** :
+[`F-051-ANALYTICS.md`](features/F-051-ANALYTICS.md).
+
 ### F-052 — Onboarding guidé (`P1`)
 
 **Valeur** : rendre un nouveau workspace opérationnel rapidement.
+
+**État** : livré — progression partagée et persistée en 7 étapes, prérequis
+calculés depuis les données réelles, validation/saut idempotents, page
+reprenable et bandeau de reprise dans le shell.
 
 **Périmètre** : création workspace, première offre, premier ICP, import ou
 connexion, checklist et reprise.
@@ -581,6 +734,9 @@ connexion, checklist et reprise.
 
 **Dépendances** : F-002, F-010, F-011, F-022, F-035.  
 **Surface** : `/onboarding`.
+
+**Spécification** :
+[`F-052-ONBOARDING.md`](features/F-052-ONBOARDING.md).
 
 ### F-053 — Paramètres, sécurité et cycle de vie des données (`P1`)
 
@@ -600,7 +756,14 @@ anonymisation, audit visible et préférences.
 **Dépendances** : F-002, F-003, F-026.  
 **Surface** : settings.
 
-## Epic 7 — Capacités IA différées
+**Spécification** :
+[`F-053-SETTINGS-SECURITY.md`](features/F-053-SETTINGS-SECURITY.md).
+
+## Epic 7 — Capacités IA d’évaluation et d’optimisation
+
+L’autopilote supervisé (D-003, D-005) a intégré la génération de contenu et
+la classification aux Waves 3 et 4. Cet epic ne couvre plus que les capacités
+d’évaluation et d’optimisation restantes.
 
 ### AI-100 — Scoring et explication assistés
 
@@ -609,13 +772,15 @@ la traçabilité des faits.
 
 ### AI-110 — Recherche et rédaction personnalisée
 
-Produire des brouillons de premiers contacts à partir des versions de campagne,
-des données réelles et de claims sourcés. Toute sortie reste en F-033.
+Absorbée par l’autopilote (D-005) : les premiers contacts sont générés à
+partir des versions de campagne, des données réelles et de claims sourcés,
+dans les bornes de la politique F-012. Les exceptions restent en F-033.
 
 ### AI-120 — Classification et brouillon de réponse
 
-Classer l’intention, proposer une réponse et détecter les sujets sensibles.
-Toute réponse reste en F-042 avec approbation humaine.
+Absorbée par l’autopilote : classification K3, détection des sujets sensibles
+et réponse autonome bornée par la politique (F-042) ; les sujets sensibles
+remontent en exceptions (F-033).
 
 ### AI-130 — Retrieval et RAG
 
@@ -627,6 +792,17 @@ uniquement après benchmark.
 Conserver les `AIRun`, jeux d’évaluation, feedback, coûts et recommandations de
 campagne. Aucune optimisation n’est appliquée automatiquement à une campagne
 active.
+
+**Livré** : jeux synthétiques persistés, configurations Kimi et prompts
+append-only, harness durable et idempotent, scoring déterministe contre les
+claims F-050, comparaison coût/latence/qualité, exécution shadow sans émission,
+promotion humaine auditée, feedback et console `/ai-studio`.
+Les prochaines générations de message et décisions Setter consomment la
+configuration active et tracent sa version exacte ; aucun contenu historique
+n’est recalculé.
+
+**Spécification** :
+[`AI-140-CONTINUOUS-EVALUATION.md`](features/AI-140-CONTINUOUS-EVALUATION.md).
 
 ## Hors périmètre fonctionnel initial
 

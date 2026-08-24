@@ -28,14 +28,15 @@ workspace et voit une navigation conforme à son rôle.
 
 **Démo de sortie**
 
-Lire un produit, sélectionner les segments clients suggérés, approfondir puis
-publier les ICP retenus, importer une liste, résoudre les doublons, consulter
-les fiches et exclure un contact.
+Lire un produit, obtenir un rapport complet ou partiel, publier automatiquement
+le premier ICP classé par V3, lancer sa découverte de prospects, importer une
+liste, résoudre les doublons, consulter les fiches et exclure un contact.
 
 **Gate**
 
 - versions publiées immuables ;
-- aucun segment détecté n’est utilisé sans validation humaine ;
+- seul le rang 1 issu d'un `objective_ranking` V3 terminé est publié
+  automatiquement ; une hypothèse issue d'un rapport partiel ne l'est jamais ;
 - import idempotent ;
 - fusion annulable ;
 - suppression revérifiée dans les cas d’usage sensibles.
@@ -56,14 +57,15 @@ obtenir une liste propre avec sources, confiance et données manquantes.
 - coût, quota, erreurs et fraîcheur mesurés ;
 - aucune donnée fournisseur sans provenance.
 
-## Wave 3 — Première campagne email supervisée
+## Wave 3 — Campagnes autonomes mono-canal
 
 **Features** : F-030, F-031, F-032, F-033, F-034, F-035.
 
 **Démo de sortie**
 
-Connecter un compte email, créer une séquence, sélectionner des prospects avec
-un score déterministe, approuver les messages et exécuter la campagne.
+À partir d’un canal recommandé, sourcer les prospects, les enrichir, les
+dédupliquer, les scorer, générer des messages personnalisés, publier la
+séquence et planifier les actions sans validation intermédiaire.
 
 **Gate**
 
@@ -71,7 +73,8 @@ un score déterministe, approuver les messages et exécuter la campagne.
 - une seule séquence active par contact/workspace ;
 - double exécution impossible ;
 - rate limits, fenêtres, pause et retries testés ;
-- aucun message sans approbation exigée.
+- aucun message sans identité, score, preflight et snapshot immuable ;
+- aucun clic humain requis dans le chemin normal.
 
 ## Wave 4 — Réponse et inbox
 
@@ -79,15 +82,16 @@ un score déterministe, approuver les messages et exécuter la campagne.
 
 **Démo de sortie**
 
-Recevoir une réponse, suspendre instantanément la campagne, consulter le thread,
-rédiger un brouillon et répondre dans la conversation.
+Recevoir une réponse, suspendre instantanément les relances, classifier avec
+K3, répondre automatiquement, arrêter ou créer une opportunité de rendez-vous.
 
 **Gate**
 
 - course réponse/envoi couverte par un test d’intégration ;
 - webhook relivré sans doublon ;
-- brouillon obsolète invalidé ;
-- reprise d’automatisation explicitement humaine.
+- réponse automatique liée au message entrant et envoyée dans le même thread ;
+- opposition ou refus converti en suppression durable ;
+- rendez-vous demandé converti en opportunité et proposition de réservation.
 
 ## Wave 5 — LinkedIn, WhatsApp et fallback
 
@@ -121,18 +125,20 @@ perdu, puis analyser les résultats par campagne, ICP, rôle, signal et canal.
 - exports et rétention testés ;
 - onboarding reprenable.
 
-## Wave 7 — IA supervisée
+## Wave 7 — Évaluation et optimisation IA
 
 **Features** : AI-100, AI-110, AI-120, AI-130, AI-140.
+
+La génération de contenu et la classification sont déjà intégrées à
+l’autopilote supervisé (Waves 3 et 4, D-003/D-005). Cette wave ne couvre plus
+que l’évaluation et l’optimisation.
 
 **Ordre recommandé**
 
 1. scoring en mode shadow comparé aux règles ;
-2. génération de premiers contacts sans envoi ;
-3. classification de réponses en mode suggestion ;
-4. génération de réponses avec approbation ;
-5. retrieval hybride après benchmark ;
-6. recommandations de campagne, jamais appliquées automatiquement.
+2. jeux d’évaluation sur les premiers contacts et réponses déjà générés ;
+3. retrieval hybride après benchmark ;
+4. recommandations de campagne, jamais appliquées automatiquement.
 
 Chaque capacité franchit un jeu d’évaluation et une comparaison à la baseline
 avant d’être visible aux opérateurs.

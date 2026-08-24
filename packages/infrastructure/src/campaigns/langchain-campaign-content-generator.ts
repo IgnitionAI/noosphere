@@ -1,0 +1,370 @@
+import { ChatOpenAI } from "@langchain/openai";
+import { tool } from "@langchain/core/tools";
+import { z } from "zod";
+import type {
+  CampaignContentGenerator,
+  PersonalizedCampaignContent,
+} from "@outbound/application/campaigns/campaign-content-generator";
+import type { WorkspaceAiModelPolicyReader } from "@outbound/application/workspaces/workspace-ai-settings";
+import type { ActiveAiConfigurationReader } from "@outbound/application/ai/active-ai-configuration";
+import type { AiRunRecorder } from "@outbound/application/ai/ai-run-recorder";
+import { filterAuthorizedKnowledgeCitations, type KnowledgeRetriever } from "@outbound/application/knowledge/knowledge-retriever";
+import type { ContentBrandKitReader } from "@outbound/application/content/content-brand-kit";
+import type { WorkspaceStructuredModel } from "@outbound/infrastructure/ai/workspace-structured-model";
+import {
+  requireProspectMemoryAllowedProviders,
+  type ProspectContextAssembler,
+  type ProspectMemoryPolicyReader,
+} from "@outbound/application/prospect-memory/prospect-memory";
+import type { ProspectContextBundle } from "@outbound/domain/prospect-memory/prospect-memory";
+import {
+  buildChatModelFields,
+  resolveResearchModelConfigurationFromEnvironment,
+} from "@outbound/infrastructure/ai/langchain-research-agent-executor";
+
+const personalizedContentSchema = z.object({
+  steps: z.array(z.object({
+    position: z.number().int().positive(),
+    subject: z.string().max(200).nullable(),
+    body: z.string().trim().min(1).max(5_000),
+  })).min(1).max(5),
+  assessment: z.object({
+    summary: z.string().trim().min(1).max(1_000),
+    strengths: z.array(z.string().trim().min(1).max(300)).max(5),
+    risks: z.array(z.string().trim().min(1).max(300)).max(5),
+    recommendedAngle: z.string().trim().min(1).max(500),
+  }),
+  knowledgeClaimIds: z.array(z.string().uuid()).max(20).default([]),
+  knowledgeSourceIds: z.array(z.string().uuid()).max(40).default([]),
+  offerClaimIds: z.array(z.string().uuid()).max(20).default([]),
+});
+
+const editorialReviewSchema = z.object({
+  final: personalizedContentSchema,
+  review: z.object({
+    verdict: z.enum(["approved", "revised"]),
+    genericityScore: z.number().min(0).max(1),
+    issues: z.array(z.string().trim().min(1).max(500)).max(10),
+    changesApplied: z.array(z.string().trim().min(1).max(500)).max(10),
+    evidenceAnchor: z.string().trim().min(1).max(500),
+    stageObjectiveSatisfied: z.boolean(),
+    previousMessageOverlap: z.enum(["low", "medium", "high"]),
+  }),
+});
+
+type CampaignContentModelInvoker = (input: {
+  readonly phase: "draft" | "review";
+  readonly fields: ConstructorParameters<typeof ChatOpenAI>[0];
+  readonly messages: readonly {
+    readonly role: "system" | "user";
+    readonly content: string;
+  }[];
+}) => Promise<unknown>;
+
+export class LangChainCampaignContentGenerator implements CampaignContentGenerator {
+  readonly #configuration: ReturnType<typeof resolveResearchModelConfigurationFromEnvironment>;
+
+  constructor(
+    environment: Readonly<Record<string, string | undefined>> = process.env,
+    private readonly modelPolicyReader?: WorkspaceAiModelPolicyReader,
+    private readonly knowledgeRetriever?: KnowledgeRetriever,
+    private readonly activeConfigurationReader?: ActiveAiConfigurationReader,
+    private readonly aiRunRecorder?: AiRunRecorder,
+    private readonly invokeModel: CampaignContentModelInvoker = invokeCampaignContentModel,
+    private readonly brandKitReader?: ContentBrandKitReader,
+    private readonly routedModel?: WorkspaceStructuredModel,
+    private readonly prospectContextAssembler?: ProspectContextAssembler,
+    private readonly prospectMemoryPolicies?: ProspectMemoryPolicyReader,
+  ) {
+    this.#configuration = resolveResearchModelConfigurationFromEnvironment(environment);
+  }
+
+  async generate(
+    input: Parameters<CampaignContentGenerator["generate"]>[0],
+  ): Promise<PersonalizedCampaignContent> {
+    const startedAt = performance.now();
+    const { contactId, ...publicProspect } = input.prospect;
+    const requestSeed = new Bun.CryptoHasher("sha256").update(JSON.stringify({
+      workspaceId: input.workspaceId,
+      contactId,
+      channel: input.channel,
+      campaignObjective: input.campaignObjective,
+      stepPositions: input.templateSteps.map((step) => step.position),
+      previousMessages: input.previousMessages,
+    })).digest("hex");
+    const memoryBundle = await this.#assembleMemory({
+      workspaceId: input.workspaceId,
+      contactId,
+      requestKey: `campaign-content:${requestSeed}:memory`,
+    });
+    if (memoryBundle?.mode === "active" && !memoryBundle.automaticActionAllowed) {
+      throw new Error(memoryBundle.waitCode ?? "WAIT_MEMORY_STALE");
+    }
+    const memoryAllowedProviders = memoryBundle?.mode === "active"
+      ? await requireProspectMemoryAllowedProviders({
+          policies: requiredMemoryPolicyReader(this.prospectMemoryPolicies),
+          workspaceId: input.workspaceId,
+          capability: "outbound_drafting",
+        })
+      : undefined;
+    const workspacePolicy = this.routedModel ? null : await this.modelPolicyReader?.find(input.workspaceId);
+    const activeConfiguration = await this.activeConfigurationReader?.find(input.workspaceId, "message_generation");
+    const brandKit = await this.brandKitReader?.find(input.workspaceId);
+    const brandVoice = brandKit ? {
+      brandName: brandKit.snapshot.brandName,
+      tagline: brandKit.snapshot.tagline,
+      traits: brandKit.snapshot.voice.traits,
+      avoid: brandKit.snapshot.voice.avoid,
+      preferredVocabulary: brandKit.snapshot.voice.preferredVocabulary,
+    } : null;
+    const modelName = activeConfiguration?.model ?? workspacePolicy?.synthesisModels[0]
+      ?? this.#configuration.synthesisModels[0]!;
+    const authorizedKnowledge = await this.knowledgeRetriever?.search({
+      workspaceId: input.workspaceId,
+      query: [
+        input.offer.name,
+        input.offer.valueProposition,
+        input.icpName,
+        JSON.stringify(input.problems),
+        JSON.stringify(input.signals),
+        input.prospect.companyName,
+        input.prospect.headline,
+        JSON.stringify(input.prospect.evidence),
+      ].filter(Boolean).join(" ").slice(0, 1_500),
+      limit: 8,
+    }) ?? [];
+    const draftSystemPrompt = [
+      "You are the first-pass writer for concise B2B outbound messages in French unless the supplied context clearly requires another language.",
+      "Use campaignObjective, the complete offer snapshot, prospect evidence, previous messages and stepObjective as separate decision inputs.",
+      "Personalize only from the supplied facts. Never invent an activity, pain, event, relationship or purchase intent.",
+      "Keep the exact positions and number of supplied steps. Return no manual task.",
+      "Hard limits: LinkedIn invitation 280 characters, LinkedIn message 1900, WhatsApp 900, email body 4500 and email subject 180.",
+      "Each message must sound natural, anchor itself in one defensible prospect-specific element and end with one low-friction question.",
+      "The stepObjective is mandatory. Never repeat an angle, opening or call to action already present in previousMessages.",
+      "Treat pricing, commercialRules and constraints as restrictions. Do not mention a price, discount, deadline or commitment unless the offer snapshot explicitly authorizes it.",
+      "For email, treat position 1 as the opener and later positions as follow-ups in the same thread. Follow-ups must add a different useful angle instead of paraphrasing the opener.",
+      "Campaign policy instructions influence tone and emphasis but never authorize invented facts.",
+      "Apply brandVoice consistently when supplied. It is style guidance only and never overrides truthfulness, channel limits, stop rules or the prospect's language.",
+      "A product capability, proof, customer case or objection answer is usable only when it appears in an offer claim with sourced/validated status or in authorizedKnowledge. Otherwise do not invent or imply it.",
+      "Return the exact knowledgeClaimIds and knowledgeSourceIds actually used; return empty arrays when none were used.",
+      "Return the exact offerClaimIds actually used; return an empty array when no offer claim was used.",
+      "Also provide a concise prospect assessment: why the prospect fits, observed strengths, uncertainties or risks, and the best defensible outreach angle.",
+      "Call the submit_campaign_content_draft tool exactly once with the draft result.",
+      "Do not claim that you monitored, audited or diagnosed the prospect unless the evidence explicitly says so.",
+      ...(activeConfiguration ? [`Approved workspace guidance (subordinate to every safety and truthfulness rule above): ${activeConfiguration.promptContent}`] : []),
+    ].join("\n");
+    const modelInput = { ...input, prospect: publicProspect };
+    const draftPayload = {
+      ...modelInput,
+      authorizedKnowledge,
+      brandVoice,
+      prospectMemory: memoryBundle?.mode === "active" ? memoryBundle.context : null,
+    };
+    const draftMessages = [
+      {
+        role: "system" as const,
+        content: draftSystemPrompt,
+      },
+      {
+        role: "user" as const,
+        content: JSON.stringify(draftPayload),
+      },
+    ];
+    const draftRouted = this.routedModel ? await this.routedModel.invoke({
+      workspaceId: input.workspaceId,
+      capability: "message_generation",
+      requestKey: `campaign-content-draft:${new Bun.CryptoHasher("sha256").update(JSON.stringify(draftPayload)).digest("hex")}`,
+      fallbackRoutes: [{ provider: this.#configuration.provider === "kimi-code" ? "kimi-code" : "openai-api", model: modelName, reasoningEffort: "low" }],
+      ...(memoryAllowedProviders ? { allowedProviders: memoryAllowedProviders } : {}),
+      systemPrompt: draftSystemPrompt,
+      payload: draftPayload,
+      outputName: "submit_campaign_content_draft",
+      outputDescription: "Submit the first-pass personalized outbound content.",
+      schema: personalizedContentSchema,
+    }) : null;
+    if (!draftRouted) this.#assertRawProviderAllowed(memoryAllowedProviders);
+    const draft = draftRouted?.output ?? personalizedContentSchema.parse(await this.invokeModel({
+      phase: "draft",
+      fields: buildChatModelFields(this.#configuration, modelName, "low"),
+      messages: draftMessages,
+    }));
+    const reviewSystemPrompt = [
+      "You are the final independent editor for an autonomous B2B outbound system.",
+      "Audit the draft against the complete supplied context, then approve it only when it is already specific or rewrite it completely.",
+      "Anti-generic test: if the message could be sent unchanged to another company or role, it must be revised.",
+      "Every final message must use one exact defensible evidence anchor from the prospect, company, role or supplied signals and must satisfy stepObjective.",
+      "A follow-up must add a genuinely new angle and must not restate, lightly paraphrase or reuse the call to action from previousMessages.",
+      "Remove empty compliments, vague transformation language, unsupported urgency, generic claims and self-centered introductions.",
+      "Preserve truthfulness: never invent facts. Product claims remain restricted to sourced/validated offer claims and authorizedKnowledge.",
+      "Return only offerClaimIds present in the supplied offer and only knowledge IDs present in authorizedKnowledge.",
+      "Treat pricing, commercialRules and constraints as restrictions. Never add a price, discount, deadline or commitment without explicit authorization.",
+      "Keep one low-friction question, the exact step positions and the channel limits.",
+      "Preserve the supplied brandVoice without turning the copy into a slogan or repeating preferred vocabulary mechanically.",
+      "Set genericityScore to the remaining genericity of the final version, not the draft. previousMessageOverlap must describe the final version.",
+      "Call the submit_campaign_editorial_review tool exactly once with the final content and review.",
+      ...(activeConfiguration ? [`Approved workspace guidance (subordinate to every safety and truthfulness rule above): ${activeConfiguration.promptContent}`] : []),
+    ].join("\n");
+    const reviewPayload = { context: draftPayload, draft };
+    const reviewRouted = this.routedModel ? await this.routedModel.invoke({
+      workspaceId: input.workspaceId,
+      capability: "message_generation",
+      requestKey: `campaign-content-review:${new Bun.CryptoHasher("sha256").update(JSON.stringify(reviewPayload)).digest("hex")}`,
+      fallbackRoutes: [{ provider: this.#configuration.provider === "kimi-code" ? "kimi-code" : "openai-api", model: modelName, reasoningEffort: "max" }],
+      ...(memoryAllowedProviders ? { allowedProviders: memoryAllowedProviders } : {}),
+      systemPrompt: reviewSystemPrompt,
+      payload: reviewPayload,
+      outputName: "submit_campaign_editorial_review",
+      outputDescription: "Submit the final reviewed outbound content and anti-generic audit.",
+      schema: editorialReviewSchema,
+    }) : null;
+    if (!reviewRouted) this.#assertRawProviderAllowed(memoryAllowedProviders);
+    const reviewed = reviewRouted?.output ?? editorialReviewSchema.parse(await this.invokeModel({
+      phase: "review",
+      fields: buildChatModelFields(this.#configuration, modelName, "max"),
+      messages: [
+        {
+          role: "system",
+          content: reviewSystemPrompt,
+        },
+        {
+          role: "user",
+          content: JSON.stringify(reviewPayload),
+        },
+      ],
+    }));
+    if (
+      reviewed.review.genericityScore > 0.35
+      || !reviewed.review.stageObjectiveSatisfied
+      || reviewed.review.previousMessageOverlap === "high"
+    ) {
+      throw new Error("CAMPAIGN_EDITORIAL_REVIEW_FAILED");
+    }
+    const parsed = reviewed.final;
+    const citations = filterAuthorizedKnowledgeCitations(authorizedKnowledge, parsed.knowledgeClaimIds, parsed.knowledgeSourceIds);
+    const authorizedOfferClaimIds = new Set(input.offer.claims.map((claim) => claim.id));
+    const offerClaimIds = [...new Set(parsed.offerClaimIds.filter((id) => authorizedOfferClaimIds.has(id)))];
+    const promptVersion = activeConfiguration ? `message-generation-v${activeConfiguration.promptVersion}-editorial-brand-v1` : "campaign-personalization-v4-editorial-brand";
+    const aiRun = await this.aiRunRecorder?.record({
+      workspaceId: input.workspaceId,
+      purpose: "message_generation",
+      provider: reviewRouted?.metadata.provider ?? draftRouted?.metadata.provider ?? this.#configuration.provider,
+      model: reviewRouted?.metadata.model ?? draftRouted?.metadata.model ?? modelName,
+      promptVersion,
+      ...(activeConfiguration ? { aiConfigurationId: activeConfiguration.configurationId, promptVersionId: activeConfiguration.promptVersionId } : {}),
+      shadow: false,
+      inputHash: new Bun.CryptoHasher("sha256").update(JSON.stringify({ modelInput, brandVoice, memory: memoryReference(memoryBundle) })).digest("hex"),
+      output: {
+        draft: draft.steps,
+        steps: parsed.steps,
+        assessment: parsed.assessment,
+        editorialReview: reviewed.review,
+        knowledgeClaimIds: citations.claimIds,
+        knowledgeSourceIds: citations.sourceIds,
+        offerClaimIds,
+        prospectMemory: memoryReference(memoryBundle),
+      },
+      status: "completed",
+      cost: null,
+      latencyMs: Math.max(0, Math.round(performance.now() - startedAt)),
+    });
+    return {
+      steps: parsed.steps,
+      assessment: parsed.assessment,
+      metadata: {
+        provider: reviewRouted?.metadata.provider ?? draftRouted?.metadata.provider ?? this.#configuration.provider,
+        model: reviewRouted?.metadata.model ?? draftRouted?.metadata.model ?? modelName,
+        promptVersion,
+        ...(activeConfiguration ? { aiConfigurationId: activeConfiguration.configurationId, promptVersionId: activeConfiguration.promptVersionId } : {}),
+        ...(aiRun ? { aiRunId: aiRun.id } : {}),
+        knowledgeClaimIds: citations.claimIds,
+        knowledgeSourceIds: citations.sourceIds,
+        offerClaimIds,
+        editorialReview: {
+          verdict: reviewed.review.verdict,
+          genericityScore: reviewed.review.genericityScore,
+          issues: reviewed.review.issues,
+          changesApplied: reviewed.review.changesApplied,
+          evidenceAnchor: reviewed.review.evidenceAnchor,
+        },
+        ...(memoryBundle?.mode === "active" ? {
+          memoryReceiptId: memoryBundle.receiptId,
+          memorySnapshotId: memoryBundle.snapshotId,
+          memorySnapshotVersion: memoryBundle.snapshotVersion,
+          memoryWatermark: memoryBundle.watermark,
+        } : {}),
+      },
+    };
+  }
+
+  async #assembleMemory(input: {
+    readonly workspaceId: string;
+    readonly contactId: string;
+    readonly requestKey: string;
+  }): Promise<ProspectContextBundle | null> {
+    if (!this.prospectContextAssembler) return null;
+    try {
+      return await this.prospectContextAssembler.assemble({
+        ...input,
+        capability: "outbound_drafting",
+        principalRole: "worker",
+        now: new Date(),
+      });
+    } catch (error) {
+      if (isOptionalMemoryUnavailable(error)) return null;
+      throw error;
+    }
+  }
+
+  #assertRawProviderAllowed(allowedProviders: readonly string[] | undefined): void {
+    if (!allowedProviders) return;
+    const provider = this.#configuration.provider === "kimi-code" ? "kimi-code" : "openai-api";
+    if (!allowedProviders.includes(provider)) throw new Error("AI_PROCESSING_ROUTE_NOT_ALLOWED");
+  }
+}
+
+function memoryReference(bundle: ProspectContextBundle | null) {
+  if (!bundle || bundle.mode !== "active") return null;
+  return {
+    receiptId: bundle.receiptId,
+    snapshotId: bundle.snapshotId,
+    snapshotVersion: bundle.snapshotVersion,
+    watermark: bundle.watermark,
+    privacyEpoch: bundle.privacyEpoch,
+  };
+}
+
+function isOptionalMemoryUnavailable(error: unknown): boolean {
+  return error instanceof Error && [
+    "PROSPECT_MEMORY_CAPABILITY_DISABLED",
+    "PROSPECT_MEMORY_CONTACT_UNAVAILABLE",
+  ].includes(error.message);
+}
+
+function requiredMemoryPolicyReader(reader: ProspectMemoryPolicyReader | undefined): ProspectMemoryPolicyReader {
+  if (!reader) throw new Error("PROSPECT_MEMORY_POLICY_READER_REQUIRED");
+  return reader;
+}
+
+async function invokeCampaignContentModel(input: Parameters<CampaignContentModelInvoker>[0]) {
+  const draft = input.phase === "draft";
+  const name = draft ? "submit_campaign_content_draft" : "submit_campaign_editorial_review";
+  const submit = tool(async (value) => value, {
+    name,
+    description: draft
+      ? "Submit the first-pass personalized outbound content."
+      : "Submit the final reviewed outbound content and anti-generic audit.",
+    schema: draft ? personalizedContentSchema : editorialReviewSchema,
+  });
+  const response = await new ChatOpenAI(input.fields)
+    // Kimi K3 rejects a named tool_choice while its thinking mode is enabled.
+    // The prompt still requires this exact tool and the response is validated below.
+    .bindTools([submit], { tool_choice: "auto" })
+    .invoke([...input.messages]);
+  const call = response.tool_calls?.find((item) => item.name === name);
+  if (!call) {
+    throw new Error(draft
+      ? "CAMPAIGN_CONTENT_DRAFT_TOOL_CALL_MISSING"
+      : "CAMPAIGN_EDITORIAL_REVIEW_TOOL_CALL_MISSING");
+  }
+  return call.args;
+}

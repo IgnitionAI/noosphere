@@ -1,110 +1,72 @@
-# Ignition Outbound
+# Noosphere
 
-Ignition Outbound est une application interne de prospection multicanale conçue
-pour IgnitionAI, avec une architecture permettant une évolution ultérieure vers
-un produit SaaS multi-workspace.
+**Open-source growth intelligence: discover the right market, run outbound, publish inbound content, and turn conversations into calls.**
 
-Ce dépôt contient les spécifications d’architecture, un prototype frontend
-HTML/Tailwind navigable et la première tranche verticale Bun/PostgreSQL/Next.js
-de la mission de recherche ICP F-009, son moteur LangChain et son crawler
-Python autonome.
+[Documentation française](README.fr.md) · [English documentation](README.en.md) · [Architecture](docs/architecture/ARCHITECTURE.md) · [Production runbook](docs/runbooks/vps-production.md)
 
-![Vue d’ensemble du prototype](prototype/screenshots/dashboard-desktop.png)
+Noosphere brings the GTM loop into one multi-workspace application:
 
-## Démarrer le prototype
-
-```bash
-bun run prototype
+```mermaid
+flowchart LR
+  O[Product and offer] --> I[ICP research]
+  I --> C[Outbound campaigns]
+  O --> P[Inbound content]
+  C --> M[LinkedIn, email and WhatsApp conversations]
+  P --> M
+  M --> R[Qualified calls]
+  R --> L[Durable learning]
+  L --> I
+  L --> P
 ```
 
-Puis ouvrir [http://localhost:4173](http://localhost:4173).
+The normal experience stays intentionally simple:
 
-Vérifier l’intégrité des pages, des types, de l’architecture, des routes et des
-builds Bun :
+1. launch an ICP study;
+2. let campaigns and LinkedIn content run within deterministic policies;
+3. answer from the unified inbox and collect calls.
+
+The AI never owns provider state. PostgreSQL, durable jobs, leases, idempotency keys and outbox events remain authoritative. Closing a page or drawer stops browser polling only; it does not cancel the work.
+
+## Quick start
+
+Requirements: Bun 1.3+, Docker with Compose, and `uv` for crawler development.
+
+```bash
+cp .env.example .env
+bun install
+bun run dev:setup
+bun run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000). The production-like Compose stack and VPS procedure are documented in the [production runbook](docs/runbooks/vps-production.md).
+
+For production, start from the tracked, secret-free template:
+
+```bash
+cp deploy/.env.production.example .env
+ENV_FILE=.env bash deploy/validate-production-env.sh
+```
+
+## Verification
 
 ```bash
 bun run check
+bun run test:integration
 ```
 
-Le contrôle couvre aussi les types, les dépendances d’architecture et les tests
-unitaires du domaine, de la file de jobs, de l’orchestrateur et le build
-standalone Next.js.
+The repository also contains effect-free capacity, shadow, Setter-quality and operator-comprehension gates. Their current evidence and remaining production gates are recorded in the [Prospect 360 validation report](docs/performance/2026-08-23-prospect-360-memory-validation-report.md).
 
-## Application web
+Measured on 23 August 2026: the real-data shadow gate passed on 1,000 IgnitionAI contexts; 100/100 synthetic Codex Setter dry-runs were generated with zero provider effects and resolvable memory receipts. An isolated 2-vCPU/8-GiB VPS remained functional but missed the concurrent-memory p95 target.
 
-Après avoir renseigné `.env`, migré la base et créé le compte propriétaire :
+## Production sizing
 
-```bash
-bun run db:migrate
-bun run bootstrap:owner
-bun run api
-bun run web
-```
+- **Light usage, one workspace:** Netcup **RS 2000 G12**, with 8 dedicated cores, 16 GiB RAM and 512 GB NVMe. This is the acceptable minimum for a canary or one lightly loaded workspace, provided heavy crawling, indexing and campaigns are not run concurrently.
+- **Recommended production:** Netcup **RS 4000 G12**, with 12 dedicated cores, 32 GiB RAM and 1 TB NVMe. This is the recommended target for the full platform, including PostgreSQL/ParadeDB, MinIO, Chromium crawling, workers, Qwen embedding and BGE reranking.
 
-L’API écoute par défaut sur `127.0.0.1:3001` et Next.js sur
-`127.0.0.1:3000`. L’authentification passe par le proxy same-origin
-`/api/auth/*`, puis les pages serveur résolvent uniquement les workspaces actifs
-de la session.
+TEI keeps Qwen and BGE resident in RAM to avoid cold starts, but this is not continuous compute. Embeddings are generated only for new or changed knowledge, hybrid-search queries, and full reindexing; unchanged content is skipped by hash. Message synchronization, prospect sourcing, post writing, sends and normal Setter execution do not currently use Qwen Embedding. See the localized deployment guides below for the complete workload explanation.
 
-Pour produire et lancer le bundle VPS :
+Use x86_64/AMD64 and NVMe storage. A GPU is not required. Shared-vCPU plans are suitable for short preproduction tests but are not the preferred production target. See the [French deployment guide](README.fr.md#déploiement-vps), [English deployment guide](README.en.md#vps-deployment) and [capacity report](docs/performance/2026-08-21-noosphere-standard-stack-capacity.md) for assumptions, upgrade thresholds and operational configuration.
 
-```bash
-bun run build:web
-HOSTNAME=0.0.0.0 PORT=3000 bun run web:start
-```
+## License
 
-Le workflow livré couvre `/login`, la sélection automatique du workspace, le
-brief produit et ses documents, le suivi de mission, le rapport sourcé et
-l’approbation humaine d’un ICP.
-
-## Backend F-009
-
-Le socle est organisé selon le monolithe modulaire :
-
-- `packages/domain` : agrégat et invariants de recherche ;
-- `packages/contracts` : contrats Zod des rôles d’agents ;
-- `packages/application` : cas d’usage, ports et orchestrateur ;
-- `packages/infrastructure` : Drizzle, PostgreSQL, queue et adapters de test ;
-- `packages/interface` : transport HTTP Web standard et contrôle des rôles ;
-- `apps/api` : serveur Bun et composition root HTTP ;
-- `apps/worker` : consommateur Bun à lease.
-
-Voir le [runbook F-009](docs/architecture/F009_BACKEND_RUNBOOK.md) pour lancer
-ParadeDB, MinIO, Docling et le crawler, migrer la base, puis démarrer l’API et
-le worker. Le contrat machine des routes est
-[`product-research-v1.json`](packages/contracts/openapi/product-research-v1.json).
-
-L’API monte Better Auth sous `/api/auth/*`. Les appels métier doivent envoyer
-le slug de la route dans `x-workspace-slug` ; le serveur vérifie ensuite la
-session et le membership PostgreSQL. Voir `.env.example` pour les variables
-`BETTER_AUTH_*`.
-
-Après `bun run db:migrate`, le premier compte et son workspace peuvent être
-créés avec `bun run bootstrap:owner`. La procédure et les variables requises
-sont détaillées dans le runbook F-009.
-
-## Documents
-
-- [Préparation produit et catalogue des features](docs/product/README.md)
-- [Plan de livraison des features](docs/product/DELIVERY_PLAN.md)
-- [Frontière IA](docs/product/AI_BOUNDARY.md)
-- [Spécification d’architecture](docs/architecture/ARCHITECTURE.md)
-- [Modèle de domaine](docs/architecture/DOMAIN.md)
-- [Modèle de données et ERD](docs/architecture/DATA_MODEL.md)
-- [Flux critiques](docs/architecture/FLOWS.md)
-- [Contrat API](docs/architecture/API_CONTRACT.md)
-- [Contrat d’architecture](docs/architecture/ARCHITECTURE_CONTRACT.md)
-- [Checklist Guardian](docs/architecture/GUARDIAN_CHECKLIST.md)
-- [Roadmap d’implémentation](docs/architecture/ROADMAP.md)
-- [Guide d’intégration frontend](docs/frontend/FRONTEND_INTEGRATION.md)
-- [Runbook backend F-009](docs/architecture/F009_BACKEND_RUNBOOK.md)
-- [Architecture Decision Records](docs/architecture/adr/)
-- [Prototype frontend](prototype/dashboard.html)
-
-## Statut
-
-Architecture V1, prototype frontend et moteur F-009 intégrés le 25 juillet
-2026. Le moteur utilise les agents LangChain avec Kimi Code par défaut,
-OpenAI pour les embeddings documentaires, le crawler
-SearXNG/Crawl4AI, Docling, ParadeDB et un rapport dont la publication d’ICP
-reste soumise à une décision humaine explicite.
+Noosphere is licensed under the [GNU Affero General Public License v3.0 only](LICENSE). If you modify and operate it over a network, the AGPL requires offering the corresponding source to its users.
