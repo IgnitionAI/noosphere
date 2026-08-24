@@ -1,26 +1,35 @@
 name: ignition-outbound
 
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   migrate:
+    image: ${BACKEND_IMAGE:-ghcr.io/ignitionai/noosphere-backend:${APP_VERSION:-dev}}
     build:
       context: .
       dockerfile: Dockerfile.backend
     command: ["bun", "dist/migrate/migrate.js"]
-    env_file: .env
+    env_file: ${APP_ENV_FILE:-.env}
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@database:5432/${POSTGRES_DB:-ignition_outbound}
     depends_on:
       database:
         condition: service_healthy
     restart: "no"
+    logging: *default-logging
     networks: [outbound-private]
 
   api:
+    image: ${BACKEND_IMAGE:-ghcr.io/ignitionai/noosphere-backend:${APP_VERSION:-dev}}
     build:
       context: .
       dockerfile: Dockerfile.backend
     command: ["bun", "dist/backend/api/src/index.js"]
-    env_file: .env
+    env_file: ${APP_ENV_FILE:-.env}
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@database:5432/${POSTGRES_DB:-ignition_outbound}
       S3_ENDPOINT: http://minio:9000
@@ -32,8 +41,8 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
-      minio-init:
-        condition: service_completed_successfully
+      minio:
+        condition: service_healthy
       crawler:
         condition: service_healthy
     healthcheck:
@@ -43,13 +52,15 @@ services:
       start_period: 15s
       retries: 10
     restart: unless-stopped
+    logging: *default-logging
     networks: [outbound-private]
 
   web:
+    image: ${WEB_IMAGE:-ghcr.io/ignitionai/noosphere-web:${APP_VERSION:-dev}}
     build:
       context: .
       dockerfile: Dockerfile.web
-    env_file: .env
+    env_file: ${APP_ENV_FILE:-.env}
     environment:
       OUTBOUND_API_URL: http://api:3001
       HOSTNAME: 0.0.0.0
@@ -58,20 +69,22 @@ services:
       api:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:3000/login').then(r => { if (!r.ok) process.exit(1) })"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/login').then(r => { if (!r.ok) process.exit(1) })"]
       interval: 15s
       timeout: 5s
       start_period: 10s
       retries: 10
     restart: unless-stopped
+    logging: *default-logging
     networks: [outbound-private]
 
   worker:
+    image: ${BACKEND_IMAGE:-ghcr.io/ignitionai/noosphere-backend:${APP_VERSION:-dev}}
     build:
       context: .
       dockerfile: Dockerfile.backend
     command: ["bun", "dist/backend/worker/src/index.js"]
-    env_file: .env
+    env_file: ${APP_ENV_FILE:-.env}
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@database:5432/${POSTGRES_DB:-ignition_outbound}
       S3_ENDPOINT: http://minio:9000
@@ -86,19 +99,25 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
-      minio-init:
-        condition: service_completed_successfully
+      minio:
+        condition: service_healthy
       crawler:
         condition: service_healthy
+      tei-embedding:
+        condition: service_healthy
+      tei-reranker:
+        condition: service_healthy
     restart: unless-stopped
+    logging: *default-logging
     networks: [outbound-private]
 
   decision-worker:
+    image: ${BACKEND_IMAGE:-ghcr.io/ignitionai/noosphere-backend:${APP_VERSION:-dev}}
     build:
       context: .
       dockerfile: Dockerfile.backend
     command: ["bun", "dist/backend/worker/src/index.js"]
-    env_file: .env
+    env_file: ${APP_ENV_FILE:-.env}
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@database:5432/${POSTGRES_DB:-ignition_outbound}
       S3_ENDPOINT: http://minio:9000
@@ -117,19 +136,25 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
-      minio-init:
-        condition: service_completed_successfully
+      minio:
+        condition: service_healthy
       crawler:
         condition: service_healthy
+      tei-embedding:
+        condition: service_healthy
+      tei-reranker:
+        condition: service_healthy
     restart: unless-stopped
+    logging: *default-logging
     networks: [outbound-private]
 
   setter-worker:
+    image: ${BACKEND_IMAGE:-ghcr.io/ignitionai/noosphere-backend:${APP_VERSION:-dev}}
     build:
       context: .
       dockerfile: Dockerfile.backend
     command: ["bun", "dist/backend/worker/src/index.js"]
-    env_file: .env
+    env_file: ${APP_ENV_FILE:-.env}
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@database:5432/${POSTGRES_DB:-ignition_outbound}
       S3_ENDPOINT: http://minio:9000
@@ -150,19 +175,25 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
-      minio-init:
-        condition: service_completed_successfully
+      minio:
+        condition: service_healthy
       crawler:
         condition: service_healthy
+      tei-embedding:
+        condition: service_healthy
+      tei-reranker:
+        condition: service_healthy
     restart: unless-stopped
+    logging: *default-logging
     networks: [outbound-private]
 
   memory-worker:
+    image: ${BACKEND_IMAGE:-ghcr.io/ignitionai/noosphere-backend:${APP_VERSION:-dev}}
     build:
       context: .
       dockerfile: Dockerfile.backend
     command: ["bun", "dist/backend/worker/src/index.js"]
-    env_file: .env
+    env_file: ${APP_ENV_FILE:-.env}
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@database:5432/${POSTGRES_DB:-ignition_outbound}
       S3_ENDPOINT: http://minio:9000
@@ -185,15 +216,20 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
-      minio-init:
-        condition: service_completed_successfully
+      minio:
+        condition: service_healthy
       crawler:
         condition: service_healthy
+      tei-embedding:
+        condition: service_healthy
+      tei-reranker:
+        condition: service_healthy
     restart: unless-stopped
+    logging: *default-logging
     networks: [outbound-private]
 
   proxy:
-    image: caddy:2.10.0-alpine
+    image: caddy:2.11.1-alpine@sha256:3b2a0196e0687279c14c27adff9fc6b44acfa318dbb97eaebe385bdf99e5364c
     environment:
       PUBLIC_HOST: ${PUBLIC_HOST:?PUBLIC_HOST is required}
     ports:
@@ -209,12 +245,13 @@ services:
       api:
         condition: service_healthy
     restart: unless-stopped
+    logging: *default-logging
     networks: [outbound-private]
 
   backup-postgres:
     image: paradedb/paradedb:v0.23.5
     profiles: [backup]
-    env_file: .env
+    env_file: ${APP_ENV_FILE:-.env}
     environment:
       PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
     entrypoint: ["/bin/sh", "-ec"]
@@ -230,25 +267,28 @@ services:
       database:
         condition: service_healthy
     networks: [outbound-private]
+    logging: *default-logging
 
   backup-minio:
     image: minio/mc:RELEASE.2025-08-13T08-35-41Z
     profiles: [backup]
-    env_file: .env
+    env_file: ${APP_ENV_FILE:-.env}
     entrypoint: ["/bin/sh", "-ec"]
     command:
       - |
         mkdir -p /backups/minio
         mc alias set local http://minio:9000 "$${S3_ACCESS_KEY_ID}" "$${S3_SECRET_ACCESS_KEY}"
-        mc mirror --overwrite local/"$${S3_BUCKET}" /backups/minio/latest
+        mc mirror --overwrite --remove local/"$${S3_BUCKET}" /backups/minio/latest
     volumes:
       - ${BACKUP_DIR:?BACKUP_DIR is required}:/backups
     depends_on:
       minio:
         condition: service_healthy
     networks: [outbound-private]
+    logging: *default-logging
 
   codex-auth:
+    image: ${BACKEND_IMAGE:-ghcr.io/ignitionai/noosphere-backend:${APP_VERSION:-dev}}
     build:
       context: .
       dockerfile: Dockerfile.backend
@@ -262,6 +302,7 @@ services:
     volumes:
       - codex-service-home:/var/lib/noosphere-codex
     networks: [outbound-private]
+    logging: *default-logging
 
 volumes:
   caddy-data:

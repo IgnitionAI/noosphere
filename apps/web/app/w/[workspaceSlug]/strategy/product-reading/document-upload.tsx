@@ -53,16 +53,27 @@ export function DocumentUpload({ workspaceSlug, initialDocuments }: {
         sizeBytes: file.size,
         checksumSha256: checksum,
       });
-      const uploadResponse = await fetch(intent.uploadUrl, {
-        method: "PUT",
-        headers: { "content-type": file.type || "text/plain" },
-        body: file,
-      });
-      if (!uploadResponse.ok) throw new Error("Le stockage a refusé le fichier.");
-      await confirmDocumentUpload(workspaceSlug, intent.document.id);
+      const alreadyStored = ["uploaded", "processing", "ready", "partial", "ocr_required"].includes(intent.document.status);
+      if (!alreadyStored) {
+        const uploadResponse = await fetch(intent.uploadUrl, {
+          method: "PUT",
+          headers: {
+            "content-type": file.type || "text/plain",
+            "x-workspace-slug": workspaceSlug,
+          },
+          body: file,
+        });
+        if (!uploadResponse.ok) throw new Error("Le stockage a refusé le fichier.");
+      }
+      if (!["processing", "ready", "partial", "ocr_required"].includes(intent.document.status)) {
+        await confirmDocumentUpload(workspaceSlug, intent.document.id);
+      }
+      const visibleStatus: UploadedDocument["status"] = ["ready", "partial", "ocr_required"].includes(intent.document.status)
+        ? intent.document.status as UploadedDocument["status"]
+        : "processing";
       setDocuments((current) => [
         ...current.filter((item) => item.id !== intent.document.id),
-        { id: intent.document.id, filename: intent.document.filename, status: "processing", failureCode: null, warnings: [] },
+        { id: intent.document.id, filename: intent.document.filename, status: visibleStatus, failureCode: null, warnings: [] },
       ]);
       for (let attempt = 0; attempt < 90; attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, 2_000));

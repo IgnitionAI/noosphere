@@ -1,5 +1,11 @@
 name: ignition-outbound
 
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   database:
     image: ${PARADEDB_IMAGE:-paradedb/paradedb:v0.23.5}
@@ -15,6 +21,7 @@ services:
       timeout: 5s
       retries: 10
     restart: unless-stopped
+    logging: *default-logging
     networks: [outbound-private]
 
   tei-embedding:
@@ -36,8 +43,6 @@ services:
       - ${TEI_EMBEDDING_MAX_CONCURRENT_REQUESTS:-1}
       - --max-client-batch-size
       - ${TEI_EMBEDDING_MAX_CLIENT_BATCH_SIZE:-32}
-    ports:
-      - "127.0.0.1:${TEI_EMBEDDING_HOST_PORT:-8081}:80"
     volumes:
       - tei-model-cache:/data
     healthcheck:
@@ -47,6 +52,7 @@ services:
       start_period: 120s
       retries: 20
     restart: unless-stopped
+    logging: *default-logging
     networks: [outbound-private]
 
   tei-reranker:
@@ -64,8 +70,6 @@ services:
       - ${TEI_RERANKER_MAX_BATCH_TOKENS:-1024}
       - --max-concurrent-requests
       - ${TEI_RERANKER_MAX_CONCURRENT_REQUESTS:-1}
-    ports:
-      - "127.0.0.1:${TEI_RERANKER_HOST_PORT:-8082}:80"
     volumes:
       - tei-model-cache:/data
     healthcheck:
@@ -75,6 +79,7 @@ services:
       start_period: 120s
       retries: 20
     restart: unless-stopped
+    logging: *default-logging
     networks: [outbound-private]
 
   minio:
@@ -91,6 +96,7 @@ services:
       timeout: 5s
       retries: 10
     restart: unless-stopped
+    logging: *default-logging
     networks: [outbound-private]
 
   minio-init:
@@ -108,6 +114,7 @@ services:
       S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?S3_SECRET_ACCESS_KEY is required}
       S3_BUCKET: ${S3_BUCKET:-ignition-outbound}
     networks: [outbound-private]
+    logging: *default-logging
 
   searxng:
     image: ${SEARXNG_IMAGE:-searxng/searxng:2026.8.16-b2da6b90f}
@@ -122,9 +129,11 @@ services:
       timeout: 5s
       retries: 10
     restart: unless-stopped
+    logging: *default-logging
     networks: [outbound-private]
 
   crawler:
+    image: ${CRAWLER_IMAGE:-ghcr.io/ignitionai/noosphere-crawler:${APP_VERSION:-dev}}
     build:
       context: ./apps/crawler
     depends_on:
@@ -147,6 +156,7 @@ services:
       timeout: 5s
       retries: 10
     restart: unless-stopped
+    logging: *default-logging
     networks: [outbound-private]
 
 volumes:

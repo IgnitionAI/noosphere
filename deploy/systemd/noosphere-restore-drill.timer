@@ -1,0 +1,10 @@
+[Unit]
+Description=Monthly Noosphere backup restore drill
+
+[Timer]
+OnCalendar=monthly
+Persistent=true
+RandomizedDelaySec=30m
+
+[Install]
+WantedBy=timers.target

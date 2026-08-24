@@ -2,6 +2,7 @@
 .idea/
 .vscode/
 .gstack/
+.deploy/
 node_modules/
 .next/
 dist/

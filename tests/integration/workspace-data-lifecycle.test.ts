@@ -341,5 +341,15 @@ databaseDescribe("F-053 workspace settings and data lifecycle", () => {
 class MemoryArchiveStorage implements WorkspaceArchiveStorage {
   readonly objects = new Map<string, Uint8Array>();
   async put(input: { objectKey: string; body: Uint8Array }): Promise<void> { this.objects.set(input.objectKey, input.body); }
-  async createDownloadUrl(): Promise<string> { return "https://download.invalid/export"; }
+  async get(input: { objectKey: string }) {
+    const body = this.objects.get(input.objectKey);
+    if (!body) throw new Error("WORKSPACE_EXPORT_OBJECT_NOT_FOUND");
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(body);
+        controller.close();
+      },
+    });
+    return { body: stream, contentLength: body.byteLength };
+  }
 }

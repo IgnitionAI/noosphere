@@ -1,21 +1,31 @@
 {$PUBLIC_HOST} {
-  encode gzip
+	encode zstd gzip
+	request_body {
+		max_size 53MB
+	}
 
-  header {
-    -Server
-    X-Content-Type-Options nosniff
-    X-Frame-Options DENY
-    Referrer-Policy strict-origin-when-cross-origin
-  }
+	log {
+		output stdout
+		format json
+	}
 
-  @health path /health/*
-  reverse_proxy @health api:3001
+	header {
+		-Server
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+		Strict-Transport-Security "max-age=31536000"
+	}
 
-  @api path /api/v1/*
-  reverse_proxy @api api:3001
+	@health path /health/*
+	reverse_proxy @health api:3001
 
-  @auth path /api/auth/*
-  reverse_proxy @auth web:3000
+	@api path /api/v1/*
+	reverse_proxy @api api:3001
 
-  reverse_proxy web:3000
+	@auth path /api/auth/*
+	reverse_proxy @auth web:3000
+
+	reverse_proxy web:3000
 }

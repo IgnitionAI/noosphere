@@ -1,0 +1,10 @@
+[Unit]
+Description=Monitor Noosphere every five minutes
+
+[Timer]
+OnBootSec=3m
+OnUnitActiveSec=5m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

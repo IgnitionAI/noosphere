@@ -1,4 +1,12 @@
 services:
+  tei-embedding:
+    ports:
+      - "127.0.0.1:${TEI_EMBEDDING_HOST_PORT:-8081}:80"
+
+  tei-reranker:
+    ports:
+      - "127.0.0.1:${TEI_RERANKER_HOST_PORT:-8082}:80"
+
   database:
     ports:
       - "127.0.0.1:${DEV_POSTGRES_PORT:-55432}:5432"

@@ -4,13 +4,15 @@ on:
   push:
     branches:
       - dev
-      - preprod
-      - prod
+      - main
   pull_request:
     branches:
       - dev
-      - preprod
-      - prod
+      - main
+
+concurrency:
+  group: check-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -22,11 +24,10 @@ env:
   # Integration tests create/migrate their own database and must not share the
   # database used by the repository migration check above.
   TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/ignition_outbound_integration_test
-  OPENAI_API_KEY: ci-test-openai-key
-  OPENAI_RESEARCH_MODEL: ci-test-research-model
-  OPENAI_SYNTHESIS_MODEL: ci-test-synthesis-model
-  OPENAI_EMBEDDING_MODEL: text-embedding-3-small
-  AI_PROVIDER: openai
+  AI_PROVIDER: codex-cli
+  CODEX_BINARY_PATH: /bin/false
+  CODEX_DEFAULT_MODEL: gpt-5.6-luna
+  CODEX_DEFAULT_REASONING_EFFORT: xhigh
   BETTER_AUTH_URL: http://localhost:3000
   BETTER_AUTH_SECRET: ci-only-better-auth-secret-012345678901234567890123
   BETTER_AUTH_TRUSTED_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
@@ -37,7 +38,6 @@ env:
   S3_BUCKET: ignition-outbound-ci
   S3_ACCESS_KEY_ID: ci-access-key
   S3_SECRET_ACCESS_KEY: ci-secret-key
-  DOCLING_SERVICE_URL: http://127.0.0.1:5001
   CRAWLER_SERVICE_URL: http://127.0.0.1:8000
   SEARCH_FALLBACK_ENABLED: "true"
   PORT: "3001"
@@ -114,6 +114,15 @@ jobs:
 
       - name: Run repository checks
         run: bun run check
+
+      - name: Audit Bun production dependencies
+        run: bun audit --audit-level high
+
+      - name: Audit crawler production dependencies
+        working-directory: apps/crawler
+        run: |
+          uv export --frozen --no-dev --no-emit-project --format requirements.txt --output-file /tmp/noosphere-crawler-requirements.txt
+          uvx pip-audit --no-deps --disable-pip --requirement /tmp/noosphere-crawler-requirements.txt
 
       - name: Run PostgreSQL integration tests
         run: bun run test:integration

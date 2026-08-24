@@ -14,6 +14,7 @@ COPY --from=ghcr.io/astral-sh/uv:0.7.3 /uv /uvx /bin/
 
 # Set working directory
 WORKDIR /app
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 # Copy project files
 COPY pyproject.toml uv.lock ./
@@ -49,6 +50,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libwayland-client0 \
     libxml2 \
     libxslt1.1 \
+    && apt-get upgrade -y \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -61,10 +63,17 @@ COPY src/ src/
 
 # Add virtual environment to PATH
 ENV PATH="/app/.venv/bin:$PATH"
-ENV PYTHONPATH="/app/src:$PYTHONPATH"
+ENV PYTHONPATH="/app/src"
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
-# Install Playwright browsers
-RUN playwright install chromium
+# Install the browser in a shared immutable path, then run the service as a
+# dedicated unprivileged user. Crawl4AI keeps its writable cache in that
+# user's home directory.
+RUN playwright install chromium \
+    && useradd --create-home --shell /usr/sbin/nologin crawler \
+    && chown -R crawler:crawler /app /ms-playwright
+
+USER crawler
 
 # Expose port
 EXPOSE 8000

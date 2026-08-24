@@ -35,6 +35,9 @@ function harness(role: "viewer" | "operator" = "operator") {
         expiresInSeconds: 900,
       };
     },
+    async uploadContent(input) {
+      calls.push(`upload:${input.workspaceId}:${input.documentId}:${input.contentType}:${input.bytes.byteLength}`);
+    },
     async completeUpload(input) {
       calls.push(`complete:${input.workspaceId}:${input.documentId}`);
       return { ...document, status: "uploaded" };
@@ -105,5 +108,33 @@ describe("research document HTTP routes", () => {
     );
     expect(forbidden.status).toBe(403);
     expect(calls).toEqual([`list:${workspaceId}`]);
+  });
+
+  test("uploads document bytes through the authenticated workspace route", async () => {
+    const { handle, calls } = harness();
+    const response = await handle(new Request(
+      `http://localhost/api/v1/research-documents/${documentId}/content`,
+      {
+        method: "PUT",
+        headers: { "content-type": "application/pdf", "content-length": "100" },
+        body: new Uint8Array(100),
+      },
+    ));
+    expect(response.status).toBe(204);
+    expect(calls).toEqual([`upload:${workspaceId}:${documentId}:application/pdf:100`]);
+  });
+
+  test("rejects an oversized document before reading its body", async () => {
+    const { handle, calls } = harness();
+    const response = await handle(new Request(
+      `http://localhost/api/v1/research-documents/${documentId}/content`,
+      {
+        method: "PUT",
+        headers: { "content-type": "application/pdf", "content-length": String(50 * 1024 * 1024 + 1) },
+        body: new Uint8Array([1]),
+      },
+    ));
+    expect(response.status).toBe(413);
+    expect(calls).toEqual([]);
   });
 });

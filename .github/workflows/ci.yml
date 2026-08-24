@@ -14,4 +14,4 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Use the Check workflow
-        run: echo "Run the Check workflow for the supported dev -> preprod -> prod flow."
+        run: echo "Run the Check workflow for the supported dev -> main flow."

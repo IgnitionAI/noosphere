@@ -1,0 +1,11 @@
+[Unit]
+Description=Noosphere monthly backup restore drill
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=__APP_DIR__
+Environment=APP_DIR=__APP_DIR__
+Environment=ENV_FILE=__APP_DIR__/.env
+ExecStart=/usr/bin/bash __APP_DIR__/deploy/verify-backup-restore.sh
+Nice=10

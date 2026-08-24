@@ -8,7 +8,7 @@ export default defineConfig({
   workers: 1,
   reporter: process.env.CI ? "github" : "list",
   use: {
-    baseURL: "http://localhost:3000",
+    baseURL: process.env.E2E_BASE_URL ?? "http://127.0.0.1:3300",
     browserName: "chromium",
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
@@ -19,8 +19,8 @@ export default defineConfig({
   ],
   webServer: {
     command: "bun scripts/start-e2e-server.ts",
-    url: "http://localhost:3000/login",
-    reuseExistingServer: !process.env.CI,
+    url: `${process.env.E2E_BASE_URL ?? "http://127.0.0.1:3300"}/login`,
+    reuseExistingServer: false,
     timeout: 120_000,
   },
 });

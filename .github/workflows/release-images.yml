@@ -1,0 +1,79 @@
+name: Release images
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  actions: read
+  contents: read
+  packages: write
+
+jobs:
+  verify-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Require a release commit from main
+        run: |
+          git fetch origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+      - name: Require the Check workflow to be green on the release commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          conclusion="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/check.yml/runs?head_sha=$GITHUB_SHA&per_page=20" \
+            --jq '.workflow_runs | map(select(.event == "push")) | first | .conclusion')"
+          if [[ "$conclusion" != "success" ]]; then
+            echo "The Check workflow is not green for $GITHUB_SHA (conclusion: ${conclusion:-missing})" >&2
+            exit 1
+          fi
+
+  build-scan-push:
+    needs: verify-tag
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: backend
+            image: ghcr.io/ignitionai/noosphere-backend
+            context: .
+            dockerfile: Dockerfile.backend
+          - name: web
+            image: ghcr.io/ignitionai/noosphere-web
+            context: .
+            dockerfile: Dockerfile.web
+          - name: crawler
+            image: ghcr.io/ignitionai/noosphere-crawler
+            context: apps/crawler
+            dockerfile: apps/crawler/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build ${{ matrix.name }} image for AMD64
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: ${{ matrix.image }}:${{ github.ref_name }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+      - name: Scan runtime image
+        run: >-
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock
+          aquasec/trivy:0.67.2 image --exit-code 1 --severity CRITICAL,HIGH
+          --ignore-unfixed ${{ matrix.image }}:${{ github.ref_name }}
+      - name: Push immutable release image
+        run: docker push ${{ matrix.image }}:${{ github.ref_name }}

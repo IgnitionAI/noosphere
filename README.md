@@ -40,12 +40,22 @@ bun run dev
 
 Open [http://localhost:3000](http://localhost:3000). The production-like Compose stack and VPS procedure are documented in the [production runbook](docs/runbooks/vps-production.md).
 
+The private production application is a responsive web UI served by Caddy and
+works from desktop and mobile browsers. It can use the existing
+`noosphere.ignitionai.fr` subdomain; no separate domain purchase is required,
+and a future marketing domain remains independent from the application host.
+
 For production, start from the tracked, secret-free template:
 
 ```bash
 cp deploy/.env.production.example .env
 ENV_FILE=.env bash deploy/validate-production-env.sh
 ```
+
+Production releases are immutable GHCR images built from green `main` commits
+and semantic-version tags. The VPS pulls those images; it does not build from a
+mutable Git branch. Daily encrypted off-site backups, five-minute health checks
+and monthly restore drills are included in `deploy/systemd/`.
 
 ## Verification
 

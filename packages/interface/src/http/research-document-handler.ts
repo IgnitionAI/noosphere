@@ -7,7 +7,9 @@ import {
 } from "@outbound/interface/http/request-context";
 
 const documentPath = /^\/api\/v1\/research-documents\/([^/]+)$/;
+const contentPath = /^\/api\/v1\/research-documents\/([^/]+)\/content$/;
 const completePath = /^\/api\/v1\/research-documents\/([^/]+)\/complete$/;
+const MAX_DOCUMENT_BYTES = 50 * 1024 * 1024;
 const uuidSchema = z.string().uuid();
 const uploadIntentSchema = z
   .object({
@@ -30,6 +32,12 @@ export interface ResearchDocumentHttpService {
     uploadUrl: string;
     expiresInSeconds: number;
   }>;
+  uploadContent(input: {
+    workspaceId: string;
+    documentId: string;
+    contentType: string;
+    bytes: Uint8Array;
+  }): Promise<void>;
   completeUpload(input: {
     workspaceId: string;
     documentId: string;
@@ -86,6 +94,24 @@ export function createResearchDocumentHttpHandler(input: {
           data: (await input.service.list(context.workspaceId)).map(serialize),
         });
       }
+      const content = contentPath.exec(url.pathname);
+      if (request.method === "PUT" && content) {
+        requireOperator(context.role);
+        const declaredLength = request.headers.get("content-length");
+        if (declaredLength && (!/^\d+$/.test(declaredLength) || Number(declaredLength) > MAX_DOCUMENT_BYTES)) {
+          return problem(413, "RESEARCH_DOCUMENT_TOO_LARGE", "The document exceeds the 50 MiB limit");
+        }
+        const contentType = request.headers.get("content-type")?.split(";", 1)[0]?.trim();
+        if (!contentType) return problem(400, "RESEARCH_DOCUMENT_CONTENT_TYPE_REQUIRED", "Content-Type is required");
+        const bytes = await readBoundedBody(request, MAX_DOCUMENT_BYTES);
+        await input.service.uploadContent({
+          workspaceId: context.workspaceId,
+          documentId: uuidSchema.parse(content[1]),
+          contentType,
+          bytes,
+        });
+        return new Response(null, { status: 204 });
+      }
       const complete = completePath.exec(url.pathname);
       if (request.method === "POST" && complete) {
         requireOperator(context.role);
@@ -124,12 +150,45 @@ export function createResearchDocumentHttpHandler(input: {
         message.startsWith("INVALID_") ||
         message === "UNSUPPORTED_DOCUMENT_TYPE" ||
         message === "RESEARCH_DOCUMENT_SIZE_MISMATCH"
+        || message === "RESEARCH_DOCUMENT_CHECKSUM_MISMATCH"
+        || message === "RESEARCH_DOCUMENT_CONTENT_TYPE_MISMATCH"
       ) {
         return problem(400, message, "The document upload is invalid");
+      }
+      if (message === "RESEARCH_DOCUMENT_UPLOAD_ALREADY_COMPLETED") {
+        return problem(409, message, "The document upload is already complete");
+      }
+      if (message === "RESEARCH_DOCUMENT_TOO_LARGE") {
+        return problem(413, message, "The document exceeds the 50 MiB limit");
       }
       return problem(500, "INTERNAL_ERROR", "An unexpected error occurred");
     }
   };
+}
+
+async function readBoundedBody(request: Request, maximumBytes: number): Promise<Uint8Array> {
+  if (!request.body) return new Uint8Array();
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maximumBytes) throw new Error("RESEARCH_DOCUMENT_TOO_LARGE");
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const body = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body;
 }
 
 class WorkspacePermissionError extends Error {}

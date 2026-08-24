@@ -8,6 +8,7 @@ const workspaceProfilePath = /^\/api\/v1\/workspaces\/([^/]+)$/;
 const workspaceSettingPath = /^\/api\/v1\/workspaces\/([^/]+)\/(sending-preferences|channel-limits|retention-policy)$/;
 const workspaceExportPath = /^\/api\/v1\/workspaces\/([^/]+)\/actions\/export$/;
 const exportPath = /^\/api\/v1\/exports\/([^/]+)$/;
+const exportDownloadPath = /^\/api\/v1\/exports\/([^/]+)\/download$/;
 const anonymizePath = /^\/api\/v1\/contacts\/([^/]+)\/actions\/anonymize$/;
 
 const profileSchema = z.object({ name: z.string().trim().min(1).max(200) }).strict();
@@ -45,7 +46,10 @@ export interface WorkspaceDataLifecycleService {
 }
 
 export interface WorkspaceExportDownloads {
-  createDownloadUrl(input: { objectKey: string; expiresAt: Date }): Promise<string>;
+  get(input: { objectKey: string }): Promise<{
+    body: ReadableStream<Uint8Array>;
+    contentLength: number | null;
+  }>;
 }
 
 export function createWorkspaceDataHttpHandler(dependencies: {
@@ -107,10 +111,33 @@ export function createWorkspaceDataHttpHandler(dependencies: {
         const expiresAt = result.expiresAt ? new Date(result.expiresAt) : null;
         if (expiresAt && expiresAt <= dependencies.clock.now()) return problem(410, "WORKSPACE_EXPORT_EXPIRED", "Workspace export link expired");
         const downloadUrl = result.status === "completed" && result.objectKey && expiresAt
-          ? await dependencies.downloads.createDownloadUrl({ objectKey: result.objectKey, expiresAt })
+          ? `/api/v1/exports/${result.id}/download`
           : null;
         const { objectKey: _objectKey, ...safe } = result;
         return Response.json({ ...safe, downloadUrl });
+      }
+      const exportDownload = exportDownloadPath.exec(pathname);
+      if (exportDownload) {
+        if (request.method !== "GET") return methodNotAllowed("GET");
+        requireAdmin(context.role);
+        const result = await dependencies.service.getExport(context.workspaceId, uuid(exportDownload[1]));
+        if (!result) return problem(404, "WORKSPACE_EXPORT_NOT_FOUND", "Workspace export not found");
+        const expiresAt = result.expiresAt ? new Date(result.expiresAt) : null;
+        if (!expiresAt || expiresAt <= dependencies.clock.now()) {
+          return problem(410, "WORKSPACE_EXPORT_EXPIRED", "Workspace export link expired");
+        }
+        if (result.status !== "completed" || !result.objectKey) {
+          return problem(409, "WORKSPACE_EXPORT_NOT_READY", "Workspace export is not ready");
+        }
+        const archive = await dependencies.downloads.get({ objectKey: result.objectKey });
+        const headers = new Headers({
+          "cache-control": "private, no-store",
+          "content-disposition": `attachment; filename="noosphere-export-${result.id}.json.gz"`,
+          "content-type": "application/gzip",
+          "x-content-type-options": "nosniff",
+        });
+        if (archive.contentLength !== null) headers.set("content-length", String(archive.contentLength));
+        return new Response(archive.body, { status: 200, headers });
       }
       const anonymize = anonymizePath.exec(pathname);
       if (anonymize) {

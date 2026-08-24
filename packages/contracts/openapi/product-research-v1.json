@@ -94,6 +94,10 @@
       "parameters": [{ "name": "exportId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }, { "$ref": "#/components/parameters/WorkspaceSlug" }],
       "get": { "operationId": "getWorkspaceDataExport", "responses": { "200": { "description": "Export status and temporary download URL", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkspaceDataExport" } } } }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" }, "404": { "$ref": "#/components/responses/RunNotFound" }, "410": { "description": "Export expired" } } }
     },
+    "/api/v1/exports/{exportId}/download": {
+      "parameters": [{ "name": "exportId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }, { "$ref": "#/components/parameters/WorkspaceSlug" }],
+      "get": { "operationId": "downloadWorkspaceDataExport", "responses": { "200": { "description": "Workspace export archive", "headers": { "Content-Disposition": { "schema": { "type": "string" } } }, "content": { "application/gzip": { "schema": { "type": "string", "format": "binary" } } } }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" }, "404": { "$ref": "#/components/responses/RunNotFound" }, "409": { "$ref": "#/components/responses/Conflict" }, "410": { "description": "Export expired" } } }
+    },
     "/api/v1/contacts/{contactId}/actions/anonymize": {
       "parameters": [{ "name": "contactId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }, { "$ref": "#/components/parameters/WorkspaceSlug" }],
       "post": { "operationId": "anonymizeWorkspaceContact", "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["confirmation"], "properties": { "confirmation": { "type": "string", "const": "ANONYMISER" } } } } } }, "responses": { "200": { "description": "Contact anonymized while facts and suppressions remain" }, "400": { "$ref": "#/components/responses/InvalidRequest" }, "403": { "$ref": "#/components/responses/WorkspaceForbidden" } } }
@@ -909,7 +913,7 @@
       ],
       "post": {
         "operationId": "createResearchDocumentUploadIntent",
-        "summary": "Create a direct object-storage upload intent",
+        "summary": "Create an authenticated same-origin upload intent",
         "requestBody": {
           "required": true,
           "content": {
@@ -938,7 +942,7 @@
                     },
                     "uploadUrl": {
                       "type": "string",
-                      "format": "uri"
+                      "format": "uri-reference"
                     },
                     "expiresInSeconds": {
                       "type": "integer"
@@ -973,6 +977,53 @@
           "404": {
             "$ref": "#/components/responses/RunNotFound"
           }
+        }
+      }
+    },
+    "/api/v1/research-documents/{documentId}/content": {
+      "parameters": [
+        { "$ref": "#/components/parameters/DocumentId" },
+        { "$ref": "#/components/parameters/WorkspaceSlug" }
+      ],
+      "put": {
+        "operationId": "uploadResearchDocumentContent",
+        "summary": "Upload a workspace document through the authenticated API",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/pdf": {
+              "schema": { "type": "string", "format": "binary", "maxLength": 52428800 }
+            },
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document": {
+              "schema": { "type": "string", "format": "binary", "maxLength": 52428800 }
+            },
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation": {
+              "schema": { "type": "string", "format": "binary", "maxLength": 52428800 }
+            },
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+              "schema": { "type": "string", "format": "binary", "maxLength": 52428800 }
+            },
+            "text/html": {
+              "schema": { "type": "string", "format": "binary", "maxLength": 52428800 }
+            },
+            "text/markdown": {
+              "schema": { "type": "string", "format": "binary", "maxLength": 52428800 }
+            },
+            "text/plain": {
+              "schema": { "type": "string", "format": "binary", "maxLength": 52428800 }
+            },
+            "application/octet-stream": {
+              "schema": { "type": "string", "format": "binary", "maxLength": 52428800 }
+            }
+          }
+        },
+        "responses": {
+          "204": { "description": "Document bytes stored" },
+          "400": { "$ref": "#/components/responses/InvalidRequest" },
+          "403": { "$ref": "#/components/responses/WorkspaceForbidden" },
+          "404": { "$ref": "#/components/responses/RunNotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "413": { "description": "Document exceeds the 50 MiB limit" }
         }
       }
     },

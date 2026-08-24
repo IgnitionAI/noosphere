@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { and, eq, inArray, isNotNull, lt, sql as drizzleSql } from "drizzle-orm";
 import type { JobQueue, LeasedJob } from "@outbound/application/jobs/job-queue";
 import type { Clock } from "@outbound/application/shared/ports";
@@ -31,7 +30,10 @@ const REDACTED_COLUMNS = [
 
 export interface WorkspaceArchiveStorage {
   put(input: { objectKey: string; body: Uint8Array; contentType: string }): Promise<void>;
-  createDownloadUrl(input: { objectKey: string; expiresAt: Date }): Promise<string>;
+  get(input: { objectKey: string }): Promise<{
+    body: ReadableStream<Uint8Array>;
+    contentLength: number | null;
+  }>;
 }
 
 export class S3WorkspaceArchiveStorage implements WorkspaceArchiveStorage {
@@ -47,12 +49,16 @@ export class S3WorkspaceArchiveStorage implements WorkspaceArchiveStorage {
   }
 
   async put(input: { objectKey: string; body: Uint8Array; contentType: string }) {
-    await this.#client.send(new PutObjectCommand({ Bucket: this.options.bucket, Key: input.objectKey, Body: input.body, ContentType: input.contentType, ContentEncoding: "gzip" }));
+    await this.#client.send(new PutObjectCommand({ Bucket: this.options.bucket, Key: input.objectKey, Body: input.body, ContentType: "application/gzip" }));
   }
 
-  async createDownloadUrl(input: { objectKey: string; expiresAt: Date }) {
-    const remainingSeconds = Math.max(1, Math.min(7 * 24 * 60 * 60, Math.floor((input.expiresAt.getTime() - Date.now()) / 1_000)));
-    return getSignedUrl(this.#client, new GetObjectCommand({ Bucket: this.options.bucket, Key: input.objectKey }), { expiresIn: remainingSeconds });
+  async get(input: { objectKey: string }) {
+    const object = await this.#client.send(new GetObjectCommand({ Bucket: this.options.bucket, Key: input.objectKey }));
+    if (!object.Body) throw new Error("WORKSPACE_EXPORT_OBJECT_EMPTY");
+    return {
+      body: object.Body.transformToWebStream() as ReadableStream<Uint8Array>,
+      contentLength: object.ContentLength ?? null,
+    };
   }
 }
 

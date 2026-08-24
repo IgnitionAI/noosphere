@@ -50,6 +50,24 @@ describe("F-053 workspace data HTTP", () => {
       limit: 25,
     })]);
   });
+
+  test("streams a completed export only to an administrator in the same workspace", async () => {
+    const handle = handler("owner", {
+      async getExport() {
+        return {
+          id: exportId,
+          workspaceId,
+          status: "completed",
+          objectKey: `${workspaceId}/exports/${exportId}.json.gz`,
+          expiresAt: new Date("2026-08-10T00:00:00.000Z"),
+        };
+      },
+    });
+    const response = await handle(request(`/api/v1/exports/${exportId}/download`));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-disposition")).toContain(exportId);
+    expect(await response.text()).toBe("archive");
+  });
 });
 
 function handler(role: "operator" | "owner", overrides: Record<string, unknown> = {}) {
@@ -70,7 +88,12 @@ function handler(role: "operator" | "owner", overrides: Record<string, unknown> 
     contextResolver: { async resolve() { return { userId: "00000000-0000-4000-8000-000000000100", workspaceId, role }; } },
     service,
     clock: { now: () => new Date("2026-08-09T00:00:00.000Z") },
-    downloads: { async createDownloadUrl() { return "https://download.invalid/export"; } },
+    downloads: {
+      async get() {
+        const bytes = new TextEncoder().encode("archive");
+        return { body: new Blob([bytes]).stream(), contentLength: bytes.byteLength };
+      },
+    },
   });
 }
 

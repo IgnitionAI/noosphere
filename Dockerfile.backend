@@ -24,6 +24,7 @@ WORKDIR /app
 ENV NODE_ENV=production
 
 RUN apt-get update \
+  && apt-get upgrade -y \
   && apt-get install -y --no-install-recommends ca-certificates ffmpeg fonts-dejavu-core nodejs \
   && rm -rf /var/lib/apt/lists/*
 

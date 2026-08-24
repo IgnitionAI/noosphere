@@ -4,7 +4,6 @@ import {
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type { JobQueue, LeasedJob } from "@outbound/application/jobs/job-queue";
 import type { Clock, IdGenerator } from "@outbound/application/shared/ports";
@@ -112,16 +111,44 @@ export class ResearchDocumentService {
       .limit(1);
     const document = rows[0];
     if (!document) throw new Error("RESEARCH_DOCUMENT_CREATE_FAILED");
-    const uploadUrl = await getSignedUrl(
-      this.#s3,
-      new PutObjectCommand({
-        Bucket: this.options.bucket,
-        Key: document.objectKey,
-        ContentType: document.contentType,
-      }),
-      { expiresIn: 15 * 60 },
-    );
-    return { document, uploadUrl, expiresInSeconds: 15 * 60 };
+    return {
+      document,
+      uploadUrl: `/api/v1/research-documents/${document.id}/content`,
+      expiresInSeconds: 15 * 60,
+    };
+  }
+
+  async uploadContent(input: {
+    workspaceId: string;
+    documentId: string;
+    contentType: string;
+    bytes: Uint8Array;
+  }): Promise<void> {
+    const document = await this.#find(input.workspaceId, input.documentId);
+    if (!document) throw new Error("RESEARCH_DOCUMENT_NOT_FOUND");
+    if (!["uploading", "uploaded", "failed"].includes(document.status)) {
+      throw new Error("RESEARCH_DOCUMENT_UPLOAD_ALREADY_COMPLETED");
+    }
+    if (input.contentType !== document.contentType) {
+      throw new Error("RESEARCH_DOCUMENT_CONTENT_TYPE_MISMATCH");
+    }
+    if (input.bytes.byteLength !== document.sizeBytes) {
+      throw new Error("RESEARCH_DOCUMENT_SIZE_MISMATCH");
+    }
+    if (sha256Bytes(input.bytes) !== document.checksumSha256) {
+      throw new Error("RESEARCH_DOCUMENT_CHECKSUM_MISMATCH");
+    }
+    if (!matchesDeclaredContentType(document.contentType, input.bytes)) {
+      throw new Error("RESEARCH_DOCUMENT_CONTENT_TYPE_MISMATCH");
+    }
+    await this.#s3.send(new PutObjectCommand({
+      Bucket: this.options.bucket,
+      Key: document.objectKey,
+      Body: input.bytes,
+      ContentType: document.contentType,
+      ContentLength: input.bytes.byteLength,
+      Metadata: { sha256: document.checksumSha256 },
+    }));
   }
 
   async completeUpload(input: {
