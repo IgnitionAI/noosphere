@@ -1,198 +1,277 @@
-# Modèle de domaine
+# Modèle de domaine Noosphere
 
-## 1. Contextes bornés
+Date de réconciliation : 2026-08-24
+Statut : modèle logique **AS-IS**. Le code de `packages/domain/src` et les
+contraintes PostgreSQL restent les autorités exécutables.
 
-| Contexte | Responsabilité | Agrégats principaux |
-|---|---|---|
-| Workspace | tenant, membres, rôles, invitations | `Workspace`, `WorkspaceMembership` |
-| GTM Strategy | offre, ICP, messages et politique IA versionnés | `Offer`, `ICP`, `MessagingStrategy` |
-| Prospect Intelligence | entreprises, contacts, identités, emplois, signaux, enrichissements | `Company`, `Contact`, `Suppression` |
-| Campaigns | campagne, population, séquence et policy d’exécution | `Campaign`, `Sequence`, `CampaignProspect` |
-| Outreach | planification et exécution multicanale | `OutreachAction`, `ConnectedAccount` |
-| Inbox | conversations, messages et qualification des réponses | `Conversation`, `Message` |
-| Pipeline | rendez-vous, opportunités et revenu | `Opportunity`, `Meeting` |
-| AI & Knowledge | sources, claims, génération, retrieval et évaluations | `KnowledgeSource`, `AIRun` |
-| Analytics | événements et projections de performance | `AnalyticsEvent` |
+## 1. Vocabulaire
 
-## 2. Agrégats et comportements
+| Terme | Sens précis |
+|---|---|
+| Outbound | sourcing, enrichissement, campagne, séquence et message direct |
+| Content Inbound | création, publication et mesure de contenu organique |
+| Reply Intake | réception d'un message LinkedIn, email ou WhatsApp |
+| Social Interaction | commentaire, réponse, réaction ou mention observée |
+| Signal | observation datée et sourcée ; jamais permission d'envoi |
+| Prospect | contact évalué dans un contexte ICP/campagne |
+| Prospect 360 | mémoire relationnelle durable, versionnée et reconstructible |
+| Setter | capacité IA de qualification et de réponse, bornée par la policy |
+| Appel | réservation calendrier confirmée ou proposition durable |
+| Publication | snapshot immuable destiné à un compte et un canal |
+| Effet externe | envoi, publication, réservation, annulation ou mutation provider |
 
-### Workspace
+Le mot `inbound` appliqué à un message signifie seulement « reçu ». Il ne doit
+pas être confondu avec Content Inbound.
 
-`Workspace` est la frontière de sécurité et de propriété. Il peut inviter un
-membre, changer son rôle et désactiver un accès. Better Auth fournit l’identité
-et la session, mais n’est pas propriétaire du workspace.
+## 2. Carte des contextes
 
-Rôles V1 :
+```mermaid
+flowchart LR
+  Workspace[Workspace & Access] --> GTM[Offer, ICP & Research]
+  GTM --> CRM[CRM & Sourcing]
+  GTM --> Campaigns[Campaigns & Outreach]
+  GTM --> Content[Content Inbound]
+  CRM --> Campaigns
+  Content --> Symbiosis[Symbiosis & Attribution]
+  Symbiosis --> CRM
+  Campaigns --> Conversations[Conversations & Setter]
+  Content --> Conversations
+  Conversations --> Calls[Pipeline & Calls]
+  CRM --> Memory[Prospect 360]
+  Campaigns --> Memory
+  Conversations --> Memory
+  Calls --> Memory
+  Symbiosis --> Memory
+  Knowledge[Knowledge & Documents] --> GTM
+  Knowledge --> Content
+  Knowledge --> Conversations
+  AI[AI Runtime & Evaluation] --> GTM
+  AI --> Content
+  AI --> Conversations
+  Operations[Operations] --> Campaigns
+  Operations --> Content
+  Operations --> Memory
+```
 
-- `owner` : contrôle total et transfert de propriété ;
-- `admin` : membres, intégrations, campagnes et politiques ;
-- `operator` : prospects, campagnes, inbox et pipeline ;
-- `reviewer` : réponses et traitement des exceptions sensibles ;
-- `viewer` : lecture seule.
+## 3. Contextes et autorités
 
-### Offer et ICP
+### Workspace & Access
 
-`Offer` et `ICP` sont des conteneurs éditables. Une publication crée
-respectivement une `OfferVersion` ou une `ICPVersion` immuable. Une campagne ne
-référence jamais la version de travail.
+`Workspace` est la frontière de propriété. Better Auth authentifie l'utilisateur ;
+`WorkspaceMembership` et le contexte serveur décident de son rôle actif.
 
-Une `OfferVersion` décrit notamment la catégorie (`service`, `saas`,
-`licence`, `autre`), la proposition de valeur, les claims autorisés, les
-preuves, objections, prix communicables et contraintes.
+Invariants :
 
-Une `ICPVersion` contient les critères d’inclusion, d’exclusion, personas,
-géographies, tailles, technologies, signaux et pondérations.
+- toute lecture ou mutation métier est scoped par workspace ;
+- un identifiant de workspace venant d'un body ou d'un modèle n'accorde aucune
+  autorité ;
+- secrets et tokens sont chiffrés ou référencés, jamais journalisés ;
+- paramètres IA, rétention, canaux et onboarding sont propres au workspace.
 
-### Company
+### Offer, ICP & Research
 
-`Company` représente une entreprise canonique dans un workspace. Elle consolide
-des domaines, identifiants externes et signaux sans perdre leurs sources.
+`Offer`, `ICP`, `MessagingStrategy` et `AIPolicy` sont des conteneurs éditables.
+Leurs versions publiées sont immuables. Une étude produit durable passe par des
+stages et work items reprenables ; chaque finding non hypothétique doit résoudre
+vers une preuve.
 
-Unicité :
+Autorités :
 
-- domaine normalisé unique dans le workspace lorsqu’il est connu ;
-- identifiant fournisseur unique par fournisseur et workspace ;
-- les correspondances probables sont soumises à validation.
+- les preuves et findings autorisent les affirmations du rapport ;
+- l'ICP publié autorise le ciblage, pas un message ;
+- le rapport final est produit automatiquement ; une relance crée une nouvelle
+  étude au lieu de modifier rétroactivement l'ancienne.
 
-### Contact
+### CRM & Sourcing
 
-`Contact` représente une personne stable, indépendamment de son employeur.
-`ContactIdentity` porte LinkedIn, email, téléphone, WhatsApp et identifiants
-externes. `Employment` historise les postes.
+`Company` et `Contact` portent les identités canoniques d'un workspace.
+`ContactIdentity` sépare LinkedIn, email, téléphone et WhatsApp ;
+`ContactEmployment` historise le poste. Les observations d'enrichissement et
+signaux conservent source, date, confiance et provenance.
 
-Règle de fusion :
+Règles :
 
-- identité certaine : fusion automatique ;
-- identité probable : `MergeCandidate` à valider ;
-- nom seul : jamais suffisant.
+- une identité certaine peut être fusionnée automatiquement ; une correspondance
+  probable reste une `MergeCandidate` explicable et réversible ;
+- le nom seul n'autorise jamais une fusion ;
+- email vérifié, profil LinkedIn et numéro WhatsApp restent des canaux distincts ;
+- un like ou une réaction ne déclenche jamais seul un cold message ;
+- une suppression générale prime sur chaque canal et survit à l'anonymisation.
 
-Une fusion génère un `ContactMerge` réversible et conserve la provenance.
+### Campaigns & Outreach
 
-### Suppression
+Une `Campaign` capture offre, ICP, messaging, policy et séquence publiés. Les
+`CampaignProspect`, enrollments, `ProspectDecision`, `OutreachAction` et
+`OutreachAttempt` rendent le parcours explicable et reprenable.
 
-`Suppression` peut viser une identité, un contact ou une empreinte d’identité.
-Elle est soit limitée à un canal, soit générale. Une opposition générale
-interdit toute nouvelle action multicanale. La suppression survit à
-l’anonymisation du contact.
+La séquence est une stratégie autorisée. L'agent de décision propose une action
+parmi `send`, `wait`, `research`, `pause`, `stop`, `handoff`; la policy pure
+l'autorise ou la bloque. Une intention `send` ne constitue jamais une preuve
+d'envoi.
 
-### Campaign
+Avant tout appel provider, le runtime relit : campagne, enrollment, réponse
+entrante, suppression, quota, fenêtre, compte et idempotence. L'action et la
+tentative distinguent `planned`, `executing`, `accepted`, `delivered`,
+`failed`, `cancelled` et résultat provider inconnu.
 
-Une campagne capture au démarrage :
+### Conversations & Setter
 
-- une `OfferVersion` ;
-- une `ICPVersion` ;
-- une `MessagingStrategyVersion` ;
-- une `AIPolicyVersion` ;
-- une `SequenceVersion`.
+Une `Conversation` est un thread provider sur un canal et un compte connecté.
+Le miroir Inbox synchronise l'historique et les nouveautés par curseur durable.
+Plusieurs threads peuvent être rapprochés du même contact sans perdre leur
+identité provider.
 
-Ces références sont immuables après activation. Modifier une stratégie crée
-une nouvelle version ou une nouvelle campagne.
+Règles :
 
-### CampaignProspect
+- une conversation hors campagne reste `outside_campaign` et `human` ;
+- aucune réponse autonome implicite n'est créée hors campagne ;
+- l'amélioration IA modifie un brouillon, elle n'envoie rien ;
+- une commande Setter devient un job durable ; fermer le drawer n'annule pas ce
+  job ;
+- une réponse humaine ou un sortant inconnu de Noosphere reprend la main et
+  invalide les réponses automatiques pendantes ;
+- opt-out, bounce, absence, mauvais contact, referral, intérêt et meeting sont
+  traités avant ou avec une classification structurée ;
+- le modèle rédige, mais la policy et le dispatcher autorisent l'effet.
 
-`CampaignProspect` relie un contact à une campagne et porte le score,
-l’explication, les preuves, la priorité et l’état d’enrollment. Les données
-canoniques restent dans `Contact` et `Company`.
+### Content Inbound
 
-Un contact ne peut avoir qu’une seule séquence active à la fois dans un
-workspace. Cette règle est protégée par une contrainte partielle en base.
+`EditorialStrategyVersion`, `ContentIdea`, `ContentBrief`, `ContentAssetVersion`,
+`ContentPublication` et ses tentatives forment le pipeline LinkedIn.
 
-### Sequence
+```text
+offre + ICP + marque
+  → stratégie publiée
+  → idée sourcée
+  → brief
+  → rédaction
+  → audit des preuves
+  → critique
+  → snapshot de publication
+  → tentative provider
+  → métriques et interactions
+```
 
-Une séquence est un playbook linéaire versionné. Chaque `SequenceStep` contient
-canal, délai, conditions, fenêtre d’envoi, stratégie de contenu et fallback.
-Les canaux V1 sont `linkedin`, `email`, `whatsapp` et `manual_task`.
+Les assets texte, image et document/carrousel sont versionnés. La vidéo longue
+et les Shorts ne font pas partie du chemin livré. Modifier cadence ou fuseau
+recalcule les publications encore planifiées ; un snapshot déjà publié reste
+immuable. Les effets de publication ont request key, lease et réconciliation.
 
-Une réponse, une opposition, une restriction du compte ou une intervention
-manuelle peut suspendre l’enrollment avant l’étape suivante.
+### Symbiosis & Attribution
 
-### OutreachAction
+Les contenus synchronisés et `SocialInteraction` produisent des signaux
+sourcés. `AttributionTouch` relie, avec niveau de confiance, publication,
+interaction, contact, conversation et appel.
 
-`OutreachAction` est une intention immuable d’exécution. Sa machine d’état :
+L'attribution décrit une origine `inbound`, `outbound`, `mixed` ou `unknown`.
+Elle ne remplace pas `Conversation.origin`, qui reste campagne/hors campagne.
+Une attribution incertaine reste incertaine ; elle ne justifie pas une action
+commerciale seule.
 
-`planned → ready → executing → accepted → delivered`
+### Prospect 360
 
-Branches terminales : `skipped`, `failed`, `cancelled`.
+Prospect 360 est la mémoire centrale par prospect. Ses faits sources viennent
+du CRM, des campagnes, messages, appels et interactions. Son modèle est :
 
-Une nouvelle tentative crée une `OutreachAttempt`. La clé d’idempotence empêche
-deux envois pour la même action logique.
+- `ProspectMemoryEvent` : journal ordonné append-only ;
+- `ProspectMemorySnapshot` : synthèse versionnée à un watermark ;
+- `ProspectMemoryContextReceipt` : preuve du snapshot, delta, renderer et
+  policy fournis à un use case.
 
-### Conversation
+Un snapshot distingue fait, hypothèse, recommandation et décision. Il conserve
+objections, engagements, informations confirmées, sujets couverts, éléments à
+ne pas répéter, contradictions et informations manquantes. La prochaine action
+reste l'autorité de `ProspectDecision`, jamais celle du résumé.
 
-Une conversation agrège les messages d’un contact sur un canal et un compte
-connecté. Une vue unifiée rapproche les conversations d’un même contact sans
-effacer les threads fournisseurs.
+Il n'existe aucun agent singleton possédant la mémoire. Chaque job reconstruit
+un contexte borné depuis le snapshot et les événements récents, puis le receipt
+est persisté. L'anonymisation invalide les snapshots et empêche toute
+publication issue d'un ancien `privacyEpoch`.
 
-Toute réponse entrante :
+### Pipeline & Calls
 
-1. suspend les enrollments actifs ;
-2. classe l’intention ;
-3. génère la réponse dans les bornes de la politique d’autopilote ;
-4. l’envoie sans validation humaine dans le chemin normal (D-003), ou la
-   remonte en exception (F-033) si elle sort des bornes.
+`Opportunity` représente la progression commerciale ; `CalendarBooking`,
+`MeetingProposal` et leurs historiques représentent la vérité calendrier.
 
-### Opportunity
+Étapes usuelles :
 
-Pipeline V1 :
+```text
+prospect → conversation → qualifié → rendez-vous → opportunité
+         → proposition → gagné | perdu
+```
 
-`Prospect → Conversation → Qualifié → Rendez-vous → Opportunité → Proposition → Gagné/Perdu`
+Une proposition de créneau ne vaut pas réservation. Seule la confirmation du
+provider fait foi. Annulation, replanification et no-show sont historisés et
+réconciliés.
 
-`Opportunity` conserve offre/version, valeur estimée, probabilité, responsable,
-prochaine action, date de clôture et motif de perte. La facturation, les devis,
-contrats et la delivery restent hors périmètre.
+### Knowledge & Documents
 
-### AIRun et Knowledge
+`ResearchDocument` décrit l'ingestion. `KnowledgeDocument`,
+`KnowledgeChunkSet`, `KnowledgeChunk` et `KnowledgeChunkEmbedding` séparent
+contenu stable, découpage et projection vectorielle. `KnowledgeSource`,
+`KnowledgeClaim` et leurs liens bornent les preuves autorisées.
 
-Tout résultat IA conserve :
+Un document `complete` ou `partial` peut être indexé avec avertissements. Un
+document `ocr_required` ou échoué ne devient jamais une preuve. Une recherche
+est workspace-scoped, applique les filtres avant les candidats lexicaux et
+vectoriels, puis fusionne et reranke.
 
-- fournisseur, modèle et paramètres ;
-- version de prompt et politique ;
-- entrée structurée ou empreinte ;
-- sources récupérées et claims utilisés ;
-- sortie, validation et feedback ;
-- coût, latence et statut.
+### AI Runtime & Evaluation
 
-`KnowledgeRetriever` est un port. PostgreSQL est utilisé en premier, pgvector ou
-ParadeDB seulement lorsque la recherche hybride devient nécessaire.
+`ModelGateway`, `ModelCatalog` et `AiRoutingPolicy` sélectionnent une route
+Kimi, Codex CLI ou API compatible selon une capacité de use case. `AIRun`,
+prompts, configurations, datasets et évaluations rendent le résultat traçable.
 
-## 3. Invariants non négociables
+Le modèle ne choisit jamais son workspace, sa capacité, ses outils ni son droit
+d'effet. Un stage borné peut être rejoué sur fallback ; un état de raisonnement
+opaque ne traverse pas les providers.
 
-1. Toute donnée métier appartient exactement à un workspace.
-2. Une campagne active référence une seule version immuable d’offre et d’ICP.
-3. Un contact est unique dans un workspace selon ses identités certaines.
-4. Un contact possède au maximum une séquence active par workspace.
-5. Une séquence doit être publiée (version immuable valide) avant son
-   activation.
-6. Toute réponse entrante suspend immédiatement l’automatisation.
-7. Une opposition générale bloque tous les canaux.
-8. Chaque donnée enrichie conserve source, date, confiance et preuve.
-9. Chaque message IA conserve preuves, prompt, modèle, politique et décision.
-10. Chaque événement fournisseur est traité idempotemment.
-11. Une modification de configuration ne change jamais rétroactivement une
-    campagne active.
-12. Les analytics distinguent intention, tentative, envoi, livraison, réponse,
-    rendez-vous et revenu.
+### Operations
 
-## 4. Événements de domaine
+`Job`, `OutboxEvent`, `IntegrationEvent`, `AuditLog` et `AccountHealthAlert`
+portent la durabilité et l'exploitation. Les leases expirés sont récupérables,
+les dead letters sont visibles, et une requeue est une commande auditée — pas
+une correction manuelle de la donnée métier.
 
-| Événement | Déclencheur | Consommateurs |
-|---|---|---|
-| `WorkspaceMemberInvited` | invitation créée | notification |
-| `OfferVersionPublished` | offre figée | index connaissance |
-| `ICPVersionPublished` | ICP figé | recherche/scoring |
-| `ProspectDiscovered` | candidat collecté | enrichissement |
-| `ContactIdentityVerified` | identité certaine | déduplication |
-| `EmploymentChanged` | nouveau poste observé | signaux/campagnes |
-| `SignalObserved` | signal entreprise/contact | rescoring |
-| `CampaignActivated` | campagne autorisée par sa policy | enrollment |
-| `ApprovalItemApproved`, `ApprovalItemRejected` | décision sur exception autopilote | planification |
-| `OutreachActionDue` | délai atteint | exécution |
-| `OutreachActionAccepted` | fournisseur accepte | analytics |
-| `InboundMessageReceived` | webhook entrant | suspension/classification |
-| `SuppressionRegistered` | refus détecté | annulation actions |
-| `ReplyDraftApproved` | réponse validée par la politique ou un humain | envoi |
-| `MeetingBooked` | calendrier confirmé | pipeline |
-| `OpportunityWon` | clôture gagnée | revenu/analytics |
+## 4. Invariants transverses
 
-Tous les événements destinés aux workers sont écrits dans l’outbox au sein de
-la même transaction que le changement d’état.
+1. Une donnée métier appartient exactement à un workspace.
+2. Un effet externe possède une request/idempotency key et une tentative
+   durable.
+3. Un refresh navigateur n'altère jamais un job, un lease ou une prochaine
+   action.
+4. Une suppression est vérifiée à la planification et juste avant l'effet.
+5. Une réponse entrante invalide les relances incompatibles avant envoi.
+6. Les versions publiées et snapshots d'exécution sont immuables.
+7. Tout fait IA non marqué hypothèse possède une provenance résoluble.
+8. Un contexte modèle est une donnée non fiable, jamais une autorité d'outil.
+9. Aucun transcript ou état prospect mutable n'est conservé dans un singleton.
+10. Chaque contexte agentique est reconstructible et attesté par un receipt ou
+    un run durable lorsque le use case l'exige.
+11. Une publication ou un message « accepté » n'est pas assimilé à « livré ».
+12. Un résultat provider inconnu est réconcilié avant toute nouvelle tentative.
+13. Une conversation hors campagne n'active pas le Setter automatiquement.
+14. Un document sans texte exploitable n'entre ni dans le RAG ni dans les
+    preuves.
+15. Une recherche vectorielle utilise une seule révision active.
+
+## 5. Événements structurants
+
+| Fait durable | Consommateurs principaux |
+|---|---|
+| étude ICP démarrée / stage terminé | orchestrateur, rapport, UI |
+| ICP publié | sourcing, campagne, content strategy |
+| prospect découvert / enrichi | CRM, scoring, Prospect 360 |
+| décision prospect planifiée | decision-worker, campagne, UI |
+| action outreach acceptée / livrée / échouée | analytics, campagne, mémoire |
+| message entrant reçu | invalidation, Setter, mémoire, pipeline |
+| commande conversation créée | setter-worker, UI |
+| stratégie éditoriale publiée | idées et autopilote contenu |
+| publication planifiée / réconciliée | content worker, métriques |
+| interaction sociale observée | signal, attribution, mémoire |
+| réservation confirmée / modifiée | appels, pipeline, attribution, mémoire |
+| événement mémoire ajouté / snapshot publié | context renderer, use cases IA |
+| document extrait / indexé | knowledge search, études, Setter |
+
+Les noms physiques et payloads sont versionnés dans le code et les migrations ;
+ce tableau décrit leur sémantique, pas un second schéma d'événements.

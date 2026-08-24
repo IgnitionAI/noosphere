@@ -2,7 +2,7 @@
 
 Noosphere is an open-source growth intelligence platform. It brings ICP research, outbound prospecting, inbound content, multichannel conversations and booked calls into one multi-workspace application.
 
-[Français](README.fr.md) · [Main README](README.md)
+[Français](README.fr.md) · [Main README](README.md) · [Required subscriptions](docs/runbooks/required-subscriptions.md)
 
 ## Product promise
 

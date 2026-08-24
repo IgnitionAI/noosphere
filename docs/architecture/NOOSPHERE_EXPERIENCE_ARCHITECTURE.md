@@ -1,7 +1,10 @@
 # Noosphere — architecture produit et expérience Inbound ↔ Outbound
 
-> Statut : architecture et maquettes statiques à valider. Aucun code de
-> production ni comportement provider n'est livré par ce package.
+> Statut : **baseline de design historique, partiellement implémentée puis
+> simplifiée**. Ce document conserve les décisions d'expérience et les
+> maquettes du 20 août 2026 ; il ne décrit pas à lui seul l'AS-IS. Voir
+> [`ARCHITECTURE.md`](./ARCHITECTURE.md) pour le système actuel et
+> [`design/noosphere/`](../../design/noosphere/) pour le contrat visuel.
 
 ## 1. Phrase produit
 
@@ -54,7 +57,7 @@ publication et envoi sont explicites et séparées.
 
 ## 4. Information architecture
 
-### Navigation principale partagée
+### Navigation principale proposée à cette date
 
 1. **Aujourd'hui** — santé des deux moteurs et attention requise ;
 2. **Activité** — surface pilotée par le Noosphere Axis ;
@@ -66,7 +69,7 @@ Configuration reste dans le menu workspace/utilisateur et regroupe offre,
 ICP, comptes, autonomie, agenda et connaissance. Desktop et mobile utilisent
 les cinq mêmes destinations, dans le même ordre.
 
-### Routes cibles
+### Routes proposées à cette date
 
 | Route | Surface | Compatibilité |
 |---|---|---|

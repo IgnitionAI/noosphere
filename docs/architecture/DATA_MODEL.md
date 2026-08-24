@@ -1,704 +1,307 @@
-# Modèle de données PostgreSQL
+# Catalogue logique des données Noosphere
+
+Date de réconciliation : 2026-08-24
+Statut : catalogue logique des **137 tables** déclarées dans le schéma Drizzle.
+
+Ce document explique l'intention et les relations. Il ne recopie pas chaque
+colonne, index ou contrainte : la source physique canonique est
+`packages/infrastructure/src/database/schema.ts`, complétée par
+`packages/infrastructure/migrations`. Une migration et le schéma Drizzle doivent
+toujours évoluer ensemble.
 
 ## 1. Conventions
 
-- clés primaires UUID générées côté serveur ou PostgreSQL ;
-- `workspace_id` obligatoire sur toutes les tables métier ;
-- `created_at`, `updated_at` sur les entités mutables ;
-- `deleted_at` pour les suppressions métier récupérables ;
-- `timestamptz` pour tous les instants ;
-- `jsonb` réservé aux payloads externes, snapshots et critères réellement
-  variables, pas aux relations principales ;
-- montants en `numeric(19,4)` avec devise ISO séparée ;
-- index composites commencent par `workspace_id` ;
-- toutes les FK inter-workspace sont protégées par FK composite ou validées
-  dans le repository et couvertes par tests d’isolation.
+- UUID pour les identifiants métier ;
+- `timestamptz` pour les instants ;
+- `workspace_id` sur toute donnée tenant-scoped ;
+- index tenant-first lorsque la requête est tenant-scoped ;
+- JSONB pour snapshots, payloads provider et métadonnées variables, pas pour
+  masquer une relation stable ;
+- version immuable pour stratégie, policy, publication, chunk set et mémoire ;
+- clés uniques d'idempotence scoped au workspace ;
+- suppression logique ou anonymisation avant purge physique ;
+- aucune relation inter-workspace valide.
 
-## 2. Workspace et stratégie GTM
-
-```mermaid
-erDiagram
-    AUTH_USER ||--o{ AUTH_SESSION : opens
-    AUTH_USER ||--o{ AUTH_ACCOUNT : authenticates_with
-    AUTH_USER ||--o{ WORKSPACE_MEMBER : joins
-    WORKSPACE ||--o{ WORKSPACE_MEMBER : owns
-    WORKSPACE ||--o{ WORKSPACE_INVITATION : issues
-    WORKSPACE ||--o{ OFFER : owns
-    OFFER ||--o{ OFFER_VERSION : publishes
-    OFFER_VERSION ||--o{ OFFER_CLAIM : contains
-    WORKSPACE ||--o{ ICP : owns
-    ICP ||--o{ ICP_VERSION : publishes
-    ICP_VERSION ||--o{ ICP_CRITERION : contains
-    WORKSPACE ||--o{ MESSAGING_STRATEGY : owns
-    MESSAGING_STRATEGY ||--o{ MESSAGING_STRATEGY_VERSION : publishes
-    WORKSPACE ||--o{ AI_POLICY : owns
-    AI_POLICY ||--o{ AI_POLICY_VERSION : publishes
-
-    AUTH_USER {
-        uuid id PK
-        citext email UK
-        string name
-        boolean email_verified
-        timestamptz created_at
-        timestamptz updated_at
-    }
-    AUTH_SESSION {
-        uuid id PK
-        uuid user_id FK
-        string token UK
-        timestamptz expires_at
-    }
-    AUTH_ACCOUNT {
-        uuid id PK
-        uuid user_id FK
-        string provider_id
-        string account_id
-        string password
-    }
-    WORKSPACE {
-        uuid id PK
-        string slug UK
-        string name
-        string status
-        timestamptz created_at
-        timestamptz updated_at
-        timestamptz deleted_at
-    }
-    WORKSPACE_MEMBER {
-        uuid workspace_id PK,FK
-        uuid user_id PK,FK
-        string role
-        string status
-        timestamptz joined_at
-        timestamptz last_selected_at
-    }
-    WORKSPACE_INVITATION {
-        uuid id PK
-        uuid workspace_id FK
-        citext email
-        string role
-        string token_hash UK
-        timestamptz expires_at
-        timestamptz accepted_at
-    }
-    OFFER {
-        uuid id PK
-        uuid workspace_id FK
-        string name
-        string status
-        int current_version
-        timestamptz deleted_at
-    }
-    OFFER_VERSION {
-        uuid id PK
-        uuid workspace_id FK
-        uuid offer_id FK
-        int version
-        string category
-        string value_proposition
-        jsonb commercial_rules
-        uuid published_by FK
-        timestamptz published_at
-    }
-    OFFER_CLAIM {
-        uuid id PK
-        uuid workspace_id FK
-        uuid offer_version_id FK
-        string claim
-        string validation_status
-        string evidence_uri
-    }
-    ICP {
-        uuid id PK
-        uuid workspace_id FK
-        string name
-        int current_version
-        timestamptz deleted_at
-    }
-    ICP_VERSION {
-        uuid id PK
-        uuid workspace_id FK
-        uuid icp_id FK
-        int version
-        string description
-        jsonb persona_definition
-        uuid published_by FK
-        timestamptz published_at
-    }
-    ICP_CRITERION {
-        uuid id PK
-        uuid workspace_id FK
-        uuid icp_version_id FK
-        string dimension
-        string operator
-        jsonb expected_value
-        numeric weight
-        boolean exclusion
-    }
-    MESSAGING_STRATEGY {
-        uuid id PK
-        uuid workspace_id FK
-        string name
-    }
-    MESSAGING_STRATEGY_VERSION {
-        uuid id PK
-        uuid workspace_id FK
-        uuid strategy_id FK
-        int version
-        jsonb rules
-        timestamptz published_at
-    }
-    AI_POLICY {
-        uuid id PK
-        uuid workspace_id FK
-        string name
-    }
-    AI_POLICY_VERSION {
-        uuid id PK
-        uuid workspace_id FK
-        uuid policy_id FK
-        int version
-        jsonb autonomy_rules
-        jsonb escalation_rules
-        timestamptz published_at
-    }
-```
-
-Contraintes principales :
-
-- `UNIQUE (offer_id, version)`, `UNIQUE (icp_id, version)` ;
-- versions publiées interdites en `UPDATE` et `DELETE` ;
-- `UNIQUE (workspace_id, lower(name))` pour les conteneurs actifs ;
-- Better Auth possède `AUTH_USER`, `AUTH_SESSION`, `AUTH_ACCOUNT` et
-  `AUTH_VERIFICATION` ; le domaine ne les modifie pas hors bootstrap contrôlé ;
-- le domaine possède `WORKSPACE` et `WORKSPACE_MEMBER` et vérifie le membership
-  actif à chaque résolution du slug de route.
-
-## 3. Prospect Intelligence
+## 2. Carte de relations critique
 
 ```mermaid
 erDiagram
-    WORKSPACE ||--o{ COMPANY : owns
-    COMPANY ||--o{ COMPANY_DOMAIN : identifies
-    COMPANY ||--o{ COMPANY_EXTERNAL_ID : identifies
-    COMPANY ||--o{ COMPANY_SIGNAL : exhibits
-    WORKSPACE ||--o{ CONTACT : owns
-    CONTACT ||--o{ CONTACT_IDENTITY : identifies
-    CONTACT ||--o{ EMPLOYMENT : has
-    COMPANY ||--o{ EMPLOYMENT : employs
-    CONTACT ||--o{ CONTACT_SIGNAL : exhibits
-    CONTACT ||--o{ ENRICHMENT_OBSERVATION : receives
-    COMPANY ||--o{ ENRICHMENT_OBSERVATION : receives
-    CONTACT ||--o{ MERGE_CANDIDATE : source
-    CONTACT ||--o{ MERGE_CANDIDATE : target
-    CONTACT ||--o{ CONTACT_MERGE : merged
-    WORKSPACE ||--o{ SUPPRESSION : owns
-
-    COMPANY {
-        uuid id PK
-        uuid workspace_id FK
-        string legal_name
-        string display_name
-        string country_code
-        int employee_count
-        string industry
-        string linkedin_url
-        timestamptz deleted_at
-    }
-    COMPANY_DOMAIN {
-        uuid id PK
-        uuid workspace_id FK
-        uuid company_id FK
-        citext domain
-        boolean is_primary
-        string verification_status
-    }
-    COMPANY_EXTERNAL_ID {
-        uuid id PK
-        uuid workspace_id FK
-        uuid company_id FK
-        string provider
-        string external_id
-    }
-    COMPANY_SIGNAL {
-        uuid id PK
-        uuid workspace_id FK
-        uuid company_id FK
-        string signal_type
-        timestamptz occurred_at
-        string source_uri
-        numeric confidence
-        jsonb evidence
-    }
-    CONTACT {
-        uuid id PK
-        uuid workspace_id FK
-        string first_name
-        string last_name
-        string display_name
-        string locale
-        string status
-        timestamptz deleted_at
-    }
-    CONTACT_IDENTITY {
-        uuid id PK
-        uuid workspace_id FK
-        uuid contact_id FK
-        string type
-        string normalized_value
-        string display_value
-        string verification_status
-        string provider
-        numeric confidence
-        timestamptz last_observed_at
-    }
-    EMPLOYMENT {
-        uuid id PK
-        uuid workspace_id FK
-        uuid contact_id FK
-        uuid company_id FK
-        string title
-        string seniority
-        date started_on
-        date ended_on
-        boolean is_current
-        numeric confidence
-        string source_uri
-        timestamptz observed_at
-    }
-    CONTACT_SIGNAL {
-        uuid id PK
-        uuid workspace_id FK
-        uuid contact_id FK
-        string signal_type
-        timestamptz occurred_at
-        string source_uri
-        numeric confidence
-        jsonb evidence
-    }
-    ENRICHMENT_OBSERVATION {
-        uuid id PK
-        uuid workspace_id FK
-        uuid contact_id FK
-        uuid company_id FK
-        string provider
-        string field_name
-        jsonb observed_value
-        numeric confidence
-        string evidence_uri
-        timestamptz observed_at
-    }
-    MERGE_CANDIDATE {
-        uuid id PK
-        uuid workspace_id FK
-        uuid source_contact_id FK
-        uuid target_contact_id FK
-        numeric confidence
-        jsonb reasons
-        string status
-        uuid reviewed_by FK
-    }
-    CONTACT_MERGE {
-        uuid id PK
-        uuid workspace_id FK
-        uuid survivor_contact_id FK
-        uuid merged_contact_id FK
-        jsonb snapshot_before
-        uuid merged_by FK
-        timestamptz merged_at
-        timestamptz reverted_at
-    }
-    SUPPRESSION {
-        uuid id PK
-        uuid workspace_id FK
-        uuid contact_id FK
-        string identity_hash
-        string channel
-        string scope
-        string reason
-        string source
-        timestamptz created_at
-        timestamptz revoked_at
-    }
+  WORKSPACES ||--o{ WORKSPACE_MEMBERS : contains
+  WORKSPACES ||--o{ OFFERS : owns
+  OFFERS ||--o{ OFFER_VERSIONS : publishes
+  WORKSPACES ||--o{ ICPS : owns
+  ICPS ||--o{ ICP_VERSIONS : publishes
+  ICP_VERSIONS ||--o{ CAMPAIGNS : targets
+  OFFER_VERSIONS ||--o{ CAMPAIGNS : sells
+  CAMPAIGNS ||--o{ CAMPAIGN_PROSPECTS : contains
+  CONTACTS ||--o{ CAMPAIGN_PROSPECTS : evaluated_as
+  CONTACTS ||--o{ CONTACT_IDENTITIES : has
+  CONTACTS ||--o{ CONVERSATIONS : participates_in
+  CONVERSATIONS ||--o{ MESSAGES : contains
+  CONTACTS ||--o{ PROSPECT_MEMORY_EVENTS : emits
+  CONTACTS ||--o{ PROSPECT_MEMORY_SNAPSHOTS : summarized_by
+  PROSPECT_MEMORY_SNAPSHOTS ||--o{ PROSPECT_MEMORY_CONTEXT_RECEIPTS : rendered_as
+  CONVERSATIONS ||--o{ OPPORTUNITIES : qualifies
+  OPPORTUNITIES ||--o{ CALENDAR_BOOKINGS : produces
+  CONTENT_PUBLICATIONS ||--o{ SOCIAL_INTERACTIONS : receives
+  SOCIAL_INTERACTIONS ||--o{ ATTRIBUTION_TOUCHES : contributes
+  CALENDAR_BOOKINGS ||--o{ ATTRIBUTION_TOUCHES : attributed_by
 ```
 
-Index et contraintes :
+## 3. Catalogue complet par contexte
 
-- `UNIQUE (workspace_id, domain)` sur `COMPANY_DOMAIN` actif ;
-- `UNIQUE (workspace_id, provider, external_id)` ;
-- `UNIQUE (workspace_id, type, normalized_value)` pour les identités certaines ;
-- un seul emploi courant par couple contact/entreprise, avec index partiel ;
-- pas de chevauchement incohérent de périodes après validation ;
-- `CHECK (contact_id IS NOT NULL OR company_id IS NOT NULL)` sur observation ;
-- `CHECK (contact_id IS NOT NULL OR identity_hash IS NOT NULL)` sur suppression ;
-- index sur `(workspace_id, signal_type, occurred_at DESC)`.
+### Authentification, workspace et configuration — 12
 
-## 4. Campagnes et outreach
+| Table | Rôle |
+|---|---|
+| `auth_users` | identité Better Auth |
+| `auth_sessions` | sessions actives |
+| `auth_accounts` | méthodes de connexion |
+| `auth_verifications` | challenges de vérification |
+| `workspaces` | tenant et état principal |
+| `workspace_members` | rôles et appartenance |
+| `workspace_invitations` | invitations |
+| `workspace_ai_settings` | routage modèle par capacité |
+| `workspace_data_settings` | rétention et lifecycle |
+| `workspace_prospect_memory_settings` | policy Prospect 360 |
+| `workspace_onboarding` | checklist de configuration |
+| `workspace_exports` | demandes et état d'export |
+
+### Automatisation quotidienne et recherche ICP — 13
+
+| Table | Rôle |
+|---|---|
+| `daily_prospecting_schedules` | cadence quotidienne par workspace |
+| `daily_sourcing_cycles` | occurrence durable d'une recherche |
+| `sourcing_frontiers` | pagination/frontière de sourcing |
+| `product_research_runs` | étude ICP durable |
+| `research_stage_runs` | exécution d'un stage |
+| `research_work_items` | fan-out borné et reprenable |
+| `research_tool_requests` | requête d'outil idempotente |
+| `product_research_run_documents` | documents autorisés pour un run |
+| `market_evidence` | preuves publiques collectées |
+| `competitor_candidates` | concurrents examinés |
+| `research_findings` | affirmations structurées |
+| `research_finding_evidence` | liens finding-preuve |
+| `icp_proposals` | propositions classées avant publication |
+
+### IA et évaluation — 9
+
+| Table | Rôle |
+|---|---|
+| `evaluation_datasets` | corpus versionné |
+| `evaluation_cases` | cas synthétique et attente |
+| `ai_prompt_versions` | prompts immuables |
+| `ai_configurations` | configuration provider/modèle/policy |
+| `ai_runs` | provenance d'une invocation |
+| `evaluation_runs` | exécution d'une évaluation |
+| `evaluation_case_results` | résultat par cas |
+| `ai_feedbacks` | feedback opérateur |
+| `ai_tool_runs` | appel d'outil et résultat borné |
+
+### Documents et recherche versionnée — 8
+
+| Table | Rôle |
+|---|---|
+| `research_documents` | upload, extraction, statut et métriques |
+| `embedding_model_revisions` | modèle, SHA, dimension et lifecycle |
+| `knowledge_search_runtime` | unique révision active |
+| `knowledge_documents` | projection documentaire unifiée |
+| `knowledge_chunk_sets` | version immuable du découpage |
+| `knowledge_chunks` | texte stable et provenance |
+| `knowledge_chunk_embeddings` | vecteur par chunk et révision |
+| `embedding_reindex_runs` | backfill, validation et activation |
 
 ```mermaid
 erDiagram
-    OFFER_VERSION ||--o{ CAMPAIGN : sells
-    ICP_VERSION ||--o{ CAMPAIGN : targets
-    MESSAGING_STRATEGY_VERSION ||--o{ CAMPAIGN : guides
-    AI_POLICY_VERSION ||--o{ CAMPAIGN : governs
-    SEQUENCE_VERSION ||--o{ CAMPAIGN : executes
-    SEQUENCE ||--o{ SEQUENCE_VERSION : publishes
-    SEQUENCE_VERSION ||--o{ SEQUENCE_STEP : contains
-    CAMPAIGN ||--o{ CAMPAIGN_PROSPECT : enrolls
-    CONTACT ||--o{ CAMPAIGN_PROSPECT : participates
-    CAMPAIGN_PROSPECT ||--o{ SCORE_EXPLANATION : scores
-    CAMPAIGN_PROSPECT ||--o{ APPROVAL : requires
-    CAMPAIGN_PROSPECT ||--o{ SEQUENCE_ENROLLMENT : starts
-    SEQUENCE_ENROLLMENT ||--o{ OUTREACH_ACTION : schedules
-    SEQUENCE_STEP ||--o{ OUTREACH_ACTION : instantiates
-    CONNECTED_ACCOUNT ||--o{ OUTREACH_ACTION : sends
-    OUTREACH_ACTION ||--o{ OUTREACH_ATTEMPT : attempts
-
-    CAMPAIGN {
-        uuid id PK
-        uuid workspace_id FK
-        uuid offer_version_id FK
-        uuid icp_version_id FK
-        uuid messaging_version_id FK
-        uuid ai_policy_version_id FK
-        uuid sequence_version_id FK
-        string name
-        string status
-        timestamptz activated_at
-        timestamptz completed_at
-    }
-    SEQUENCE {
-        uuid id PK
-        uuid workspace_id FK
-        string name
-        int current_version
-    }
-    SEQUENCE_VERSION {
-        uuid id PK
-        uuid workspace_id FK
-        uuid sequence_id FK
-        int version
-        timestamptz published_at
-    }
-    SEQUENCE_STEP {
-        uuid id PK
-        uuid workspace_id FK
-        uuid sequence_version_id FK
-        int position
-        string channel
-        int delay_seconds
-        jsonb execution_conditions
-        jsonb fallback_policy
-        jsonb content_instruction
-        jsonb send_window
-    }
-    CAMPAIGN_PROSPECT {
-        uuid id PK
-        uuid workspace_id FK
-        uuid campaign_id FK
-        uuid contact_id FK
-        uuid company_id FK
-        string status
-        numeric score
-        string score_version
-        int priority
-        timestamptz enrolled_at
-    }
-    SCORE_EXPLANATION {
-        uuid id PK
-        uuid workspace_id FK
-        uuid campaign_prospect_id FK
-        string factor
-        numeric contribution
-        jsonb evidence_refs
-    }
-    APPROVAL {
-        uuid id PK
-        uuid workspace_id FK
-        string subject_type
-        uuid subject_id
-        string decision
-        uuid decided_by FK
-        string comment
-        timestamptz decided_at
-    }
-    SEQUENCE_ENROLLMENT {
-        uuid id PK
-        uuid workspace_id FK
-        uuid campaign_prospect_id FK
-        string status
-        int current_position
-        string suspension_reason
-        timestamptz started_at
-        timestamptz suspended_at
-        timestamptz completed_at
-    }
-    CONNECTED_ACCOUNT {
-        uuid id PK
-        uuid workspace_id FK
-        string provider
-        string channel
-        string external_account_id
-        string credential_ref
-        string status
-        jsonb limits
-        timestamptz last_health_at
-    }
-    OUTREACH_ACTION {
-        uuid id PK
-        uuid workspace_id FK
-        uuid enrollment_id FK
-        uuid sequence_step_id FK
-        uuid connected_account_id FK
-        string channel
-        string status
-        string idempotency_key UK
-        timestamptz due_at
-        timestamptz locked_at
-        jsonb content_snapshot
-    }
-    OUTREACH_ATTEMPT {
-        uuid id PK
-        uuid workspace_id FK
-        uuid outreach_action_id FK
-        int attempt_number
-        string provider_request_id
-        string status
-        string error_code
-        timestamptz attempted_at
-    }
+  RESEARCH_DOCUMENTS ||--o| KNOWLEDGE_DOCUMENTS : projects
+  KNOWLEDGE_DOCUMENTS ||--o{ KNOWLEDGE_CHUNK_SETS : versions
+  KNOWLEDGE_CHUNK_SETS ||--o{ KNOWLEDGE_CHUNKS : contains
+  KNOWLEDGE_CHUNKS ||--o{ KNOWLEDGE_CHUNK_EMBEDDINGS : embeds
+  EMBEDDING_MODEL_REVISIONS ||--o{ KNOWLEDGE_CHUNK_EMBEDDINGS : computes
+  EMBEDDING_MODEL_REVISIONS ||--o{ EMBEDDING_REINDEX_RUNS : backfills
 ```
 
-Contraintes :
+`knowledge_chunk_embeddings.embedding` reste un `vector` non dimensionné afin
+de préparer une future migration, mais l'index HNSW actif est partiel et casté
+vers la dimension de la révision. La première production utilise exclusivement
+Qwen 1 024 dimensions. Une recherche ne mélange jamais deux révisions.
 
-- `UNIQUE (campaign_id, contact_id)` ;
-- `UNIQUE (sequence_version_id, position)` ;
-- index partiel unique sur `(workspace_id, contact_id)` via
-  `CampaignProspect`/`SequenceEnrollment` lorsque l’enrollment est actif ;
-- campagne active interdite en modification sur ses cinq versions ;
-- action en exécution verrouillée par lease avec expiration ;
-- relecture des suppressions et limites juste avant transition vers
-  `executing`.
+### Offre, ICP, messaging et policy — 11
 
-## 5. Inbox, pipeline, IA et système
+| Table | Rôle |
+|---|---|
+| `icps` | conteneur ICP |
+| `icp_versions` | snapshot publié |
+| `icp_criterion` | critères structurés |
+| `messaging_strategies` | conteneur de stratégie |
+| `messaging_strategy_versions` | stratégie publiée |
+| `ai_policies` | conteneur policy |
+| `ai_policy_versions` | policy publiée |
+| `offers` | conteneur offre |
+| `offer_versions` | offre publiée |
+| `offer_claims` | claims et preuves autorisées |
+| `workspace_channel_accounts` | compte autorisé par workspace/canal |
 
-```mermaid
-erDiagram
-    CONTACT ||--o{ CONVERSATION : participates
-    CONNECTED_ACCOUNT ||--o{ CONVERSATION : hosts
-    CONVERSATION ||--o{ MESSAGE : contains
-    MESSAGE ||--o{ REPLY_CLASSIFICATION : classified
-    MESSAGE ||--o{ REPLY_DRAFT : inspires
-    REPLY_DRAFT ||--o{ APPROVAL : requires
-    CONTACT ||--o{ OPPORTUNITY : creates
-    OPPORTUNITY ||--o{ OPPORTUNITY_STAGE_HISTORY : records
-    OPPORTUNITY ||--o{ MEETING : schedules
-    WORKSPACE ||--o{ KNOWLEDGE_SOURCE : owns
-    KNOWLEDGE_SOURCE ||--o{ KNOWLEDGE_DOCUMENT : contains
-    KNOWLEDGE_DOCUMENT ||--o{ KNOWLEDGE_CHUNK : splits
-    AIRUN ||--o{ AI_RETRIEVAL : uses
-    KNOWLEDGE_CHUNK ||--o{ AI_RETRIEVAL : cited
-    WORKSPACE ||--o{ AIRUN : owns
-    WORKSPACE ||--o{ INTEGRATION_EVENT : receives
-    WORKSPACE ||--o{ OUTBOX_EVENT : emits
-    WORKSPACE ||--o{ AUDIT_LOG : audits
+### Content Inbound et marque — 18
 
-    CONVERSATION {
-        uuid id PK
-        uuid workspace_id FK
-        uuid contact_id FK
-        uuid connected_account_id FK
-        string provider_thread_id
-        string channel
-        string status
-        timestamptz last_message_at
-    }
-    MESSAGE {
-        uuid id PK
-        uuid workspace_id FK
-        uuid conversation_id FK
-        string provider_message_id
-        string direction
-        string sender_type
-        text body
-        jsonb attachments
-        timestamptz sent_at
-        timestamptz received_at
-    }
-    REPLY_CLASSIFICATION {
-        uuid id PK
-        uuid workspace_id FK
-        uuid message_id FK
-        string intent
-        numeric confidence
-        uuid ai_run_id FK
-        uuid reviewed_by FK
-    }
-    REPLY_DRAFT {
-        uuid id PK
-        uuid workspace_id FK
-        uuid message_id FK
-        uuid ai_run_id FK
-        text body
-        string status
-        timestamptz created_at
-    }
-    OPPORTUNITY {
-        uuid id PK
-        uuid workspace_id FK
-        uuid contact_id FK
-        uuid company_id FK
-        uuid offer_version_id FK
-        uuid owner_id FK
-        string stage
-        numeric estimated_value
-        string currency
-        numeric probability
-        string next_action
-        date expected_close_on
-        string loss_reason
-        numeric actual_revenue
-    }
-    OPPORTUNITY_STAGE_HISTORY {
-        uuid id PK
-        uuid workspace_id FK
-        uuid opportunity_id FK
-        string from_stage
-        string to_stage
-        uuid changed_by FK
-        timestamptz changed_at
-    }
-    MEETING {
-        uuid id PK
-        uuid workspace_id FK
-        uuid opportunity_id FK
-        string provider
-        string external_event_id
-        timestamptz starts_at
-        string status
-    }
-    KNOWLEDGE_SOURCE {
-        uuid id PK
-        uuid workspace_id FK
-        string source_type
-        string name
-        string status
-        jsonb metadata
-    }
-    KNOWLEDGE_DOCUMENT {
-        uuid id PK
-        uuid workspace_id FK
-        uuid source_id FK
-        string object_uri
-        string checksum
-        string validation_status
-        timestamptz indexed_at
-    }
-    KNOWLEDGE_CHUNK {
-        uuid id PK
-        uuid workspace_id FK
-        uuid document_id FK
-        text content
-        tsvector search_vector
-        vector embedding
-        jsonb metadata
-    }
-    AIRUN {
-        uuid id PK
-        uuid workspace_id FK
-        string purpose
-        string provider
-        string model
-        string prompt_version
-        string input_hash
-        jsonb parameters
-        jsonb output
-        string status
-        numeric cost
-        int latency_ms
-        timestamptz created_at
-    }
-    AI_RETRIEVAL {
-        uuid id PK
-        uuid workspace_id FK
-        uuid ai_run_id FK
-        uuid chunk_id FK
-        numeric score
-        int rank
-    }
-    INTEGRATION_EVENT {
-        uuid id PK
-        uuid workspace_id FK
-        string provider
-        string external_event_id
-        string event_type
-        jsonb payload
-        string status
-        timestamptz received_at
-        timestamptz processed_at
-    }
-    OUTBOX_EVENT {
-        uuid id PK
-        uuid workspace_id FK
-        string aggregate_type
-        uuid aggregate_id
-        string event_type
-        jsonb payload
-        int attempts
-        timestamptz available_at
-        timestamptz published_at
-    }
-    AUDIT_LOG {
-        bigint id PK
-        uuid workspace_id FK
-        uuid actor_user_id FK
-        string action
-        string subject_type
-        uuid subject_id
-        jsonb changes
-        string correlation_id
-        timestamptz created_at
-    }
-```
+| Table | Rôle |
+|---|---|
+| `editorial_strategies` | conteneur de stratégie éditoriale |
+| `editorial_strategy_versions` | stratégie publiée immuable |
+| `editorial_learning_versions` | apprentissage proposé/versionné |
+| `content_operation_requests` | commande idempotente de l'autopilote |
+| `content_idea_discovery_runs` | recherche quotidienne d'idées |
+| `content_ideas` | idée et statut |
+| `content_idea_sources` | sources résolubles d'une idée |
+| `content_idea_schedules` | cadence de génération |
+| `content_brand_kits` | identité, voix et palette réutilisables |
+| `content_assets` | identité stable d'un asset |
+| `content_generation_runs` | pipeline writer/audit/critic |
+| `content_briefs` | brief canonique |
+| `content_asset_versions` | texte ou document immuable |
+| `content_media_assets` | image/document associé |
+| `content_publications` | snapshot planifié/publié |
+| `content_publication_attempts` | appel provider et résultat |
+| `content_publication_reconciliations` | résolution d'un état inconnu |
+| `content_metric_snapshots` | métriques observées à un instant |
 
-Contraintes et index :
+### Social sync, interactions et knowledge claims — 8
 
-- `UNIQUE (workspace_id, provider_thread_id, connected_account_id)` ;
-- `UNIQUE (workspace_id, provider_message_id, connected_account_id)` ;
-- `UNIQUE (provider, external_event_id)` ou clé équivalente tenant-aware ;
-- GIN sur `search_vector`, index vectoriel seulement après activation pgvector ;
-- `AIRun.output` soumis à une politique de rétention distincte des métriques ;
-- audit append-only ;
-- outbox indexée sur `(published_at, available_at)` ;
-- messages entrants persistés avant toute classification IA.
+| Table | Rôle |
+|---|---|
+| `social_content_sync_states` | curseur de synchronisation des posts |
+| `social_content_items` | post interne ou externe observé |
+| `social_interaction_sync_states` | curseur des interactions |
+| `social_interactions` | réaction, commentaire, réponse ou mention |
+| `knowledge_sources` | source validable |
+| `knowledge_claims` | claim autorisé ou retiré |
+| `knowledge_claim_sources` | provenance d'un claim |
+| `attribution_touches` | lien content/outbound/conversation/appel |
 
-## 6. Recherche produit F-009
+### CRM, identités, signaux et enrichissement — 20
 
-La première migration implémente :
+| Table | Rôle |
+|---|---|
+| `companies` | entreprise canonique |
+| `company_field_provenance` | source de chaque champ entreprise |
+| `contacts` | personne canonique |
+| `contact_identities` | LinkedIn, email, téléphone, WhatsApp |
+| `contact_employments` | historique d'emploi |
+| `contact_suppressions` | opposition canal ou générale |
+| `enrichment_jobs` | enrichissement durable |
+| `enrichment_observations` | valeur, source, confiance |
+| `signal_collection_runs` | collecte de signaux |
+| `workspace_signal_settings` | types et cadence autorisés |
+| `signals` | signal sourcé |
+| `merge_candidates` | rapprochement probable |
+| `contact_merges` | fusion réversible et auditée |
+| `prospect_discovery_runs` | sourcing par ICP/canal |
+| `prospect_discovery_candidates` | candidat avant import |
+| `phone_observations` | numéro observé et provenance |
+| `whatsapp_reachability_checks` | vérification WhatsApp |
+| `import_batches` | import durable |
+| `import_rows` | ligne, validation et résultat |
+| `contact_channel_assignments` | canal retenu pour un contact |
 
-- `product_research_runs` pour le brief, l’état et l’étape active ;
-- `research_stage_runs` pour les checkpoints, tentatives et verrous humains ;
-- `market_evidence`, `competitor_candidates`, `research_findings` et
-  `icp_proposals` pour le livrable sourcé ;
-- `ai_runs` pour le fournisseur, modèle, prompt, coût et latence ;
-- `jobs` pour les leases PostgreSQL, retries et dead letters ;
-- `outbox_events` pour les événements enregistrés avec la transition.
+### Prospect 360 — 3
 
-Les FK composites `(workspace_id, id)` empêchent une relation de recherche de
-pointer vers un autre workspace. Le résultat complet d’une étape reste dans son
-checkpoint ; les tables de livrable sont les projections révisables utilisées
-par le rapport.
+| Table | Rôle |
+|---|---|
+| `prospect_memory_events` | journal append-only ordonné |
+| `prospect_memory_snapshots` | synthèse versionnée à un watermark |
+| `prospect_memory_context_receipts` | contexte exact rendu à un use case |
 
-## 7. Vues et projections
+Le journal est autoritatif pour reconstruire la projection. Le snapshot ne
+remplace ni les messages, ni les bookings, ni les décisions. `privacy_epoch`
+empêche la publication ou lecture d'un dérivé antérieur à une anonymisation.
 
-Les écrans de recherche et analytics utilisent des vues SQL ou vues
-matérialisées, jamais des agrégats transactionnels dénormalisés prématurément :
+### Campagnes, séquences et exécution — 16
 
-- `prospect_search_view` ;
-- `campaign_performance_view` ;
-- `inbox_unread_view` ;
-- `pipeline_summary_view` ;
-- `sender_account_health_view`.
+| Table | Rôle |
+|---|---|
+| `sequences` | conteneur de séquence |
+| `sequence_steps` | étapes de travail |
+| `sequence_versions` | snapshot publié |
+| `campaigns` | campagne et références immuables |
+| `campaign_prospects` | score et état par contact |
+| `campaign_enrollments` | inscription et progression |
+| `approval_items` | exceptions ou dry-runs, hors chemin normal |
+| `outreach_actions` | intention d'effet externe |
+| `outreach_attempts` | tentative provider |
+| `prospecting_plans` | plan généré depuis l'ICP |
+| `channel_assessments` | pertinence d'un canal pour un ICP |
+| `sequence_enrollments` | exécution de la séquence |
+| `prospect_decisions` | prochaine action durable et explication |
+| `daily_prospecting_schedules` | cadence automatique (référencée plus haut) |
+| `daily_sourcing_cycles` | cycle quotidien (référencé plus haut) |
+| `sourcing_frontiers` | frontière de reprise (référencée plus haut) |
 
-Les projections sont reconstruisibles depuis les tables sources. Une
-incohérence de projection ne doit jamais modifier l’état métier.
+Les trois dernières tables figurent déjà dans la section recherche ; elles
+sont rappelées ici pour montrer le flux, sans augmenter le total de 137.
+
+### Inbox et commandes — 8
+
+| Table | Rôle |
+|---|---|
+| `integration_events` | événement provider authentifié/dédupliqué |
+| `conversations` | thread par compte/canal |
+| `inbox_sync_states` | curseur et état du backfill |
+| `messages` | message entrant ou sortant |
+| `reply_classifications` | intention et décision structurée |
+| `automated_replies` | réponse IA proposée/planifiée/envoyée |
+| `conversation_commands` | manuel, amélioration ou Setter durable |
+| `connected_account_webhooks` | abonnement webhook par compte |
+
+### Pipeline, appels et attribution — 9
+
+| Table | Rôle |
+|---|---|
+| `opportunities` | opportunité et étape courante |
+| `workspace_lost_reasons` | taxonomie de perte |
+| `opportunity_stage_history` | transitions auditables |
+| `calendar_connections` | connexion agenda |
+| `calendar_meeting_types` | type et durée |
+| `calendar_bookings` | réservation provider |
+| `calendar_booking_history` | transitions de booking |
+| `meeting_proposals` | créneaux proposés avant confirmation |
+| `attribution_touches` | origine du résultat (référencée plus haut) |
+
+### Queue, audit et comptes providers — 8
+
+| Table | Rôle |
+|---|---|
+| `jobs` | queue PostgreSQL, lease, heartbeat et retry |
+| `outbox_events` | événement écrit avec la transaction métier |
+| `audit_logs` | action sensible et acteur |
+| `connected_accounts` | compte provider associé |
+| `connection_onboardings` | session de connexion durable |
+| `account_health_alerts` | état dégradé et action opérateur |
+| `connected_account_webhooks` | abonnement provider (référencé plus haut) |
+| `workspace_exports` | export workspace (référencé plus haut) |
+
+## 4. Filtres, index et recherche
+
+- Les filtres de sécurité et métier sont appliqués avant BM25 et ANN.
+- Les candidats lexicaux viennent de ParadeDB ; les candidats vectoriels de
+  pgvector avec l'index HNSW de la révision active.
+- La fusion par défaut est RRF, puis BGE reranke les meilleurs candidats.
+- La panne du reranker dégrade vers `hybrid` ; la panne de l'embedding de requête
+  vers `lexical_degraded`.
+- Les locators `page:N`, `slide:N`, `sheet:Nom!A1:D20` ou section permettent de
+  résoudre chaque extrait vers sa source.
+- Aucun index supplémentaire n'est ajouté sans requête représentative et
+  preuve `EXPLAIN (ANALYZE, BUFFERS)`.
+
+## 5. Évolution et migrations
+
+1. Toute évolution commence additive : nouvelle colonne/table/index nullable
+   ou backfillable.
+2. Les writers mixtes ne démarrent qu'après déploiement des readers compatibles.
+3. Le backfill est idempotent, observable et reprenable.
+4. Une contrainte forte s'active après validation de couverture.
+5. La suppression de l'ancien chemin attend au moins une release compatible.
+6. Une nouvelle révision d'embedding suit `registered → backfilling → validating
+   → active`, avec rollback temporaire puis purge.
+7. Les données de développement peuvent être réindexées ; aucune migration
+   silencieuse de données production n'est présumée.

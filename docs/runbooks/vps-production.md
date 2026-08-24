@@ -4,6 +4,12 @@ Le bundle production exécute l’application dans le même réseau Docker priv�
 que PostgreSQL, MinIO, SearXNG et le crawler. Seul Caddy expose les
 ports 80/443.
 
+Avant de préparer le serveur, vérifier la liste des comptes payants et des
+identités de canal dans
+[`required-subscriptions.md`](./required-subscriptions.md). Noosphere requiert
+Unipile pour les canaux actuels et au moins une route IA, Codex **ou** Kimi ;
+Qwen Embedding, BGE, MinIO, SearXNG et ParadeDB sont auto-hébergés.
+
 ## Préparer
 
 ```bash
@@ -104,7 +110,7 @@ CANARY_CONFIRM=SEND_ONE_LIVE_CANARY \
 CANARY_CHANNEL=whatsapp \
 CANARY_ACCOUNT_ID="$UNIPILE_WHATSAPP_ACCOUNT_ID" \
 CANARY_RECIPIENT=33600000000 \
-CANARY_MESSAGE='Canary Ignition Outbound — merci de ne pas répondre.' \
+CANARY_MESSAGE='Canary Noosphere — merci de ne pas répondre.' \
 bash deploy/unipile-canary.sh
 ```
 

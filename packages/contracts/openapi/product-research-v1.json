@@ -1,11 +1,11 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Ignition Outbound Product Research API",
+    "title": "Noosphere API",
     "version": "1.0.0",
     "license": {
-      "name": "Proprietary",
-      "identifier": "LicenseRef-Proprietary"
+      "name": "GNU Affero General Public License v3.0 only",
+      "identifier": "AGPL-3.0-only"
     }
   },
   "servers": [

@@ -1,10 +1,11 @@
 # Noosphere — architecture produit Outbound + Content Inbound
 
 Date de décision : 2026-08-20
-Statut : remplacé pour l'expérience et la navigation par
+Statut : **décision historique, largement implémentée**. Remplacé pour l'AS-IS
+par [`ARCHITECTURE.md`](./ARCHITECTURE.md) et, pour l'expérience datée, par
 [`NOOSPHERE_EXPERIENCE_ARCHITECTURE.md`](./NOOSPHERE_EXPERIENCE_ARCHITECTURE.md).
-Ce document reste la référence détaillée pour les agrégats Content Inbound,
-les ports provider et les contraintes par canal.
+Ce document conserve la conception initiale des agrégats Content Inbound, des
+ports provider et des contraintes par canal.
 Baseline analysée : `b8efbf8424ebc1c5c6f86f48a0a68d70d63a6652`
 
 ## 1. Décision produit
@@ -18,10 +19,10 @@ conversations, rendez-vous et mesures :
 - **Content Inbound** : transformer une stratégie en contenus, engagement,
   signaux d'intention, conversations et rendez-vous.
 
-Le renommage du dépôt GitHub et des identifiants techniques n'est pas effectué
-en une seule opération. Le produit, le shell et la documentation adoptent
-Noosphere en premier. Le nom de dépôt peut être migré dans un lot séparé avec
-redirections, inventaire des URLs de déploiement, secrets CI et runbooks.
+Le dépôt distant est désormais `IgnitionAI/noosphere` et le package racine se
+nomme `noosphere`. Certains identifiants de compatibilité, chemins historiques
+et noms de répertoires locaux peuvent encore conserver l'ancien vocabulaire ;
+ils ne changent pas la marque produit.
 
 ## 2. Promesse canonique
 

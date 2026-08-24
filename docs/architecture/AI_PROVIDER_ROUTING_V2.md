@@ -2,12 +2,14 @@
 
 ## Statut
 
-Implémenté et validé localement le 2026-08-22. Le déploiement VPS et le canary
-produit complet restent à réaliser.
+Décision historique implémentée et validée localement le 2026-08-22. Le
+déploiement VPS et le canary produit complet restent à réaliser. Pour l'AS-IS,
+voir [`ARCHITECTURE.md`](./ARCHITECTURE.md) ; pour les comptes à prévoir, voir
+[`../runbooks/required-subscriptions.md`](../runbooks/required-subscriptions.md).
 
-Cette spécification prépare le remplacement du couplage actuel à Kimi par un
-runtime d'inférence interchangeable. Elle ne modifie ni les règles métier, ni
-les outils des agents, ni les adaptateurs d'envoi.
+Cette spécification a guidé le remplacement du couplage à Kimi par un runtime
+d'inférence interchangeable. Elle ne modifie ni les règles métier, ni les
+outils des agents, ni les adaptateurs d'envoi.
 
 ## Décisions verrouillées
 
@@ -61,7 +63,7 @@ rapporté 18 623 tokens car le client a chargé du contexte utilisateur. Le
 transport serveur doit donc posséder un `CODEX_HOME` minimal et dédié, sans
 skills, plugins, mémoire personnelle, MCP ni instructions de dépôt.
 
-## État actuel
+## État antérieur ayant motivé la décision
 
 Le runtime possède déjà une première distinction `kimi-code | openai` dans le
 moteur ICP, mais elle n'est pas une abstraction générale :
