@@ -61,6 +61,11 @@ re-run the workflow. GitHub deliberately returns 404 for a private package page
 when the browser is signed out or the account lacks access. Later tagged
 releases keep that visibility.
 
+If GitHub displays `Setting is disabled by organization administrators`, an
+organization owner must first open `Organization settings` -> `Packages` and
+enable `Package Creation` -> `Public`. The release workflow prints the exact
+organization settings URL for organization-owned forks.
+
 Create a secure environment interactively:
 
 ```bash

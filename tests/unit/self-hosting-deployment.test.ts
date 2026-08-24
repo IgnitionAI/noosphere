@@ -152,6 +152,10 @@ describe("self-hosting distribution", () => {
     );
     expect(workflow).toContain("Sign in to github.com");
     expect(workflow).toContain("click Package settings");
+    expect(workflow).toContain(
+      "https://github.com/organizations/${GITHUB_REPOSITORY_OWNER}/settings/packages",
+    );
+    expect(workflow).toContain("Package Creation > Public");
   });
 
   test("records exact images and never rolls migrations or volumes back", () => {

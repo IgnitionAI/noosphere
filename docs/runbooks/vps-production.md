@@ -61,6 +61,17 @@ limitation; subsequent versions reuse the public packages. Public repositories
 must expose their GHCR packages publicly for anonymous installs. Private forks
 keep private packages and require:
 
+If the package page displays `Setting is disabled by organization
+administrators`, an organization owner must open:
+
+```text
+https://github.com/organizations/<owner>/settings/packages
+```
+
+Then enable `Package Creation` -> `Public` before returning to each package.
+If that organization setting is itself locked, the policy is controlled at the
+parent enterprise level and requires an enterprise owner.
+
 ```bash
 echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
 ```

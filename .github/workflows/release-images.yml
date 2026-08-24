@@ -124,14 +124,19 @@ jobs:
               owner_type="${{ github.event.repository.owner.type }}"
               if [[ "$owner_type" == "Organization" ]]; then
                 package_url="https://github.com/orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/package/noosphere-${{ matrix.name }}"
+                organization_packages_url="https://github.com/organizations/${GITHUB_REPOSITORY_OWNER}/settings/packages"
               else
                 package_url="https://github.com/users/${GITHUB_REPOSITORY_OWNER}/packages/container/package/noosphere-${{ matrix.name }}"
+                organization_packages_url=""
               fi
               echo "Public repositories must expose public GHCR packages for anonymous quickstart installs." >&2
               echo "GitHub creates a new container package as Private even when its repository is public." >&2
               echo "Sign in to github.com with an account that administers the package." >&2
               echo "Open $package_url, click Package settings, set visibility to Public once, then re-run this workflow." >&2
               echo "GitHub returns 404 for this private page when the browser is signed out or the account lacks package access." >&2
+              if [[ -n "$organization_packages_url" ]]; then
+                echo "If Public is disabled by organization administrators, an organization owner must open $organization_packages_url and enable Package Creation > Public first." >&2
+              fi
               exit 1
             fi
           else
