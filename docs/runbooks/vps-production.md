@@ -51,12 +51,15 @@ ghcr.io/<owner>/noosphere-crawler:vX.Y.Z
 The workflow links each image to the fork, records OCI source/version/commit/
 license labels, scans it, creates provenance and verifies it can be pulled.
 GitHub creates each new container package as private, including packages linked
-to a public repository. On the first tagged release, open the three package
-settings pages shown by the failed anonymous-pull gate, choose
+to a public repository. On the first tagged release, sign in to GitHub with an
+account that administers the packages, open the three package landing pages
+shown by the failed anonymous-pull gate, click `Package settings`, choose
 `Change visibility` -> `Public`, confirm the package name, then re-run the
-workflow. This is a one-time GitHub limitation; subsequent versions reuse the
-public packages. Public repositories must expose their GHCR packages publicly
-for anonymous installs. Private forks keep private packages and require:
+workflow. A 404 on one of those private pages means that the browser is signed
+out or the current account cannot read the package. This is a one-time GitHub
+limitation; subsequent versions reuse the public packages. Public repositories
+must expose their GHCR packages publicly for anonymous installs. Private forks
+keep private packages and require:
 
 ```bash
 echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin

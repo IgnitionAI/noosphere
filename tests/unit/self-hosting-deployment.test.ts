@@ -139,6 +139,21 @@ describe("self-hosting distribution", () => {
     }
   });
 
+  test("guides private GHCR packages through their landing page", () => {
+    const workflow = readFileSync(
+      join(repositoryRoot, ".github/workflows/release-images.yml"),
+      "utf8",
+    );
+    expect(workflow).not.toContain(
+      "packages/container/package/noosphere-${{ matrix.name }}/settings",
+    );
+    expect(workflow).toContain(
+      "packages/container/package/noosphere-${{ matrix.name }}",
+    );
+    expect(workflow).toContain("Sign in to github.com");
+    expect(workflow).toContain("click Package settings");
+  });
+
   test("records exact images and never rolls migrations or volumes back", () => {
     const release = readFileSync(join(repositoryRoot, "deploy/release.sh"), "utf8");
     expect(release).toContain("last-successful-release.json");
