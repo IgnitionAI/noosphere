@@ -121,8 +121,15 @@ jobs:
             anonymous_config="$(mktemp -d)"
             trap 'rm -rf "$anonymous_config"' EXIT
             if ! DOCKER_CONFIG="$anonymous_config" docker pull "$exact"; then
+              owner_type="${{ github.event.repository.owner.type }}"
+              if [[ "$owner_type" == "Organization" ]]; then
+                settings_url="https://github.com/orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/package/noosphere-${{ matrix.name }}/settings"
+              else
+                settings_url="https://github.com/users/${GITHUB_REPOSITORY_OWNER}/packages/container/package/noosphere-${{ matrix.name }}/settings"
+              fi
               echo "Public repositories must expose public GHCR packages for anonymous quickstart installs." >&2
-              echo "Open the package settings, set visibility to Public, then re-run this workflow." >&2
+              echo "GitHub creates a new container package as Private even when its repository is public." >&2
+              echo "Open $settings_url, set visibility to Public once, then re-run this workflow." >&2
               exit 1
             fi
           else

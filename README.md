@@ -53,6 +53,11 @@ Noosphere supports three distribution paths without YAML edits:
    lowercase fork owner;
 3. set `DEPLOY_MODE=local-build` to build all application images on the VPS.
 
+GitHub creates a fork's first GHCR packages as private even when the fork is
+public. The release workflow fails closed and prints the three exact package
+settings URLs. Set each package to `Public` once, then re-run the workflow;
+later tagged releases keep that visibility.
+
 Create a secure environment interactively:
 
 ```bash
