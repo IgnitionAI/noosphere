@@ -11,8 +11,8 @@ handlers Web `Request`/`Response`, `apps/worker` consomme les jobs PostgreSQL et
 `apps/crawler` reste le seul service Python. Les dépendances suivent
 `interface → application → domain`; les adaptateurs Drizzle, Unipile,
 LangChain/Kimi, S3 et crawler sont dans `packages/infrastructure` ;
-l’extraction standard est portée par `DocumentTextExtractor` avec `pdftotext`,
-tandis que Docling reste un adaptateur optionnel hors du chemin standard.
+l’extraction standard est portée par `DocumentTextExtractor` et un routeur
+local PDF/Office isolé ; les scans sont signalés `ocr_required` sans OCR.
 
 La base est PostgreSQL/Drizzle (`packages/infrastructure/src/database/schema.ts`).
 Better Auth gère l’identité tandis que `workspaces` et `workspace_members`

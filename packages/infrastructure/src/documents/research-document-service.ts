@@ -5,19 +5,14 @@ import {
   S3Client,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { OpenAIEmbeddings } from "@langchain/openai";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type { JobQueue, LeasedJob } from "@outbound/application/jobs/job-queue";
 import type { Clock, IdGenerator } from "@outbound/application/shared/ports";
-import type { Database, SqlClient } from "@outbound/infrastructure/database/client";
-import {
-  researchDocumentChunks,
-  researchDocuments,
-} from "@outbound/infrastructure/database/schema";
-import type { InternalDocumentSearch } from "@outbound/infrastructure/ai/research-tools";
+import type { Database } from "@outbound/infrastructure/database/client";
+import { researchDocuments } from "@outbound/infrastructure/database/schema";
 import type { DocumentTextExtractor } from "@outbound/application/documents/document-text-extractor";
-import { LightweightDocumentTextExtractor } from "@outbound/infrastructure/documents/lightweight-document-text-extractor";
-import { DoclingDocumentTextExtractor } from "@outbound/infrastructure/documents/docling-document-text-extractor";
+import type { DocumentTextExtraction } from "@outbound/application/documents/document-text-extractor";
+import { StructuredDocumentTextExtractor } from "@outbound/infrastructure/documents/structured-document-text-extractor";
 
 const MAX_DOCUMENT_BYTES = 50 * 1024 * 1024;
 const allowedContentTypes = new Set([
@@ -36,17 +31,25 @@ export interface ResearchDocumentServiceOptions {
   readonly region: string;
   readonly accessKeyId: string;
   readonly secretAccessKey: string;
-  readonly documentExtractor?: "lightweight" | "docling";
   readonly extractor?: DocumentTextExtractor;
-  readonly doclingUrl?: string;
-  readonly doclingApiKey?: string;
-  readonly openAIApiKey?: string;
-  readonly embeddingModel?: string;
+  readonly extractorProcessPath?: string;
+}
+
+export interface ResearchDocumentKnowledgeIndexer {
+  indexResearchDocument(input: {
+    readonly workspaceId: string;
+    readonly sourceDocumentId: string;
+    readonly filename: string;
+    readonly contentType: string;
+    readonly checksumSha256: string;
+    readonly sourceCreatedAt: Date;
+    readonly extraction: DocumentTextExtraction;
+    readonly chunks: readonly { content: string; heading: string | null; locator: string }[];
+  }): Promise<void>;
 }
 
 export class ResearchDocumentService {
   readonly #s3: S3Client;
-  readonly #embeddings: OpenAIEmbeddings | null;
   readonly #extractor: DocumentTextExtractor;
 
   constructor(
@@ -55,6 +58,7 @@ export class ResearchDocumentService {
     private readonly ids: IdGenerator,
     private readonly clock: Clock,
     private readonly options: ResearchDocumentServiceOptions,
+    private readonly knowledgeIndexer?: ResearchDocumentKnowledgeIndexer,
   ) {
     this.#s3 = new S3Client({
       endpoint: options.endpoint,
@@ -65,18 +69,10 @@ export class ResearchDocumentService {
         secretAccessKey: options.secretAccessKey,
       },
     });
-    this.#embeddings =
-      options.openAIApiKey && options.embeddingModel
-        ? new OpenAIEmbeddings({
-            apiKey: options.openAIApiKey,
-            model: options.embeddingModel,
-            dimensions: 1536,
-          })
-        : null;
     this.#extractor = options.extractor
-      ?? (options.documentExtractor === "docling"
-        ? new DoclingDocumentTextExtractor(options.doclingUrl ?? "", options.doclingApiKey)
-        : new LightweightDocumentTextExtractor());
+      ?? new StructuredDocumentTextExtractor(
+        options.extractorProcessPath ? { processPath: options.extractorProcessPath } : {},
+      );
   }
 
   async createUploadIntent(input: {
@@ -135,7 +131,7 @@ export class ResearchDocumentService {
   }) {
     const document = await this.#find(input.workspaceId, input.documentId);
     if (!document) throw new Error("RESEARCH_DOCUMENT_NOT_FOUND");
-    if (document.status === "ready" || document.status === "processing") return document;
+    if (["ready", "partial", "ocr_required", "processing"].includes(document.status)) return document;
     const object = await this.#s3.send(
       new HeadObjectCommand({ Bucket: this.options.bucket, Key: document.objectKey }),
     );
@@ -193,7 +189,9 @@ export class ResearchDocumentService {
     const payload = documentJobPayload(job.payload);
     const document = await this.#find(payload.workspaceId, payload.documentId);
     if (!document) throw new Error("RESEARCH_DOCUMENT_NOT_FOUND");
-    if (document.status === "ready") {
+    const alreadyIndexed = ["ready", "partial"].includes(document.status)
+      && await this.#hasActiveKnowledgeIndex(payload.workspaceId, payload.documentId);
+    if (alreadyIndexed || document.status === "ocr_required") {
       await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
       return;
     }
@@ -218,49 +216,57 @@ export class ResearchDocumentService {
       if (!matchesDeclaredContentType(document.contentType, bytes)) {
         throw new Error("RESEARCH_DOCUMENT_CONTENT_TYPE_MISMATCH");
       }
-      const markdown = await this.#extractMarkdown(document.filename, document.contentType, bytes);
-      const chunks = splitDocument(markdown);
-      if (!this.#embeddings) throw new Error("DOCUMENT_EMBEDDINGS_NOT_CONFIGURED");
-      const vectors = await this.#embeddings.embedDocuments(chunks.map((chunk) => chunk.content));
-      await this.db.transaction(async (tx) => {
-        await tx
-          .delete(researchDocumentChunks)
-          .where(
-            and(
-              eq(researchDocumentChunks.workspaceId, payload.workspaceId),
-              eq(researchDocumentChunks.documentId, payload.documentId),
-            ),
-          );
-        if (chunks.length) {
-          await tx.insert(researchDocumentChunks).values(
-            chunks.map((chunk, index) => ({
-              id: this.ids.generate(),
-              workspaceId: payload.workspaceId,
-              documentId: payload.documentId,
-              ordinal: index,
-              content: chunk.content,
-              contentHash: sha256(chunk.content),
-              tokenCount: Math.ceil(chunk.content.length / 4),
-              metadata: { heading: chunk.heading },
-              embedding: vectors[index]!,
-            })),
-          );
-        }
-        await tx
-          .update(researchDocuments)
-          .set({
-            status: "ready",
-            extractedMarkdown: markdown,
-            updatedAt: this.clock.now(),
-            failureCode: null,
-          })
-          .where(
-            and(
-              eq(researchDocuments.workspaceId, payload.workspaceId),
-              eq(researchDocuments.id, payload.documentId),
-            ),
-          );
+      const extraction = await this.#extractor.extract({
+        filename: document.filename,
+        contentType: document.contentType,
+        bytes,
       });
+      if (extraction.status === "ocr_required") {
+        await this.db.transaction(async (tx) => {
+          await tx.update(researchDocuments).set({
+            status: "ocr_required",
+            extractedMarkdown: null,
+            extractionProvider: extraction.provider,
+            extractionDurationMs: extraction.durationMs,
+            extractionMetrics: extraction.metrics,
+            extractionWarnings: extraction.warnings,
+            extractedAt: this.clock.now(),
+            updatedAt: this.clock.now(),
+            failureCode: "DOCUMENT_OCR_REQUIRED",
+          }).where(and(
+            eq(researchDocuments.workspaceId, payload.workspaceId),
+            eq(researchDocuments.id, payload.documentId),
+          ));
+        });
+        await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
+        return;
+      }
+      const chunks = documentChunksForExtraction(extraction);
+      if (!this.knowledgeIndexer) throw new Error("DOCUMENT_EMBEDDINGS_NOT_CONFIGURED");
+      await this.knowledgeIndexer.indexResearchDocument({
+        workspaceId: payload.workspaceId,
+        sourceDocumentId: payload.documentId,
+        filename: document.filename,
+        contentType: document.contentType,
+        checksumSha256: document.checksumSha256,
+        sourceCreatedAt: document.createdAt,
+        extraction,
+        chunks,
+      });
+      await this.db.update(researchDocuments).set({
+        status: extraction.status === "partial" ? "partial" : "ready",
+        extractedMarkdown: extraction.markdown,
+        extractionProvider: extraction.provider,
+        extractionDurationMs: extraction.durationMs,
+        extractionMetrics: extraction.metrics,
+        extractionWarnings: extraction.warnings,
+        extractedAt: this.clock.now(),
+        updatedAt: this.clock.now(),
+        failureCode: null,
+      }).where(and(
+        eq(researchDocuments.workspaceId, payload.workspaceId),
+        eq(researchDocuments.id, payload.documentId),
+      ));
       await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
     } catch (error) {
       const failureCode = documentProcessingFailureCode(error);
@@ -300,10 +306,6 @@ export class ResearchDocumentService {
     }
   }
 
-  async #extractMarkdown(filename: string, contentType: string, bytes: Uint8Array): Promise<string> {
-    return (await this.#extractor.extract({ filename, contentType, bytes })).markdown;
-  }
-
   async #find(workspaceId: string, documentId: string) {
     const rows = await this.db
       .select()
@@ -317,12 +319,32 @@ export class ResearchDocumentService {
       .limit(1);
     return rows[0] ?? null;
   }
+
+  async #hasActiveKnowledgeIndex(workspaceId: string, documentId: string): Promise<boolean> {
+    const rows = await this.db.execute(sql`
+      select 1
+      from knowledge_documents kd
+      join knowledge_chunk_sets kcs
+        on kcs.workspace_id = kd.workspace_id
+       and kcs.document_id = kd.id
+       and kcs.status = 'active'
+      where kd.workspace_id = ${workspaceId}
+        and kd.source_type = 'research_document'
+        and kd.source_id = ${documentId}
+      limit 1
+    `);
+    return rows.length > 0;
+  }
 }
 
 export function documentProcessingFailureDisposition(code: string): "terminal" | "retry" {
   return new Set([
     "DOCUMENT_FORMAT_UNSUPPORTED_BY_LIGHTWEIGHT_EXTRACTOR",
     "DOCUMENT_PDF_TOO_LARGE_FOR_LIGHTWEIGHT_EXTRACTOR",
+    "DOCUMENT_OCR_REQUIRED",
+    "DOCUMENT_ENCRYPTED_UNSUPPORTED",
+    "DOCUMENT_CONTENT_LIMIT_EXCEEDED",
+    "DOCUMENT_FORMAT_INVALID",
     "DOCUMENT_TEXT_EMPTY",
     "DOCUMENT_PDF_EXTRACTION_FAILED",
     "RESEARCH_DOCUMENT_CHECKSUM_MISMATCH",
@@ -336,95 +358,6 @@ function documentProcessingFailureCode(error: unknown): string {
   return /^[A-Z][A-Z0-9_]{2,159}$/.test(message)
     ? message
     : "RESEARCH_DOCUMENT_PROCESSING_FAILED";
-}
-
-export class ParadeDbInternalDocumentSearch implements InternalDocumentSearch {
-  readonly #embeddings: OpenAIEmbeddings;
-
-  constructor(
-    private readonly sqlClient: SqlClient,
-    openAIApiKey: string,
-    embeddingModel: string,
-  ) {
-    this.#embeddings = new OpenAIEmbeddings({
-      apiKey: openAIApiKey,
-      model: embeddingModel,
-      dimensions: 1536,
-    });
-  }
-
-  async search(input: {
-    workspaceId: string;
-    documentIds: readonly string[];
-    query: string;
-    limit: number;
-  }): Promise<readonly Record<string, unknown>[]> {
-    if (!input.documentIds.length) return [];
-    const embedding = await this.#embeddings.embedQuery(input.query);
-    const ids = `{${input.documentIds.join(",")}}`;
-    const vectorLiteral = `[${embedding.join(",")}]`;
-    return this.sqlClient`
-      with lexical as (
-        select id, row_number() over (order by paradedb.score(id) desc) as rank
-        from research_document_chunks
-        where workspace_id = ${input.workspaceId}
-          and document_id = any(${ids}::uuid[])
-          and content @@@ ${input.query}
-        limit ${input.limit * 3}
-      ),
-      semantic as (
-        select id, row_number() over (order by embedding <=> ${vectorLiteral}::vector) as rank
-        from research_document_chunks
-        where workspace_id = ${input.workspaceId}
-          and document_id = any(${ids}::uuid[])
-        limit ${input.limit * 3}
-      ),
-      fused as (
-        select coalesce(lexical.id, semantic.id) as id,
-          coalesce(1.0 / (60 + lexical.rank), 0) +
-          coalesce(1.0 / (60 + semantic.rank), 0) as score
-        from lexical full join semantic on lexical.id = semantic.id
-      )
-      select c.id, c.document_id as "documentId", c.ordinal, c.content,
-        c.metadata, fused.score
-      from fused
-      join research_document_chunks c on c.id = fused.id
-      order by fused.score desc
-      limit ${input.limit}
-    ` as Promise<readonly Record<string, unknown>[]>;
-  }
-
-  async read(input: {
-    workspaceId: string;
-    documentIds: readonly string[];
-    chunkId: string;
-    contextWindow: number;
-  }): Promise<Readonly<Record<string, unknown>> | null> {
-    if (!input.documentIds.length) return null;
-    const rows = await this.sqlClient<{
-      documentId: string;
-      ordinal: number;
-    }[]>`
-      select document_id as "documentId", ordinal
-      from research_document_chunks
-      where workspace_id = ${input.workspaceId}
-        and id = ${input.chunkId}
-        and document_id = any(${`{${input.documentIds.join(",")}}`}::uuid[])
-      limit 1
-    `;
-    const match = rows[0];
-    if (!match) return null;
-    const chunks = await this.sqlClient`
-      select id, document_id as "documentId", ordinal, content, metadata
-      from research_document_chunks
-      where workspace_id = ${input.workspaceId}
-        and document_id = ${match.documentId}
-        and ordinal between ${match.ordinal - input.contextWindow}
-          and ${match.ordinal + input.contextWindow}
-      order by ordinal
-    `;
-    return { documentId: match.documentId, chunks };
-  }
 }
 
 function validateUpload(input: {
@@ -455,23 +388,18 @@ function documentJobPayload(value: unknown): { workspaceId: string; documentId: 
   return { workspaceId, documentId };
 }
 
-function splitDocument(markdown: string): { content: string; heading: string | null }[] {
-  const sections = markdown.split(/(?=^#{1,3}\s)/m);
-  const chunks: { content: string; heading: string | null }[] = [];
-  for (const section of sections) {
-    const heading = section.match(/^#{1,3}\s+(.+)$/m)?.[1]?.trim() ?? null;
-    for (let offset = 0; offset < section.length; offset += 3_000) {
-      const content = section.slice(Math.max(0, offset - 300), offset + 3_500).trim();
-      if (content.length >= 40) chunks.push({ content, heading });
+export function documentChunksForExtraction(extraction: DocumentTextExtraction): { content: string; heading: string | null; locator: string }[] {
+  if (extraction.status === "ocr_required") return [];
+  const chunks: { content: string; heading: string | null; locator: string }[] = [];
+  for (const section of extraction.sections) {
+    for (let offset = 0; offset < section.content.length; offset += 3_000) {
+      const content = section.content.slice(Math.max(0, offset - 300), offset + 3_500).trim();
+      if (content.length >= 40) {
+        chunks.push({ content, heading: section.title, locator: section.locator });
+      }
     }
   }
   return chunks;
-}
-
-function sha256(value: string): string {
-  const hasher = new Bun.CryptoHasher("sha256");
-  hasher.update(value);
-  return hasher.digest("hex");
 }
 
 function sha256Bytes(value: Uint8Array): string {

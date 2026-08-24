@@ -987,7 +987,7 @@
       ],
       "post": {
         "operationId": "completeResearchDocumentUpload",
-        "summary": "Verify an upload and queue Docling extraction",
+        "summary": "Verify an upload and queue durable local extraction",
         "responses": {
           "202": {
             "description": "Document processing queued",
@@ -2848,6 +2848,11 @@
           "checksumSha256",
           "status",
           "failureCode",
+          "extractionProvider",
+          "extractionDurationMs",
+          "extractionMetrics",
+          "extractionWarnings",
+          "extractedAt",
           "createdAt",
           "updatedAt"
         ],
@@ -2875,6 +2880,8 @@
               "uploaded",
               "processing",
               "ready",
+              "partial",
+              "ocr_required",
               "failed",
               "deleted"
             ]
@@ -2884,6 +2891,25 @@
               "string",
               "null"
             ]
+          },
+          "extractionProvider": {
+            "type": ["string", "null"],
+            "enum": ["unpdf", "docx", "pptx", "xlsx", "html", "text", null]
+          },
+          "extractionDurationMs": {
+            "type": ["integer", "null"],
+            "minimum": 0
+          },
+          "extractionMetrics": {
+            "type": "object"
+          },
+          "extractionWarnings": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "extractedAt": {
+            "type": ["string", "null"],
+            "format": "date-time"
           },
           "createdAt": {
             "type": "string",

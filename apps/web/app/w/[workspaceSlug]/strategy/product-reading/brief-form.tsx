@@ -11,7 +11,7 @@ import {
   X,
 } from "lucide-react";
 import { useActionState, useState } from "react";
-import type { ProductResearchBrief } from "@/lib/api";
+import type { ProductResearchBrief, ResearchDocument } from "@/lib/api";
 import {
   createResearchMission,
   type CreateMissionState,
@@ -63,9 +63,11 @@ function languageSelection(languages: readonly string[] | undefined): string {
 export function BriefForm({
   workspaceSlug,
   initialBrief,
+  initialDocuments,
 }: {
   workspaceSlug: string;
   initialBrief?: ProductResearchBrief | null;
+  initialDocuments: readonly ResearchDocument[];
 }) {
   const action = createResearchMission.bind(null, workspaceSlug);
   const [state, formAction, pending] = useActionState<CreateMissionState, FormData>(
@@ -352,7 +354,18 @@ export function BriefForm({
               <span className="badge">Facultatif</span>
             </div>
             <div className="panel-body">
-              <DocumentUpload workspaceSlug={workspaceSlug} />
+              <DocumentUpload
+                workspaceSlug={workspaceSlug}
+                initialDocuments={initialDocuments
+                  .filter((document) => ["uploading", "uploaded", "processing", "ready", "partial", "ocr_required", "failed"].includes(document.status))
+                  .map((document) => ({
+                    id: document.id,
+                    filename: document.filename,
+                    status: document.status === "uploaded" || document.status === "uploading" ? "processing" : document.status,
+                    failureCode: document.failureCode,
+                    warnings: document.extractionWarnings,
+                  }))}
+              />
             </div>
           </section>
 

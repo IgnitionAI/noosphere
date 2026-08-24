@@ -608,17 +608,15 @@ function positiveIntegerEnvironment(name: string, fallback: number): number {
 }
 
 function documentServiceOptionsFromEnvironment() {
-  const extractor = process.env.DOCUMENT_EXTRACTOR === "docling" ? "docling" : "lightweight";
-  if (extractor === "docling" && !process.env.DOCLING_SERVICE_URL) throw new Error("DOCLING_SERVICE_URL is required when DOCUMENT_EXTRACTOR=docling");
+  if (process.env.DOCUMENT_EXTRACTOR?.toLowerCase() === "docling") {
+    throw new Error("DOCUMENT_EXTRACTOR=docling is no longer supported; remove the legacy configuration");
+  }
   return {
     bucket: requiredEnvironment("S3_BUCKET"),
     endpoint: requiredEnvironment("S3_ENDPOINT"),
     region: process.env.S3_REGION ?? "us-east-1",
     accessKeyId: requiredEnvironment("S3_ACCESS_KEY_ID"),
     secretAccessKey: requiredEnvironment("S3_SECRET_ACCESS_KEY"),
-    documentExtractor: extractor as "lightweight" | "docling",
-    ...(process.env.DOCLING_SERVICE_URL ? { doclingUrl: process.env.DOCLING_SERVICE_URL } : {}),
-    ...(process.env.DOCLING_API_KEY ? { doclingApiKey: process.env.DOCLING_API_KEY } : {}),
   };
 }
 

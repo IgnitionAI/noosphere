@@ -65,7 +65,7 @@ export class PostgresProductResearchRepository
           .where(
             and(
               eq(researchDocuments.workspaceId, run.snapshot.workspaceId),
-              eq(researchDocuments.status, "ready"),
+              inArray(researchDocuments.status, ["ready", "partial"]),
               inArray(researchDocuments.id, documentIds),
             ),
           );

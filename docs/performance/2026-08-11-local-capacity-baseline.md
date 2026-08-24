@@ -1,4 +1,8 @@
-# Baseline locale de capacité — 11 août 2026
+# Baseline locale de capacité — 11 août 2026 (historique obsolète)
+
+> Cette mesure documente l’ancien runtime Docling. Depuis la migration 0093,
+> Noosphere ne déploie plus ce service et utilise le routeur PDF/Office Bun.
+> Les chiffres restent ici uniquement comme preuve historique.
 
 ## Objectif
 

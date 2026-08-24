@@ -9,6 +9,7 @@ import {
   bigserial,
   boolean,
   check,
+  customType,
   foreignKey,
   index,
   integer,
@@ -23,8 +24,13 @@ import {
   uniqueIndex,
   uuid,
   varchar,
-  vector,
 } from "drizzle-orm/pg-core";
+
+const unboundedVector = customType<{ data: number[]; driverData: string }>({
+  dataType: () => "vector",
+  toDriver: (value) => `[${value.join(",")}]`,
+  fromDriver: (value) => value.slice(1, -1).split(",").map(Number),
+});
 
 export const productResearchStatusEnum = pgEnum("product_research_status", [
   "draft",
@@ -105,6 +111,28 @@ export const knowledgeClaimStatusEnum = pgEnum("knowledge_claim_status", [
   "draft",
   "validated",
 ]);
+export const embeddingModelStatusEnum = pgEnum("embedding_model_status", [
+  "registered",
+  "backfilling",
+  "validating",
+  "active",
+  "retired",
+  "failed",
+]);
+export const knowledgeDocumentSourceTypeEnum = pgEnum("knowledge_document_source_type", [
+  "research_document",
+  "knowledge_source",
+  "offer",
+  "proof",
+]);
+export const knowledgeIndexStatusEnum = pgEnum("knowledge_index_status", [
+  "building",
+  "ready",
+  "validating",
+  "active",
+  "failed",
+  "retired",
+]);
 export const aiCapabilityEnum = pgEnum("ai_capability", [
   "icp_research",
   "message_generation",
@@ -140,6 +168,8 @@ export const researchDocumentStatusEnum = pgEnum("research_document_status", [
   "uploaded",
   "processing",
   "ready",
+  "partial",
+  "ocr_required",
   "failed",
   "deleted",
 ]);
@@ -946,6 +976,11 @@ export const researchDocuments = pgTable(
     objectKey: text("object_key").notNull(),
     status: researchDocumentStatusEnum("status").notNull().default("uploading"),
     extractedMarkdown: text("extracted_markdown"),
+    extractionProvider: varchar("extraction_provider", { length: 40 }),
+    extractionDurationMs: integer("extraction_duration_ms"),
+    extractionMetrics: jsonb("extraction_metrics").notNull().default(sql`'{}'::jsonb`),
+    extractionWarnings: jsonb("extraction_warnings").notNull().default(sql`'[]'::jsonb`),
+    extractedAt: timestamp("extracted_at", { withTimezone: true }),
     failureCode: varchar("failure_code", { length: 120 }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -961,42 +996,167 @@ export const researchDocuments = pgTable(
   ],
 );
 
-export const researchDocumentChunks = pgTable(
-  "research_document_chunks",
+export const embeddingModelRevisions = pgTable(
+  "embedding_model_revisions",
+  {
+    id: uuid("id").primaryKey(),
+    provider: varchar("provider", { length: 40 }).notNull(),
+    modelId: varchar("model_id", { length: 300 }).notNull(),
+    modelSha: varchar("model_sha", { length: 64 }).notNull(),
+    runtimeArtifactModelId: varchar("runtime_artifact_model_id", { length: 300 }).notNull(),
+    runtimeArtifactSha: varchar("runtime_artifact_sha", { length: 64 }).notNull(),
+    dimension: integer("dimension").notNull(),
+    distanceMetric: varchar("distance_metric", { length: 40 }).notNull().default("cosine"),
+    normalized: boolean("normalized").notNull().default(true),
+    queryInstruction: text("query_instruction").notNull(),
+    configuration: jsonb("configuration").notNull().default(sql`'{}'::jsonb`),
+    configurationHash: varchar("configuration_hash", { length: 64 }).notNull(),
+    vectorIndexName: varchar("vector_index_name", { length: 63 }),
+    status: embeddingModelStatusEnum("status").notNull().default("registered"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    activatedAt: timestamp("activated_at", { withTimezone: true }),
+    retiredAt: timestamp("retired_at", { withTimezone: true }),
+    retireAfter: timestamp("retire_after", { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex("embedding_model_revisions_identity_uq").on(table.provider, table.modelId, table.modelSha, table.configurationHash),
+    check("embedding_model_revisions_dimension_ck", sql`${table.dimension} between 1 and 4096`),
+    check("embedding_model_revisions_metric_ck", sql`${table.distanceMetric} = 'cosine'`),
+  ],
+);
+
+export const knowledgeSearchRuntime = pgTable("knowledge_search_runtime", {
+  singleton: boolean("singleton").primaryKey().default(true),
+  activeModelRevisionId: uuid("active_model_revision_id").notNull().references(() => embeddingModelRevisions.id, { onDelete: "restrict" }),
+  rerankerModelId: varchar("reranker_model_id", { length: 300 }).notNull(),
+  rerankerModelSha: varchar("reranker_model_sha", { length: 64 }).notNull(),
+  rerankerRuntimeArtifactModelId: varchar("reranker_runtime_artifact_model_id", { length: 300 }).notNull(),
+  rerankerRuntimeArtifactSha: varchar("reranker_runtime_artifact_sha", { length: 64 }).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [check("knowledge_search_runtime_singleton_ck", sql`${table.singleton} = true`)]);
+
+export const knowledgeDocuments = pgTable(
+  "knowledge_documents",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    sourceType: knowledgeDocumentSourceTypeEnum("source_type").notNull(),
+    sourceId: uuid("source_id").notNull(),
+    title: varchar("title", { length: 500 }).notNull(),
+    format: varchar("format", { length: 100 }).notNull(),
+    language: varchar("language", { length: 20 }),
+    validationStatus: varchar("validation_status", { length: 40 }).notNull(),
+    contentHash: varchar("content_hash", { length: 64 }).notNull(),
+    offerId: uuid("offer_id"),
+    icpId: uuid("icp_id"),
+    runId: uuid("run_id"),
+    tags: jsonb("tags").notNull().default(sql`'[]'::jsonb`),
+    sourceCreatedAt: timestamp("source_created_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique("knowledge_documents_workspace_id_uq").on(table.workspaceId, table.id),
+    uniqueIndex("knowledge_documents_source_uq").on(table.workspaceId, table.sourceType, table.sourceId),
+    index("knowledge_documents_filters_idx").on(table.workspaceId, table.validationStatus, table.sourceType, table.format),
+    index("knowledge_documents_offer_icp_run_idx").on(table.workspaceId, table.offerId, table.icpId, table.runId),
+  ],
+);
+
+export const knowledgeChunkSets = pgTable(
+  "knowledge_chunk_sets",
   {
     id: uuid("id").primaryKey(),
     workspaceId: uuid("workspace_id").notNull(),
     documentId: uuid("document_id").notNull(),
+    chunkerId: varchar("chunker_id", { length: 100 }).notNull(),
+    chunkerVersion: varchar("chunker_version", { length: 40 }).notNull(),
+    configuration: jsonb("configuration").notNull(),
+    configurationHash: varchar("configuration_hash", { length: 64 }).notNull(),
+    sourceContentHash: varchar("source_content_hash", { length: 64 }).notNull(),
+    status: knowledgeIndexStatusEnum("status").notNull().default("building"),
+    chunkCount: integer("chunk_count").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    activatedAt: timestamp("activated_at", { withTimezone: true }),
+    retiredAt: timestamp("retired_at", { withTimezone: true }),
+  },
+  (table) => [
+    foreignKey({ columns: [table.workspaceId, table.documentId], foreignColumns: [knowledgeDocuments.workspaceId, knowledgeDocuments.id], name: "knowledge_chunk_sets_workspace_document_fk" }).onDelete("cascade"),
+    unique("knowledge_chunk_sets_workspace_id_uq").on(table.workspaceId, table.id),
+    uniqueIndex("knowledge_chunk_sets_revision_uq").on(table.workspaceId, table.documentId, table.chunkerId, table.chunkerVersion, table.configurationHash, table.sourceContentHash),
+    index("knowledge_chunk_sets_active_idx").on(table.workspaceId, table.documentId, table.status),
+  ],
+);
+
+export const knowledgeChunks = pgTable(
+  "knowledge_chunks",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    documentId: uuid("document_id").notNull(),
+    chunkSetId: uuid("chunk_set_id").notNull(),
     ordinal: integer("ordinal").notNull(),
+    locator: varchar("locator", { length: 500 }),
+    title: varchar("title", { length: 500 }),
     content: text("content").notNull(),
     contentHash: varchar("content_hash", { length: 64 }).notNull(),
     tokenCount: integer("token_count").notNull(),
+    language: varchar("language", { length: 20 }),
+    sourceType: knowledgeDocumentSourceTypeEnum("source_type").notNull(),
+    format: varchar("format", { length: 100 }).notNull(),
+    validationStatus: varchar("validation_status", { length: 40 }).notNull(),
+    offerId: uuid("offer_id"),
+    icpId: uuid("icp_id"),
+    runId: uuid("run_id"),
+    tags: jsonb("tags").notNull().default(sql`'[]'::jsonb`),
     metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
-    embedding: vector("embedding", { dimensions: 1536 }).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    foreignKey({
-      columns: [table.workspaceId, table.documentId],
-      foreignColumns: [researchDocuments.workspaceId, researchDocuments.id],
-      name: "research_document_chunks_workspace_document_fk",
-    }).onDelete("cascade"),
-    uniqueIndex("research_document_chunks_ordinal_uq").on(
-      table.workspaceId,
-      table.documentId,
-      table.ordinal,
-    ),
-    unique("research_document_chunks_workspace_id_uq").on(table.workspaceId, table.id),
-    index("research_document_chunks_workspace_document_idx").on(
-      table.workspaceId,
-      table.documentId,
-    ),
-    index("research_document_chunks_embedding_hnsw_idx").using(
-      "hnsw",
-      table.embedding.op("vector_cosine_ops"),
-    ),
+    foreignKey({ columns: [table.workspaceId, table.documentId], foreignColumns: [knowledgeDocuments.workspaceId, knowledgeDocuments.id], name: "knowledge_chunks_workspace_document_fk" }).onDelete("cascade"),
+    foreignKey({ columns: [table.workspaceId, table.chunkSetId], foreignColumns: [knowledgeChunkSets.workspaceId, knowledgeChunkSets.id], name: "knowledge_chunks_workspace_set_fk" }).onDelete("cascade"),
+    unique("knowledge_chunks_workspace_id_uq").on(table.workspaceId, table.id),
+    uniqueIndex("knowledge_chunks_ordinal_uq").on(table.workspaceId, table.chunkSetId, table.ordinal),
+    index("knowledge_chunks_filters_idx").on(table.workspaceId, table.validationStatus, table.sourceType, table.format),
+    index("knowledge_chunks_document_idx").on(table.workspaceId, table.documentId, table.chunkSetId),
   ],
 );
+
+export const knowledgeChunkEmbeddings = pgTable(
+  "knowledge_chunk_embeddings",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull(),
+    chunkId: uuid("chunk_id").notNull(),
+    modelRevisionId: uuid("model_revision_id").notNull().references(() => embeddingModelRevisions.id, { onDelete: "cascade" }),
+    embedding: unboundedVector("embedding").notNull(),
+    dimension: integer("dimension").notNull(),
+    inputHash: varchar("input_hash", { length: 64 }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({ columns: [table.workspaceId, table.chunkId], foreignColumns: [knowledgeChunks.workspaceId, knowledgeChunks.id], name: "knowledge_chunk_embeddings_workspace_chunk_fk" }).onDelete("cascade"),
+    uniqueIndex("knowledge_chunk_embeddings_revision_uq").on(table.workspaceId, table.chunkId, table.modelRevisionId),
+    index("knowledge_chunk_embeddings_workspace_revision_idx").on(table.workspaceId, table.modelRevisionId),
+    check("knowledge_chunk_embeddings_dimension_ck", sql`vector_dims(${table.embedding}) = ${table.dimension}`),
+  ],
+);
+
+export const embeddingReindexRuns = pgTable("embedding_reindex_runs", {
+  id: uuid("id").primaryKey(),
+  modelRevisionId: uuid("model_revision_id").notNull().references(() => embeddingModelRevisions.id, { onDelete: "restrict" }),
+  status: knowledgeIndexStatusEnum("status").notNull().default("building"),
+  eligibleChunks: integer("eligible_chunks").notNull().default(0),
+  embeddedChunks: integer("embedded_chunks").notNull().default(0),
+  failedChunks: integer("failed_chunks").notNull().default(0),
+  checkpoint: jsonb("checkpoint").notNull().default(sql`'{}'::jsonb`),
+  qualityMetrics: jsonb("quality_metrics").notNull().default(sql`'{}'::jsonb`),
+  capacityMetrics: jsonb("capacity_metrics").notNull().default(sql`'{}'::jsonb`),
+  correlationId: varchar("correlation_id", { length: 200 }).notNull(),
+  startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+  activatedAt: timestamp("activated_at", { withTimezone: true }),
+});
 
 export const productResearchRunDocuments = pgTable(
   "product_research_run_documents",
