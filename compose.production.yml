@@ -8,7 +8,7 @@ x-default-logging: &default-logging
 
 services:
   migrate:
-    image: ${BACKEND_IMAGE:-ghcr.io/ignitionai/noosphere-backend:${APP_VERSION:-dev}}
+    image: ${BACKEND_IMAGE:-${IMAGE_REGISTRY:-ghcr.io}/${IMAGE_NAMESPACE:-ignitionai}/${IMAGE_PREFIX:-noosphere}-backend:${APP_VERSION:-dev}}
     build:
       context: .
       dockerfile: Dockerfile.backend
@@ -24,7 +24,7 @@ services:
     networks: [outbound-private]
 
   api:
-    image: ${BACKEND_IMAGE:-ghcr.io/ignitionai/noosphere-backend:${APP_VERSION:-dev}}
+    image: ${BACKEND_IMAGE:-${IMAGE_REGISTRY:-ghcr.io}/${IMAGE_NAMESPACE:-ignitionai}/${IMAGE_PREFIX:-noosphere}-backend:${APP_VERSION:-dev}}
     build:
       context: .
       dockerfile: Dockerfile.backend
@@ -56,7 +56,7 @@ services:
     networks: [outbound-private]
 
   web:
-    image: ${WEB_IMAGE:-ghcr.io/ignitionai/noosphere-web:${APP_VERSION:-dev}}
+    image: ${WEB_IMAGE:-${IMAGE_REGISTRY:-ghcr.io}/${IMAGE_NAMESPACE:-ignitionai}/${IMAGE_PREFIX:-noosphere}-web:${APP_VERSION:-dev}}
     build:
       context: .
       dockerfile: Dockerfile.web
@@ -79,7 +79,7 @@ services:
     networks: [outbound-private]
 
   worker:
-    image: ${BACKEND_IMAGE:-ghcr.io/ignitionai/noosphere-backend:${APP_VERSION:-dev}}
+    image: ${BACKEND_IMAGE:-${IMAGE_REGISTRY:-ghcr.io}/${IMAGE_NAMESPACE:-ignitionai}/${IMAGE_PREFIX:-noosphere}-backend:${APP_VERSION:-dev}}
     build:
       context: .
       dockerfile: Dockerfile.backend
@@ -112,7 +112,7 @@ services:
     networks: [outbound-private]
 
   decision-worker:
-    image: ${BACKEND_IMAGE:-ghcr.io/ignitionai/noosphere-backend:${APP_VERSION:-dev}}
+    image: ${BACKEND_IMAGE:-${IMAGE_REGISTRY:-ghcr.io}/${IMAGE_NAMESPACE:-ignitionai}/${IMAGE_PREFIX:-noosphere}-backend:${APP_VERSION:-dev}}
     build:
       context: .
       dockerfile: Dockerfile.backend
@@ -149,7 +149,7 @@ services:
     networks: [outbound-private]
 
   setter-worker:
-    image: ${BACKEND_IMAGE:-ghcr.io/ignitionai/noosphere-backend:${APP_VERSION:-dev}}
+    image: ${BACKEND_IMAGE:-${IMAGE_REGISTRY:-ghcr.io}/${IMAGE_NAMESPACE:-ignitionai}/${IMAGE_PREFIX:-noosphere}-backend:${APP_VERSION:-dev}}
     build:
       context: .
       dockerfile: Dockerfile.backend
@@ -188,7 +188,7 @@ services:
     networks: [outbound-private]
 
   memory-worker:
-    image: ${BACKEND_IMAGE:-ghcr.io/ignitionai/noosphere-backend:${APP_VERSION:-dev}}
+    image: ${BACKEND_IMAGE:-${IMAGE_REGISTRY:-ghcr.io}/${IMAGE_NAMESPACE:-ignitionai}/${IMAGE_PREFIX:-noosphere}-backend:${APP_VERSION:-dev}}
     build:
       context: .
       dockerfile: Dockerfile.backend
@@ -288,7 +288,7 @@ services:
     logging: *default-logging
 
   codex-auth:
-    image: ${BACKEND_IMAGE:-ghcr.io/ignitionai/noosphere-backend:${APP_VERSION:-dev}}
+    image: ${BACKEND_IMAGE:-${IMAGE_REGISTRY:-ghcr.io}/${IMAGE_NAMESPACE:-ignitionai}/${IMAGE_PREFIX:-noosphere}-backend:${APP_VERSION:-dev}}
     build:
       context: .
       dockerfile: Dockerfile.backend

@@ -185,7 +185,7 @@ A green suite is not a live proof. Read the [Prospect 360 validation report](doc
 
 ## VPS deployment
 
-The standard deployment uses `compose.infrastructure.yml` and `compose.production.yml` for the API, web app, crawler, PostgreSQL, MinIO and specialized workers. Follow the [VPS production runbook](docs/runbooks/vps-production.md) for TLS, migrations, backups, restores and canaries.
+The standard deployment uses `compose.infrastructure.yml` and `compose.production.yml` for the API, web app, crawler, PostgreSQL, MinIO and specialized workers. It supports official public images, GHCR images produced by a fork, or a local VPS build. Follow the [self-hosting runbook](docs/runbooks/vps-production.md) for TLS, migrations, backups, restores and canaries.
 
 ### Choose the server
 
@@ -225,13 +225,18 @@ Public prices checked on 24 August 2026 and subject to VAT and contract changes:
 
 Recommended system configuration: Debian 12 x86_64, 8 GiB emergency swap with `vm.swappiness=10`, off-server PostgreSQL and MinIO backups, and public exposure restricted to HTTP(S) and restricted SSH. PostgreSQL, MinIO and TEI remain on the private Docker network.
 
+Two profiles are available: `quickstart` for one light workspace with local
+backups, and `production` with off-VPS Restic, monitoring and restore drills.
+The configurator generates every secret locally:
+
 ```bash
-cp deploy/.env.production.example .env
-chmod 600 .env
-ENV_FILE=.env bash deploy/validate-production-env.sh
-docker compose --env-file .env \
-  -f compose.infrastructure.yml -f compose.production.yml up -d
+bash deploy/configure.sh
+ENV_FILE=.env bash deploy/doctor.sh
+ENV_FILE=.env bash deploy/release.sh
 ```
+
+A healthy UI is not enough to prospect: you also need a working Codex/Kimi/
+OpenAI route and at least one connected channel account.
 
 The deployment starts no external document extractor. Each extraction runs in a transient Bun process and remains durably driven by PostgreSQL jobs.
 
@@ -246,7 +251,7 @@ Do not run a real LinkedIn, email or WhatsApp canary without explicit authorizat
 - [OpenAPI contract](packages/contracts/openapi/product-research-v1.json)
 - [AI boundary](docs/product/AI_BOUNDARY.md)
 - [Product backlog](docs/product/NOOSPHERE_BACKLOG.md)
-- [Production runbook](docs/runbooks/vps-production.md)
+- [Self-hosting runbook](docs/runbooks/vps-production.md)
 - [Prospect 360 context design](docs/architecture/2026-08-23-prospect-360-memory-context-engineering.md)
 
 ## Contributing and security

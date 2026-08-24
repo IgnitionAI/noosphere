@@ -19,6 +19,7 @@ __pycache__/
 .env.*
 !.env.example
 !deploy/.env.production.example
+!deploy/.env.quickstart.example
 
 # Python
 __pycache__/

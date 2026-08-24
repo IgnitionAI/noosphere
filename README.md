@@ -2,7 +2,7 @@
 
 **Open-source growth intelligence: discover the right market, run outbound, publish inbound content, and turn conversations into calls.**
 
-[Documentation française](README.fr.md) · [English documentation](README.en.md) · [Architecture](docs/architecture/ARCHITECTURE.md) · [Production runbook](docs/runbooks/vps-production.md) · [Required subscriptions](docs/runbooks/required-subscriptions.md)
+[Documentation française](README.fr.md) · [English documentation](README.en.md) · [Architecture](docs/architecture/ARCHITECTURE.md) · [Self-hosting](docs/runbooks/vps-production.md) · [Required subscriptions](docs/runbooks/required-subscriptions.md)
 
 Noosphere brings the GTM loop into one multi-workspace application:
 
@@ -38,24 +38,42 @@ bun run dev:setup
 bun run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). The production-like Compose stack and VPS procedure are documented in the [production runbook](docs/runbooks/vps-production.md).
+Open [http://localhost:3000](http://localhost:3000).
 
-The private production application is a responsive web UI served by Caddy and
-works from desktop and mobile browsers. It can use the existing
-`noosphere.ignitionai.fr` subdomain; no separate domain purchase is required,
-and a future marketing domain remains independent from the application host.
+## Self-hosting
 
-For production, start from the tracked, secret-free template:
+The same responsive UI can be hosted privately behind Caddy and used from a
+phone or desktop browser. Supply any domain or subdomain that points to the VPS;
+the application hostname does not need to be the future marketing domain.
+
+Noosphere supports three distribution paths without YAML edits:
+
+1. pull official public images from `ghcr.io/ignitionai`;
+2. tag a public or private fork and let its workflow publish images under the
+   lowercase fork owner;
+3. set `DEPLOY_MODE=local-build` to build all application images on the VPS.
+
+Create a secure environment interactively:
 
 ```bash
-cp deploy/.env.production.example .env
-ENV_FILE=.env bash deploy/validate-production-env.sh
+bash deploy/configure.sh
+ENV_FILE=.env bash deploy/doctor.sh
+ENV_FILE=.env bash deploy/release.sh
 ```
 
-Production releases are immutable GHCR images built from green `main` commits
-and semantic-version tags. The VPS pulls those images; it does not build from a
-mutable Git branch. Daily encrypted off-site backups, five-minute health checks
-and monthly restore drills are included in `deploy/systemd/`.
+`quickstart` gives one light workspace HTTPS, daily local backups and a clear
+warning that VPS loss also loses those backups. `production` additionally
+requires encrypted off-VPS Restic storage, monitoring and restore drills. The
+configurator generates secrets locally, writes `.env` with mode `0600` and
+refuses to overwrite it by default.
+
+See the complete [self-hosting runbook](docs/runbooks/vps-production.md) for
+fork releases, private GHCR login, updates, exact-digest rollback and backup
+restoration.
+
+A running UI is not yet an operational prospecting system: AI features need a
+configured Codex CLI, Kimi Code or OpenAI route, and outreach needs at least one
+connected LinkedIn, email or WhatsApp provider account.
 
 ## Verification
 

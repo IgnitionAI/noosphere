@@ -7,7 +7,9 @@ on:
 
 permissions:
   actions: read
+  attestations: write
   contents: read
+  id-token: write
   packages: write
 
 jobs:
@@ -26,7 +28,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           conclusion="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/check.yml/runs?head_sha=$GITHUB_SHA&per_page=20" \
-            --jq '.workflow_runs | map(select(.event == "push")) | first | .conclusion')"
+            --jq '.workflow_runs | map(select(.conclusion == "success")) | first | .conclusion')"
           if [[ "$conclusion" != "success" ]]; then
             echo "The Check workflow is not green for $GITHUB_SHA (conclusion: ${conclusion:-missing})" >&2
             exit 1
@@ -40,20 +42,29 @@ jobs:
       matrix:
         include:
           - name: backend
-            image: ghcr.io/ignitionai/noosphere-backend
             context: .
             dockerfile: Dockerfile.backend
           - name: web
-            image: ghcr.io/ignitionai/noosphere-web
             context: .
             dockerfile: Dockerfile.web
           - name: crawler
-            image: ghcr.io/ignitionai/noosphere-crawler
             context: apps/crawler
             dockerfile: apps/crawler/Dockerfile
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
+      - name: Resolve fork-safe image coordinates
+        id: image
+        shell: bash
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          short_sha="${GITHUB_SHA:0:12}"
+          image="ghcr.io/${owner}/noosphere-${{ matrix.name }}"
+          {
+            echo "name=$image"
+            echo "version_tag=$image:$GITHUB_REF_NAME"
+            echo "sha_tag=$image:sha-$short_sha"
+          } >> "$GITHUB_OUTPUT"
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -67,13 +78,77 @@ jobs:
           platforms: linux/amd64
           load: true
           push: false
-          tags: ${{ matrix.image }}:${{ github.ref_name }}
+          tags: |
+            ${{ steps.image.outputs.version_tag }}
+            ${{ steps.image.outputs.sha_tag }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.licenses=AGPL-3.0-only
+            org.opencontainers.image.title=Noosphere ${{ matrix.name }}
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
       - name: Scan runtime image
         run: >-
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock
           aquasec/trivy:0.67.2 image --exit-code 1 --severity CRITICAL,HIGH
-          --ignore-unfixed ${{ matrix.image }}:${{ github.ref_name }}
-      - name: Push immutable release image
-        run: docker push ${{ matrix.image }}:${{ github.ref_name }}
+          --ignore-unfixed ${{ steps.image.outputs.version_tag }}
+      - name: Push SemVer and commit tags
+        run: |
+          docker push "${{ steps.image.outputs.version_tag }}"
+          docker push "${{ steps.image.outputs.sha_tag }}"
+      - name: Resolve published digest
+        id: digest
+        run: |
+          digest="$(docker buildx imagetools inspect "${{ steps.image.outputs.version_tag }}" --format '{{.Manifest.Digest}}')"
+          if [[ ! "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+            echo "Published digest is invalid: $digest" >&2
+            exit 1
+          fi
+          echo "value=$digest" >> "$GITHUB_OUTPUT"
+      - name: Generate build provenance
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-name: ${{ steps.image.outputs.name }}
+          subject-digest: ${{ steps.digest.outputs.value }}
+          push-to-registry: true
+      - name: Verify published image can be downloaded
+        shell: bash
+        run: |
+          exact="${{ steps.image.outputs.name }}@${{ steps.digest.outputs.value }}"
+          if [[ "${{ github.event.repository.private }}" == "false" ]]; then
+            anonymous_config="$(mktemp -d)"
+            trap 'rm -rf "$anonymous_config"' EXIT
+            if ! DOCKER_CONFIG="$anonymous_config" docker pull "$exact"; then
+              echo "Public repositories must expose public GHCR packages for anonymous quickstart installs." >&2
+              echo "Open the package settings, set visibility to Public, then re-run this workflow." >&2
+              exit 1
+            fi
+          else
+            docker pull "$exact"
+          fi
+          runtime_user="$(docker image inspect "$exact" --format '{{.Config.User}}')"
+          runtime_architecture="$(docker image inspect "$exact" --format '{{.Architecture}}')"
+          printf 'user=%s\narchitecture=%s\n' "$runtime_user" "$runtime_architecture" | tee image-runtime.txt
+          if [[ -z "$runtime_user" || "$runtime_user" == "0" || "$runtime_user" == "root" || "$runtime_user" == 0:* ]]; then
+            echo "Runtime image must declare a non-root user" >&2
+            exit 1
+          fi
+          [[ "$runtime_architecture" == "amd64" ]]
+      - name: Archive release evidence
+        run: |
+          mkdir -p release-evidence
+          printf '%s\n' \
+            "image=${{ steps.image.outputs.name }}" \
+            "version=${{ github.ref_name }}" \
+            "commit=${{ github.sha }}" \
+            "digest=${{ steps.digest.outputs.value }}" \
+            "source=https://github.com/${{ github.repository }}" \
+            > "release-evidence/${{ matrix.name }}.txt"
+          mv image-runtime.txt "release-evidence/${{ matrix.name }}-runtime.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: noosphere-${{ matrix.name }}-${{ github.ref_name }}
+          path: release-evidence/
+          if-no-files-found: error

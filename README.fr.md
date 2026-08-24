@@ -185,7 +185,7 @@ Une suite verte ne remplace pas une preuve live. Consultez le [rapport de valida
 
 ## Déploiement VPS
 
-Le déploiement standard utilise `compose.infrastructure.yml` et `compose.production.yml`. Il comprend API, web, crawler, PostgreSQL, MinIO et workers spécialisés. Suivez le [runbook VPS](docs/runbooks/vps-production.md) pour TLS, migrations, sauvegardes, restauration et canary.
+Le déploiement standard utilise `compose.infrastructure.yml` et `compose.production.yml`. Il comprend API, web, crawler, PostgreSQL, MinIO et workers spécialisés. Il accepte les images publiques officielles, les images GHCR produites par un fork ou un build local sur le VPS. Suivez le [runbook self-hosting](docs/runbooks/vps-production.md) pour TLS, migrations, sauvegardes, restauration et canary.
 
 ### Choisir la machine
 
@@ -225,13 +225,18 @@ Prix publics relevés le 24 août 2026, susceptibles d’évoluer selon TVA et d
 
 Configuration système conseillée : Debian 12 x86_64, 8 Gio de swap de secours avec `vm.swappiness=10`, sauvegardes PostgreSQL et MinIO hors du serveur, et exposition publique limitée à HTTP(S) et SSH restreint. PostgreSQL, MinIO et les services TEI restent sur le réseau Docker privé.
 
+Deux profils sont disponibles : `quickstart` pour un workspace léger avec
+sauvegardes locales, et `production` avec Restic hors VPS, supervision et
+exercices de restauration. Le configurateur génère les secrets localement :
+
 ```bash
-cp deploy/.env.production.example .env
-chmod 600 .env
-ENV_FILE=.env bash deploy/validate-production-env.sh
-docker compose --env-file .env \
-  -f compose.infrastructure.yml -f compose.production.yml up -d
+bash deploy/configure.sh
+ENV_FILE=.env bash deploy/doctor.sh
+ENV_FILE=.env bash deploy/release.sh
 ```
+
+Une interface saine ne suffit pas pour prospecter : il faut aussi une route IA
+Codex/Kimi/OpenAI opérationnelle et au moins un compte de canal connecté.
 
 Le déploiement ne démarre aucun extracteur externe. Chaque extraction utilise un processus Bun transitoire et durablement piloté par les jobs PostgreSQL.
 
@@ -246,7 +251,7 @@ Ne lancez pas de canary LinkedIn, email ou WhatsApp réel sans autorisation expl
 - [Contrat OpenAPI](packages/contracts/openapi/product-research-v1.json)
 - [Frontière IA](docs/product/AI_BOUNDARY.md)
 - [Backlog produit](docs/product/NOOSPHERE_BACKLOG.md)
-- [Runbook production](docs/runbooks/vps-production.md)
+- [Runbook self-hosting](docs/runbooks/vps-production.md)
 - [Prospect 360 — design de contexte](docs/architecture/2026-08-23-prospect-360-memory-context-engineering.md)
 
 ## Contribuer et sécurité

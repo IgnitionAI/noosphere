@@ -133,7 +133,7 @@ services:
     networks: [outbound-private]
 
   crawler:
-    image: ${CRAWLER_IMAGE:-ghcr.io/ignitionai/noosphere-crawler:${APP_VERSION:-dev}}
+    image: ${CRAWLER_IMAGE:-${IMAGE_REGISTRY:-ghcr.io}/${IMAGE_NAMESPACE:-ignitionai}/${IMAGE_PREFIX:-noosphere}-crawler:${APP_VERSION:-dev}}
     build:
       context: ./apps/crawler
     depends_on:

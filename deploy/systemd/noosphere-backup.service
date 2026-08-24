@@ -1,5 +1,5 @@
 [Unit]
-Description=Noosphere encrypted backup
+Description=Noosphere durable backup
 After=docker.service network-online.target
 
 [Service]
