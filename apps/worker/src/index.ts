@@ -10,9 +10,15 @@ import { Sha256ContentHasher } from "@outbound/infrastructure/shared/sha256-cont
 import { createLangChainResearchAgentExecutorFromEnvironment } from "@outbound/infrastructure/ai/langchain-research-agent-executor";
 import { ResearchWorker } from "./research-worker";
 import {
-  ParadeDbInternalDocumentSearch,
   ResearchDocumentService,
 } from "@outbound/infrastructure/documents/research-document-service";
+import { TeiGrpcEmbeddingGateway, TeiGrpcReranker } from "@outbound/infrastructure/embeddings/tei-grpc-client";
+import {
+  ParadeDbVersionedKnowledgeSearch,
+  PostgresVersionedKnowledgeIndexer,
+} from "@outbound/infrastructure/knowledge/postgres-versioned-knowledge-index";
+import { PostgresEmbeddingRevisionManager } from "@outbound/infrastructure/knowledge/postgres-embedding-revision-manager";
+import { PostgresKnowledgeProjectionReconciler } from "@outbound/infrastructure/knowledge/postgres-knowledge-projection-reconciler";
 import { PostgresResearchToolRunRecorder } from "@outbound/infrastructure/ai/postgres-tool-run-recorder";
 import { PostgresWorkspaceAiSettingsRepository } from "@outbound/infrastructure/workspaces/postgres-workspace-ai-settings-repository";
 import { createWorkspaceStructuredModelFromEnvironment } from "@outbound/infrastructure/ai/model-runtime-from-environment";
@@ -169,17 +175,23 @@ const knowledgeRetriever = new PostgresKnowledgeRetriever(database.db, clock);
 const activeAiConfigurations = new PostgresActiveAiConfigurationReader(database.db);
 const aiRunRecorder = new PostgresAiRunRecorder(database.db, clock, ids);
 const documentOptions = documentServiceOptionsFromEnvironment();
+const embeddingGateway = new TeiGrpcEmbeddingGateway(embeddingOptionsFromEnvironment());
+const knowledgeReranker = new TeiGrpcReranker(rerankerOptionsFromEnvironment());
+const knowledgeIndexer = new PostgresVersionedKnowledgeIndexer(database.db, embeddingGateway, ids, clock);
+const embeddingRevisionManager = new PostgresEmbeddingRevisionManager(database.db);
+const knowledgeProjectionReconciler = new PostgresKnowledgeProjectionReconciler(database.db, knowledgeIndexer);
 const documentService = new ResearchDocumentService(
   database.db,
   queue,
   ids,
   clock,
   documentOptions,
+  knowledgeIndexer,
 );
-const documentSearch = new ParadeDbInternalDocumentSearch(
+const documentSearch = new ParadeDbVersionedKnowledgeSearch(
   database.client,
-  documentOptions.openAIApiKey,
-  documentOptions.embeddingModel,
+  embeddingGateway,
+  knowledgeReranker,
 );
 const workspaceArchiveStorage = new S3WorkspaceArchiveStorage({
   bucket: documentOptions.bucket,
@@ -512,6 +524,14 @@ const editorialLearningReconciler = new EditorialLearningReconciler(
 );
 const maintenance = {
   async reconcile() {
+    const purgedEmbeddingRevisions = await embeddingRevisionManager.purgeExpired();
+    const projectedKnowledgeDocuments = await knowledgeProjectionReconciler.reconcile().catch((error) => {
+      console.warn(JSON.stringify({
+        event: "knowledge_projection_deferred",
+        error: error instanceof Error ? error.message : String(error),
+      }));
+      return 0;
+    });
     const reconciledPreSendWaits = await jobOutcomeReconciler.reconcileExhaustedPreSendWaits();
     const reconciledRecoverableProviderRefusals = await jobOutcomeReconciler.reconcileRecoverableOutreachActions();
     const reconciledStaleProviderActions = await jobOutcomeReconciler.reconcileStaleOutreachActions();
@@ -531,6 +551,12 @@ const maintenance = {
     const automatedContentActions = await contentAutopilotReconciler.reconcile();
     if (automatedContentActions > 0) {
       console.info(JSON.stringify({ event: "linkedin_content_autopilot_progressed", actions: automatedContentActions }));
+    }
+    if (purgedEmbeddingRevisions > 0) {
+      console.info(JSON.stringify({ event: "expired_embedding_revisions_purged", revisions: purgedEmbeddingRevisions }));
+    }
+    if (projectedKnowledgeDocuments > 0) {
+      console.info(JSON.stringify({ event: "knowledge_documents_projected", documents: projectedKnowledgeDocuments }));
     }
     if (reconciledJobOutcomes > 0) {
       console.info(JSON.stringify({ event: "job_outcomes_reconciled", count: reconciledJobOutcomes }));
@@ -564,7 +590,7 @@ const maintenance = {
     if (editorialLearningVersions > 0) {
       console.info(JSON.stringify({ event: "linkedin_editorial_learning_updated", versions: editorialLearningVersions }));
     }
-    return dailyRuns + dailyIdeaRuns + automatedContentActions + assessmentJobs + repairedCampaigns + retainedSourcing + inboundEvents + reconciledProviderEffects + observedSocialPosts + observedSocialEngagements + attributedInteractions + editorialLearningVersions + reconciledJobOutcomes + prospectMemoryBackfills + reconciledPreSendWaits + reconciledRecoverableProviderRefusals + reconciledStaleProviderActions;
+    return dailyRuns + dailyIdeaRuns + automatedContentActions + assessmentJobs + repairedCampaigns + retainedSourcing + inboundEvents + reconciledProviderEffects + observedSocialPosts + observedSocialEngagements + attributedInteractions + editorialLearningVersions + reconciledJobOutcomes + prospectMemoryBackfills + reconciledPreSendWaits + reconciledRecoverableProviderRefusals + reconciledStaleProviderActions + purgedEmbeddingRevisions + projectedKnowledgeDocuments;
   },
 };
 const orchestrator = new ResearchOrchestrator(
@@ -733,18 +759,38 @@ function unavailableSocialPublishingAccounts(): SocialPublishingAccountResolver 
 }
 
 function documentServiceOptionsFromEnvironment() {
-  const extractor = process.env.DOCUMENT_EXTRACTOR === "docling" ? "docling" : "lightweight";
-  if (extractor === "docling" && !process.env.DOCLING_SERVICE_URL) throw new Error("DOCLING_SERVICE_URL is required when DOCUMENT_EXTRACTOR=docling");
+  if (process.env.DOCUMENT_EXTRACTOR?.toLowerCase() === "docling") {
+    throw new Error("DOCUMENT_EXTRACTOR=docling is no longer supported; remove the legacy configuration");
+  }
   return {
     bucket: requiredEnvironment("S3_BUCKET"),
     endpoint: requiredEnvironment("S3_ENDPOINT"),
     region: process.env.S3_REGION ?? "us-east-1",
     accessKeyId: requiredEnvironment("S3_ACCESS_KEY_ID"),
     secretAccessKey: requiredEnvironment("S3_SECRET_ACCESS_KEY"),
-    documentExtractor: extractor as "lightweight" | "docling",
-    ...(process.env.DOCLING_SERVICE_URL ? { doclingUrl: process.env.DOCLING_SERVICE_URL } : {}),
-    ...(process.env.DOCLING_API_KEY ? { doclingApiKey: process.env.DOCLING_API_KEY } : {}),
-    openAIApiKey: requiredEnvironment("OPENAI_API_KEY"),
-    embeddingModel: requiredEnvironment("OPENAI_EMBEDDING_MODEL"),
+  };
+}
+
+function embeddingOptionsFromEnvironment() {
+  return {
+    address: process.env.TEI_EMBEDDING_GRPC_ADDRESS ?? "127.0.0.1:8081",
+    expectedModelId: process.env.TEI_EMBEDDING_RUNTIME_MODEL_ID ?? "janni-t/qwen3-embedding-0.6b-int8-tei-onnx",
+    expectedModelSha: process.env.TEI_EMBEDDING_RUNTIME_MODEL_SHA ?? "8fe0c238c7c48016d28e750413ca492024be3ddf",
+    dimension: positiveIntegerEnvironment("TEI_EMBEDDING_DIMENSION", 1_024),
+    timeoutMs: positiveIntegerEnvironment("TEI_GRPC_TIMEOUT_MS", 15_000),
+    maxConcurrency: positiveIntegerEnvironment("TEI_EMBEDDING_CONCURRENCY", 1),
+    queryInstruction: process.env.TEI_QUERY_INSTRUCTION ?? "Given a search query, retrieve relevant passages that answer the query in French or English.",
+    ...(process.env.TEI_PROTO_PATH ? { protoPath: process.env.TEI_PROTO_PATH } : {}),
+  };
+}
+
+function rerankerOptionsFromEnvironment() {
+  return {
+    address: process.env.TEI_RERANKER_GRPC_ADDRESS ?? "127.0.0.1:8082",
+    expectedModelId: process.env.TEI_RERANKER_RUNTIME_MODEL_ID ?? "csylabs/bge-reranker-v2-m3-int8-onnx",
+    expectedModelSha: process.env.TEI_RERANKER_RUNTIME_MODEL_SHA ?? "eaf5072d7b1a3f1fa584cc7482c7efb8f784dca0",
+    dimension: 0,
+    timeoutMs: positiveIntegerEnvironment("TEI_GRPC_TIMEOUT_MS", 15_000),
+    ...(process.env.TEI_PROTO_PATH ? { protoPath: process.env.TEI_PROTO_PATH } : {}),
   };
 }

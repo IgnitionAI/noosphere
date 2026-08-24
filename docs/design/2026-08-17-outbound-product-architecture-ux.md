@@ -171,6 +171,10 @@ drawer “Détails d’exécution”.
 
 ### 3.4 Docling : décision de conception
 
+> **Décision remplacée par la migration 0093.** Docling et son profil optionnel
+> ont été supprimés. Le runtime actuel route localement PDF texte et Office ;
+> les scans restent explicitement `ocr_required`, sans fallback OCR.
+
 La baseline locale est suffisante pour prendre une décision pragmatique : une
 conversion PDF de 15 pages a atteint environ 2,7 Gio de RAM et 41,5 secondes,
 avec un pic de 2,38 Gio encore observé sous contention. Les documents internes

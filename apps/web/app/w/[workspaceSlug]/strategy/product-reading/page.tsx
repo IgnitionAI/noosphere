@@ -1,6 +1,6 @@
 import { ArrowRight, CircleAlert, Clock3, FileSearch, PauseCircle } from "lucide-react";
 import Link from "next/link";
-import { listResearchRuns, type ResearchRunSummary } from "@/lib/api";
+import { listResearchDocuments, listResearchRuns, type ResearchRunSummary } from "@/lib/api";
 import { BriefForm } from "./brief-form";
 import { loadProductReadingPageState } from "./product-reading-state";
 
@@ -12,9 +12,10 @@ export default async function ProductReadingPage({
   params: Promise<{ workspaceSlug: string }>;
 }) {
   const { workspaceSlug } = await params;
-  const { runs, historyUnavailable } = await loadProductReadingPageState(
-    () => listResearchRuns(workspaceSlug),
-  );
+  const [{ runs, historyUnavailable }, documents] = await Promise.all([
+    loadProductReadingPageState(() => listResearchRuns(workspaceSlug)),
+    listResearchDocuments(workspaceSlug).catch(() => []),
+  ]);
   const latestRun = runs[0] ?? null;
   const recoverableRun = runs.find((run) =>
     ["draft", "queued", "running", "paused", "ready_for_review", "completed", "partial", "interrupted"].includes(run.status),
@@ -64,7 +65,7 @@ export default async function ProductReadingPage({
       {recoverableRun ? (
         <RecoverableRun workspaceSlug={workspaceSlug} run={recoverableRun} />
       ) : null}
-      <BriefForm initialBrief={latestRun?.brief ?? null} workspaceSlug={workspaceSlug} />
+      <BriefForm initialBrief={latestRun?.brief ?? null} initialDocuments={documents} workspaceSlug={workspaceSlug} />
     </>
   );
 }

@@ -22,7 +22,8 @@ Technical details remain observable without taking over the product. Exceptions 
 | Setter corpus | automatic gate passed | 100/100 Codex Luna dry-runs, resolvable receipts, no sends |
 | Human editorial review | open | the review artifact exists but is not auto-labelled |
 | 2-vCPU / 8-GiB VPS | below the concurrent SLO | zero errors, memory-view p95 above target |
-| Recommended VPS | 4 vCPU / 16 GiB minimum | final measurement still required on that profile |
+| Light deployment | Netcup RS 2000 G12, 8 dedicated cores / 16 GiB | acceptable minimum for a canary or one lightly loaded workspace |
+| Recommended production | Netcup RS 4000 G12, 12 dedicated cores / 32 GiB | target for concurrent research, crawling, TEI and campaigns |
 | Real provider canary | not executed | requires explicit, bounded authorization |
 
 See the [Prospect 360 validation report](docs/performance/2026-08-23-prospect-360-memory-validation-report.md) for exact evidence. A shadow or dry-run result is never presented as proof of a real send.
@@ -74,7 +75,7 @@ Noosphere is a TypeScript/Bun modular monolith with an autonomous Python crawler
 | `apps/web` | Next.js 16 and React 19 |
 | `apps/crawler` | FastAPI, Crawl4AI, Playwright and SearXNG |
 
-Standard primitives are PostgreSQL/ParadeDB, S3-compatible MinIO, PostgreSQL jobs/outbox, Bun, Next.js and Docker Compose. Docling is not required by the standard deployment; the lightweight extractor handles text, Markdown, HTML and text PDFs.
+Standard primitives are PostgreSQL/ParadeDB, S3-compatible MinIO, PostgreSQL jobs/outbox, Bun, Next.js and Docker Compose. The local router extracts text PDFs, DOCX, PPTX, XLSX, HTML, Markdown and text; scans are reported without OCR.
 
 ```mermaid
 flowchart TB
@@ -145,10 +146,9 @@ Never commit `.env`, API keys, LinkedIn cookies, OAuth tokens or webhook secrets
 | Storage | `S3_ENDPOINT`, bucket and credentials | yes |
 | Crawler | `CRAWLER_SERVICE_URL`, `CRAWLER_API_KEY` | yes |
 | AI | `AI_PROVIDER` and the selected Kimi, Codex or OpenAI runtime | yes |
-| Embeddings | `OPENAI_API_KEY`, `OPENAI_EMBEDDING_MODEL` | for knowledge search |
+| Search | `TEI_EMBEDDING_*`, `TEI_RERANKER_*` | for knowledge search |
 | Channels | Unipile credentials and healthy account IDs | only for enabled channels |
-| Documents | `DOCUMENT_EXTRACTOR=lightweight` | standard value |
-| Docling | advanced-profile URL and key | no |
+| Documents | S3 storage, TEI Qwen and ParadeDB | for knowledge |
 
 For Codex, initialize the private Docker authentication volume as documented in the [provider runbook](docs/runbooks/provider-configuration.md). Models and fallbacks can then be selected per workspace and capability in the UI.
 
@@ -187,7 +187,43 @@ A green suite is not a live proof. Read the [Prospect 360 validation report](doc
 
 The standard deployment uses `compose.infrastructure.yml` and `compose.production.yml` for the API, web app, crawler, PostgreSQL, MinIO and specialized workers. Follow the [VPS production runbook](docs/runbooks/vps-production.md) for TLS, migrations, backups, restores and canaries.
 
-Current recommendation: **x86_64, 4 vCPU, 16 GiB RAM and at least 100 GiB SSD/NVMe**. The isolated 2-vCPU / 8-GiB benchmark completed without errors but missed the p95 targets under 100 concurrent Prospect 360 assemblies, so that smaller profile is not recommended for the complete platform.
+### Choose the server
+
+Deploy Noosphere on an **x86_64/AMD64 machine with NVMe storage**. No GPU is required: Qwen3 Embedding and the BGE reranker run locally through CPU-based TEI. Dedicated cores are preferable to shared vCPUs because PostgreSQL, Chromium and TEI can become CPU-bound at the same time.
+
+| Usage | Netcup machine | Resources | Recommendation |
+|---|---|---|---|
+| Remote development or short canary | VPS 2000 G12 | 8 shared vCPUs, 16 GiB, 512 GB NVMe | acceptable for deployment validation, not as the durable target |
+| Light usage | **RS 2000 G12** | **8 dedicated cores, 16 GiB, 512 GB NVMe** | acceptable minimum for one lightly loaded workspace |
+| Recommended production | **RS 4000 G12** | **12 dedicated cores, 32 GiB, 1 TB NVMe** | recommended target for the complete platform |
+
+The **RS 2000 G12** fits when all the following conditions remain true:
+
+- one active workspace;
+- few concurrent users;
+- no more than four concurrent crawls;
+- heavy document indexing and campaign workloads do not run concurrently;
+- moderate growth of documents, conversations and evidence.
+
+This profile is not a multi-workspace capacity guarantee. Benchmarks showed PostgreSQL using about eight cores during an aggressive scenario before accounting for Qwen, reranker and crawler CPU. On 16 GiB, monitor memory, swap, job lag and p95 latency. Upgrade to the RS 4000 when sustained memory exceeds 12 GiB, swap remains active, CPU exceeds 70% for 15 minutes or multiple workspaces must run concurrently.
+
+The **RS 4000 G12** is the production recommendation. Its headroom keeps both TEI models resident while crawls, workers, PostgreSQL, MinIO and backups operate together instead of sizing the platform for idle conditions.
+
+### When embeddings are actually used
+
+The TEI services stay running and keep their models resident to avoid cold starts lasting several dozen seconds. Resident memory does not mean continuous CPU usage: Qwen computes embeddings only in the following cases:
+
+- when an eligible document, offer, proof or knowledge item is imported or changed;
+- during hybrid knowledge search, to embed the query;
+- during a full reindex or a future model migration.
+
+The reconciler checks content hashes before calling TEI, so unchanged content is not embedded again on every worker pass. The BGE reranker runs only after hybrid retrieval, on a small candidate set. Message synchronization, prospect sourcing, post writing, sends and the Setter's normal execution do not currently invoke Qwen Embedding.
+
+For one lightly used workspace, embedding load is therefore **occasional**; the permanent cost is mainly the RAM reserved for warm models. The truly intensive case is importing a large corpus or running a full reindex. This is why the RS 2000 is appropriate for one workspace, while the RS 4000 mainly provides headroom for multi-workspace concurrency and simultaneous heavy operations.
+
+Public prices checked on 24 August 2026 and subject to VAT and contract changes: RS 2000 G12 from **€21.43/month including VAT** and RS 4000 G12 from **€39.92/month including VAT**. See [Netcup Root Server G12](https://www.netcup.com/en/server/root-server) for current specifications. The local measurement protocol and its limitations are recorded in the [capacity report](docs/performance/2026-08-21-noosphere-standard-stack-capacity.md).
+
+Recommended system configuration: Debian 12 x86_64, 8 GiB emergency swap with `vm.swappiness=10`, off-server PostgreSQL and MinIO backups, and public exposure restricted to HTTP(S) and restricted SSH. PostgreSQL, MinIO and TEI remain on the private Docker network.
 
 ```bash
 cp deploy/.env.production.example .env
@@ -197,7 +233,7 @@ docker compose --env-file .env \
   -f compose.infrastructure.yml -f compose.production.yml up -d
 ```
 
-The standard deployment does not start Docling. `documents-advanced` remains an optional profile.
+The deployment starts no external document extractor. Each extraction runs in a transient Bun process and remains durably driven by PostgreSQL jobs.
 
 Do not run a real LinkedIn, email or WhatsApp canary without explicit authorization bounded to the relevant account, workspace and content.
 

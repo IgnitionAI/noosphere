@@ -48,13 +48,16 @@ Setter durables et Prospect 360. Leur absence ne casse pas la page web, mais
 laisse les jobs en file ; le healthcheck de déploiement doit donc vérifier leur
 présence en plus de l'API et du web.
 
-L’extracteur documentaire standard ne dépend pas de Docling. Pour activer
-l’OCR et les tableaux complexes, définir `DOCUMENT_EXTRACTOR=docling`, fournir
-`DOCLING_SERVICE_URL` et démarrer explicitement le profil optionnel :
+L’extraction documentaire est locale et automatique selon le MIME vérifié :
+PDF texte, DOCX, PPTX, XLSX, HTML, Markdown et texte. Aucun service Docling ou
+OCR n’est déployé. Un PDF image est conservé avec l’état `ocr_required` et ne
+produit aucun chunk ni aucune preuve.
 
-```bash
-docker compose --env-file .env -f compose.infrastructure.yml --profile documents-advanced up -d docling
-```
+Avant le canary documentaire, mesurer le routeur local avec
+`bun run benchmark:documents`. Le dernier relevé local versionné se trouve dans
+`docs/performance/evidence/2026-08-24-structured-document-extraction-local.json`.
+Rejouer exactement la même commande sur le VPS et conserver le résultat avant
+d’augmenter la concurrence, qui reste fixée à une extraction par worker.
 
 Puis vérifier :
 

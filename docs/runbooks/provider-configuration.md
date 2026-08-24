@@ -38,15 +38,18 @@ Le runtime lance chaque appel avec un répertoire temporaire vide, en mode
 secrets applicatifs. L’abonnement Codex possède tout de même des limites : il
 n’est jamais présenté comme illimité.
 
-`OPENAI_API_KEY` et `OPENAI_EMBEDDING_MODEL` restent utilisés pour les
-embeddings documentaires.
+Les embeddings documentaires n'utilisent aucun provider IA distant. Le worker
+appelle le service privé TEI gRPC avec Qwen3 Embedding 0.6B en 1 024 dimensions,
+puis ParadeDB combine BM25 et pgvector. Un second TEI privé exécute le reranker
+BGE. Les identités des modèles de référence et des artefacts ONNX INT8 sont
+épinglées et vérifiées par l'appel gRPC `Info`.
 
 Les envois exigent `UNIPILE_DSN`, `UNIPILE_API_KEY` et un compte sain du
 workspace. Les webhooks doivent viser la route Unipile publique et porter la
 signature configurée. Le crawler, SearXNG, PostgreSQL et le stockage
-S3-compatible restent privés au réseau Docker. L’extraction documentaire
-standard est locale et légère ; Docling n’est démarré que pour le profil
-optionnel `documents-advanced`.
+S3-compatible restent privés au réseau Docker. L’extraction PDF et Office est
+locale, isolée dans un processus Bun transitoire et choisie automatiquement
+selon le MIME vérifié. Aucun service d’OCR ou Docling n’est requis.
 
 Tester d’abord en dry-run. Aucun test automatisé du dépôt ne lit les secrets
 de production ou n’appelle un vrai provider d’envoi.

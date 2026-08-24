@@ -652,6 +652,41 @@
       "when": 1797890400000,
       "tag": "0092_conversation_command_generation_audit",
       "breakpoints": true
+    },
+    {
+      "idx": 93,
+      "version": "7",
+      "when": 1797894000000,
+      "tag": "0093_structured_office_extraction",
+      "breakpoints": true
+    },
+    {
+      "idx": 94,
+      "version": "7",
+      "when": 1797980400000,
+      "tag": "0094_qwen_versioned_knowledge_search",
+      "breakpoints": true
+    },
+    {
+      "idx": 95,
+      "version": "7",
+      "when": 1797984000000,
+      "tag": "0095_tei_onnx_runtime_artifacts",
+      "breakpoints": true
+    },
+    {
+      "idx": 96,
+      "version": "7",
+      "when": 1797987600000,
+      "tag": "0096_embedding_revision_retention",
+      "breakpoints": true
+    },
+    {
+      "idx": 97,
+      "version": "7",
+      "when": 1797991200000,
+      "tag": "0097_embedding_revision_vector_indexes",
+      "breakpoints": true
     }
   ]
 }

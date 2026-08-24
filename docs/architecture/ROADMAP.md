@@ -22,7 +22,7 @@ déterministes localisés.
 ## Validation avant déploiement VPS
 
 - exécuter la suite complète sur PostgreSQL et le crawler ;
-- valider le build de production et le compose sans Docling ;
+- valider le build de production et le routeur PDF/Office local ;
 - effectuer un canary fournisseur sans envoi réel, puis un canary live borné ;
 - vérifier le webhook public, le rattrapage de l’inbox et la reprise après
   redémarrage ;

@@ -1083,8 +1083,13 @@ export interface ResearchDocument {
   readonly contentType: string;
   readonly sizeBytes: number;
   readonly checksumSha256: string;
-  readonly status: "uploading" | "uploaded" | "processing" | "ready" | "failed";
+  readonly status: "uploading" | "uploaded" | "processing" | "ready" | "partial" | "ocr_required" | "failed";
   readonly failureCode: string | null;
+  readonly extractionProvider: "unpdf" | "docx" | "pptx" | "xlsx" | "html" | "text" | null;
+  readonly extractionDurationMs: number | null;
+  readonly extractionMetrics: Readonly<Record<string, unknown>>;
+  readonly extractionWarnings: readonly string[];
+  readonly extractedAt: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
 }

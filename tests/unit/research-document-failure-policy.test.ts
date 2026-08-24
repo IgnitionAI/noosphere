@@ -2,10 +2,14 @@ import { describe, expect, test } from "bun:test";
 import { documentProcessingFailureDisposition } from "@outbound/infrastructure/documents/research-document-service";
 
 describe("research document failure policy", () => {
-  test("does not retry permanent lightweight extraction failures", () => {
+  test("does not retry permanent document extraction failures", () => {
     for (const code of [
       "DOCUMENT_FORMAT_UNSUPPORTED_BY_LIGHTWEIGHT_EXTRACTOR",
       "DOCUMENT_PDF_TOO_LARGE_FOR_LIGHTWEIGHT_EXTRACTOR",
+      "DOCUMENT_OCR_REQUIRED",
+      "DOCUMENT_ENCRYPTED_UNSUPPORTED",
+      "DOCUMENT_CONTENT_LIMIT_EXCEEDED",
+      "DOCUMENT_FORMAT_INVALID",
       "DOCUMENT_TEXT_EMPTY",
       "DOCUMENT_PDF_EXTRACTION_FAILED",
       "RESEARCH_DOCUMENT_CHECKSUM_MISMATCH",

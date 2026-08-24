@@ -645,7 +645,7 @@ export class PostgresJobOutcomeReconciler {
       .where(and(eq(researchDocuments.workspaceId, job.workspaceId), eq(researchDocuments.id, documentId)))
       .limit(1);
     if (!document) return this.#complete(job, "JOB_ORPHANED", "Le document n’existe plus.");
-    if (["ready", "failed"].includes(document.status)) {
+    if (["ready", "partial", "ocr_required", "failed"].includes(document.status)) {
       return this.#complete(job, "JOB_OUTCOME_RECONCILED", "Le document porte déjà un état terminal.");
     }
     const repairAttempts = nonNegativeInteger(payload._reconciliationAttempts);

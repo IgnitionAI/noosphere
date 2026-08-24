@@ -47,6 +47,11 @@ interface ResearchDocumentHttpView {
   readonly checksumSha256: string;
   readonly status: string;
   readonly failureCode: string | null;
+  readonly extractionProvider?: string | null;
+  readonly extractionDurationMs?: number | null;
+  readonly extractionMetrics?: unknown;
+  readonly extractionWarnings?: unknown;
+  readonly extractedAt?: Date | null;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }
@@ -150,6 +155,11 @@ function serialize(document: ResearchDocumentHttpView) {
     checksumSha256: document.checksumSha256,
     status: document.status,
     failureCode: document.failureCode,
+    extractionProvider: document.extractionProvider ?? null,
+    extractionDurationMs: document.extractionDurationMs ?? null,
+    extractionMetrics: document.extractionMetrics ?? {},
+    extractionWarnings: document.extractionWarnings ?? [],
+    extractedAt: document.extractedAt?.toISOString() ?? null,
     createdAt: document.createdAt.toISOString(),
     updatedAt: document.updatedAt.toISOString(),
   };

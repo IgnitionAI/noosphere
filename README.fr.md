@@ -22,7 +22,8 @@ Les détails techniques restent observables sans envahir l’expérience. Les ex
 | Corpus Setter | gate automatique atteint | 100/100 dry-runs Codex Luna, receipts résolubles, aucun envoi |
 | Revue éditoriale humaine | ouverte | le fichier de revue existe, mais n’est pas auto-étiqueté |
 | VPS 2 vCPU / 8 Gio | insuffisant pour le SLO concurrent | fonctionnement sans erreur, p95 mémoire hors cible |
-| VPS recommandé | 4 vCPU / 16 Gio minimum | mesure finale encore à rejouer sur ce profil |
+| Déploiement léger | Netcup RS 2000 G12, 8 cœurs dédiés / 16 Gio | minimum acceptable pour un canary ou un seul workspace peu chargé |
+| Production recommandée | Netcup RS 4000 G12, 12 cœurs dédiés / 32 Gio | cible pour faire tourner simultanément recherche, crawling, TEI et campagnes |
 | Canary provider réel | non exécuté | exige une autorisation explicite et bornée |
 
 Le détail et les fichiers de preuve sont dans le [rapport de validation Prospect 360](docs/performance/2026-08-23-prospect-360-memory-validation-report.md). Une preuve shadow ou dry-run ne constitue jamais une preuve d’envoi réel.
@@ -74,7 +75,7 @@ Noosphere est un monolithe modulaire TypeScript/Bun avec un crawler Python auton
 | `apps/web` | Next.js 16 et React 19 |
 | `apps/crawler` | FastAPI, Crawl4AI, Playwright et SearXNG |
 
-Primitives standard : PostgreSQL/ParadeDB, MinIO compatible S3, queue/outbox PostgreSQL, Bun, Next.js et Docker Compose. Docling n’est pas requis dans le déploiement standard ; l’extracteur léger gère texte, Markdown, HTML et PDF texte.
+Primitives standard : PostgreSQL/ParadeDB, MinIO compatible S3, queue/outbox PostgreSQL, Bun, Next.js et Docker Compose. Le routeur local extrait PDF texte, DOCX, PPTX, XLSX, HTML, Markdown et texte ; les scans sont signalés sans OCR.
 
 ```mermaid
 flowchart TB
@@ -145,10 +146,9 @@ Ne commitez jamais `.env`, clés API, cookies LinkedIn, jetons OAuth ou secrets 
 | Stockage | `S3_ENDPOINT`, bucket et identifiants | oui |
 | Crawler | `CRAWLER_SERVICE_URL`, `CRAWLER_API_KEY` | oui |
 | IA | `AI_PROVIDER` puis Kimi, Codex ou OpenAI selon la route | oui |
-| Embeddings | `OPENAI_API_KEY`, `OPENAI_EMBEDDING_MODEL` | pour la connaissance |
+| Recherche | `TEI_EMBEDDING_*`, `TEI_RERANKER_*` | pour la connaissance |
 | Canaux | Unipile et IDs de comptes sains | seulement pour les canaux activés |
-| Documents | `DOCUMENT_EXTRACTOR=lightweight` | valeur standard |
-| Docling | URL et clé du profil `documents-advanced` | non |
+| Documents | stockage S3, TEI Qwen et ParadeDB | pour la connaissance |
 
 Pour Codex, exécutez l’authentification dans le volume privé décrit par le [runbook providers](docs/runbooks/provider-configuration.md). Les modèles et fallbacks se choisissent ensuite par workspace et par capacité dans l’interface.
 
@@ -187,7 +187,43 @@ Une suite verte ne remplace pas une preuve live. Consultez le [rapport de valida
 
 Le déploiement standard utilise `compose.infrastructure.yml` et `compose.production.yml`. Il comprend API, web, crawler, PostgreSQL, MinIO et workers spécialisés. Suivez le [runbook VPS](docs/runbooks/vps-production.md) pour TLS, migrations, sauvegardes, restauration et canary.
 
-Profil recommandé à ce stade : **x86_64, 4 vCPU, 16 Gio de RAM, SSD/NVMe 100 Gio ou plus**. Le benchmark isolé 2 vCPU / 8 Gio a terminé sans erreur, mais a dépassé les seuils p95 sous 100 assemblages Prospect 360 concurrents ; ce profil n’est donc pas recommandé pour l’ensemble de la plateforme.
+### Choisir la machine
+
+Noosphere doit être déployé sur une machine **x86_64/AMD64 avec stockage NVMe**. Aucun GPU n’est requis : Qwen3 Embedding et le reranker BGE sont servis localement par TEI en mode CPU. Les cœurs dédiés sont préférables aux vCPU partagés, car PostgreSQL, Chromium et TEI peuvent solliciter le CPU au même moment.
+
+| Usage | Machine Netcup | Ressources | Recommandation |
+|---|---|---|---|
+| Développement distant ou canary court | VPS 2000 G12 | 8 vCPU partagés, 16 Gio, 512 Go NVMe | acceptable pour valider le déploiement, pas comme cible durable |
+| Usage léger | **RS 2000 G12** | **8 cœurs dédiés, 16 Gio, 512 Go NVMe** | minimum acceptable pour un seul workspace peu chargé |
+| Production recommandée | **RS 4000 G12** | **12 cœurs dédiés, 32 Gio, 1 To NVMe** | cible recommandée pour la plateforme complète |
+
+Le **RS 2000 G12** convient lorsque toutes les conditions suivantes sont vraies :
+
+- un seul workspace actif ;
+- peu d’utilisateurs simultanés ;
+- au plus quatre crawls concurrents ;
+- indexations documentaires et campagnes lourdes non lancées en parallèle ;
+- croissance modérée des documents, conversations et preuves.
+
+Ce profil ne doit pas être confondu avec une garantie de capacité multi-workspace. Les tests ont montré que PostgreSQL pouvait déjà mobiliser environ huit cœurs pendant un scénario agressif, avant d’ajouter le coût CPU de Qwen, du reranker et du crawler. Sur 16 Gio, surveillez la mémoire, le swap, le lag des jobs et la latence p95. Passez au RS 4000 si la mémoire reste au-dessus de 12 Gio, si le swap est utilisé durablement, si le CPU dépasse 70 % pendant 15 minutes ou si plusieurs workspaces doivent travailler simultanément.
+
+Le **RS 4000 G12** est notre choix de production : sa marge permet de conserver simultanément les deux modèles TEI en mémoire, d’exécuter les crawls, les workers, PostgreSQL, MinIO et les sauvegardes sans dimensionner la plateforme sur son fonctionnement au repos.
+
+### Quand les embeddings sont réellement utilisés
+
+Les services TEI restent démarrés et gardent leurs modèles en mémoire pour éviter un démarrage à froid de plusieurs dizaines de secondes. Cette mémoire résidente ne signifie pas que le CPU travaille en permanence : Qwen calcule un embedding seulement dans les cas suivants :
+
+- à l'import ou à la modification d'un document, d'une offre, d'une preuve ou d'une connaissance éligible ;
+- lors d'une recherche hybride dans la connaissance, pour vectoriser la requête ;
+- pendant une réindexation complète ou une future migration de modèle.
+
+Le réconciliateur vérifie les hashes avant l'appel TEI : un contenu inchangé n'est pas ré-embeddé à chaque passage du worker. Le reranker BGE n'intervient qu'après la recherche hybride, sur un petit ensemble de candidats. La synchronisation des messages, le sourcing de prospects, la rédaction des posts, les envois et le fonctionnement courant du Setter n'appellent pas actuellement Qwen Embedding.
+
+En pratique, pour un workspace léger, la charge d'embedding est donc **ponctuelle** ; le coût permanent est surtout la RAM réservée aux modèles chauds. Le pic réellement intensif correspond à l'import d'un corpus important ou à une réindexation complète. C'est pourquoi le RS 2000 est cohérent pour un seul workspace, tandis que le RS 4000 apporte surtout de la marge pour la concurrence multi-workspace et les opérations lourdes simultanées.
+
+Prix publics relevés le 24 août 2026, susceptibles d’évoluer selon TVA et durée d’engagement : RS 2000 G12 à partir de **21,43 € TTC/mois** et RS 4000 G12 à partir de **39,92 € TTC/mois**. Consultez les [Root Servers G12 Netcup](https://www.netcup.com/en/server/root-server) pour les caractéristiques actuelles. Le protocole et les limites de la mesure locale sont documentés dans le [rapport de capacité](docs/performance/2026-08-21-noosphere-standard-stack-capacity.md).
+
+Configuration système conseillée : Debian 12 x86_64, 8 Gio de swap de secours avec `vm.swappiness=10`, sauvegardes PostgreSQL et MinIO hors du serveur, et exposition publique limitée à HTTP(S) et SSH restreint. PostgreSQL, MinIO et les services TEI restent sur le réseau Docker privé.
 
 ```bash
 cp deploy/.env.production.example .env
@@ -197,7 +233,7 @@ docker compose --env-file .env \
   -f compose.infrastructure.yml -f compose.production.yml up -d
 ```
 
-Le déploiement standard ne démarre pas Docling. Le profil `documents-advanced` est optionnel.
+Le déploiement ne démarre aucun extracteur externe. Chaque extraction utilise un processus Bun transitoire et durablement piloté par les jobs PostgreSQL.
 
 Ne lancez pas de canary LinkedIn, email ou WhatsApp réel sans autorisation explicite et bornée au compte, au workspace et au contenu concernés.
 

@@ -28,7 +28,10 @@ required = [
     "SEARXNG_SECRET",
     "CRAWLER_API_KEY",
     "BETTER_AUTH_SECRET",
-    "OPENAI_API_KEY",
+    "TEI_EMBEDDING_RUNTIME_MODEL_ID",
+    "TEI_EMBEDDING_RUNTIME_MODEL_SHA",
+    "TEI_RERANKER_RUNTIME_MODEL_ID",
+    "TEI_RERANKER_RUNTIME_MODEL_SHA",
     "UNIPILE_DSN",
     "UNIPILE_API_KEY",
     "UNIPILE_LINKEDIN_ACCOUNT_ID",
@@ -57,8 +60,8 @@ if provider == "kimi-code" and not os.environ.get("KIMI_CODE_API_KEY"):
 if provider == "openai" and not os.environ.get("OPENAI_API_KEY"):
     raise SystemExit("OPENAI_API_KEY is required when AI_PROVIDER=openai")
 
-if os.environ.get("DOCUMENT_EXTRACTOR", "lightweight") == "docling" and not os.environ.get("DOCLING_SERVICE_URL"):
-    raise SystemExit("DOCLING_SERVICE_URL is required when DOCUMENT_EXTRACTOR=docling")
+if os.environ.get("DOCUMENT_EXTRACTOR", "").lower() == "docling":
+    raise SystemExit("DOCUMENT_EXTRACTOR=docling is obsolete; remove this legacy configuration")
 
 for name in ("BETTER_AUTH_URL", "PUBLIC_WEBHOOK_BASE_URL"):
     parsed = urlparse(os.environ[name])

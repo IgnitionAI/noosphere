@@ -25,7 +25,6 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@database:5432/${POSTGRES_DB:-ignition_outbound}
       S3_ENDPOINT: http://minio:9000
       CRAWLER_SERVICE_URL: http://crawler:8000
-      DOCUMENT_EXTRACTOR: ${DOCUMENT_EXTRACTOR:-lightweight}
       CODEX_SERVICE_HOME: /var/lib/noosphere-codex
       PORT: "3001"
     volumes:
@@ -77,7 +76,9 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@database:5432/${POSTGRES_DB:-ignition_outbound}
       S3_ENDPOINT: http://minio:9000
       CRAWLER_SERVICE_URL: http://crawler:8000
-      DOCUMENT_EXTRACTOR: ${DOCUMENT_EXTRACTOR:-lightweight}
+      TEI_EMBEDDING_GRPC_ADDRESS: tei-embedding:80
+      TEI_RERANKER_GRPC_ADDRESS: tei-reranker:80
+      TEI_PROTO_PATH: /app/packages/infrastructure/src/embeddings/tei.proto
       CODEX_SERVICE_HOME: /var/lib/noosphere-codex
       WORKER_EXCLUDED_JOB_TYPES: prospect.decision.execute,conversation.command.execute,prospect.memory.refresh,prospect.memory.backfill
     volumes:
@@ -102,7 +103,9 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@database:5432/${POSTGRES_DB:-ignition_outbound}
       S3_ENDPOINT: http://minio:9000
       CRAWLER_SERVICE_URL: http://crawler:8000
-      DOCUMENT_EXTRACTOR: ${DOCUMENT_EXTRACTOR:-lightweight}
+      TEI_EMBEDDING_GRPC_ADDRESS: tei-embedding:80
+      TEI_RERANKER_GRPC_ADDRESS: tei-reranker:80
+      TEI_PROTO_PATH: /app/packages/infrastructure/src/embeddings/tei.proto
       CODEX_SERVICE_HOME: /var/lib/noosphere-codex
       WORKER_ID: prospect-decision-worker
       WORKER_JOB_TYPES: prospect.decision.execute
@@ -131,7 +134,9 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@database:5432/${POSTGRES_DB:-ignition_outbound}
       S3_ENDPOINT: http://minio:9000
       CRAWLER_SERVICE_URL: http://crawler:8000
-      DOCUMENT_EXTRACTOR: ${DOCUMENT_EXTRACTOR:-lightweight}
+      TEI_EMBEDDING_GRPC_ADDRESS: tei-embedding:80
+      TEI_RERANKER_GRPC_ADDRESS: tei-reranker:80
+      TEI_PROTO_PATH: /app/packages/infrastructure/src/embeddings/tei.proto
       CODEX_SERVICE_HOME: /var/lib/noosphere-codex
       WORKER_ID: setter-command-worker
       WORKER_JOB_TYPES: conversation.command.execute
@@ -162,7 +167,9 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@database:5432/${POSTGRES_DB:-ignition_outbound}
       S3_ENDPOINT: http://minio:9000
       CRAWLER_SERVICE_URL: http://crawler:8000
-      DOCUMENT_EXTRACTOR: ${DOCUMENT_EXTRACTOR:-lightweight}
+      TEI_EMBEDDING_GRPC_ADDRESS: tei-embedding:80
+      TEI_RERANKER_GRPC_ADDRESS: tei-reranker:80
+      TEI_PROTO_PATH: /app/packages/infrastructure/src/embeddings/tei.proto
       CODEX_SERVICE_HOME: /var/lib/noosphere-codex
       WORKER_ID: prospect-memory-worker
       WORKER_JOB_TYPES: prospect.memory.refresh,prospect.memory.backfill
