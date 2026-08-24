@@ -3,6 +3,7 @@ import type { ProspectingChannel } from "@outbound/domain/campaigns/prospecting-
 import { normalizeEmail } from "@outbound/domain/crm/normalization";
 import type { Database } from "@outbound/infrastructure/database/client";
 import { captureProspectMemoryMutation } from "@outbound/infrastructure/prospect-memory/capture-prospect-memory-mutation";
+import { htmlToText } from "@outbound/infrastructure/inbox/html-to-text";
 import {
   automatedReplies,
   connectedAccounts,
@@ -805,26 +806,6 @@ function recordList(value: unknown): Record<string, unknown>[] {
   return Array.isArray(value)
     ? value.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item)))
     : [];
-}
-
-function htmlToText(value: string | null): string | null {
-  if (!value) return null;
-  const text = value
-    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
-    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/p>/gi, "\n")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
-    .replace(/[ \t]+/g, " ")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-  return text || null;
 }
 
 function batches<T>(items: readonly T[], size: number): T[][] {

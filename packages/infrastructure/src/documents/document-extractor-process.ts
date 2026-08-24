@@ -11,6 +11,7 @@ import mammoth from "mammoth";
 import { unzipSync, type UnzipFileInfo, type Unzipped } from "fflate";
 import { XMLParser } from "fast-xml-parser";
 import { NodeHtmlMarkdown } from "node-html-markdown";
+import { parse } from "node-html-parser";
 import { extractText } from "unpdf";
 import type {
   DocumentExtractionSection,
@@ -444,10 +445,27 @@ function normalizeZipPath(base: string, target: string): string {
 }
 
 function stripUnsafeHtml(value: string): string {
-  return value
-    .replace(/<(script|style|iframe|object|embed)[^>]*>[\s\S]*?<\/\1>/gi, "")
-    .replace(/\son\w+\s*=\s*(["']).*?\1/gi, "")
-    .replace(/\s(href|src)\s*=\s*(["'])\s*(javascript|data):.*?\2/gi, "");
+  const root = parse(value, {
+    comment: false,
+    blockTextElements: { script: false, style: false, pre: true },
+  });
+  for (const element of root.querySelectorAll("script,style,iframe,object,embed,svg,math,template")) {
+    element.remove();
+  }
+  for (const element of root.querySelectorAll("*")) {
+    for (const [name, rawValue] of Object.entries(element.attributes)) {
+      const attribute = name.toLowerCase();
+      if (attribute.startsWith("on") || attribute === "style") {
+        element.removeAttribute(name);
+        continue;
+      }
+      if (["href", "src", "xlink:href", "formaction"].includes(attribute)) {
+        const normalized = rawValue.replace(/[\u0000-\u0020\u007f]+/g, "").toLowerCase();
+        if (/^(javascript|data|vbscript):/.test(normalized)) element.removeAttribute(name);
+      }
+    }
+  }
+  return root.toString();
 }
 
 function baseMetrics(bytes: Uint8Array, markdown: string, sections: readonly DocumentExtractionSection[]) {
@@ -466,7 +484,21 @@ function assertHasText(value: string): void {
 }
 
 function visibleText(value: string): string {
-  return value.replace(/<!--.*?-->/gs, "").replace(/[#|*_`\s-]+/g, " ").trim();
+  return stripHtmlComments(value).replace(/[#|*_`\s-]+/g, " ").trim();
+}
+
+function stripHtmlComments(value: string): string {
+  let output = "";
+  let offset = 0;
+  while (offset < value.length) {
+    const start = value.indexOf("<!--", offset);
+    if (start === -1) return output + value.slice(offset);
+    output += value.slice(offset, start);
+    const end = value.indexOf("-->", start + 4);
+    if (end === -1) return output;
+    offset = end + 3;
+  }
+  return output;
 }
 
 function normalize(value: string): string {
@@ -474,7 +506,7 @@ function normalize(value: string): string {
 }
 
 function escapeTableCell(value: string): string {
-  return value.replace(/\|/g, "\\|").replace(/\r?\n/g, "<br>");
+  return value.replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r\n?|\n/g, "<br>");
 }
 
 function escapeRegExp(value: string): string {

@@ -22,6 +22,19 @@ describe("structured document text extractor", () => {
     expect(result.sections[0]?.locator).toBe("section:1");
   });
 
+  test("removes active HTML attributes and unsafe links before Markdown conversion", async () => {
+    const result = await extractor.extract({
+      filename: "hostile.html",
+      contentType: "text/html",
+      bytes: new TextEncoder().encode('<h1 onmouseover="steal()">Titre</h1><a href="java\nscript:steal()">Lien</a><img src="data:text/html,evil"><p>Preuve sûre</p>'),
+    });
+    expect(result.markdown).toContain("Titre");
+    expect(result.markdown).toContain("Preuve sûre");
+    expect(result.markdown).not.toContain("javascript:");
+    expect(result.markdown).not.toContain("data:text");
+    expect(result.markdown).not.toContain("steal()");
+  });
+
   test("preserves physical PDF pages and marks image-only PDFs for OCR", async () => {
     const textPdf = await createTextPdf();
     const text = await extractor.extract({ filename: "offre.pdf", contentType: "application/pdf", bytes: textPdf });
