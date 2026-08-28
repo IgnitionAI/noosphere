@@ -16,7 +16,9 @@
       "@outbound/application/*": ["./packages/application/src/*"],
       "@outbound/contracts/*": ["./packages/contracts/src/*"],
       "@outbound/infrastructure/*": ["./packages/infrastructure/src/*"],
-      "@outbound/interface/*": ["./packages/interface/src/*"]
+      "@outbound/interface/*": ["./packages/interface/src/*"],
+      "@outbound/bootstrap": ["./packages/bootstrap/src/index.ts"],
+      "@outbound/bootstrap/*": ["./packages/bootstrap/src/*"]
     }
   },
   "include": [
