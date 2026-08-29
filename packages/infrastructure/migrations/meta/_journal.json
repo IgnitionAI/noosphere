@@ -736,6 +736,20 @@
       "when": 1798016400000,
       "tag": "0104_mcp_governed_external_effects_repair",
       "breakpoints": true
+    },
+    {
+      "idx": 105,
+      "version": "7",
+      "when": 1798020000000,
+      "tag": "0105_mcp_reconciliation_evidence",
+      "breakpoints": true
+    },
+    {
+      "idx": 106,
+      "version": "7",
+      "when": 1798023600000,
+      "tag": "0106_mcp_reconciliation_matched_invariant",
+      "breakpoints": true
     }
   ]
 }

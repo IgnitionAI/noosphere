@@ -4795,6 +4795,7 @@ export const mcpEffectReconciliations = pgTable(
     nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
     candidateCount: integer("candidate_count").notNull().default(0),
+    resultSnapshot: jsonb("result_snapshot"),
     errorCode: varchar("error_code", { length: 120 }),
     errorMessage: varchar("error_message", { length: 500 }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -4810,6 +4811,8 @@ export const mcpEffectReconciliations = pgTable(
     check("mcp_effect_reconciliations_attempts_ck", sql`${table.attempts} >= 0 and ${table.maxAttempts} > 0 and ${table.attempts} <= ${table.maxAttempts}`),
     check("mcp_effect_reconciliations_candidates_ck", sql`${table.candidateCount} >= 0`),
     check("mcp_effect_reconciliations_snapshot_ck", sql`jsonb_typeof(${table.criteriaSnapshot}) = 'object' and octet_length(${table.criteriaSnapshot}::text) <= 32768`),
+    check("mcp_effect_reconciliations_result_snapshot_ck", sql`${table.resultSnapshot} is null or (jsonb_typeof(${table.resultSnapshot}) = 'object' and octet_length(${table.resultSnapshot}::text) <= 32768)`),
+    check("mcp_effect_reconciliations_matched_result_ck", sql`${table.status} <> 'matched' or (${table.candidateCount} = 1 and ${table.resultSnapshot} is not null and jsonb_typeof(${table.resultSnapshot}) = 'object' and ${table.resultSnapshot} <> '{}'::jsonb and octet_length(${table.resultSnapshot}::text) <= 32768)`),
     check("mcp_effect_reconciliations_terminal_ck", sql`${table.completedAt} is null or ${table.status} in ('matched', 'not_found', 'ambiguous', 'error')`),
   ],
 );

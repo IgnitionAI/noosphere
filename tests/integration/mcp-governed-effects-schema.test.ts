@@ -49,21 +49,35 @@ databaseDescribe("MCP governed external effects schema", () => {
       entries: Array<{ idx: number; tag: string }>;
     };
     expect(journal.entries.at(-1)).toMatchObject({
-      idx: 104,
-      tag: "0104_mcp_governed_external_effects_repair",
+      idx: 106,
+      tag: "0106_mcp_reconciliation_matched_invariant",
     });
 
     const columns = await database.client`
       select table_name, column_name from information_schema.columns
       where (table_name = 'approval_items' and column_name = 'proposal_id')
          or (table_name = 'meeting_proposals' and column_name in ('revision', 'source_version'))
+         or (table_name = 'mcp_effect_reconciliations' and column_name = 'result_snapshot')
       order by table_name, column_name
     `;
     expect([...columns]).toEqual([
       { table_name: "approval_items", column_name: "proposal_id" },
+      { table_name: "mcp_effect_reconciliations", column_name: "result_snapshot" },
       { table_name: "meeting_proposals", column_name: "revision" },
       { table_name: "meeting_proposals", column_name: "source_version" },
     ]);
+  });
+
+  test("requires a non-empty bounded result snapshot for matched reconciliation", async () => {
+    const matchedConstraint = await database.client`
+      select pg_get_constraintdef(oid) as definition
+      from pg_constraint
+      where conrelid = 'mcp_effect_reconciliations'::regclass
+        and conname = 'mcp_effect_reconciliations_matched_result_ck'
+    `;
+    expect(matchedConstraint[0]?.definition).toContain("candidate_count = 1");
+    expect(matchedConstraint[0]?.definition).toContain("result_snapshot IS NOT NULL");
+    expect(matchedConstraint[0]?.definition).toContain("result_snapshot <> '{}'::jsonb");
   });
 
   test("rejects invalid kinds/states and oversized redacted payloads", async () => {
@@ -82,6 +96,22 @@ databaseDescribe("MCP governed external effects schema", () => {
           (id, workspace_id, client_id, kind, request_key, input_hash, aggregate_id, intent_snapshot, source_snapshot, correlation_id)
         values (${proposalId}, ${workspaceId}, 'fixture', 'conversation_reply', ${crypto.randomUUID()}, ${"a".repeat(64)}, ${crypto.randomUUID()}, '{}'::jsonb, '{}'::jsonb, ${crypto.randomUUID()})
       `;
+      await expect(Promise.resolve(database.client`
+        insert into mcp_effect_reconciliations
+          (workspace_id, proposal_id, status, candidate_count, result_snapshot, next_attempt_at)
+        values (${workspaceId}, ${proposalId}, 'matched', 1, '{}'::jsonb, now())
+      `)).rejects.toThrow();
+      const reconciliationId = crypto.randomUUID();
+      await database.client`
+        insert into mcp_effect_reconciliations
+          (id, workspace_id, proposal_id, status, candidate_count, next_attempt_at)
+        values (${reconciliationId}, ${workspaceId}, ${proposalId}, 'pending', 0, now())
+      `;
+      await expect(Promise.resolve(database.client`
+        update mcp_effect_reconciliations
+        set status = 'matched', candidate_count = 1, result_snapshot = '[]'::jsonb
+        where id = ${reconciliationId}
+      `)).rejects.toThrow();
       await expect(Promise.resolve(database.client`
         insert into mcp_effect_traces
           (workspace_id, proposal_id, stage, sequence, source_event_id, idempotency_key, event_type, redacted_payload, correlation_id)
@@ -107,8 +137,9 @@ databaseDescribe("MCP governed external effects schema", () => {
           [crypto.randomUUID(), workspaceId, proposalId],
         ))).rejects.toThrow();
       }
-    } finally {
+      } finally {
       await database.client.begin(async (transaction) => {
+        await transaction`update mcp_effect_proposals set reconciliation_id = null where workspace_id = ${workspaceId}`;
         await transaction`delete from mcp_effect_traces where workspace_id = ${workspaceId}`;
         await transaction`delete from mcp_effect_reconciliations where workspace_id = ${workspaceId}`;
         await transaction`delete from mcp_effect_intentions where workspace_id = ${workspaceId}`;
@@ -201,6 +232,7 @@ databaseDescribe("MCP governed external effects schema", () => {
       expect([...stale]).toHaveLength(0);
     } finally {
       await database.client.begin(async (transaction) => {
+        await transaction`update mcp_effect_proposals set reconciliation_id = null where workspace_id in (${workspaceId}, ${foreignWorkspaceId})`;
         await transaction`delete from mcp_effect_traces where workspace_id in (${workspaceId}, ${foreignWorkspaceId})`;
         await transaction`delete from mcp_effect_reconciliations where workspace_id in (${workspaceId}, ${foreignWorkspaceId})`;
         await transaction`delete from mcp_effect_intentions where workspace_id in (${workspaceId}, ${foreignWorkspaceId})`;
