@@ -77,7 +77,7 @@ export interface ContentGenerationContext {
 
 export interface ContentGenerationRepository {
   findRequest(input: { workspaceId: string; operation: "asset.generate" | "asset.improve"; requestKey: string }): Promise<ContentGenerationRunView | null>;
-  createGeneration(input: { workspaceId: string; userId: string | null; ideaId?: string; assetId?: string; operation: "asset.generate" | "asset.improve"; requestKey: string; instruction?: string; expectedRevision?: number; now: Date }): Promise<ContentGenerationRunView>;
+  createGeneration(input: { workspaceId: string; userId: string | null; ideaId?: string; assetId?: string; operation: "asset.generate" | "asset.improve"; requestKey: string; instruction?: string; expectedRevision?: number; correlationId?: string; now: Date }): Promise<ContentGenerationRunView>;
   findRun(input: { workspaceId: string; runId: string }): Promise<ContentGenerationRunView | null>;
   findIdea(input: { workspaceId: string; ideaId: string }): Promise<ContentIdeaView | null>;
   findAssetByIdea(input: { workspaceId: string; ideaId: string }): Promise<ContentAssetView | null>;
@@ -110,13 +110,13 @@ export class ContentGenerationApplication {
   findIdea(input: Parameters<ContentGenerationRepository["findIdea"]>[0]) { return this.repository.findIdea(input); }
   findAssetByIdea(input: Parameters<ContentGenerationRepository["findAssetByIdea"]>[0]) { return this.repository.findAssetByIdea(input); }
 
-  async generate(input: { workspaceId: string; userId: string; ideaId: string; requestKey: string; instruction?: string; expectedRevision?: number; now?: Date }) {
+  async generate(input: { workspaceId: string; userId: string; ideaId: string; requestKey: string; instruction?: string; expectedRevision?: number; correlationId?: string; now?: Date }) {
     const replay = await this.repository.findRequest({ workspaceId: input.workspaceId, operation: "asset.generate", requestKey: input.requestKey });
     if (replay) return replay;
     return this.repository.createGeneration({ ...input, operation: "asset.generate", now: input.now ?? new Date() });
   }
 
-  async improve(input: { workspaceId: string; userId: string; assetId: string; requestKey: string; instruction?: string; now?: Date }) {
+  async improve(input: { workspaceId: string; userId: string; assetId: string; requestKey: string; instruction?: string; correlationId?: string; now?: Date }) {
     const replay = await this.repository.findRequest({ workspaceId: input.workspaceId, operation: "asset.improve", requestKey: input.requestKey });
     if (replay) return replay;
     return this.repository.createGeneration({ ...input, operation: "asset.improve", now: input.now ?? new Date() });

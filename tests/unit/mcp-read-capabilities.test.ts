@@ -27,7 +27,14 @@ function fakeCapabilities(): McpReadCapabilities {
     conversation: { list: async (context) => ({ data: [{ id: context.workspaceId }], nextCursor: null }) },
     campaign: { getStatus: async (_context, input) => ({ id: input.campaignId }) },
     content: { getCalendar: async (context) => ({ data: [{ id: context.workspaceId }], nextCursor: null }) },
-    operations: { getHealth: async (context) => ({ workspaceId: context.workspaceId }) },
+    operations: {
+      getHealth: async (context) => ({ workspaceId: context.workspaceId }),
+      get: async (_context, input) => ({
+        operationId: input.operationId, jobId: crypto.randomUUID(), correlationId: crypto.randomUUID(), status: "queued" as const,
+        resultRefs: [], errorCode: null, createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(),
+        operationUri: `noosphere://operations/${input.operationId}`,
+      }),
+    },
   };
 }
 

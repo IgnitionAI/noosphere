@@ -140,6 +140,8 @@ import {
 } from "@outbound/infrastructure/prospect-memory/prospect-memory-backfill";
 import { DefaultProspectContextAssembler } from "@outbound/application/prospect-memory/prospect-context-assembler";
 import { DeterministicProspectMemoryShadowComparator } from "@outbound/application/prospect-memory/prospect-memory-shadow-comparator";
+import { McpTrackedJobLifecycle } from "@outbound/application/mcp/mcp-tracked-job-lifecycle";
+import { PostgresMcpOperationStore } from "@outbound/infrastructure/auth/postgres-mcp-operation-store";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
@@ -153,6 +155,7 @@ const campaignChannelReadiness = unipileChannelConnections
   ? new UnipileCampaignChannelReadiness(unipileChannelConnections)
   : null;
 const queue = new PostgresJobQueue(database.client);
+const mcpOperationStore = new PostgresMcpOperationStore(database.db);
 const importService = new PostgresImportService(database.db, queue);
 const enrichmentRepository = new PostgresEnrichmentRepository(database.db, new SystemClock());
 const signalRepository = new PostgresSignalRepository(database.db, new SystemClock());
@@ -163,6 +166,13 @@ const unipileClient = unipileDsn && unipileApiKey ? new HttpUnipileClient({ dsn:
 const outreachScheduler = new PostgresOutreachScheduler(database.db, unipileClient);
 const repository = new PostgresProductResearchRepository(database.db);
 const clock = new SystemClock();
+const mcpTrackedJobLifecycle = new McpTrackedJobLifecycle(
+  mcpOperationStore,
+  async ({ job, operation }) => operation.resultRefs.length > 0
+    ? operation.resultRefs
+    : persistedMcpResultRefs(job.payload),
+  clock,
+);
 const ids = new CryptoIdGenerator();
 const contentHasher = new Sha256ContentHasher();
 const workspaceDataLifecycle = new PostgresWorkspaceDataLifecycle(database.db, clock, ids);
@@ -535,7 +545,7 @@ const maintenance = {
     const reconciledPreSendWaits = await jobOutcomeReconciler.reconcileExhaustedPreSendWaits();
     const reconciledRecoverableProviderRefusals = await jobOutcomeReconciler.reconcileRecoverableOutreachActions();
     const reconciledStaleProviderActions = await jobOutcomeReconciler.reconcileStaleOutreachActions();
-    const [dailyRuns, dailyIdeaRuns, assessmentJobs, repairedCampaigns, retainedSourcing, inboundEvents, observedSocialEngagements, reconciledJobOutcomes, prospectMemoryBackfills] = await Promise.all([
+    const [dailyRuns, dailyIdeaRuns, assessmentJobs, repairedCampaigns, retainedSourcing, inboundEvents, observedSocialEngagements, reconciledJobOutcomes, prospectMemoryBackfills, reconciledMcpOperations] = await Promise.all([
       dailyProspectingScheduler.reconcile(),
       dailyContentIdeaScheduler.reconcile(),
       prospectAssessmentReconciler.reconcile(),
@@ -545,6 +555,7 @@ const maintenance = {
       socialEngagementSynchronizer?.reconcile() ?? Promise.resolve(0),
       jobOutcomeReconciler.reconcile(),
       prospectMemoryBackfillScheduler.reconcile(),
+      mcpOperationStore.reconcileJobOutcomes(100),
     ]);
     const reconciledProviderEffects = await contentPublicationOutcomeReconciler?.reconcile() ?? 0;
     const observedSocialPosts = await socialContentSynchronizer?.reconcile() ?? 0;
@@ -560,6 +571,9 @@ const maintenance = {
     }
     if (reconciledJobOutcomes > 0) {
       console.info(JSON.stringify({ event: "job_outcomes_reconciled", count: reconciledJobOutcomes }));
+    }
+    if (reconciledMcpOperations > 0) {
+      console.info(JSON.stringify({ event: "mcp_job_outcomes_reconciled", count: reconciledMcpOperations }));
     }
     if (reconciledStaleProviderActions > 0) {
       console.info(JSON.stringify({ event: "stale_outreach_actions_failed_closed", count: reconciledStaleProviderActions }));
@@ -590,7 +604,7 @@ const maintenance = {
     if (editorialLearningVersions > 0) {
       console.info(JSON.stringify({ event: "linkedin_editorial_learning_updated", versions: editorialLearningVersions }));
     }
-    return dailyRuns + dailyIdeaRuns + automatedContentActions + assessmentJobs + repairedCampaigns + retainedSourcing + inboundEvents + reconciledProviderEffects + observedSocialPosts + observedSocialEngagements + attributedInteractions + editorialLearningVersions + reconciledJobOutcomes + prospectMemoryBackfills + reconciledPreSendWaits + reconciledRecoverableProviderRefusals + reconciledStaleProviderActions + purgedEmbeddingRevisions + projectedKnowledgeDocuments;
+    return dailyRuns + dailyIdeaRuns + automatedContentActions + assessmentJobs + repairedCampaigns + retainedSourcing + inboundEvents + reconciledProviderEffects + observedSocialPosts + observedSocialEngagements + attributedInteractions + editorialLearningVersions + reconciledJobOutcomes + prospectMemoryBackfills + reconciledMcpOperations + reconciledPreSendWaits + reconciledRecoverableProviderRefusals + reconciledStaleProviderActions + purgedEmbeddingRevisions + projectedKnowledgeDocuments;
   },
 };
 const orchestrator = new ResearchOrchestrator(
@@ -617,7 +631,7 @@ const worker = new ResearchWorker(queue, orchestrator, clock, {
   pollIntervalMs: positiveIntegerEnvironment("JOB_POLL_INTERVAL_MS", 1_000),
   ...optionalJobTypes("WORKER_JOB_TYPES"),
   ...optionalExcludedJobTypes("WORKER_EXCLUDED_JOB_TYPES"),
-}, documentService, discoveryProcessor, channelAssessmentProcessor, campaignAutomationProcessor, campaignCompositionProcessor, outreachDispatchProcessor, inboundReplyProcessor, automatedReplySendProcessor, conversationCommandProcessor, process.env.WORKER_DISABLE_MAINTENANCE === "true" ? undefined : maintenance, process.env.WORKER_DISABLE_OUTBOX === "true" ? undefined : outboxDispatcher, importService, process.env.WORKER_DISABLE_OUTREACH_SCHEDULER === "true" ? undefined : outreachScheduler, enrichmentProcessor, signalProcessor, workspaceExportProcessor, retentionPurgeProcessor, knowledgeExpirationProcessor, evaluationRunProcessor, prospectDecisionProcessor, contentIdeaDiscoveryProcessor, contentGenerationProcessor, contentPublicationProcessor, prospectMemoryRefreshProcessor, prospectMemoryBackfillProcessor);
+}, documentService, discoveryProcessor, channelAssessmentProcessor, campaignAutomationProcessor, campaignCompositionProcessor, outreachDispatchProcessor, inboundReplyProcessor, automatedReplySendProcessor, conversationCommandProcessor, process.env.WORKER_DISABLE_MAINTENANCE === "true" ? undefined : maintenance, process.env.WORKER_DISABLE_OUTBOX === "true" ? undefined : outboxDispatcher, importService, process.env.WORKER_DISABLE_OUTREACH_SCHEDULER === "true" ? undefined : outreachScheduler, enrichmentProcessor, signalProcessor, workspaceExportProcessor, retentionPurgeProcessor, knowledgeExpirationProcessor, evaluationRunProcessor, prospectDecisionProcessor, contentIdeaDiscoveryProcessor, contentGenerationProcessor, contentPublicationProcessor, prospectMemoryRefreshProcessor, prospectMemoryBackfillProcessor, mcpTrackedJobLifecycle);
 
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
   process.once(signal, () => {
@@ -677,6 +691,19 @@ function optionalJobTypes(name: string): { readonly jobTypes?: readonly string[]
 function optionalExcludedJobTypes(name: string): { readonly excludedJobTypes?: readonly string[] } {
   const values = commaSeparatedEnvironment(name);
   return values.length > 0 ? { excludedJobTypes: values } : {};
+}
+
+function persistedMcpResultRefs(payload: unknown): readonly { type: string; id: string }[] {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return [];
+  const refs = (payload as Record<string, unknown>).mcpResultRefs;
+  if (!Array.isArray(refs)) return [];
+  return refs.filter((ref): ref is { type: string; id: string } => (
+    !!ref
+    && typeof ref === "object"
+    && !Array.isArray(ref)
+    && typeof (ref as Record<string, unknown>).type === "string"
+    && typeof (ref as Record<string, unknown>).id === "string"
+  ));
 }
 
 function commaSeparatedEnvironment(name: string): readonly string[] {

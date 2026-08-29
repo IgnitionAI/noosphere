@@ -1,6 +1,6 @@
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/server";
 import type { McpExecutionContext, McpReadCapabilities } from "@outbound/application/mcp/mcp-read-capabilities";
-import { redactMcpReadValue } from "@outbound/interface/mcp/mcp-read-contracts";
+import { redactMcpOperationValue, redactMcpReadValue } from "@outbound/interface/mcp/mcp-read-contracts";
 
 /** Register the issue #73 stable resources/templates on a fresh SDK server. */
 export function registerMcpReadResources(
@@ -20,6 +20,15 @@ export function registerMcpReadResources(
   server.registerResource("operations_health", "noosphere://operations/health", {
     description: "Workspace-safe operational health.", mimeType: "application/json",
   }, async (uri) => jsonResource(uri.href, await capabilities.operations.getHealth(context), context.role));
+  server.registerResource("operation", new ResourceTemplate("noosphere://operations/{operationId}", { list: undefined }), {
+    description: "Read a durable MCP operation status.", mimeType: "application/json",
+  }, async (uri, variables) => {
+    const operationId = uuidVariable(variables.operationId);
+    const operation = await capabilities.operations.get(context, { operationId });
+    return operation === null
+      ? errorResource(uri.href, "NOT_FOUND")
+      : jsonResource(uri.href, redactMcpOperationValue(operation), context.role);
+  });
 
   server.registerResource("company_brief", new ResourceTemplate("noosphere://companies/{companyId}/brief", { list: undefined }), {
     description: "Redacted company brief.", mimeType: "application/json",
@@ -53,6 +62,10 @@ function jsonResource(uri: string, value: unknown, role: McpExecutionContext["ro
   return {
     contents: [{ uri, mimeType: "application/json", text: JSON.stringify(normalize(redacted)) }],
   };
+}
+
+function errorResource(uri: string, error: string) {
+  return { contents: [{ uri, mimeType: "application/json", text: JSON.stringify({ error }) }] };
 }
 
 function uuidVariable(value: string | string[] | undefined): string {

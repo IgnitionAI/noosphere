@@ -4597,3 +4597,32 @@ export const mcpWriteOperations = pgTable(
     index("mcp_write_operations_lease_idx").on(table.status, table.leaseExpiresAt),
   ],
 );
+
+/** Durable, tenant-bound handles for queued MCP operations. The payload itself
+ * stays in the job queue; this read model persists only bounded references and
+ * safe error codes. */
+export const mcpOperations = pgTable(
+  "mcp_operations",
+  {
+    operationId: uuid("operation_id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    clientId: varchar("client_id", { length: 180 }).notNull().references(() => mcpOauthClients.clientId, { onDelete: "cascade" }),
+    userId: uuid("user_id").notNull().references(() => authUsers.id, { onDelete: "cascade" }),
+    tool: varchar("tool", { length: 100 }).notNull(),
+    requestKey: uuid("request_key").notNull(),
+    inputHash: varchar("input_hash", { length: 64 }).notNull(),
+    jobId: uuid("job_id").notNull(),
+    correlationId: varchar("correlation_id", { length: 200 }).notNull(),
+    status: varchar("status", { length: 16 }).notNull(),
+    resultRefs: jsonb("result_refs").$type<Array<{ type: string; id: string }>>().notNull().default([]),
+    errorCode: varchar("error_code", { length: 120 }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique("mcp_operations_request_uq").on(table.workspaceId, table.clientId, table.tool, table.requestKey),
+    index("mcp_operations_workspace_status_idx").on(table.workspaceId, table.status, table.updatedAt),
+    index("mcp_operations_job_idx").on(table.workspaceId, table.jobId),
+    check("mcp_operations_status_ck", sql`${table.status} in ('queued', 'running', 'completed', 'failed', 'cancelled')`),
+  ],
+);

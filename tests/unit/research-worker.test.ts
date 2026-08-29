@@ -2,6 +2,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 import type { JobQueue, LeasedJob } from "@outbound/application/jobs/job-queue";
 import type { ResearchOrchestrator } from "@outbound/application/gtm/research-orchestrator";
 import { SystemClock } from "@outbound/application/shared/ports";
+import type { McpTrackedJobContext } from "@outbound/application/mcp/mcp-tracked-job-lifecycle";
 import { ResearchWorker } from "../../apps/worker/src/research-worker";
 
 describe("ResearchWorker job leases", () => {
@@ -85,6 +86,90 @@ describe("ResearchWorker job leases", () => {
 
     expect(maintenanceRuns).toBe(1);
     expect(leaseCalls).toBe(2);
+  });
+
+  test("does not requeue a domain effect when lifecycle completion fails after ack", async () => {
+    const now = new Date("2026-08-22T06:00:00.000Z");
+    const job: LeasedJob = {
+      id: crypto.randomUUID(),
+      workspaceId: crypto.randomUUID(),
+      type: "content.asset.generate",
+      payload: { contentId: crypto.randomUUID() },
+      idempotencyKey: "content:asset:tracked",
+      correlationId: "tracked:test",
+      attempts: 1,
+      maxAttempts: 5,
+      availableAt: now,
+      lockedBy: "worker-test",
+      lockedUntil: new Date(now.getTime() + 60_000),
+    };
+    let leased = false;
+    let acknowledgements = 0;
+    let retries = 0;
+    const queue: JobQueue = {
+      async enqueue() { return { inserted: true }; },
+      async lease() {
+        if (leased) return [];
+        leased = true;
+        return [job];
+      },
+      async renewLease() { return true; },
+      async acknowledge() { acknowledgements += 1; },
+      async defer() {},
+      async retry() { retries += 1; return "scheduled"; },
+    };
+    const trackedLifecycle = {
+      async beforeDispatch() { return {} as McpTrackedJobContext; },
+      async afterSuccess() { throw new Error("MCP_OPERATION_STORE_UNAVAILABLE"); },
+      async afterRetry() {},
+    };
+    const worker = new ResearchWorker(
+      queue,
+      { async process() { throw new Error("wrong processor"); } } as unknown as ResearchOrchestrator,
+      { now: () => now },
+      {
+        workerId: "worker-test",
+        leaseMs: 60_000,
+        batchSize: 1,
+        pollIntervalMs: 1,
+        jobTypes: ["content.asset.generate"],
+      },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { async process() { await queue.acknowledge(job.id, job.lockedBy, now); } },
+      undefined,
+      undefined,
+      undefined,
+      trackedLifecycle,
+    );
+    const error = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await worker.tick();
+    } finally {
+      error.mockRestore();
+    }
+
+    expect(acknowledgements).toBe(1);
+    expect(retries).toBe(0);
   });
 
   test("renews the lease while a long AI stage is executing", async () => {

@@ -10,8 +10,12 @@ export interface McpWriteResult {
   readonly id: string;
   readonly version: number;
   readonly state: string;
+  readonly status?: string;
   readonly operation: McpWriteToolName;
   readonly correlationId: string;
+  readonly operationId?: string;
+  readonly jobId?: string;
+  readonly operationUri?: string;
   readonly auditId?: string;
 }
 

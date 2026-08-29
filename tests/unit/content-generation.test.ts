@@ -1,10 +1,27 @@
 import { describe, expect, test } from "bun:test";
 import { assertGroundedContentDraft, evaluateContentReadiness } from "@outbound/domain/content/content-asset";
-import { ContentGenerationJobProcessor, type ContentGenerationRepository } from "@outbound/application/content/content-generation";
+import { ContentGenerationApplication, ContentGenerationJobProcessor, type ContentGenerationRepository } from "@outbound/application/content/content-generation";
 import { DEFAULT_CONTENT_BRAND_KIT, selectNextContentFormat } from "@outbound/domain/content/content-brand-kit";
 import type { JobQueue, LeasedJob } from "@outbound/application/jobs/job-queue";
 
 describe("CNT-101 grounded content pipeline", () => {
+  test("forwards an explicit correlation id to generation persistence", async () => {
+    let captured: unknown;
+    const repository = {
+      async findRequest() { return null; },
+      async createGeneration(input: unknown) { captured = input; return {} as never; },
+    } as unknown as ContentGenerationRepository;
+    const application = new ContentGenerationApplication(repository);
+    const correlationId = crypto.randomUUID();
+
+    await application.generate({
+      workspaceId: crypto.randomUUID(), userId: crypto.randomUUID(), ideaId: crypto.randomUUID(),
+      requestKey: crypto.randomUUID(), correlationId,
+    });
+
+    expect(captured).toMatchObject({ correlationId });
+  });
+
   test("keeps synthetic videos out of the default automatic mix", () => {
     expect(DEFAULT_CONTENT_BRAND_KIT.enabledFormats).toEqual(["linkedin_text", "linkedin_image", "linkedin_document"]);
     expect(DEFAULT_CONTENT_BRAND_KIT.weeklyMix.linkedin_video).toBe(0);

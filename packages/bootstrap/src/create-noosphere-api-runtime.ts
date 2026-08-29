@@ -1,7 +1,8 @@
+import { and, eq, sql } from "drizzle-orm";
 import { ProductResearchApplication } from "@outbound/application/gtm/product-research-application";
-import { CryptoIdGenerator, SystemClock } from "@outbound/application/shared/ports";
+import { CryptoIdGenerator, SystemClock, type Clock } from "@outbound/application/shared/ports";
 import { createBetterAuthRuntime } from "@outbound/infrastructure/auth/better-auth-runtime";
-import { createDatabase } from "@outbound/infrastructure/database/client";
+import { createDatabase, type Database } from "@outbound/infrastructure/database/client";
 import { PostgresProductResearchRepository } from "@outbound/infrastructure/gtm/postgres-product-research-repository";
 import { createProductResearchHttpHandler } from "@outbound/interface/http/product-research-handler";
 import { createWorkspaceHttpHandler } from "@outbound/interface/http/workspace-handler";
@@ -67,7 +68,7 @@ import { createContentStrategyHttpHandler, isContentStrategyRoute } from "@outbo
 import { ContentIdeaApplication } from "@outbound/application/content/content-ideas";
 import { PostgresContentIdeaRepository } from "@outbound/infrastructure/content/postgres-content-idea-repository";
 import { createContentIdeaHttpHandler, isContentIdeaRoute } from "@outbound/interface/http/content-idea-handler";
-import { ContentGenerationApplication } from "@outbound/application/content/content-generation";
+import { ContentGenerationApplication, CONTENT_GENERATION_JOB_TYPE } from "@outbound/application/content/content-generation";
 import { PostgresContentGenerationRepository } from "@outbound/infrastructure/content/postgres-content-generation-repository";
 import { createContentGenerationHttpHandler, isContentGenerationRoute } from "@outbound/interface/http/content-generation-handler";
 import { ContentPublicationApplication, type SocialPublishingAccountResolver } from "@outbound/application/content/content-publications";
@@ -127,11 +128,192 @@ import { createMcpTransport } from "@outbound/interface/mcp/mcp-transport";
 import { createMcpOAuthHandler, createMcpOAuthService } from "@outbound/interface/mcp/mcp-oauth";
 import { PostgresMcpOAuthStore } from "@outbound/infrastructure/auth/postgres-mcp-oauth-store";
 import { createPostgresAtomicMcpWriteCapabilities, type PostgresMcpWriteTransaction } from "@outbound/infrastructure/auth/postgres-mcp-write-ledger";
+import { PostgresMcpOperationStore } from "@outbound/infrastructure/auth/postgres-mcp-operation-store";
+import { jobs } from "@outbound/infrastructure/database/schema";
 import { assertMcpExpectedRevision, type McpWriteCapabilities } from "@outbound/application/mcp/mcp-write-capabilities";
 import { PostgresCrmRepository } from "@outbound/infrastructure/crm/postgres-crm-repository";
 import { PostgresProspectViewRepository } from "@outbound/infrastructure/crm/postgres-prospect-view-repository";
 import { PostgresOperationalViews } from "@outbound/infrastructure/workspaces/postgres-operational-views";
 import { createMcpReadCapabilities, type McpReadCapabilities, type McpReadPage, type McpReadValue } from "@outbound/application/mcp/mcp-read-capabilities";
+import { toMcpOperationView } from "@outbound/application/mcp/mcp-durable-operations";
+
+/** Compose the production MCP write capabilities around a database transaction. */
+export function createMcpWriteCapabilities(database: Database, clock: Clock): McpWriteCapabilities {
+  return createPostgresAtomicMcpWriteCapabilities(database, async (tx: PostgresMcpWriteTransaction, context, command, correlationId) => {
+    const mcpCrmRepository = new PostgresCrmRepository(tx);
+    const mcpOpportunityRepository = new PostgresOpportunityRepository(tx);
+    const mcpProspectViews = new PostgresProspectViewRepository(tx);
+    const mcpProspectDecisionScheduler = new PostgresProspectDecisionScheduler(tx, clock);
+    const mcpContentIdeaRepository = new PostgresContentIdeaRepository(tx);
+    const contentGenerationApplication = new ContentGenerationApplication(new PostgresContentGenerationRepository(tx));
+    const args = command.arguments as Readonly<Record<string, unknown>>;
+    const now = clock.now();
+    const actorRole = context.role;
+    if (command.operation === "company_upsert") {
+      const id = typeof args.id === "string" ? args.id : crypto.randomUUID();
+      const existing = await mcpCrmRepository.getCompany({ workspaceId: context.workspaceId, companyId: id });
+      if (existing) assertMcpExpectedRevision(typeof args.expectedVersion === "number" ? args.expectedVersion : undefined, existing.revision);
+      else if (args.expectedVersion !== undefined) throw new Error("MCP_WRITE_VERSION_CONFLICT");
+      const row = existing
+        ? await mcpCrmRepository.updateCompany({ workspaceId: context.workspaceId, companyId: id, expectedRevision: existing.revision, fields: {
+            name: String(args.name), normalizedDomain: typeof args.domain === "string" ? args.domain.toLowerCase() : null,
+            sector: typeof args.sector === "string" ? args.sector : null, location: typeof args.location === "string" ? args.location : null,
+            employeeCountMin: typeof args.employeeCountMin === "number" ? args.employeeCountMin : null,
+            employeeCountMax: typeof args.employeeCountMax === "number" ? args.employeeCountMax : null,
+          } })
+        : await mcpCrmRepository.createCompany({
+            id, workspaceId: context.workspaceId, name: String(args.name), normalizedDomain: typeof args.domain === "string" ? args.domain.toLowerCase() : null,
+            sector: typeof args.sector === "string" ? args.sector : null, location: typeof args.location === "string" ? args.location : null,
+            employeeCountMin: typeof args.employeeCountMin === "number" ? args.employeeCountMin : null,
+            employeeCountMax: typeof args.employeeCountMax === "number" ? args.employeeCountMax : null,
+            linkedinUrl: null, source: "manual",
+          });
+      return { id: row.id, version: row.revision, state: existing ? "updated" : "created", operation: command.operation, correlationId: crypto.randomUUID() };
+    }
+    if (command.operation === "contact_upsert") {
+      const id = typeof args.id === "string" ? args.id : crypto.randomUUID();
+      const companyId = typeof args.companyId === "string" ? args.companyId : null;
+      const employmentTitle = typeof args.title === "string" && args.title.trim() ? args.title.trim() : "MCP contact";
+      const identities = [
+        ...(typeof args.email === "string" ? [{ id: crypto.randomUUID(), type: "email" as const, value: args.email.trim(), normalizedValue: args.email.trim().toLowerCase() }] : []),
+        ...(typeof args.phone === "string" && args.phone.trim() ? [{ id: crypto.randomUUID(), type: "phone" as const, value: args.phone.trim(), normalizedValue: args.phone.trim() }] : []),
+      ];
+      const upserted = await mcpCrmRepository.upsertMcpContact({
+        id,
+        workspaceId: context.workspaceId,
+        firstName: String(args.firstName),
+        lastName: String(args.lastName),
+        identities,
+        companyId,
+        title: employmentTitle,
+        ...(typeof args.expectedVersion === "number" ? { expectedRevision: args.expectedVersion } : {}),
+      });
+      return { id: upserted.row.id, version: upserted.row.revision, state: upserted.created ? "created" : "updated", operation: command.operation, correlationId: crypto.randomUUID() };
+    }
+    if (command.operation === "opportunity_update") {
+      const row = await mcpOpportunityRepository.update({
+        workspaceId: context.workspaceId,
+        opportunityId: String(args.opportunityId),
+        actorUserId: context.userId,
+        actorRole,
+        ...(typeof args.expectedVersion === "number" ? { expectedRevision: args.expectedVersion } : {}),
+        ...(typeof args.amount === "number" || args.amount === null ? { amount: args.amount as number | null } : {}),
+        ...(typeof args.currency === "string" || args.currency === null ? { currency: args.currency as string | null } : {}),
+        ...(typeof args.probability === "number" ? { probability: args.probability } : {}),
+        ...(typeof args.nextAction === "string" || args.nextAction === null ? { nextAction: args.nextAction as string | null } : {}),
+        now,
+      });
+      return { id: row.id, version: row.revision, state: "updated", operation: command.operation, correlationId: crypto.randomUUID() };
+    }
+    if (command.operation === "opportunity_change_stage") {
+      const row = await mcpOpportunityRepository.changeStage({
+        workspaceId: context.workspaceId,
+        opportunityId: String(args.opportunityId),
+        stage: String(args.stage) as Parameters<PostgresOpportunityRepository["changeStage"]>[0]["stage"],
+        reason: typeof args.reason === "string" ? args.reason : null,
+        actorUserId: context.userId,
+        actorRole,
+        ...(typeof args.expectedVersion === "number" ? { expectedRevision: args.expectedVersion } : {}),
+        now,
+      });
+      return { id: row.id, version: row.revision, state: "updated", operation: command.operation, correlationId: crypto.randomUUID() };
+    }
+    if (command.operation === "prospect_add_note") {
+      const contactId = String(args.contactId);
+      const contact = await mcpCrmRepository.getContact({ workspaceId: context.workspaceId, contactId });
+      if (!contact) throw new Error("WRITE_NOT_FOUND");
+      const noteCorrelationId = crypto.randomUUID();
+      const note = await mcpCrmRepository.addMcpNote({
+        workspaceId: context.workspaceId,
+        contactId,
+        note: String(args.note),
+        actorUserId: context.userId,
+        expectedRevision: typeof args.expectedVersion === "number" ? args.expectedVersion : contact.revision,
+        correlationId: noteCorrelationId,
+        now,
+      });
+      return { id: note.eventId ?? contactId, version: note.revision, state: note.eventId ? "created" : "replayed", operation: command.operation, correlationId: noteCorrelationId };
+    }
+    if (command.operation === "content_idea_create") {
+      const row = await mcpContentIdeaRepository.createManual({
+        workspaceId: context.workspaceId,
+        userId: context.userId,
+        title: String(args.title),
+        brief: String(args.brief),
+        strategyId: typeof args.strategyId === "string" ? args.strategyId : null,
+        now,
+      });
+      return { id: row.id, version: row.revision ?? 1, state: "created", operation: command.operation, correlationId: crypto.randomUUID() };
+    }
+    if (command.operation === "content_draft_create") {
+      const ideaId = String(args.ideaId);
+      const idea = await contentGenerationApplication.findIdea({ workspaceId: context.workspaceId, ideaId });
+      if (!idea) throw new Error("WRITE_NOT_FOUND");
+      const asset = await contentGenerationApplication.findAssetByIdea({ workspaceId: context.workspaceId, ideaId });
+      const currentRevision = (asset as (typeof asset & { revision?: number }) | null)?.revision
+        ?? (idea as typeof idea & { revision?: number }).revision
+        ?? 1;
+      assertMcpExpectedRevision(typeof args.expectedVersion === "number" ? args.expectedVersion : undefined, currentRevision);
+      const run = await contentGenerationApplication.generate({
+        workspaceId: context.workspaceId,
+        userId: context.userId,
+        ideaId,
+        correlationId,
+        requestKey: command.requestKey,
+        instruction: String(args.body),
+        ...(typeof args.expectedVersion === "number" ? { expectedRevision: args.expectedVersion } : {}),
+        now,
+      });
+      const [job] = await tx.select({ id: jobs.id, correlationId: jobs.correlationId }).from(jobs).where(and(
+        eq(jobs.workspaceId, context.workspaceId),
+        eq(jobs.type, CONTENT_GENERATION_JOB_TYPE),
+        sql`${jobs.payload}->>'runId' = ${run.id}`,
+      )).limit(1);
+      if (!job) throw new Error("CONTENT_GENERATION_JOB_NOT_FOUND");
+      const operationId = crypto.randomUUID();
+      const operation = await new PostgresMcpOperationStore(tx).createQueued({
+        context,
+        command,
+        operationId,
+        jobId: job.id,
+        correlationId: job.correlationId,
+        resultRefs: [{ type: "ContentGenerationRun", id: run.id }],
+        now,
+      });
+      return {
+        id: run.id,
+        version: currentRevision,
+        state: "queued",
+        status: "queued",
+        operation: command.operation,
+        correlationId: operation.record.correlationId,
+        operationId: operation.record.operationId,
+        jobId: operation.record.jobId,
+        operationUri: operation.record.operationUri,
+      };
+    }
+    if (command.operation === "prospect_schedule_dry_run") {
+      const contactId = String(args.contactId);
+      const contact = await mcpCrmRepository.getContact({ workspaceId: context.workspaceId, contactId });
+      if (!contact) throw new Error("WRITE_NOT_FOUND");
+      const prospect = await mcpProspectViews.get({ workspaceId: context.workspaceId, contactId });
+      if (!prospect) throw new Error("WRITE_NOT_FOUND");
+      const campaignId = typeof args.campaignId === "string" ? args.campaignId : null;
+      if (campaignId && !prospect.icpMatches.some((match) => match.campaignId === campaignId)) throw new Error("WRITE_NOT_FOUND");
+      const dueAt = typeof args.scheduledFor === "string" ? new Date(args.scheduledFor) : now;
+      if (Number.isNaN(dueAt.getTime())) throw new Error("WRITE_FAILED");
+      const correlationId = crypto.randomUUID();
+      const scheduled = await mcpProspectDecisionScheduler.schedule({
+        id: crypto.randomUUID(), workspaceId: context.workspaceId, contactId,
+        ...(campaignId ? { campaignId } : {}), kind: "mcp_dry_run", reason: "MCP dry-run requested",
+        dueAt, priority: 90, maxAttempts: 1, idempotencyKey: `mcp:${context.clientId}:${command.requestKey}`,
+        correlationId, payload: { simulationOnly: true, requestedBy: context.userId },
+      });
+      return { id: scheduled.decision.id, version: 1, state: "queued", operation: command.operation, correlationId };
+    }
+    throw new Error("WRITE_FAILED");
+  });
+}
 
 /** Compose the complete API application once for HTTP or a future MCP adapter. */
 export function createNoosphereApiRuntime(environment: NodeJS.ProcessEnv = process.env): NoosphereRuntime {
@@ -150,6 +332,7 @@ const auth = createBetterAuthRuntime(database.db, {
 const mcpIssuer = publicAppOrigin;
 const mcpResource = `${mcpIssuer}/mcp`;
 const mcpOAuthStore = new PostgresMcpOAuthStore(database.db);
+const mcpOperationStore = new PostgresMcpOperationStore(database.db);
 const mcpOAuthService = createMcpOAuthService(mcpOAuthStore, {
   issuer: mcpIssuer,
   resource: mcpResource,
@@ -587,155 +770,13 @@ const mcpReadCapabilities: McpReadCapabilities = createMcpReadCapabilities({
         return { status: "not_ready" };
       }
     },
+    get: async (context, input) => {
+      const operation = await mcpOperationStore.get({ workspaceId: context.workspaceId, operationId: input.operationId });
+      return operation ? toMcpOperationView(operation) : null;
+    },
   },
 });
-const mcpWriteCapabilities: McpWriteCapabilities = createPostgresAtomicMcpWriteCapabilities(database.db, async (tx: PostgresMcpWriteTransaction, context, command) => {
-  const mcpCrmRepository = new PostgresCrmRepository(tx);
-  const mcpOpportunityRepository = new PostgresOpportunityRepository(tx);
-  const mcpProspectViews = new PostgresProspectViewRepository(tx);
-  const mcpProspectDecisionScheduler = new PostgresProspectDecisionScheduler(tx, clock);
-  const mcpContentIdeaRepository = new PostgresContentIdeaRepository(tx);
-  const contentGenerationApplication = new ContentGenerationApplication(new PostgresContentGenerationRepository(tx));
-  const args = command.arguments as Readonly<Record<string, unknown>>;
-  const now = new Date();
-  const actorRole = context.role;
-  if (command.operation === "company_upsert") {
-    const id = typeof args.id === "string" ? args.id : crypto.randomUUID();
-    const existing = await mcpCrmRepository.getCompany({ workspaceId: context.workspaceId, companyId: id });
-    if (existing) assertMcpExpectedRevision(typeof args.expectedVersion === "number" ? args.expectedVersion : undefined, existing.revision);
-    else if (args.expectedVersion !== undefined) throw new Error("MCP_WRITE_VERSION_CONFLICT");
-    const row = existing
-      ? await mcpCrmRepository.updateCompany({ workspaceId: context.workspaceId, companyId: id, expectedRevision: existing.revision, fields: {
-          name: String(args.name), normalizedDomain: typeof args.domain === "string" ? args.domain.toLowerCase() : null,
-          sector: typeof args.sector === "string" ? args.sector : null, location: typeof args.location === "string" ? args.location : null,
-          employeeCountMin: typeof args.employeeCountMin === "number" ? args.employeeCountMin : null,
-          employeeCountMax: typeof args.employeeCountMax === "number" ? args.employeeCountMax : null,
-        } })
-      : await mcpCrmRepository.createCompany({
-          id, workspaceId: context.workspaceId, name: String(args.name), normalizedDomain: typeof args.domain === "string" ? args.domain.toLowerCase() : null,
-          sector: typeof args.sector === "string" ? args.sector : null, location: typeof args.location === "string" ? args.location : null,
-          employeeCountMin: typeof args.employeeCountMin === "number" ? args.employeeCountMin : null,
-          employeeCountMax: typeof args.employeeCountMax === "number" ? args.employeeCountMax : null,
-          linkedinUrl: null, source: "manual",
-        });
-    return { id: row.id, version: row.revision, state: existing ? "updated" : "created", operation: command.operation, correlationId: crypto.randomUUID() };
-  }
-  if (command.operation === "contact_upsert") {
-    const id = typeof args.id === "string" ? args.id : crypto.randomUUID();
-    const companyId = typeof args.companyId === "string" ? args.companyId : null;
-    const employmentTitle = typeof args.title === "string" && args.title.trim() ? args.title.trim() : "MCP contact";
-    const identities = [
-      ...(typeof args.email === "string" ? [{ id: crypto.randomUUID(), type: "email" as const, value: args.email.trim(), normalizedValue: args.email.trim().toLowerCase() }] : []),
-      ...(typeof args.phone === "string" && args.phone.trim() ? [{ id: crypto.randomUUID(), type: "phone" as const, value: args.phone.trim(), normalizedValue: args.phone.trim() }] : []),
-    ];
-    const upserted = await mcpCrmRepository.upsertMcpContact({
-      id,
-      workspaceId: context.workspaceId,
-      firstName: String(args.firstName),
-      lastName: String(args.lastName),
-      identities,
-      companyId,
-      title: employmentTitle,
-      ...(typeof args.expectedVersion === "number" ? { expectedRevision: args.expectedVersion } : {}),
-    });
-    return { id: upserted.row.id, version: upserted.row.revision, state: upserted.created ? "created" : "updated", operation: command.operation, correlationId: crypto.randomUUID() };
-  }
-  if (command.operation === "opportunity_update") {
-    const row = await mcpOpportunityRepository.update({
-      workspaceId: context.workspaceId,
-      opportunityId: String(args.opportunityId),
-      actorUserId: context.userId,
-      actorRole,
-      ...(typeof args.expectedVersion === "number" ? { expectedRevision: args.expectedVersion } : {}),
-      ...(typeof args.amount === "number" || args.amount === null ? { amount: args.amount as number | null } : {}),
-      ...(typeof args.currency === "string" || args.currency === null ? { currency: args.currency as string | null } : {}),
-      ...(typeof args.probability === "number" ? { probability: args.probability } : {}),
-      ...(typeof args.nextAction === "string" || args.nextAction === null ? { nextAction: args.nextAction as string | null } : {}),
-      now,
-    });
-    return { id: row.id, version: row.revision, state: "updated", operation: command.operation, correlationId: crypto.randomUUID() };
-  }
-  if (command.operation === "opportunity_change_stage") {
-    const row = await mcpOpportunityRepository.changeStage({
-      workspaceId: context.workspaceId,
-      opportunityId: String(args.opportunityId),
-      stage: String(args.stage) as Parameters<PostgresOpportunityRepository["changeStage"]>[0]["stage"],
-      reason: typeof args.reason === "string" ? args.reason : null,
-      actorUserId: context.userId,
-      actorRole,
-      ...(typeof args.expectedVersion === "number" ? { expectedRevision: args.expectedVersion } : {}),
-      now,
-    });
-    return { id: row.id, version: row.revision, state: "updated", operation: command.operation, correlationId: crypto.randomUUID() };
-  }
-  if (command.operation === "prospect_add_note") {
-    const contactId = String(args.contactId);
-    const contact = await mcpCrmRepository.getContact({ workspaceId: context.workspaceId, contactId });
-    if (!contact) throw new Error("WRITE_NOT_FOUND");
-    const noteCorrelationId = crypto.randomUUID();
-    const note = await mcpCrmRepository.addMcpNote({
-      workspaceId: context.workspaceId,
-      contactId,
-      note: String(args.note),
-      actorUserId: context.userId,
-      expectedRevision: typeof args.expectedVersion === "number" ? args.expectedVersion : contact.revision,
-      correlationId: noteCorrelationId,
-      now,
-    });
-    return { id: note.eventId ?? contactId, version: note.revision, state: note.eventId ? "created" : "replayed", operation: command.operation, correlationId: noteCorrelationId };
-  }
-  if (command.operation === "content_idea_create") {
-    const row = await mcpContentIdeaRepository.createManual({
-      workspaceId: context.workspaceId,
-      userId: context.userId,
-      title: String(args.title),
-      brief: String(args.brief),
-      strategyId: typeof args.strategyId === "string" ? args.strategyId : null,
-      now,
-    });
-    return { id: row.id, version: row.revision ?? 1, state: "created", operation: command.operation, correlationId: crypto.randomUUID() };
-  }
-  if (command.operation === "content_draft_create") {
-    const ideaId = String(args.ideaId);
-    const idea = await contentGenerationApplication.findIdea({ workspaceId: context.workspaceId, ideaId });
-    if (!idea) throw new Error("WRITE_NOT_FOUND");
-    const asset = await contentGenerationApplication.findAssetByIdea({ workspaceId: context.workspaceId, ideaId });
-    const currentRevision = (asset as (typeof asset & { revision?: number }) | null)?.revision
-      ?? (idea as typeof idea & { revision?: number }).revision
-      ?? 1;
-    assertMcpExpectedRevision(typeof args.expectedVersion === "number" ? args.expectedVersion : undefined, currentRevision);
-    const run = await contentGenerationApplication.generate({
-      workspaceId: context.workspaceId,
-      userId: context.userId,
-      ideaId,
-      requestKey: command.requestKey,
-      instruction: String(args.body),
-      ...(typeof args.expectedVersion === "number" ? { expectedRevision: args.expectedVersion } : {}),
-      now,
-    });
-    return { id: run.id, version: currentRevision, state: "queued", operation: command.operation, correlationId: crypto.randomUUID() };
-  }
-  if (command.operation === "prospect_schedule_dry_run") {
-    const contactId = String(args.contactId);
-    const contact = await mcpCrmRepository.getContact({ workspaceId: context.workspaceId, contactId });
-    if (!contact) throw new Error("WRITE_NOT_FOUND");
-    const prospect = await mcpProspectViews.get({ workspaceId: context.workspaceId, contactId });
-    if (!prospect) throw new Error("WRITE_NOT_FOUND");
-    const campaignId = typeof args.campaignId === "string" ? args.campaignId : null;
-    if (campaignId && !prospect.icpMatches.some((match) => match.campaignId === campaignId)) throw new Error("WRITE_NOT_FOUND");
-    const dueAt = typeof args.scheduledFor === "string" ? new Date(args.scheduledFor) : now;
-    if (Number.isNaN(dueAt.getTime())) throw new Error("WRITE_FAILED");
-    const correlationId = crypto.randomUUID();
-    const scheduled = await mcpProspectDecisionScheduler.schedule({
-      id: crypto.randomUUID(), workspaceId: context.workspaceId, contactId,
-      ...(campaignId ? { campaignId } : {}), kind: "mcp_dry_run", reason: "MCP dry-run requested",
-      dueAt, priority: 90, maxAttempts: 1, idempotencyKey: `mcp:${context.clientId}:${command.requestKey}`,
-      correlationId, payload: { simulationOnly: true, requestedBy: context.userId },
-    });
-    return { id: scheduled.decision.id, version: 1, state: "queued", operation: command.operation, correlationId };
-  }
-  throw new Error("WRITE_FAILED");
-});
+const mcpWriteCapabilities: McpWriteCapabilities = createMcpWriteCapabilities(database.db, clock);
 async function dispatch(request: Request): Promise<Response> {
     const pathname = new URL(request.url).pathname;
     if (pathname.startsWith("/oauth/") || pathname === "/.well-known/oauth-authorization-server" || pathname.startsWith("/.well-known/oauth-protected-resource")) return mcpOAuth(request);

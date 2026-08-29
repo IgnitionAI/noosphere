@@ -20,9 +20,10 @@ describe("MCP read contracts", () => {
     expect(() => parseMcpToolArguments("company_get_brief", { companyId: crypto.randomUUID(), extra: true })).toThrow();
     const contactId = crypto.randomUUID();
     expect(parseMcpToolArguments("prospect_get_360", { contactId })).toEqual({ contactId });
+    expect(() => parseMcpToolArguments("operation_get", { operationId: "not-a-uuid" })).toThrow();
   });
 
-  test("publishes exactly the stable eight resource URI templates", () => {
+  test("publishes exactly the stable resource URI templates", () => {
     expect(MCP_READ_RESOURCE_URIS).toEqual([
       "noosphere://workspace/current/summary",
       "noosphere://workspace/current/pipeline",
@@ -32,6 +33,7 @@ describe("MCP read contracts", () => {
       "noosphere://campaigns/{campaignId}/status",
       "noosphere://content/calendar",
       "noosphere://operations/health",
+      "noosphere://operations/{operationId}",
     ]);
   });
 

@@ -23,7 +23,7 @@ export class PostgresMcpWriteLedger implements McpWriteLedger {
   async runAtomic<Name extends McpWriteCommand["operation"]>(
     context: McpExecutionContext,
     command: McpWriteCommand<Name>,
-    effect: (tx: PostgresMcpWriteTransaction) => Promise<McpWriteResult>,
+    effect: (tx: PostgresMcpWriteTransaction, correlationId: string) => Promise<McpWriteResult>,
   ): Promise<McpWriteResult> {
     const correlationId = crypto.randomUUID();
     const [audit] = await this.db.insert(mcpOauthAuditEvents).values({
@@ -58,7 +58,7 @@ export class PostgresMcpWriteLedger implements McpWriteLedger {
           if (conflicting?.status === "completed" && conflicting.result) return { result: conflicting.result as McpWriteResult, replay: true };
           throw new Error("MCP_WRITE_RECOVERY_REQUIRED");
         }
-        const effectResult = await effect(tx);
+        const effectResult = await effect(tx, correlationId);
         const persistedResult: McpWriteResult = audit?.id && !effectResult.auditId ? { ...effectResult, auditId: audit.id } : effectResult;
         if (audit?.id) {
           await tx.update(mcpOauthAuditEvents).set({ outcome: "accepted" }).where(eq(mcpOauthAuditEvents.id, audit.id));
@@ -204,12 +204,13 @@ export function createPostgresAtomicMcpWriteCapabilities(
     tx: PostgresMcpWriteTransaction,
     context: McpExecutionContext,
     command: McpWriteCommand<Name>,
+    correlationId: string,
   ) => Promise<McpWriteResult>,
 ): McpWriteCapabilities {
   const ledger = new PostgresMcpWriteLedger(db);
   return Object.freeze({
     execute: <Name extends McpWriteCommand["operation"]>(context: McpExecutionContext, command: McpWriteCommand<Name>) =>
-      ledger.runAtomic(context, command, (tx) => effect(tx, context, command)),
+      ledger.runAtomic(context, command, (tx, correlationId) => effect(tx, context, command, correlationId)),
     recordAudit: (context: McpExecutionContext, tool: McpWriteCommand["operation"], outcome: string) => ledger.recordAudit(context, tool, outcome),
   });
 }

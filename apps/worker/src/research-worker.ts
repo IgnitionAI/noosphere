@@ -2,6 +2,7 @@ import type { JobQueue } from "@outbound/application/jobs/job-queue";
 import type { ResearchOrchestrator } from "@outbound/application/gtm/research-orchestrator";
 import type { Clock } from "@outbound/application/shared/ports";
 import type { LeasedJob } from "@outbound/application/jobs/job-queue";
+import type { McpTrackedJobContext, McpTrackedJobLifecycle } from "@outbound/application/mcp/mcp-tracked-job-lifecycle";
 
 export interface ResearchWorkerOptions {
   readonly workerId: string;
@@ -57,6 +58,7 @@ export class ResearchWorker {
     private readonly contentPublicationProcessor?: { process(job: LeasedJob): Promise<void> },
     private readonly prospectMemoryRefreshProcessor?: { process(job: LeasedJob): Promise<void> },
     private readonly prospectMemoryBackfillProcessor?: { process(job: LeasedJob): Promise<void> },
+    private readonly trackedJobLifecycle?: Pick<McpTrackedJobLifecycle, "beforeDispatch" | "afterSuccess" | "afterRetry">,
   ) {}
 
   stop(): void {
@@ -144,7 +146,16 @@ export class ResearchWorker {
 
   async #processSafely(job: LeasedJob): Promise<void> {
     const stopHeartbeat = this.#startLeaseHeartbeat(job);
+    let tracked: McpTrackedJobContext | null = null;
+    let dispatchSucceeded = false;
     try {
+      tracked = this.trackedJobLifecycle ? await this.trackedJobLifecycle.beforeDispatch(job) : null;
+      if (tracked && !tracked.active) {
+        // A replayed queue row can outlive a completed/failed/cancelled
+        // operation. Acknowledge it without invoking the domain processor.
+        await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
+        return;
+      }
       if (job.type === "research.document.process" && this.documentProcessor) {
         await this.documentProcessor.process(job);
       } else if (job.type === "prospect.discovery.execute" && this.discoveryProcessor) {
@@ -197,7 +208,20 @@ export class ResearchWorker {
       } else {
         await this.orchestrator.process(job);
       }
+      dispatchSucceeded = true;
+      if (this.trackedJobLifecycle) await this.trackedJobLifecycle.afterSuccess(tracked);
     } catch (error) {
+      if (dispatchSucceeded) {
+        // Domain processors acknowledge before returning. A lifecycle/store
+        // failure after that point must be reconciled, never retried as a
+        // second domain effect against a completed queue row.
+        console.error(JSON.stringify({
+          event: "mcp_tracked_job_lifecycle_error",
+          jobId: job.id,
+          error: error instanceof Error ? error.message : String(error),
+        }));
+        return;
+      }
       // A poisoned job must never kill the worker: requeue it with backoff and
       // let the job table keep the error trail.
       console.error(
@@ -210,13 +234,14 @@ export class ResearchWorker {
         }),
       );
       try {
-        await this.queue.retry({
+        const outcome = await this.queue.retry({
           jobId: job.id,
           workerId: job.lockedBy,
           availableAt: new Date(this.clock.now().getTime() + 30_000),
           errorCode: "WORKER_UNHANDLED_ERROR",
           errorMessage: error instanceof Error ? error.message : String(error),
         });
+        if (this.trackedJobLifecycle) await this.trackedJobLifecycle.afterRetry(tracked, outcome, error);
       } catch (retryError) {
         // Another worker may have reclaimed/finished the job after a lease
         // race. Logging is sufficient: throwing here would contradict the

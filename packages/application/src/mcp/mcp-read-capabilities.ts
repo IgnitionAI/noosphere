@@ -1,5 +1,6 @@
 export type McpReadRole = "viewer" | "operator" | "reviewer" | "admin" | "owner";
 export type McpReadScope = "mcp:read" | "mcp:write";
+import type { McpOperationView } from "./mcp-durable-operations";
 
 /** Identity supplied by the MCP OAuth resource server for one request. */
 export interface McpExecutionContext {
@@ -66,6 +67,7 @@ export interface McpReadCapabilities {
   };
   readonly operations: {
     readonly getHealth: (context: McpExecutionContext) => Promise<McpReadValue>;
+    readonly get: (context: McpExecutionContext, input: { readonly operationId: string }) => Promise<McpOperationView | null>;
   };
 }
 

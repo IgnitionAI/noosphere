@@ -27,7 +27,10 @@ function readCapabilities(): McpReadCapabilities {
     conversation: { list: async () => page("conversation-1") },
     campaign: { getStatus: async (_context, input) => ({ id: input.campaignId, status: "healthy" }) },
     content: { getCalendar: async () => page("calendar-1") },
-    operations: { getHealth: async () => ({ status: "ready" }) },
+    operations: {
+      getHealth: async () => ({ status: "ready" }),
+      get: async (_context, input) => ({ operationId: input.operationId, jobId: crypto.randomUUID(), correlationId: crypto.randomUUID(), status: "queued", resultRefs: [], errorCode: null, createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(), operationUri: `noosphere://operations/${input.operationId}`, inputHash: "leak", args: { secret: "leak" } } as never),
+    },
   };
 }
 
@@ -62,14 +65,14 @@ function createClient() {
 }
 
 describe("MCP read tools and resources", () => {
-  test("discovers and calls all ten read tools with structured bounded output", async () => {
+  test("discovers and calls all eleven read tools with structured bounded output", async () => {
     const { client, sdkTransport } = createClient();
     await client.connect(sdkTransport);
     const tools = await client.listTools();
     const names = tools.tools.map((tool) => tool.name);
     expect(names).toEqual(expect.arrayContaining([
       "workspace_get_summary", "crm_search", "company_get_brief", "prospect_get_360", "pipeline_list",
-      "opportunity_get", "conversation_list", "campaign_get_status", "content_get_calendar", "operations_get_health",
+      "opportunity_get", "conversation_list", "campaign_get_status", "content_get_calendar", "operations_get_health", "operation_get",
     ]));
     const id = crypto.randomUUID();
     const calls: [string, Record<string, unknown>][] = [
@@ -77,20 +80,23 @@ describe("MCP read tools and resources", () => {
       ["company_get_brief", { companyId: id }], ["prospect_get_360", { contactId: id }],
       ["pipeline_list", { limit: 1 }], ["opportunity_get", { opportunityId: id }],
       ["conversation_list", { limit: 1 }], ["campaign_get_status", { campaignId: id }],
-      ["content_get_calendar", { limit: 1 }], ["operations_get_health", {}],
+      ["content_get_calendar", { limit: 1 }], ["operations_get_health", {}], ["operation_get", { operationId: id }],
     ];
     for (const [name, args] of calls) {
       const result = await client.callTool({ name, arguments: args });
       expect(result.isError).not.toBe(true);
       expect(result.structuredContent).toBeDefined();
     }
+    const operation = await client.callTool({ name: "operation_get", arguments: { operationId: id } });
+    expect(JSON.stringify(operation)).not.toContain("inputHash");
+    expect(JSON.stringify(operation)).not.toContain("leak");
     const company = await client.callTool({ name: "company_get_brief", arguments: { companyId: id } });
     expect(JSON.stringify(company)).not.toContain("provider-id");
     expect(JSON.stringify(company)).not.toContain("amount");
     await client.close();
   });
 
-  test("lists all eight resources and reads URI templates without workspace input", async () => {
+  test("lists resources and reads URI templates without workspace input", async () => {
     const { client, sdkTransport } = createClient();
     await client.connect(sdkTransport);
     const listed = await client.listResources();
@@ -102,6 +108,7 @@ describe("MCP read tools and resources", () => {
     expect(templates.resourceTemplates.map((resource) => resource.uriTemplate)).toEqual(expect.arrayContaining([
       "noosphere://companies/{companyId}/brief", "noosphere://prospects/{contactId}/360",
       "noosphere://opportunities/{opportunityId}", "noosphere://campaigns/{campaignId}/status",
+      "noosphere://operations/{operationId}",
     ]));
     const summary = await client.readResource({ uri: "noosphere://workspace/current/summary" });
     const summaryContent = summary.contents[0];
@@ -109,6 +116,9 @@ describe("MCP read tools and resources", () => {
     const company = await client.readResource({ uri: `noosphere://companies/${crypto.randomUUID()}/brief` });
     const companyContent = company.contents[0];
     expect(companyContent && "text" in companyContent ? companyContent.text : "").toContain("Acme");
+    const operation = await client.readResource({ uri: `noosphere://operations/${crypto.randomUUID()}` });
+    const operationContent = operation.contents[0];
+    expect(operationContent && "text" in operationContent ? operationContent.text : "").toContain("operationId");
     await client.close();
   });
 
@@ -150,6 +160,25 @@ describe("MCP read tools and resources", () => {
     expect(result.isError).toBe(true);
     expect(result.structuredContent).toEqual({ error: "READ_FAILED" });
     expect(JSON.stringify(result)).not.toContain("database password");
+    await client.close();
+  });
+
+  test("returns stable NOT_FOUND for missing or foreign operation handles", async () => {
+    const base = readCapabilities();
+    const instance = createMcpTransport({
+      capabilities: { ...capabilities(), mcpRead: { ...base, operations: { ...base.operations, get: async () => null } } },
+      allowedHosts: ["example.test"],
+      authorize: async () => context,
+    });
+    const client = new Client({ name: "mcp-operation-not-found", version: "1.0.0" });
+    const sdkTransport = new StreamableHTTPClientTransport(new URL("https://example.test/mcp"), {
+      fetch: async (input, init) => instance.handle(input instanceof Request ? input : new Request(input, init)),
+    });
+    await client.connect(sdkTransport);
+    const result = await client.callTool({ name: "operation_get", arguments: { operationId: crypto.randomUUID() } });
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toEqual({ error: "NOT_FOUND" });
+    await expect(client.callTool({ name: "operation_get", arguments: { operationId: "invalid" } })).resolves.toMatchObject({ isError: true });
     await client.close();
   });
 

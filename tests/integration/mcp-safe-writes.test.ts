@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { sql } from "drizzle-orm";
 import { createDatabase } from "@outbound/infrastructure/database/client";
-import { authUsers, mcpOauthClients, workspaceMembers, workspaces } from "@outbound/infrastructure/database/schema";
+import { authUsers, jobs, mcpOauthClients, mcpOperations, workspaceMembers, workspaces } from "@outbound/infrastructure/database/schema";
 import { PostgresMcpWriteLedger } from "@outbound/infrastructure/auth/postgres-mcp-write-ledger";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
@@ -43,6 +43,8 @@ databaseDescribe("MCP write ledger PostgreSQL recovery", () => {
     await database.client.begin(async (tx) => {
       await tx`delete from mcp_test_effects where request_key in (select request_key from mcp_write_operations where workspace_id = ${workspaceId})`;
       await tx`delete from mcp_write_operations where workspace_id = ${workspaceId}`;
+      await tx`delete from mcp_operations where workspace_id = ${workspaceId}`;
+      await tx`delete from jobs where workspace_id = ${workspaceId}`;
       await tx`delete from mcp_oauth_audit_events where workspace_id = ${workspaceId}`;
       await tx`delete from mcp_oauth_clients where client_id = ${clientId}`;
       await tx`delete from workspace_members where workspace_id = ${workspaceId} and user_id = ${userId}`;
@@ -83,6 +85,40 @@ databaseDescribe("MCP write ledger PostgreSQL recovery", () => {
     expect(completed.state).toBe("created");
     const afterRetry = await database.client`select effect_count from mcp_test_effects where request_key = ${key}`;
     expect(afterRetry[0]?.effect_count).toBe(1);
+  });
+
+  test("propagates one correlation UUID across audit, domain job, operation, and replayed output", async () => {
+    const key = crypto.randomUUID();
+    const cmd = { ...command, requestKey: key, inputHash: "g".repeat(64) };
+    const operationId = crypto.randomUUID();
+    const jobId = crypto.randomUUID();
+    let effects = 0;
+    const effect = async (tx: Parameters<Parameters<typeof database.db.transaction>[0]>[0], correlationId: string) => {
+      effects += 1;
+      await tx.insert(jobs).values({
+        id: jobId, workspaceId, type: "content.asset.generate", payload: { requestKey: key },
+        idempotencyKey: `mcp-correlation:${key}`, correlationId, maxAttempts: 1, availableAt: new Date(),
+      });
+      await tx.insert(mcpOperations).values({
+        operationId, workspaceId, clientId, userId, tool, requestKey: key, inputHash: cmd.inputHash,
+        jobId, correlationId, status: "queued", resultRefs: [{ type: "job", id: jobId }],
+      });
+      return { id: operationId, version: 1, state: "queued", status: "queued", operation: tool, correlationId, operationId, jobId };
+    };
+
+    const first = await new PostgresMcpWriteLedger(database.db).runAtomic(context, cmd, effect);
+    const replay = await new PostgresMcpWriteLedger(database.db).runAtomic(context, cmd, effect);
+    if (!first.auditId) throw new Error("MCP_CORRELATION_AUDIT_ID_MISSING");
+    const [audit] = await database.client`select correlation_id from mcp_oauth_audit_events where id = ${first.auditId}`;
+    const [job] = await database.client`select correlation_id from jobs where id = ${jobId}`;
+    const [operation] = await database.client`select correlation_id from mcp_operations where operation_id = ${operationId}`;
+
+    expect(first.correlationId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(replay).toEqual(first);
+    expect(effects).toBe(1);
+    expect(audit?.correlation_id).toBe(first.correlationId);
+    expect(job?.correlation_id).toBe(first.correlationId);
+    expect(operation?.correlation_id).toBe(first.correlationId);
   });
 
   test("atomic legacy non-completed rows require recovery and never replay the effect", async () => {

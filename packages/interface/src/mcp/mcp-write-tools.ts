@@ -33,7 +33,18 @@ function register<Name extends McpWriteToolName>(server: McpServer, name: Name, 
 }
 
 function toolResult(value: McpWriteResult) {
-  const bounded = { id: value.id, version: value.version, state: value.state, operation: value.operation, correlationId: value.correlationId, ...(value.auditId ? { auditId: value.auditId } : {}) };
+  const bounded = {
+    id: value.id,
+    version: value.version,
+    state: value.state,
+    ...(value.status ? { status: value.status } : {}),
+    operation: value.operation,
+    correlationId: value.correlationId,
+    ...(value.operationId ? { operationId: value.operationId } : {}),
+    ...(value.jobId ? { jobId: value.jobId } : {}),
+    ...(value.operationUri ? { operationUri: value.operationUri } : {}),
+    ...(value.auditId ? { auditId: value.auditId } : {}),
+  };
   return { content: [{ type: "text" as const, text: JSON.stringify(bounded) }], structuredContent: bounded };
 }
 

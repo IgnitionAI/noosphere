@@ -3,6 +3,7 @@ import type { McpExecutionContext, McpReadCapabilities, McpReadValue } from "@ou
 import {
   mcpToolArgumentsSchema,
   parseMcpToolArguments,
+  redactMcpOperationValue,
   redactMcpReadValue,
   type McpToolArguments,
   type McpReadToolName,
@@ -24,6 +25,7 @@ export function registerMcpReadTools(
   register(server, "campaign_get_status", "Read campaign automation status.", mcpToolArgumentsSchema.campaign_get_status, context, async (args) => capabilities.campaign.getStatus(context, args));
   register(server, "content_get_calendar", "Read the bounded content calendar.", mcpToolArgumentsSchema.content_get_calendar, context, async (args) => capabilities.content.getCalendar(context, args));
   register(server, "operations_get_health", "Read workspace-safe operational health.", mcpToolArgumentsSchema.operations_get_health, context, async () => capabilities.operations.getHealth(context));
+  register(server, "operation_get", "Read a durable MCP operation status.", mcpToolArgumentsSchema.operation_get, context, async (args) => redactMcpOperationValue(await capabilities.operations.get(context, args)) as McpReadValue | null);
 }
 
 function register<Name extends McpReadToolName>(

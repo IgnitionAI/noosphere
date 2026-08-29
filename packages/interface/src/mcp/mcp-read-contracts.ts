@@ -9,6 +9,7 @@ export const MCP_READ_RESOURCE_URIS = [
   "noosphere://campaigns/{campaignId}/status",
   "noosphere://content/calendar",
   "noosphere://operations/health",
+  "noosphere://operations/{operationId}",
 ] as const;
 
 export const MCP_READ_TOOL_NAMES = [
@@ -22,6 +23,7 @@ export const MCP_READ_TOOL_NAMES = [
   "campaign_get_status",
   "content_get_calendar",
   "operations_get_health",
+  "operation_get",
 ] as const;
 
 export type McpReadToolName = (typeof MCP_READ_TOOL_NAMES)[number];
@@ -54,6 +56,7 @@ export const mcpToolArgumentsSchema = {
     to: z.string().datetime({ offset: true }).optional(),
   }),
   operations_get_health: z.object({}).strict(),
+  operation_get: z.object({ operationId: uuid }).strict(),
 } as const;
 
 export type McpToolArguments = {
@@ -62,6 +65,39 @@ export type McpToolArguments = {
 
 export function parseMcpToolArguments<Name extends McpReadToolName>(name: Name, value: unknown): McpToolArguments[Name] {
   return mcpToolArgumentsSchema[name].parse(value ?? {}) as McpToolArguments[Name];
+}
+
+/** Enforce the operation public projection at the transport boundary too.
+ * Capabilities are injected, so never serialize an arbitrary implementation
+ * object even when it is structurally assignable to the public type. */
+export function redactMcpOperationValue(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const input = value as Record<string, unknown>;
+  const statuses = new Set(["queued", "running", "completed", "failed", "cancelled"]);
+  if (typeof input.operationId !== "string" || typeof input.jobId !== "string"
+    || typeof input.correlationId !== "string" || typeof input.status !== "string"
+    || !statuses.has(input.status) || typeof input.createdAt !== "string"
+    || typeof input.updatedAt !== "string" || typeof input.operationUri !== "string") return null;
+  const refs = Array.isArray(input.resultRefs) ? input.resultRefs.slice(0, 20).flatMap((ref) => {
+    if (!ref || typeof ref !== "object" || Array.isArray(ref)) return [];
+    const candidate = ref as Record<string, unknown>;
+    return typeof candidate.type === "string" && candidate.type.length > 0 && candidate.type.length <= 120
+      && typeof candidate.id === "string" && candidate.id.length > 0 && candidate.id.length <= 120
+      ? [{ type: candidate.type, id: candidate.id }] : [];
+  }) : [];
+  const errorCode = typeof input.errorCode === "string" && /^[A-Z][A-Z0-9_.-]{0,119}$/.test(input.errorCode)
+    ? input.errorCode : null;
+  return {
+    operationId: input.operationId,
+    jobId: input.jobId,
+    correlationId: input.correlationId,
+    status: input.status,
+    resultRefs: refs,
+    errorCode,
+    createdAt: input.createdAt,
+    updatedAt: input.updatedAt,
+    operationUri: `noosphere://operations/${input.operationId}`,
+  };
 }
 
 const alwaysRedactedKeys = new Set([
