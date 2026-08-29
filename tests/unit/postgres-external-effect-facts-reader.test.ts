@@ -11,6 +11,7 @@ describe("PostgresExternalEffectFactsReader", () => {
     const reader = new PostgresExternalEffectFactsReader({} as never);
     expect(typeof reader.read).toBe("function");
     expect(typeof reader.readFacts).toBe("function");
+    expect(typeof reader.readPrepare).toBe("function");
     const rows = [
       { id: "enrollment-b", status: "active", sequenceVersionId: "sequence-1", enrolledAt: new Date("2026-08-29T10:00:00.000Z"), completedAt: null, createdAt: new Date("2026-08-29T10:00:00.000Z") },
       { id: "enrollment-a", status: "active", sequenceVersionId: "sequence-1", enrolledAt: new Date("2026-08-29T09:00:00.000Z"), completedAt: null, createdAt: new Date("2026-08-29T09:00:00.000Z") },

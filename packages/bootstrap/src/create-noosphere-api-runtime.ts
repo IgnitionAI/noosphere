@@ -136,6 +136,10 @@ import { PostgresProspectViewRepository } from "@outbound/infrastructure/crm/pos
 import { PostgresOperationalViews } from "@outbound/infrastructure/workspaces/postgres-operational-views";
 import { createMcpReadCapabilities, type McpReadCapabilities, type McpReadPage, type McpReadValue } from "@outbound/application/mcp/mcp-read-capabilities";
 import { toMcpOperationView } from "@outbound/application/mcp/mcp-durable-operations";
+import { ExternalEffectPolicy } from "@outbound/application/mcp/external-effect-policy";
+import { PostgresExternalEffectFactsReader } from "@outbound/infrastructure/mcp/postgres-external-effect-facts-reader";
+import { PostgresMcpGovernedEffectRepository } from "@outbound/infrastructure/mcp/postgres-mcp-governed-effect-repository";
+import { createPostgresMcpGovernedEffectCapabilities } from "@outbound/infrastructure/mcp/postgres-mcp-governed-effect-capabilities";
 
 /** Compose the production MCP write capabilities around a database transaction. */
 export function createMcpWriteCapabilities(database: Database, clock: Clock): McpWriteCapabilities {
@@ -777,6 +781,10 @@ const mcpReadCapabilities: McpReadCapabilities = createMcpReadCapabilities({
   },
 });
 const mcpWriteCapabilities: McpWriteCapabilities = createMcpWriteCapabilities(database.db, clock);
+const mcpEffectFactsReader = new PostgresExternalEffectFactsReader(database.db, () => clock.now());
+const mcpEffectPolicy = new ExternalEffectPolicy(mcpEffectFactsReader);
+const mcpEffectRepository = new PostgresMcpGovernedEffectRepository(database.db, () => clock.now(), mcpEffectPolicy);
+const mcpGovernedEffectCapabilities = createPostgresMcpGovernedEffectCapabilities(mcpEffectRepository, mcpEffectFactsReader, mcpEffectPolicy, () => clock.now());
 async function dispatch(request: Request): Promise<Response> {
     const pathname = new URL(request.url).pathname;
     if (pathname.startsWith("/oauth/") || pathname === "/.well-known/oauth-authorization-server" || pathname.startsWith("/.well-known/oauth-protected-resource")) return mcpOAuth(request);
@@ -860,6 +868,7 @@ async function dispatch(request: Request): Promise<Response> {
 const runtimeCapabilities: RuntimeCapabilities = {
   mcpRead: mcpReadCapabilities,
   mcpWrite: mcpWriteCapabilities,
+  mcpGovernedEffects: mcpGovernedEffectCapabilities,
   crm: {
     productResearch: {
       get: (input) => application.get(input),

@@ -93,10 +93,19 @@ export interface ExternalEffectFactsReaderInput {
   readonly phase?: "preview" | "final";
 }
 
+/** Workspace-owned source facts used before a proposal exists. */
+export interface ExternalEffectPrepareFactsReaderInput {
+  readonly context: McpExecutionContext;
+  readonly kind: McpGovernedEffectKind;
+  readonly aggregateId: string;
+  readonly intentSnapshot: unknown;
+}
+
 /** Application port. Implementations may expose either name for compatibility with existing readers. */
 export interface ExternalEffectFactsReader {
   readonly read?: (input: ExternalEffectFactsReaderInput) => Promise<unknown>;
   readonly readFacts?: (input: ExternalEffectFactsReaderInput) => Promise<unknown>;
+  readonly readPrepare?: (input: ExternalEffectPrepareFactsReaderInput) => Promise<unknown>;
 }
 
 export type ExternalEffectAuthoritativeFactsReader = ExternalEffectFactsReader;

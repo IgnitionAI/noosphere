@@ -1,4 +1,4 @@
-import { and, eq, max, sql } from "drizzle-orm";
+import { and, desc, eq, max, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import type {
   ExternalEffectPolicy,
@@ -290,6 +290,61 @@ export class PostgresMcpGovernedEffectRepository {
       eq(mcpEffectProposals.id, input.proposalId),
     )).limit(1);
     return rows[0] ? toProposalRecord(rows[0]) : null;
+  }
+
+  async listStatus(input: {
+    readonly workspaceId: string;
+    readonly status?: string;
+    readonly limit: number;
+    readonly role?: string;
+  }): Promise<readonly McpEffectDecisionRecord[]> {
+    const predicate = input.status === undefined
+      ? eq(mcpEffectProposals.workspaceId, input.workspaceId)
+      : and(eq(mcpEffectProposals.workspaceId, input.workspaceId), eq(mcpEffectProposals.status, input.status));
+    const rows = await this.database.select().from(mcpEffectProposals)
+      .where(predicate)
+      .orderBy(desc(mcpEffectProposals.updatedAt), desc(mcpEffectProposals.id))
+      .limit(Math.min(100, Math.max(1, input.limit)));
+    return Promise.all(rows.map((row) => this.toStatusRecord(row, input.role ?? "viewer")));
+  }
+
+  async getStatus(input: {
+    readonly workspaceId: string;
+    readonly proposalId?: string;
+    readonly approvalItemId?: string;
+    readonly role?: string;
+  }): Promise<McpEffectDecisionRecord | null> {
+    if (!input.proposalId && !input.approvalItemId) return null;
+    const selector = input.proposalId
+      ? eq(mcpEffectProposals.id, input.proposalId)
+      : eq(mcpEffectProposals.approvalItemId, input.approvalItemId!);
+    const rows = await this.database.select().from(mcpEffectProposals).where(and(
+      eq(mcpEffectProposals.workspaceId, input.workspaceId), selector,
+    )).limit(1);
+    return rows[0] ? this.toStatusRecord(rows[0], input.role ?? "viewer") : null;
+  }
+
+  private async toStatusRecord(
+    proposal: typeof mcpEffectProposals.$inferSelect,
+    role: string,
+  ): Promise<McpEffectDecisionRecord> {
+    const approval = proposal.approvalItemId
+      ? (await this.database.select().from(approvalItems).where(and(
+        eq(approvalItems.workspaceId, proposal.workspaceId), eq(approvalItems.id, proposal.approvalItemId),
+      )).limit(1))[0] ?? null
+      : null;
+    const intention = (await this.database.select().from(mcpEffectIntentions).where(and(
+      eq(mcpEffectIntentions.workspaceId, proposal.workspaceId), eq(mcpEffectIntentions.proposalId, proposal.id),
+    )).limit(1))[0] ?? null;
+    let sourceEventId: string | null = null;
+    if (intention) {
+      try {
+        sourceEventId = await outboxSourceEventId(this.database, proposal.workspaceId, proposal.id, intention.id);
+      } catch {
+        sourceEventId = null;
+      }
+    }
+    return toDecisionRecord(proposal, approval, intention, role, sourceEventId);
   }
 
   async createApproval(input: CreateApprovalInput): Promise<McpEffectApprovalRecord> {
@@ -895,7 +950,7 @@ async function lockGovernedAggregate(
 
 function toDecisionRecord(
   proposal: typeof mcpEffectProposals.$inferSelect,
-  approval: typeof approvalItems.$inferSelect,
+  approval: typeof approvalItems.$inferSelect | null,
   intention: typeof mcpEffectIntentions.$inferSelect | null,
   role: string,
   sourceEventId: string | null = null,
@@ -916,7 +971,7 @@ function toDecisionRecord(
     operationId: proposal.operationId,
     jobId: proposal.jobId ?? intention?.jobId ?? null,
     reconciliationId: proposal.reconciliationId,
-    approvalDecision: approval.status === "approved" ? "approve" : approval.status === "rejected" ? "reject" : null,
+    approvalDecision: approval?.status === "approved" ? "approve" : approval?.status === "rejected" ? "reject" : null,
     intent: intent as McpEffectStatusView["intent"],
     redacted: true,
     intentionId: intention?.id ?? null,

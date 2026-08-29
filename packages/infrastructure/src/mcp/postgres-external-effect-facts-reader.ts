@@ -1,6 +1,6 @@
 import { and, desc, eq, isNull, or } from "drizzle-orm";
 import { createHash } from "node:crypto";
-import type { ExternalEffectFacts, ExternalEffectFactsReader, ExternalEffectFactsReaderInput } from "@outbound/application/mcp/external-effect-policy";
+import type { ExternalEffectFacts, ExternalEffectFactsReader, ExternalEffectFactsReaderInput, ExternalEffectPrepareFactsReaderInput } from "@outbound/application/mcp/external-effect-policy";
 import type { McpGovernedEffectKind } from "@outbound/application/mcp/mcp-governed-effects";
 import type { DatabaseExecutor } from "@outbound/infrastructure/database/client";
 import { suppressionFingerprint } from "@outbound/infrastructure/crm/suppression-fingerprint";
@@ -92,6 +92,25 @@ export class PostgresExternalEffectFactsReader implements ExternalEffectFactsRea
   }
 
   async readFacts(input: ExternalEffectFactsReaderInput): Promise<ExternalEffectFacts | null> { return this.read(input); }
+
+  async readPrepare(input: ExternalEffectPrepareFactsReaderInput): Promise<ExternalEffectFacts | null> {
+    if (!input.context.workspaceId || !input.aggregateId) return null;
+    try {
+      const persisted = versionsFor(1, 1, 1);
+      switch (input.kind) {
+        case "conversation_reply":
+          return this.readConversation(input.context.workspaceId, input.aggregateId, persisted);
+        case "content_publication":
+          return this.readPublication(input.context.workspaceId, input.aggregateId, input.intentSnapshot, input.intentSnapshot, persisted);
+        case "meeting_proposal":
+          return this.readMeeting(input.context.workspaceId, input.aggregateId, slotPosition(input.intentSnapshot), persisted);
+        case "campaign_activation":
+          return this.readCampaign(input.context.workspaceId, input.aggregateId, persisted);
+      }
+    } catch {
+      return null;
+    }
+  }
 
   private async readConversation(workspaceId: string, aggregateId: string, persisted: Versions): Promise<ExternalEffectFacts | null> {
     const rows = await this.database.select().from(conversations).where(and(eq(conversations.workspaceId, workspaceId), eq(conversations.id, aggregateId))).limit(1);
