@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { ExternalEffectPolicy, McpEffectProposal } from "@outbound/application/mcp/mcp-governed-effects";
+import type { ExternalEffectAttemptIdentity } from "@outbound/application/mcp/external-effect-attempt";
 import {
   evaluateMcpEffectFinalGate,
   mcpEffectWorkerContext,
@@ -122,5 +123,84 @@ describe("MCP governed-effect worker final gate", () => {
       const result = await evaluateMcpEffectFinalGate({ final: async () => ({ decision: code === "OK" ? "allow" : "deny", code, factsVersion: 2 }) }, proposal, mcpEffectWorkerContext(workspaceId));
       expect(result).toEqual({ decision: code === "OK" ? "allow" : "deny", code, factsVersion: 2 });
     }
+  });
+
+  test("records the durable attempt before an optional executor and fails closed without one", async () => {
+    const calls: string[] = [];
+    const identity = {
+      workspaceId,
+      proposalId,
+      intentionId,
+      jobId: "00000000-0000-4000-8000-000000000008",
+      kind: "conversation_reply" as const,
+      aggregateId,
+      correlationId: proposal.correlationId,
+      leaseToken: "00000000-0000-4000-8000-000000000009",
+      leaseExpiresAt: new Date("2026-08-29T12:01:00.000Z"),
+    };
+    const attemptPort = {
+      recordBeforeProvider: async (input: typeof identity) => {
+        calls.push("marker");
+        return { ...input, state: "started" as const, attempt: 1, sequence: 1, sourceEventId: "00000000-0000-4000-8000-000000000010", idempotencyKey: "attempt:v1" };
+      },
+      recordOutcome: async (input: typeof identity & { outcome: "failed"; code: string }) => {
+        calls.push(`outcome:${input.outcome}`);
+        return { state: "completed" as const, proposalStatus: "failed" as const, reconciliationId: null, sequence: 2, sourceEventId: "00000000-0000-4000-8000-000000000011", idempotencyKey: "result:v1" };
+      },
+      reconcileReadOnly: async () => ({ outcome: "not_found" as const, candidateCount: 0 as const }),
+      recoverExpiredStarted: async () => 0,
+    };
+    const worker = new PostgresMcpGovernedEffectWorker({} as never, { final: async () => ({ decision: "allow", code: "OK", factsVersion: 1 }) }, {
+      attemptPort,
+      queue: { acknowledge: async () => { calls.push("ack"); } },
+      now: () => new Date("2026-08-29T12:00:00.000Z"),
+    });
+    (worker as unknown as { claim: () => Promise<unknown> }).claim = async () => ({
+      outcome: "claimed", proposalId, intentionId, leaseToken: identity.leaseToken, leaseExpiresAt: identity.leaseExpiresAt, code: "OK", factsVersion: 1,
+    });
+    const result = await worker.process({
+      id: identity.jobId, type: "mcp.external-effect.execute", status: "running", workspaceId,
+      payload: { workspaceId, proposalId, intentionId, kind: identity.kind, aggregateId, correlationId: identity.correlationId },
+      lockedUntil: new Date("2026-08-29T12:01:00.000Z"), lockedBy: "worker-a",
+    });
+    expect(result).toMatchObject({ outcome: "invalidated", code: "ADAPTER_UNAVAILABLE" });
+    expect(calls).toEqual(["marker", "outcome:failed", "ack"]);
+  });
+
+  test("maps an executor throw to unknown after the marker and acknowledges once", async () => {
+    const calls: string[] = [];
+    const leaseToken = "00000000-0000-4000-8000-000000000009";
+    const leaseExpiresAt = new Date("2026-08-29T12:01:00.000Z");
+    const attemptPort = {
+      recordBeforeProvider: async (input: ExternalEffectAttemptIdentity) => {
+        calls.push("marker");
+        return { ...input, state: "started" as const, attempt: 1, sequence: 1, sourceEventId: "00000000-0000-4000-8000-000000000010", idempotencyKey: "attempt:v1" };
+      },
+      recordOutcome: async (input: { readonly outcome: string }) => {
+        calls.push(`outcome:${input.outcome}`);
+        return { state: "unknown" as const, proposalStatus: "reconciling" as const, reconciliationId: "00000000-0000-4000-8000-000000000012", sequence: 2, sourceEventId: "00000000-0000-4000-8000-000000000011", idempotencyKey: "result:v1" };
+      },
+      reconcileReadOnly: async () => ({ outcome: "not_found" as const, candidateCount: 0 as const }),
+      recoverExpiredStarted: async () => 0,
+    };
+    const worker = new PostgresMcpGovernedEffectWorker({} as never, { final: async () => ({ decision: "allow", code: "OK", factsVersion: 1 }) }, {
+      attemptPort,
+      executor: async () => {
+        calls.push("executor");
+        throw new Error("ambiguous adapter response");
+      },
+      queue: { acknowledge: async () => { calls.push("ack"); } },
+      now: () => new Date("2026-08-29T12:00:00.000Z"),
+    });
+    (worker as unknown as { claim: () => Promise<unknown> }).claim = async () => ({
+      outcome: "claimed", proposalId, intentionId, leaseToken, leaseExpiresAt, code: "OK", factsVersion: 1,
+    });
+    const result = await worker.process({
+      id: "00000000-0000-4000-8000-000000000008", type: "mcp.external-effect.execute", status: "running", workspaceId,
+      payload: { workspaceId, proposalId, intentionId, kind: "conversation_reply", aggregateId, correlationId: proposal.correlationId },
+      lockedUntil: leaseExpiresAt, lockedBy: "worker-a",
+    });
+    expect(result).toMatchObject({ outcome: "invalidated", code: "EFFECT_EXECUTOR_AMBIGUOUS" });
+    expect(calls).toEqual(["marker", "executor", "outcome:unknown", "ack"]);
   });
 });

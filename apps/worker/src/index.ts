@@ -146,6 +146,7 @@ import { PostgresMcpOperationStore } from "@outbound/infrastructure/auth/postgre
 import { ExternalEffectPolicy } from "@outbound/application/mcp/external-effect-policy";
 import { PostgresExternalEffectFactsReader } from "@outbound/infrastructure/mcp/postgres-external-effect-facts-reader";
 import { PostgresMcpGovernedEffectWorker } from "@outbound/infrastructure/mcp/postgres-mcp-governed-effect-worker";
+import { PostgresMcpExternalEffectAttemptRepository } from "@outbound/infrastructure/mcp/postgres-mcp-effect-attempt-repository";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
@@ -182,7 +183,14 @@ const mcpTrackedJobLifecycle = new McpTrackedJobLifecycle(
 const mcpGovernedEffectWorker = new PostgresMcpGovernedEffectWorker(
   database.db,
   new ExternalEffectPolicy(new PostgresExternalEffectFactsReader(database.db, () => clock.now())),
-  { now: () => clock.now(), leaseMs: positiveIntegerEnvironment("JOB_LEASE_MS", 60_000), queue },
+  {
+    now: () => clock.now(),
+    leaseMs: positiveIntegerEnvironment("JOB_LEASE_MS", 60_000),
+    queue,
+    // No provider adapter is composed in this slice. The attempt boundary
+    // still records a durable fail-closed outcome after the final claim.
+    attemptPort: new PostgresMcpExternalEffectAttemptRepository(database.db),
+  },
 );
 const mcpGovernedEffectProcessor = {
   process: (job: import("@outbound/application/jobs/job-queue").LeasedJob) => mcpGovernedEffectWorker.process({ ...job, status: "running" }),

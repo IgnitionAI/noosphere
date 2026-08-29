@@ -1,5 +1,10 @@
 import { and, eq, sql } from "drizzle-orm";
 import type { ExternalEffectPolicy, McpEffectProposal, McpGovernedEffectKind } from "@outbound/application/mcp/mcp-governed-effects";
+import type {
+  ExternalEffectAttemptIdentity,
+  ExternalEffectAttemptPort,
+  ExternalEffectExecutor,
+} from "@outbound/application/mcp/external-effect-attempt";
 import type { McpExecutionContext } from "@outbound/application/mcp/mcp-read-capabilities";
 import type { JobQueue } from "@outbound/application/jobs/job-queue";
 import type { Database, DatabaseExecutor } from "@outbound/infrastructure/database/client";
@@ -124,6 +129,10 @@ export interface McpGovernedEffectWorkerOptions {
   readonly leaseMs?: number;
   /** Optional queue adapter used only to acknowledge terminal jobs. */
   readonly queue?: Pick<JobQueue, "acknowledge">;
+  /** Durable attempt boundary. When provided, it is called only after claim. */
+  readonly attemptPort?: ExternalEffectAttemptPort;
+  /** Optional provider-neutral executor, invoked only after the attempt marker commits. */
+  readonly executor?: ExternalEffectExecutor;
 }
 
 /**
@@ -134,6 +143,8 @@ export class PostgresMcpGovernedEffectWorker {
   private readonly now: () => Date;
   private readonly leaseMs: number;
   private readonly queue: Pick<JobQueue, "acknowledge"> | undefined;
+  private readonly attemptPort: ExternalEffectAttemptPort | undefined;
+  private readonly executor: ExternalEffectExecutor | undefined;
 
   constructor(
     private readonly database: Database,
@@ -143,13 +154,51 @@ export class PostgresMcpGovernedEffectWorker {
     this.now = options.now ?? (() => new Date());
     this.leaseMs = Number.isSafeInteger(options.leaseMs) && (options.leaseMs ?? 0) > 0 ? options.leaseMs! : 60_000;
     this.queue = options.queue;
+    this.attemptPort = options.attemptPort;
+    this.executor = options.executor;
   }
 
-  /** Acknowledge only terminal/invalid jobs; claimed work remains leased for a later executor slice. */
+  /** Claim first, then cross the durable attempt boundary before any executor. */
   async process(job: McpExternalEffectLeasedJob): Promise<McpEffectWorkerOutcome> {
     const result = await this.claim(job);
-    if (result.outcome !== "claimed" && this.queue) await this.queue.acknowledge(job.id, job.lockedBy, this.now());
-    return result;
+    if (result.outcome !== "claimed" || !this.attemptPort) {
+      if (result.outcome !== "claimed" && this.queue) await this.queue.acknowledge(job.id, job.lockedBy, this.now());
+      return result;
+    }
+
+    const payload = parseMcpExternalEffectJobPayload(job.payload, job.workspaceId);
+    const identity: ExternalEffectAttemptIdentity = {
+      workspaceId: payload.workspaceId,
+      proposalId: payload.proposalId,
+      intentionId: payload.intentionId,
+      jobId: job.id,
+      kind: payload.kind,
+      aggregateId: payload.aggregateId,
+      correlationId: payload.correlationId,
+      leaseToken: result.leaseToken,
+      leaseExpiresAt: result.leaseExpiresAt,
+      jobLeaseOwner: job.lockedBy,
+    };
+    const marker = await this.attemptPort.recordBeforeProvider(identity);
+    let outcome;
+    if (!this.executor) {
+      outcome = { outcome: "failed" as const, code: "ADAPTER_UNAVAILABLE" };
+    } else {
+      try {
+        outcome = await this.executor({ identity, marker });
+      } catch {
+        // A thrown/ambiguous adapter result is never retried as a mutation.
+        outcome = { outcome: "unknown" as const, code: "EFFECT_EXECUTOR_AMBIGUOUS" };
+      }
+    }
+    await this.attemptPort.recordOutcome({ ...identity, ...outcome });
+    if (this.queue) await this.queue.acknowledge(job.id, job.lockedBy, this.now());
+    return terminal(
+      payload,
+      outcome.code ?? (outcome.outcome === "delivered" ? "DELIVERED" : outcome.outcome === "failed" ? "EFFECT_FAILED" : "EFFECT_UNKNOWN"),
+      outcome.outcome === "failed" ? "invalidated" : outcome.outcome === "unknown" ? "invalidated" : "already_completed",
+      result.factsVersion,
+    );
   }
 
   async claim(job: McpExternalEffectLeasedJob): Promise<McpEffectWorkerOutcome> {
