@@ -5,7 +5,7 @@ import {
   type SocialProspectSignalAssessment,
   type SocialProspectSignalFact,
 } from "@outbound/domain/crm/social-prospect-signal";
-import type { Database } from "@outbound/infrastructure/database/client";
+import type { DatabaseExecutor } from "@outbound/infrastructure/database/client";
 import {
   attributionTouches,
   conversations,
@@ -13,7 +13,7 @@ import {
 } from "@outbound/infrastructure/database/schema";
 
 export class PostgresSocialProspectSignalReader {
-  constructor(private readonly database: Database) {}
+  constructor(private readonly database: DatabaseExecutor) {}
 
   async read(input: {
     readonly workspaceId: string;

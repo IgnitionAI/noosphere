@@ -5,7 +5,7 @@ import {
   pipelineColumn,
   type OpportunityStage,
 } from "@outbound/domain/pipeline/opportunity";
-import type { Database } from "@outbound/infrastructure/database/client";
+import type { DatabaseExecutor } from "@outbound/infrastructure/database/client";
 import {
   calendarBookings,
   campaigns,
@@ -32,7 +32,7 @@ export const DEFAULT_LOST_REASONS = [
 ] as const;
 
 export class PostgresOpportunityRepository {
-  constructor(private readonly database: Database) {}
+  constructor(private readonly database: DatabaseExecutor) {}
 
   async list(workspaceId: string, options: { readonly cursor?: string; readonly limit?: number } = {}) {
     const cursor = options.cursor === undefined ? null : decodeOpportunityCursor(options.cursor);
@@ -160,6 +160,7 @@ export class PostgresOpportunityRepository {
     opportunityId: string;
     actorUserId: string;
     actorRole?: string;
+    expectedRevision?: number;
     amount?: number | null | undefined;
     currency?: string | null | undefined;
     probability?: number | undefined;
@@ -173,6 +174,7 @@ export class PostgresOpportunityRepository {
         eq(opportunities.workspaceId, input.workspaceId), eq(opportunities.id, input.opportunityId),
       )).for("update").limit(1);
       if (!current) throw new OpportunityPipelineError("OPPORTUNITY_NOT_FOUND", 404);
+      if (input.expectedRevision !== undefined && input.expectedRevision !== current.revision) throw new OpportunityPipelineError("MCP_WRITE_VERSION_CONFLICT", 409);
       if (current.stage === "won" || current.stage === "lost") throw new OpportunityPipelineError("OPPORTUNITY_LOCKED", 409);
       if (input.actorRole === "operator" && current.ownerUserId && current.ownerUserId !== input.actorUserId) throw new OpportunityPipelineError("OPPORTUNITY_FORBIDDEN", 403);
       const changes: Record<string, unknown> = {};
@@ -200,6 +202,7 @@ export class PostgresOpportunityRepository {
       if (input.nextAction !== undefined) changes.nextAction = input.nextAction;
       if (input.expectedCloseDate !== undefined) changes.expectedCloseDate = input.expectedCloseDate;
       if (!Object.keys(changes).length) return current;
+      changes.revision = sql`${opportunities.revision} + 1`;
       changes.updatedAt = input.now;
       const [updated] = await tx.update(opportunities).set(changes).where(and(
         eq(opportunities.workspaceId, input.workspaceId), eq(opportunities.id, input.opportunityId),
@@ -341,6 +344,7 @@ export class PostgresOpportunityRepository {
     reason: string | null;
     actorUserId?: string;
     actorRole?: string;
+    expectedRevision?: number;
     now: Date;
   }) {
     return this.database.transaction(async (tx) => {
@@ -351,8 +355,10 @@ export class PostgresOpportunityRepository {
           eq(opportunities.workspaceId, input.workspaceId),
           eq(opportunities.id, input.opportunityId),
         ))
+        .for("update")
         .limit(1);
       if (!current) throw new OpportunityPipelineError("OPPORTUNITY_NOT_FOUND", 404);
+      if (input.expectedRevision !== undefined && input.expectedRevision !== current.revision) throw new OpportunityPipelineError("MCP_WRITE_VERSION_CONFLICT", 409);
       if (input.actorRole === "operator" && current.ownerUserId && current.ownerUserId !== input.actorUserId) throw new OpportunityPipelineError("OPPORTUNITY_FORBIDDEN", 403);
       if (!isOpportunityStage(current.stage)) {
         throw new OpportunityPipelineError("OPPORTUNITY_STAGE_CORRUPTED", 409);
@@ -360,13 +366,16 @@ export class PostgresOpportunityRepository {
       if (!canTransitionOpportunity(current.stage, input.stage)) {
         throw new OpportunityPipelineError("OPPORTUNITY_TRANSITION_INVALID", 409);
       }
-      await tx.update(opportunities).set({
+      const [updated] = await tx.update(opportunities).set({
         stage: input.stage,
+        revision: sql`${opportunities.revision} + 1`,
         updatedAt: input.now,
       }).where(and(
         eq(opportunities.workspaceId, input.workspaceId),
         eq(opportunities.id, input.opportunityId),
-      ));
+        eq(opportunities.revision, current.revision),
+      )).returning();
+      if (!updated) throw new OpportunityPipelineError("MCP_WRITE_VERSION_CONFLICT", 409);
       await tx.insert(opportunityStageHistory).values({
         id: crypto.randomUUID(),
         workspaceId: input.workspaceId,
@@ -391,7 +400,7 @@ export class PostgresOpportunityRepository {
         createdAt: input.now,
       });
       await tx.insert(auditLogs).values({ workspaceId: input.workspaceId, actorUserId: null, action: "OpportunityStageChanged", subjectType: "Opportunity", subjectId: input.opportunityId, changes: { fromStage: current.stage, toStage: input.stage, reason: input.reason }, sourceEventId: event.id });
-      return { ...current, stage: input.stage, updatedAt: input.now };
+      return updated;
     });
   }
 

@@ -4,7 +4,7 @@ import {
   type ScheduleProspectDecisionInput,
 } from "@outbound/application/campaigns/prospect-decision";
 import type { Clock } from "@outbound/application/shared/ports";
-import type { Database } from "@outbound/infrastructure/database/client";
+import type { DatabaseExecutor } from "@outbound/infrastructure/database/client";
 import { captureProspectDecisionMutation } from "@outbound/infrastructure/prospect-memory/capture-prospect-decision-mutation";
 import {
   contacts,
@@ -21,7 +21,7 @@ export class ProspectDecisionSchedulerError extends Error {
 
 export class PostgresProspectDecisionScheduler {
   constructor(
-    private readonly database: Database,
+    private readonly database: DatabaseExecutor,
     private readonly clock: Clock = { now: () => new Date() },
   ) {}
 

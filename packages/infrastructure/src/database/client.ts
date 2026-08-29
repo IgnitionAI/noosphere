@@ -20,4 +20,7 @@ export function createDatabase(databaseUrl: string) {
 }
 
 export type Database = ReturnType<typeof createDatabase>["db"];
+export type DatabaseTransaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
+/** A root database or nested transaction/savepoint executor. */
+export type DatabaseExecutor = Database | DatabaseTransaction;
 export type SqlClient = ReturnType<typeof createDatabase>["client"];

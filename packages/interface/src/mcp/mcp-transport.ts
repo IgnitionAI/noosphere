@@ -7,6 +7,7 @@ import type { McpExecutionContext } from "@outbound/application/mcp/mcp-read-cap
 import type { RuntimeCapabilities } from "@outbound/bootstrap/runtime-capabilities";
 import { registerMcpReadResources } from "@outbound/interface/mcp/mcp-read-resources";
 import { registerMcpReadTools } from "@outbound/interface/mcp/mcp-read-tools";
+import { registerMcpWriteTools } from "@outbound/interface/mcp/mcp-write-tools";
 
 /** The maximum body accepted by the stateless MCP endpoint. */
 export const MCP_MAX_BODY_BYTES = 1_048_576;
@@ -156,6 +157,7 @@ function createServer(capabilities: RuntimeCapabilities, authExtra?: Record<stri
     registerMcpReadTools(server, capabilities.mcpRead, context);
     registerMcpReadResources(server, capabilities.mcpRead, context);
   }
+  if (context && capabilities.mcpWrite) registerMcpWriteTools(server, capabilities.mcpWrite, context);
   return server;
 }
 

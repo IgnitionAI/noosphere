@@ -13,7 +13,7 @@ import {
 import type { ContentIdeaStatus } from "@outbound/domain/content/content-idea";
 import { normalizeIdeaConcept } from "@outbound/domain/content/content-idea";
 import { editorialStrategySnapshotSchema } from "@outbound/contracts/content";
-import type { Database } from "@outbound/infrastructure/database/client";
+import type { DatabaseExecutor } from "@outbound/infrastructure/database/client";
 import {
   auditLogs,
   contentIdeaDiscoveryRuns,
@@ -38,7 +38,55 @@ const DEFAULT_SOURCE_LIMIT = 40;
 const DEFAULT_DURATION_MS = 5 * 60_000;
 
 export class PostgresContentIdeaRepository implements ContentIdeaRepository {
-  constructor(private readonly database: Database) {}
+  constructor(private readonly database: DatabaseExecutor) {}
+
+  /** Creates a bounded, internal idea without invoking discovery providers. */
+  async createManual(input: {
+    workspaceId: string;
+    userId: string;
+    title: string;
+    brief: string;
+    strategyId?: string | null;
+    now: Date;
+  }): Promise<ContentIdeaView> {
+    return this.database.transaction(async (tx) => {
+      const strategy = (await tx.select({
+        id: editorialStrategies.id,
+        currentVersion: editorialStrategies.currentVersion,
+      }).from(editorialStrategies).where(and(
+        eq(editorialStrategies.workspaceId, input.workspaceId),
+        ...(input.strategyId ? [eq(editorialStrategies.id, input.strategyId)] : [eq(editorialStrategies.status, "active"), isNull(editorialStrategies.deletedAt)]),
+      )).orderBy(desc(editorialStrategies.updatedAt)).limit(1))[0];
+      if (!strategy || strategy.currentVersion < 1) throw new Error("CONTENT_IDEA_ACTIVE_STRATEGY_REQUIRED");
+      const version = (await tx.select().from(editorialStrategyVersions).where(and(
+        eq(editorialStrategyVersions.workspaceId, input.workspaceId),
+        eq(editorialStrategyVersions.strategyId, strategy.id),
+        eq(editorialStrategyVersions.version, strategy.currentVersion),
+      )).limit(1))[0];
+      if (!version) throw new Error("CONTENT_IDEA_ACTIVE_STRATEGY_REQUIRED");
+      const normalizedTitle = input.title.trim();
+      const normalizedBrief = input.brief.trim();
+      const fingerprint = hash(`${normalizeIdeaConcept(normalizedTitle)}|${normalizeIdeaConcept(normalizedBrief)}`);
+      const values = {
+        id: crypto.randomUUID(), workspaceId: input.workspaceId, strategyVersionId: version.id,
+        status: "discovered" as const, angle: normalizedTitle, rationale: normalizedBrief,
+        audience: "internal", pillar: "manual", priority: 50, fingerprint,
+        freshnessUntil: new Date(input.now.getTime() + 30 * 86_400_000), firstSeenAt: input.now,
+        lastSeenAt: input.now, createdAt: input.now, updatedAt: input.now,
+      };
+      const inserted = (await tx.insert(contentIdeas).values(values).onConflictDoNothing({ target: [contentIdeas.workspaceId, contentIdeas.fingerprint] }).returning())[0];
+      const row = inserted ?? (await tx.select().from(contentIdeas).where(and(
+        eq(contentIdeas.workspaceId, input.workspaceId), eq(contentIdeas.fingerprint, fingerprint),
+      )).limit(1))[0];
+      if (!row) throw new Error("CONTENT_IDEA_CREATION_FAILED");
+      if (!inserted) {
+        await tx.update(contentIdeas).set({ lastSeenAt: input.now, updatedAt: input.now }).where(and(
+          eq(contentIdeas.workspaceId, input.workspaceId), eq(contentIdeas.id, row.id),
+        ));
+      }
+      return toIdea(row, []);
+    });
+  }
 
   async findRequest(input: { workspaceId: string; requestKey: string }): Promise<ContentIdeaDiscoveryRunView | null> {
     const requests = await this.database.select().from(contentOperationRequests).where(and(
@@ -322,7 +370,7 @@ function toRun(row: typeof contentIdeaDiscoveryRuns.$inferSelect): ContentIdeaDi
 }
 
 function toIdea(row: typeof contentIdeas.$inferSelect, sources: readonly ContentIdeaEvidence[]): ContentIdeaView {
-  return { id: row.id, workspaceId: row.workspaceId, strategyVersionId: row.strategyVersionId, status: row.status as ContentIdeaStatus, angle: row.angle, rationale: row.rationale, audience: row.audience, pillar: row.pillar, priority: row.priority, freshnessUntil: row.freshnessUntil, firstSeenAt: row.firstSeenAt, lastSeenAt: row.lastSeenAt, sources };
+  return { id: row.id, revision: row.revision, workspaceId: row.workspaceId, strategyVersionId: row.strategyVersionId, status: row.status as ContentIdeaStatus, angle: row.angle, rationale: row.rationale, audience: row.audience, pillar: row.pillar, priority: row.priority, freshnessUntil: row.freshnessUntil, firstSeenAt: row.firstSeenAt, lastSeenAt: row.lastSeenAt, sources };
 }
 
 function toEvidence(row: typeof contentIdeaSources.$inferSelect): ContentIdeaEvidence {

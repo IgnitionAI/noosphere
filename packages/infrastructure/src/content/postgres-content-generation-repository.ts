@@ -22,7 +22,7 @@ import {
   contentEvidenceAuditSchema,
   editorialStrategySnapshotSchema,
 } from "@outbound/contracts/content";
-import type { Database } from "@outbound/infrastructure/database/client";
+import type { DatabaseExecutor } from "@outbound/infrastructure/database/client";
 import {
   auditLogs,
   contentAssets,
@@ -40,7 +40,7 @@ import {
 } from "@outbound/infrastructure/database/schema";
 
 export class PostgresContentGenerationRepository implements ContentGenerationRepository {
-  constructor(private readonly database: Database) {}
+  constructor(private readonly database: DatabaseExecutor) {}
 
   async findRequest(input: Parameters<ContentGenerationRepository["findRequest"]>[0]): Promise<ContentGenerationRunView | null> {
     const requests = await this.database.select().from(contentOperationRequests).where(and(
@@ -70,7 +70,7 @@ export class PostgresContentGenerationRepository implements ContentGenerationRep
       }
 
       let asset = input.assetId
-        ? (await tx.select().from(contentAssets).where(and(eq(contentAssets.workspaceId, input.workspaceId), eq(contentAssets.id, input.assetId))).limit(1))[0]
+        ? (await tx.select().from(contentAssets).where(and(eq(contentAssets.workspaceId, input.workspaceId), eq(contentAssets.id, input.assetId))).for("update").limit(1))[0]
         : undefined;
       const ideaId = input.ideaId ?? asset?.ideaId;
       if (!ideaId) throw new Error("CONTENT_ASSET_NOT_FOUND");
@@ -97,6 +97,7 @@ export class PostgresContentGenerationRepository implements ContentGenerationRep
         )).limit(1))[0];
       }
       if (!asset) throw new Error("CONTENT_ASSET_CREATION_FAILED");
+      if (input.expectedRevision !== undefined && asset.revision !== input.expectedRevision) throw new Error("MCP_WRITE_VERSION_CONFLICT");
 
       const currentEvidenceHashes = new Map(sources.map((source) => [
         `${source.type}:${source.sourceRef}`,
@@ -405,7 +406,7 @@ function toRun(row: typeof contentGenerationRuns.$inferSelect): ContentGeneratio
 }
 
 function toIdea(row: typeof contentIdeas.$inferSelect, sources: readonly ContentIdeaEvidence[]): ContentIdeaView {
-  return { id: row.id, workspaceId: row.workspaceId, strategyVersionId: row.strategyVersionId, status: row.status as ContentIdeaStatus, angle: row.angle, rationale: row.rationale, audience: row.audience, pillar: row.pillar, priority: row.priority, freshnessUntil: row.freshnessUntil, firstSeenAt: row.firstSeenAt, lastSeenAt: row.lastSeenAt, sources };
+  return { id: row.id, revision: row.revision, workspaceId: row.workspaceId, strategyVersionId: row.strategyVersionId, status: row.status as ContentIdeaStatus, angle: row.angle, rationale: row.rationale, audience: row.audience, pillar: row.pillar, priority: row.priority, freshnessUntil: row.freshnessUntil, firstSeenAt: row.firstSeenAt, lastSeenAt: row.lastSeenAt, sources };
 }
 
 function toEvidence(row: typeof contentIdeaSources.$inferSelect): ContentIdeaEvidence {
@@ -439,7 +440,7 @@ function toVersion(row: typeof contentAssetVersions.$inferSelect, media: typeof 
 }
 
 function toAsset(row: typeof contentAssets.$inferSelect, latest: ContentAssetVersionView | null): ContentAssetView {
-  return { id: row.id, workspaceId: row.workspaceId, ideaId: row.ideaId, type: row.type as LinkedinContentFormat, status: row.status as ContentAssetView["status"], latestVersion: row.latestVersion, latest, createdAt: row.createdAt, updatedAt: row.updatedAt };
+  return { id: row.id, revision: row.revision, workspaceId: row.workspaceId, ideaId: row.ideaId, type: row.type as LinkedinContentFormat, status: row.status as ContentAssetView["status"], latestVersion: row.latestVersion, latest, createdAt: row.createdAt, updatedAt: row.updatedAt };
 }
 
 function stageAfter(current: ContentGenerationStage, expected: ContentGenerationStage): boolean {

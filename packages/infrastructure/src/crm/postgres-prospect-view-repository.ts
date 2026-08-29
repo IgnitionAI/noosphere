@@ -1,6 +1,6 @@
 import { and, desc, eq, gte, ilike, inArray, lt, ne, or, sql, type SQL } from "drizzle-orm";
 import type { SocialProspectSignalAssessment } from "@outbound/domain/crm/social-prospect-signal";
-import type { Database } from "@outbound/infrastructure/database/client";
+import type { DatabaseExecutor } from "@outbound/infrastructure/database/client";
 import {
   campaignProspects,
   calendarBookings,
@@ -24,7 +24,7 @@ import { PostgresSocialProspectSignalReader } from "./postgres-social-prospect-s
 export class PostgresProspectViewRepository {
   readonly #socialSignals: PostgresSocialProspectSignalReader;
 
-  constructor(private readonly db: Database) {
+  constructor(private readonly db: DatabaseExecutor) {
     this.#socialSignals = new PostgresSocialProspectSignalReader(db);
   }
 

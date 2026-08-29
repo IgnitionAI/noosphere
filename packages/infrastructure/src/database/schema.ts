@@ -1709,6 +1709,7 @@ export const contentIdeas = pgTable(
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    revision: integer("revision").notNull().default(1),
   },
   (table) => [
     foreignKey({ columns: [table.workspaceId, table.strategyVersionId], foreignColumns: [editorialStrategyVersions.workspaceId, editorialStrategyVersions.id], name: "content_ideas_workspace_strategy_version_fk" }).onDelete("restrict"),
@@ -1790,6 +1791,7 @@ export const contentAssets = pgTable(
     latestVersion: integer("latest_version").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    revision: integer("revision").notNull().default(1),
   },
   (table) => [
     foreignKey({ columns: [table.workspaceId, table.ideaId], foreignColumns: [contentIdeas.workspaceId, contentIdeas.id], name: "content_assets_workspace_idea_fk" }).onDelete("restrict"),
@@ -2373,6 +2375,7 @@ export const companies = pgTable(
     source: crmSourceEnum("source").notNull().default("manual"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    revision: integer("revision").notNull().default(1),
   },
   (table) => [
     foreignKey({
@@ -2423,6 +2426,7 @@ export const contacts = pgTable(
     privacyEpoch: integer("privacy_epoch").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    revision: integer("revision").notNull().default(1),
   },
   (table) => [
     foreignKey({
@@ -3828,6 +3832,7 @@ export const opportunities = pgTable(
     offerVersionId: uuid("offer_version_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    revision: integer("revision").notNull().default(1),
   },
   (table) => [
     foreignKey({
@@ -4551,11 +4556,44 @@ export const mcpOauthAuditEvents = pgTable(
     userId: uuid("user_id").references(() => authUsers.id, { onDelete: "set null" }),
     workspaceId: uuid("workspace_id").references(() => workspaces.id, { onDelete: "set null" }),
     subjectId: varchar("subject_id", { length: 180 }),
+    actorType: varchar("actor_type", { length: 40 }).notNull().default("oauth"),
+    tool: varchar("tool", { length: 100 }),
+    correlationId: uuid("correlation_id"),
+    outcome: varchar("outcome", { length: 40 }).notNull().default("accepted"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
     index("mcp_oauth_audit_workspace_idx").on(table.workspaceId, table.createdAt),
     index("mcp_oauth_audit_client_idx").on(table.clientId, table.createdAt),
     index("mcp_oauth_audit_rate_limit_idx").on(table.action, table.subjectId, table.createdAt),
+    check("mcp_oauth_audit_outcome_ck", sql`${table.outcome} in ('accepted', 'denied', 'replayed', 'stale', 'failed', 'in_progress')`),
+  ],
+);
+
+/** Idempotency ledger for internal MCP writes; request payloads are represented
+ * only by a canonical hash and bounded result metadata. */
+export const mcpWriteOperations = pgTable(
+  "mcp_write_operations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    clientId: varchar("client_id", { length: 180 }).notNull().references(() => mcpOauthClients.clientId, { onDelete: "cascade" }),
+    userId: uuid("user_id").notNull().references(() => authUsers.id, { onDelete: "cascade" }),
+    tool: varchar("tool", { length: 100 }).notNull(),
+    requestKey: uuid("request_key").notNull(),
+    inputHash: varchar("input_hash", { length: 64 }).notNull(),
+    status: varchar("status", { length: 32 }).notNull(),
+    result: jsonb("result"),
+    correlationId: uuid("correlation_id").notNull(),
+    leaseOwner: varchar("lease_owner", { length: 180 }),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("mcp_write_operations_idempotency_uq").on(table.workspaceId, table.clientId, table.tool, table.requestKey),
+    index("mcp_write_operations_workspace_idx").on(table.workspaceId, table.createdAt),
+    index("mcp_write_operations_correlation_idx").on(table.correlationId),
+    index("mcp_write_operations_lease_idx").on(table.status, table.leaseExpiresAt),
   ],
 );

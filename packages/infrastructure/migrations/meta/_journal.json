@@ -694,6 +694,27 @@
       "when": 1797994800000,
       "tag": "0098_mcp_oauth_workspace",
       "breakpoints": true
+    },
+    {
+      "idx": 99,
+      "version": "7",
+      "when": 1797998400000,
+      "tag": "0099_mcp_write_operations",
+      "breakpoints": true
+    },
+    {
+      "idx": 100,
+      "version": "7",
+      "when": 1798002000000,
+      "tag": "0100_mcp_write_revisions",
+      "breakpoints": true
+    },
+    {
+      "idx": 101,
+      "version": "7",
+      "when": 1798005600000,
+      "tag": "0101_mcp_write_leases",
+      "breakpoints": true
     }
   ]
 }

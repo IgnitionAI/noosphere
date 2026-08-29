@@ -19,6 +19,8 @@ export interface ContentIdeaEvidence {
 
 export interface ContentIdeaView {
   readonly id: string;
+  /** Monotonic CAS revision persisted for internal MCP writes. */
+  readonly revision?: number;
   readonly workspaceId: string;
   readonly strategyVersionId: string;
   readonly status: ContentIdeaStatus;

@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, gt, ilike, inArray, isNull, lt, or, sql, lte, gte, type SQL } from "drizzle-orm";
-import type { Database } from "@outbound/infrastructure/database/client";
+import type { Database, DatabaseExecutor } from "@outbound/infrastructure/database/client";
 import {
   companies,
   auditLogs,
@@ -18,7 +18,7 @@ export interface CompanyListCursor {
 }
 
 export class PostgresCrmRepository {
-  constructor(private readonly db: Database) {}
+  constructor(private readonly db: DatabaseExecutor) {}
 
   async createCompany(input: {
     id: string;
@@ -120,14 +120,24 @@ export class PostgresCrmRepository {
   async updateCompany(input: {
     workspaceId: string;
     companyId: string;
+    expectedRevision?: number;
     fields: Partial<Pick<typeof companies.$inferInsert,
       "name" | "normalizedDomain" | "sector" | "employeeCountMin" | "employeeCountMax" | "location" | "linkedinUrl">>;
   }) {
     try {
-      const rows = await this.db.update(companies).set({ ...input.fields, updatedAt: new Date() }).where(and(
+      const rows = await this.db.update(companies).set({ ...input.fields, revision: sql`${companies.revision} + 1`, updatedAt: new Date() }).where(and(
         eq(companies.workspaceId, input.workspaceId), eq(companies.id, input.companyId),
+        ...(input.expectedRevision === undefined ? [] : [eq(companies.revision, input.expectedRevision)]),
       )).returning();
-      if (!rows[0]) throw new Error("COMPANY_NOT_FOUND");
+      if (!rows[0]) {
+        if (input.expectedRevision !== undefined) {
+          const [existing] = await this.db.select({ id: companies.id }).from(companies).where(and(
+            eq(companies.workspaceId, input.workspaceId), eq(companies.id, input.companyId),
+          )).limit(1);
+          if (existing) throw new Error("MCP_WRITE_VERSION_CONFLICT");
+        }
+        throw new Error("COMPANY_NOT_FOUND");
+      }
       return rows[0];
     } catch (error) {
       if (isUniqueViolation(error) && input.fields.normalizedDomain) {
@@ -409,14 +419,24 @@ export class PostgresCrmRepository {
   async updateContact(input: {
     workspaceId: string;
     contactId: string;
+    expectedRevision?: number;
     fields: Partial<Pick<typeof contacts.$inferInsert, "firstName" | "lastName" | "photoUrl" | "preferredChannel">>;
   }) {
     return this.db.transaction(async (tx) => {
       const observedAt = new Date();
-      const rows = await tx.update(contacts).set({ ...input.fields, updatedAt: observedAt }).where(and(
+      const rows = await tx.update(contacts).set({ ...input.fields, revision: sql`${contacts.revision} + 1`, updatedAt: observedAt }).where(and(
         eq(contacts.workspaceId, input.workspaceId), eq(contacts.id, input.contactId),
+        ...(input.expectedRevision === undefined ? [] : [eq(contacts.revision, input.expectedRevision)]),
       )).returning();
-      if (!rows[0]) throw new Error("CONTACT_NOT_FOUND");
+      if (!rows[0]) {
+        if (input.expectedRevision !== undefined) {
+          const [existing] = await tx.select({ id: contacts.id }).from(contacts).where(and(
+            eq(contacts.workspaceId, input.workspaceId), eq(contacts.id, input.contactId),
+          )).limit(1);
+          if (existing) throw new Error("MCP_WRITE_VERSION_CONFLICT");
+        }
+        throw new Error("CONTACT_NOT_FOUND");
+      }
       const eventId = await this.recordEvent(tx, input.workspaceId, "Contact", input.contactId, "ContactUpdated", {
         contactId: input.contactId,
         fields: Object.keys(input.fields).sort(),
@@ -434,6 +454,46 @@ export class PostgresCrmRepository {
         correlationId: eventId,
       });
       return rows[0];
+    });
+  }
+
+  /** Atomically records an internal MCP note and bumps the contact revision. */
+  async addMcpNote(input: {
+    workspaceId: string;
+    contactId: string;
+    note: string;
+    actorUserId: string;
+    expectedRevision?: number;
+    correlationId: string;
+    now?: Date;
+  }) {
+    return this.db.transaction(async (tx) => {
+      const [contact] = await tx.select({ id: contacts.id, mergedIntoId: contacts.mergedIntoId, revision: contacts.revision })
+        .from(contacts)
+        .where(and(eq(contacts.workspaceId, input.workspaceId), eq(contacts.id, input.contactId)))
+        .for("update")
+        .limit(1);
+      if (!contact) throw new Error("CONTACT_NOT_FOUND");
+      if (input.expectedRevision !== undefined && input.expectedRevision !== contact.revision) throw new Error("MCP_WRITE_VERSION_CONFLICT");
+      const now = input.now ?? new Date();
+      const [updated] = await tx.update(contacts).set({ revision: sql`${contacts.revision} + 1`, updatedAt: now }).where(and(
+        eq(contacts.workspaceId, input.workspaceId), eq(contacts.id, input.contactId), eq(contacts.revision, contact.revision),
+      )).returning({ revision: contacts.revision });
+      if (!updated) throw new Error("MCP_WRITE_VERSION_CONFLICT");
+      const memory = await captureProspectMemoryMutation(tx, {
+        workspaceId: input.workspaceId,
+        sourceContactId: input.contactId,
+        sourceKind: "mcp_note",
+        sourceId: input.correlationId,
+        sourceVersion: 1,
+        kind: "contact_updated",
+        occurredAt: now,
+        observedAt: now,
+        validFrom: now,
+        payload: { note: input.note, authorUserId: input.actorUserId },
+        correlationId: input.correlationId,
+      });
+      return { revision: updated.revision, eventId: memory.eventId };
     });
   }
 
@@ -553,6 +613,55 @@ export class PostgresCrmRepository {
         correlationId: eventId,
       });
       return rows[0]!;
+    });
+  }
+
+  /** Atomic MCP contact upsert including identities and optional employment. */
+  async upsertMcpContact(input: {
+    id: string;
+    workspaceId: string;
+    firstName: string;
+    lastName: string;
+    identities: readonly {
+      id: string;
+      type: "email" | "linkedin" | "phone" | "whatsapp";
+      value: string;
+      normalizedValue: string;
+    }[];
+    companyId?: string | null;
+    title?: string | null;
+    expectedRevision?: number;
+  }) {
+    return this.db.transaction(async (tx) => {
+      const scoped = new PostgresCrmRepository(tx);
+      const existing = await scoped.getContact({ workspaceId: input.workspaceId, contactId: input.id });
+      if (existing) {
+        if (input.expectedRevision !== undefined && input.expectedRevision !== existing.revision) throw new Error("MCP_WRITE_VERSION_CONFLICT");
+      } else if (input.expectedRevision !== undefined) {
+        throw new Error("MCP_WRITE_VERSION_CONFLICT");
+      }
+      const companyId = input.companyId ?? null;
+      if (companyId && !(await scoped.getCompany({ workspaceId: input.workspaceId, companyId }))) throw new Error("COMPANY_NOT_FOUND");
+      const fields = { firstName: input.firstName, lastName: input.lastName };
+      const row = existing
+        ? await scoped.updateContact({ workspaceId: input.workspaceId, contactId: input.id, expectedRevision: existing.revision, fields })
+        : await scoped.createContact({
+            id: input.id,
+            workspaceId: input.workspaceId,
+            ...fields,
+            source: "manual",
+            identities: input.identities,
+            employment: companyId ? { id: crypto.randomUUID(), companyId, title: input.title?.trim() || "MCP contact", startedOn: null } : null,
+          });
+      if (existing) {
+        for (const identity of input.identities) {
+          if (!existing.identities.some((current) => current.type === identity.type && current.normalizedValue === identity.normalizedValue)) {
+            await scoped.addIdentity({ ...identity, workspaceId: input.workspaceId, contactId: input.id });
+          }
+        }
+        if (companyId) await scoped.addEmployment({ id: crypto.randomUUID(), workspaceId: input.workspaceId, contactId: input.id, companyId, title: input.title?.trim() || "MCP contact", startedOn: null });
+      }
+      return { row, created: !existing };
     });
   }
 
