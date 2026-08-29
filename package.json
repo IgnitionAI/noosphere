@@ -61,6 +61,8 @@
     "@grpc/proto-loader": "^0.8.0",
     "@langchain/core": "^1.2.3",
     "@langchain/openai": "^1.5.5",
+    "@modelcontextprotocol/client": "2.0.0",
+    "@modelcontextprotocol/server": "2.0.0",
     "better-auth": "^1.6.25",
     "deepagents": "^1.11.1",
     "drizzle-orm": "^0.45.2",

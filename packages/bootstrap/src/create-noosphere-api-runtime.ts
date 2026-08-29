@@ -122,6 +122,7 @@ import { createProspectMemoryHttpHandler, isProspectMemoryRoute } from "@outboun
 import { createNoosphereRuntime } from "@outbound/bootstrap/create-noosphere-runtime";
 import type { RuntimeCapabilities } from "@outbound/bootstrap/runtime-capabilities";
 import type { NoosphereRuntime } from "@outbound/bootstrap/noosphere-runtime";
+import { createMcpTransport } from "@outbound/interface/mcp/mcp-transport";
 
 /** Compose the complete API application once for HTTP or a future MCP adapter. */
 export function createNoosphereApiRuntime(environment: NodeJS.ProcessEnv = process.env): NoosphereRuntime {
@@ -476,6 +477,7 @@ const attribution = createAttributionHttpHandler({
 });
 async function dispatch(request: Request): Promise<Response> {
     const pathname = new URL(request.url).pathname;
+    if (pathname === "/mcp") return mcpTransport.handle(request);
     if (pathname.startsWith("/api/auth/")) return runtime.handleAuth(request);
     if (pathname === "/api/v1/webhooks/unipile") {
       // Account health webhooks use the dedicated signature header. Keep the
@@ -600,6 +602,26 @@ const runtimeCapabilities: RuntimeCapabilities = {
   operations: { contentPerformance: { get: (workspaceId) => contentPerformanceApplication.get(workspaceId) } },
   knowledge: { available: false },
 };
+const mcpTransport = createMcpTransport({
+  capabilities: runtimeCapabilities,
+  allowedHosts: mcpAllowedHostsFromEnvironment(),
+  allowedOrigins: commaSeparatedEnvironment(
+    "MCP_ALLOWED_ORIGINS",
+    commaSeparatedEnvironment("BETTER_AUTH_TRUSTED_ORIGINS", requiredEnvironment("BETTER_AUTH_URL")).join(","),
+  ),
+  authorize: async (request) => {
+    const devToken = environment.MCP_DEV_AUTH_TOKEN;
+    if (environment.NODE_ENV !== "production" && devToken !== undefined && devToken.length > 0 && request.headers.get("authorization") === `Bearer ${devToken}`) {
+      return true;
+    }
+    try {
+      await auth.contextResolver.resolve(request);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+});
 const runtime = createNoosphereRuntime({
   capabilities: runtimeCapabilities,
   dispatch,
@@ -613,6 +635,7 @@ const runtime = createNoosphereRuntime({
     }
   },
   close: async () => {
+    await mcpTransport.close();
     await database.close();
   },
 });
@@ -641,6 +664,17 @@ function commaSeparatedEnvironment(name: string, fallback: string): string[] {
     .split(",")
     .map((value) => value.trim())
     .filter(Boolean);
+}
+
+function mcpAllowedHostsFromEnvironment(): string[] {
+  const configured = environment.MCP_ALLOWED_HOSTS;
+  if (configured) return commaSeparatedEnvironment("MCP_ALLOWED_HOSTS", configured);
+  const authUrl = requiredEnvironment("BETTER_AUTH_URL");
+  try {
+    return [new URL(authUrl).host];
+  } catch {
+    throw new Error("BETTER_AUTH_URL must be an absolute URL for MCP host validation");
+  }
 }
 
 function positiveIntegerEnvironment(name: string, fallback: number): number {

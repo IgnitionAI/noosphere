@@ -21,6 +21,9 @@
 	@health path /health/*
 	reverse_proxy @health api:3001
 
+	@mcp path /mcp
+	reverse_proxy @mcp api:3001
+
 	@api path /api/v1/*
 	reverse_proxy @api api:3001
 
