@@ -153,13 +153,19 @@ export class PostgresMcpGovernedEffectCapabilities implements McpGovernedEffectC
 
   async decide(
     context: McpExecutionContext,
-    input: { readonly approvalItemId: string; readonly decision: "approve" | "reject"; readonly justification?: string },
+    input: {
+      readonly approvalItemId: string;
+      readonly decision: "approve" | "reject";
+      readonly justification?: string;
+      readonly expectedVersion?: number;
+    },
   ): Promise<McpEffectStatusView> {
     return this.repository.decideAndQueue({
       context,
       approvalItemId: input.approvalItemId,
       decision: input.decision,
       ...(input.justification === undefined ? {} : { justification: input.justification }),
+      ...(input.expectedVersion === undefined ? {} : { expectedVersion: input.expectedVersion }),
       policy: this.policy,
     });
   }

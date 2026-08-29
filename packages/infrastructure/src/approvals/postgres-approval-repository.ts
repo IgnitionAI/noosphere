@@ -10,6 +10,7 @@ import {
   contactSuppressions,
   contacts,
   jobs,
+  mcpEffectProposals,
   outboxEvents,
   outreachActions,
   prospectDecisions,
@@ -21,6 +22,9 @@ export class ApprovalRepositoryError extends Error {
 
 export interface ApprovalItemView {
   readonly id: string;
+  readonly proposalId: string | null;
+  /** Authoritative proposal CAS version, read under the same workspace key. */
+  readonly proposalVersion: number | null;
   readonly campaignId: string | null;
   readonly contactId: string | null;
   readonly enrollmentId: string | null;
@@ -54,7 +58,7 @@ export class PostgresApprovalRepository {
     const result: ApprovalItemView[] = [];
     for (const row of rows) {
       const current = await this.invalidateIfStale(this.db, row);
-      if (!input.status || current.status === input.status) result.push(toView(current));
+      if (!input.status || current.status === input.status) result.push(toView(current, await this.readProposalVersion(this.db, current)));
     }
     return result;
   }
@@ -62,7 +66,7 @@ export class PostgresApprovalRepository {
   async get(input: { workspaceId: string; itemId: string }) {
     const rows = await this.db.select().from(approvalItems).where(and(eq(approvalItems.workspaceId, input.workspaceId), eq(approvalItems.id, input.itemId))).limit(1);
     const row = rows[0];
-    return row ? toView(await this.invalidateIfStale(this.db, row)) : null;
+    return row ? toView(await this.invalidateIfStale(this.db, row), await this.readProposalVersion(this.db, row)) : null;
   }
 
   async create(input: {
@@ -218,7 +222,11 @@ export class PostgresApprovalRepository {
 
   private async invalidateIfStale(executor: any, row: typeof approvalItems.$inferSelect) {
     if (row.status !== "pending") return row;
-    let reason: string | null = row.contactId ? null : "contact_deleted";
+    // Governed effect approvals are bound to their proposal aggregate rather
+    // than a CRM contact. A null contact is therefore expected and must not
+    // invalidate the proposal merely because the legacy queue's contact
+    // invariant does not apply.
+    let reason: string | null = row.contactId || row.itemType === "mcp_external_effect" ? null : "contact_deleted";
     if (!reason && row.contactId) {
       const contactRows = await executor.select({ updatedAt: contacts.updatedAt }).from(contacts).where(and(eq(contacts.workspaceId, row.workspaceId), eq(contacts.id, row.contactId))).limit(1);
       const contact = contactRows[0];
@@ -233,6 +241,15 @@ export class PostgresApprovalRepository {
     const rows = await executor.update(approvalItems).set({ status: "invalidated", invalidationReason: reason, updatedAt: this.now() }).where(and(eq(approvalItems.id, row.id), eq(approvalItems.status, "pending"))).returning();
     return rows[0] ?? row;
   }
+
+  private async readProposalVersion(executor: any, row: typeof approvalItems.$inferSelect): Promise<number | null> {
+    if (!row.proposalId) return null;
+    const rows = await executor.select({ version: mcpEffectProposals.version }).from(mcpEffectProposals).where(and(
+      eq(mcpEffectProposals.workspaceId, row.workspaceId),
+      eq(mcpEffectProposals.id, row.proposalId),
+    )).limit(1);
+    return rows[0]?.version ?? null;
+  }
 }
 
 function decisionApprovalContext(value: unknown): { decisionId: string; actionId: string; correlationId: string } | null {
@@ -245,6 +262,6 @@ function decisionApprovalContext(value: unknown): { decisionId: string; actionId
     : null;
 }
 
-function toView(row: typeof approvalItems.$inferSelect): ApprovalItemView {
-  return { id: row.id, campaignId: row.campaignId, contactId: row.contactId, enrollmentId: row.enrollmentId, itemType: row.itemType, channel: row.channel, stepPosition: row.stepPosition, contentOriginal: row.contentOriginal, contentEdited: row.contentEdited, context: row.context, sourceUpdatedAt: row.sourceUpdatedAt, status: row.status, decisionBy: row.decisionBy, decidedAt: row.decidedAt, rejectionJustification: row.rejectionJustification, invalidationReason: row.invalidationReason, createdAt: row.createdAt, updatedAt: row.updatedAt };
+function toView(row: typeof approvalItems.$inferSelect, proposalVersion: number | null = null): ApprovalItemView {
+  return { id: row.id, proposalId: row.proposalId, proposalVersion, campaignId: row.campaignId, contactId: row.contactId, enrollmentId: row.enrollmentId, itemType: row.itemType, channel: row.channel, stepPosition: row.stepPosition, contentOriginal: row.contentOriginal, contentEdited: row.contentEdited, context: row.context, sourceUpdatedAt: row.sourceUpdatedAt, status: row.status, decisionBy: row.decisionBy, decidedAt: row.decidedAt, rejectionJustification: row.rejectionJustification, invalidationReason: row.invalidationReason, createdAt: row.createdAt, updatedAt: row.updatedAt };
 }

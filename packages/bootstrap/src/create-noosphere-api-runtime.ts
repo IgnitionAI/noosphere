@@ -101,6 +101,7 @@ import { CrawlerContentBrandLandingPageReader } from "@outbound/infrastructure/c
 import { ContentPerformanceApplication } from "@outbound/application/content/content-performance";
 import { PostgresContentPerformanceRepository } from "@outbound/infrastructure/content/postgres-content-performance-repository";
 import { createContentPerformanceHttpHandler } from "@outbound/interface/http/content-performance-handler";
+import { createApprovalHttpHandler } from "@outbound/interface/http/approval-handler";
 import { ModelCatalogApplication } from "@outbound/application/ai/model-catalog-application";
 import { KimiModelCatalog } from "@outbound/infrastructure/ai/kimi-model-gateway";
 import { CodexModelCatalog } from "@outbound/infrastructure/ai/codex-cli-model-gateway";
@@ -785,11 +786,17 @@ const mcpEffectFactsReader = new PostgresExternalEffectFactsReader(database.db, 
 const mcpEffectPolicy = new ExternalEffectPolicy(mcpEffectFactsReader);
 const mcpEffectRepository = new PostgresMcpGovernedEffectRepository(database.db, () => clock.now(), mcpEffectPolicy);
 const mcpGovernedEffectCapabilities = createPostgresMcpGovernedEffectCapabilities(mcpEffectRepository, mcpEffectFactsReader, mcpEffectPolicy, () => clock.now());
+const approvals = createApprovalHttpHandler({
+  database: database.db,
+  contextResolver: auth.contextResolver,
+  governedEffects: mcpGovernedEffectCapabilities,
+});
 async function dispatch(request: Request): Promise<Response> {
     const pathname = new URL(request.url).pathname;
     if (pathname.startsWith("/oauth/") || pathname === "/.well-known/oauth-authorization-server" || pathname.startsWith("/.well-known/oauth-protected-resource")) return mcpOAuth(request);
     if (pathname === "/mcp") return mcpTransport.handle(request);
     if (pathname.startsWith("/api/auth/")) return runtime.handleAuth(request);
+    if (pathname === "/api/v1/approval-items" || pathname.startsWith("/api/v1/approval-items/")) return approvals(request);
     if (pathname === "/api/v1/webhooks/unipile") {
       // Account health webhooks use the dedicated signature header. Keep the
       // existing message webhook contract (unipile-auth) untouched.

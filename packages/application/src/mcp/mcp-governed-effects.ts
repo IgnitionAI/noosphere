@@ -151,7 +151,13 @@ export interface McpGovernedEffectCapabilities {
   ): Promise<McpEffectStatusView | null>;
   decide(
     context: McpExecutionContext,
-    input: { readonly approvalItemId: string; readonly decision: "approve" | "reject"; readonly justification?: string },
+    input: {
+      readonly approvalItemId: string;
+      readonly decision: "approve" | "reject";
+      readonly justification?: string;
+      /** Optional CAS version supplied by HTTP approval callers. */
+      readonly expectedVersion?: number;
+    },
   ): Promise<McpEffectStatusView>;
 }
 
