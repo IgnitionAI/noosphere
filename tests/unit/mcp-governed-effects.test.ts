@@ -6,6 +6,7 @@ import {
   type McpReconciliationStatus,
   type McpGovernedEffectStatus,
 } from "@outbound/application/mcp/mcp-governed-effects";
+import { canonicalJson } from "@outbound/infrastructure/mcp/postgres-mcp-governed-effect-repository";
 
 describe("MCP governed external-effect state machine", () => {
   test("defines exactly the terminal proposal states", () => {
@@ -54,5 +55,12 @@ describe("MCP governed external-effect state machine", () => {
       expect(transitionMcpGovernedEffect(status, { type: "approve" })).toBeNull();
       expect(transitionMcpGovernedEffect(status, { type: "reconcile", status: "matched" })).toBeNull();
     }
+  });
+
+  test("canonicalizes nested objects while rejecting non-finite numbers", () => {
+    expect(canonicalJson({ z: [{ b: 2, a: 1 }], a: { z: true, b: null } }))
+      .toBe('{"a":{"b":null,"z":true},"z":[{"a":1,"b":2}]}');
+    expect(() => canonicalJson({ nested: { value: Number.NaN } })).toThrow("MCP_EFFECT_JSON_NON_FINITE_NUMBER");
+    expect(() => canonicalJson({ nested: [Number.POSITIVE_INFINITY] })).toThrow("MCP_EFFECT_JSON_NON_FINITE_NUMBER");
   });
 });
