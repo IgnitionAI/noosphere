@@ -711,7 +711,10 @@ export class PostgresMcpGovernedEffectRepository {
         aggregateType: "mcp_effect_proposal",
         aggregateId: proposal.id,
         eventType: "McpExternalEffectExecutionRequested",
-        payload: { proposalId: proposal.id, intentionId, jobId, correlationId: proposal.correlationId, sourceEventId, idempotencyKey },
+        payload: {
+          workspaceId, proposalId: proposal.id, intentionId, jobId, correlationId: proposal.correlationId,
+          sourceEventId, idempotencyKey, kind: proposal.kind, aggregateId: proposal.aggregateId,
+        },
         availableAt: createdAt,
         createdAt,
       });

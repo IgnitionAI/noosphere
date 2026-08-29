@@ -6,6 +6,53 @@ import type { McpTrackedJobContext } from "@outbound/application/mcp/mcp-tracked
 import { ResearchWorker } from "../../apps/worker/src/research-worker";
 
 describe("ResearchWorker job leases", () => {
+  test("routes the existing governed-effect job to the final gate without acknowledging a claim", async () => {
+    const now = new Date("2026-08-29T12:00:00.000Z");
+    const job: LeasedJob = {
+      id: crypto.randomUUID(),
+      workspaceId: crypto.randomUUID(),
+      type: "mcp.external-effect.execute",
+      payload: {},
+      idempotencyKey: "mcp-effect:fixture:execute:v1",
+      correlationId: crypto.randomUUID(),
+      attempts: 1,
+      maxAttempts: 5,
+      availableAt: now,
+      lockedBy: "worker-test",
+      lockedUntil: new Date(now.getTime() + 60_000),
+    };
+    let acknowledged = 0;
+    let processed: LeasedJob | undefined;
+    const queue: JobQueue = {
+      async enqueue() { return { inserted: true }; },
+      async lease(request) {
+        expect(request.types).toEqual(["mcp.external-effect.execute"]);
+        return [job];
+      },
+      async renewLease() { return true; },
+      async acknowledge() { acknowledged += 1; },
+      async defer() {},
+      async retry() { return "scheduled"; },
+    };
+    const processor = { async process(value: LeasedJob) { processed = value; } };
+    const worker = new ResearchWorker(
+      queue,
+      { async process() { throw new Error("wrong processor"); } } as unknown as ResearchOrchestrator,
+      { now: () => now },
+      { workerId: "worker-test", leaseMs: 60_000, batchSize: 1, pollIntervalMs: 1, jobTypes: ["mcp.external-effect.execute"] },
+      // Optional processor arguments retain their positional constructor API.
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, processor,
+    );
+
+    await worker.tick();
+
+    expect(processed).toBe(job);
+    expect(acknowledged).toBe(0);
+  });
+
   test("maintenance cannot block leasing ready business jobs", async () => {
     const events: string[] = [];
     const queue: JobQueue = {

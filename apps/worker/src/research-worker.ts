@@ -59,6 +59,7 @@ export class ResearchWorker {
     private readonly prospectMemoryRefreshProcessor?: { process(job: LeasedJob): Promise<void> },
     private readonly prospectMemoryBackfillProcessor?: { process(job: LeasedJob): Promise<void> },
     private readonly trackedJobLifecycle?: Pick<McpTrackedJobLifecycle, "beforeDispatch" | "afterSuccess" | "afterRetry">,
+    private readonly mcpGovernedEffectProcessor?: { process(job: LeasedJob): Promise<unknown> },
   ) {}
 
   stop(): void {
@@ -101,6 +102,7 @@ export class ResearchWorker {
         ...(this.contentPublicationProcessor ? ["content.publication.publish"] : []),
         ...(this.prospectMemoryRefreshProcessor ? ["prospect.memory.refresh"] : []),
         ...(this.prospectMemoryBackfillProcessor ? ["prospect.memory.backfill"] : []),
+        ...(this.mcpGovernedEffectProcessor ? ["mcp.external-effect.execute"] : []),
     ];
     const allowed = this.options.jobTypes ? new Set(this.options.jobTypes) : null;
     const excluded = new Set(this.options.excludedJobTypes ?? []);
@@ -205,6 +207,10 @@ export class ResearchWorker {
         await this.prospectMemoryRefreshProcessor.process(job);
       } else if (job.type === "prospect.memory.backfill" && this.prospectMemoryBackfillProcessor) {
         await this.prospectMemoryBackfillProcessor.process(job);
+      } else if (job.type === "mcp.external-effect.execute" && this.mcpGovernedEffectProcessor) {
+        // This slice only performs the final policy gate/claim. The leased job
+        // remains unacknowledged after a claim for the provider executor slice.
+        await this.mcpGovernedEffectProcessor.process(job);
       } else {
         await this.orchestrator.process(job);
       }

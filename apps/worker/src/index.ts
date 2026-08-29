@@ -67,6 +67,7 @@ import { EnrichmentJobProcessor, PostgresEnrichmentRepository } from "@outbound/
 import { CrawlerSignalSource } from "@outbound/infrastructure/crm/crawler-signal-source";
 import { PostgresSignalRepository, SignalCollectionJobProcessor } from "@outbound/infrastructure/crm/postgres-signal-repository";
 import { PostgresOutboxDispatcher } from "@outbound/infrastructure/outbox/postgres-outbox-dispatcher";
+import { dispatchMcpExternalEffectExecutionRequested } from "@outbound/infrastructure/outbox/mcp-external-effect-outbox-handler";
 import { HttpUnipileClient, UnavailableUnipileClient } from "@outbound/infrastructure/integrations/unipile-client";
 import { PostgresOutreachScheduler } from "@outbound/infrastructure/scheduler/postgres-outreach-scheduler";
 import {
@@ -142,6 +143,9 @@ import { DefaultProspectContextAssembler } from "@outbound/application/prospect-
 import { DeterministicProspectMemoryShadowComparator } from "@outbound/application/prospect-memory/prospect-memory-shadow-comparator";
 import { McpTrackedJobLifecycle } from "@outbound/application/mcp/mcp-tracked-job-lifecycle";
 import { PostgresMcpOperationStore } from "@outbound/infrastructure/auth/postgres-mcp-operation-store";
+import { ExternalEffectPolicy } from "@outbound/application/mcp/external-effect-policy";
+import { PostgresExternalEffectFactsReader } from "@outbound/infrastructure/mcp/postgres-external-effect-facts-reader";
+import { PostgresMcpGovernedEffectWorker } from "@outbound/infrastructure/mcp/postgres-mcp-governed-effect-worker";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
@@ -159,7 +163,9 @@ const mcpOperationStore = new PostgresMcpOperationStore(database.db);
 const importService = new PostgresImportService(database.db, queue);
 const enrichmentRepository = new PostgresEnrichmentRepository(database.db, new SystemClock());
 const signalRepository = new PostgresSignalRepository(database.db, new SystemClock());
-const outboxDispatcher = new PostgresOutboxDispatcher(database.client);
+const outboxDispatcher = new PostgresOutboxDispatcher(database.client, {
+  handler: (event) => dispatchMcpExternalEffectExecutionRequested(database.client, event),
+});
 const unipileDsn = process.env.UNIPILE_DSN ?? "";
 const unipileApiKey = process.env.UNIPILE_API_KEY ?? "";
 const unipileClient = unipileDsn && unipileApiKey ? new HttpUnipileClient({ dsn: unipileDsn, apiKey: unipileApiKey, timeoutMs: positiveIntegerEnvironment("UNIPILE_TIMEOUT_MS", 10_000) }) : new UnavailableUnipileClient();
@@ -173,6 +179,14 @@ const mcpTrackedJobLifecycle = new McpTrackedJobLifecycle(
     : persistedMcpResultRefs(job.payload),
   clock,
 );
+const mcpGovernedEffectWorker = new PostgresMcpGovernedEffectWorker(
+  database.db,
+  new ExternalEffectPolicy(new PostgresExternalEffectFactsReader(database.db, () => clock.now())),
+  { now: () => clock.now(), leaseMs: positiveIntegerEnvironment("JOB_LEASE_MS", 60_000), queue },
+);
+const mcpGovernedEffectProcessor = {
+  process: (job: import("@outbound/application/jobs/job-queue").LeasedJob) => mcpGovernedEffectWorker.process({ ...job, status: "running" }),
+};
 const ids = new CryptoIdGenerator();
 const contentHasher = new Sha256ContentHasher();
 const workspaceDataLifecycle = new PostgresWorkspaceDataLifecycle(database.db, clock, ids);
@@ -631,7 +645,7 @@ const worker = new ResearchWorker(queue, orchestrator, clock, {
   pollIntervalMs: positiveIntegerEnvironment("JOB_POLL_INTERVAL_MS", 1_000),
   ...optionalJobTypes("WORKER_JOB_TYPES"),
   ...optionalExcludedJobTypes("WORKER_EXCLUDED_JOB_TYPES"),
-}, documentService, discoveryProcessor, channelAssessmentProcessor, campaignAutomationProcessor, campaignCompositionProcessor, outreachDispatchProcessor, inboundReplyProcessor, automatedReplySendProcessor, conversationCommandProcessor, process.env.WORKER_DISABLE_MAINTENANCE === "true" ? undefined : maintenance, process.env.WORKER_DISABLE_OUTBOX === "true" ? undefined : outboxDispatcher, importService, process.env.WORKER_DISABLE_OUTREACH_SCHEDULER === "true" ? undefined : outreachScheduler, enrichmentProcessor, signalProcessor, workspaceExportProcessor, retentionPurgeProcessor, knowledgeExpirationProcessor, evaluationRunProcessor, prospectDecisionProcessor, contentIdeaDiscoveryProcessor, contentGenerationProcessor, contentPublicationProcessor, prospectMemoryRefreshProcessor, prospectMemoryBackfillProcessor, mcpTrackedJobLifecycle);
+}, documentService, discoveryProcessor, channelAssessmentProcessor, campaignAutomationProcessor, campaignCompositionProcessor, outreachDispatchProcessor, inboundReplyProcessor, automatedReplySendProcessor, conversationCommandProcessor, process.env.WORKER_DISABLE_MAINTENANCE === "true" ? undefined : maintenance, process.env.WORKER_DISABLE_OUTBOX === "true" ? undefined : outboxDispatcher, importService, process.env.WORKER_DISABLE_OUTREACH_SCHEDULER === "true" ? undefined : outreachScheduler, enrichmentProcessor, signalProcessor, workspaceExportProcessor, retentionPurgeProcessor, knowledgeExpirationProcessor, evaluationRunProcessor, prospectDecisionProcessor, contentIdeaDiscoveryProcessor, contentGenerationProcessor, contentPublicationProcessor, prospectMemoryRefreshProcessor, prospectMemoryBackfillProcessor, mcpTrackedJobLifecycle, mcpGovernedEffectProcessor);
 
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
   process.once(signal, () => {

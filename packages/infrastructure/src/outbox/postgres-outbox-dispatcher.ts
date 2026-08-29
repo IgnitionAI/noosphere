@@ -15,6 +15,24 @@ export interface OutboxDispatcherOptions {
   readonly handler?: (event: OutboxEventRow) => Promise<void>;
 }
 
+export async function writeOutboxEventAudit(sql: SqlClient, event: OutboxEventRow): Promise<void> {
+  const payload = (event.payload && typeof event.payload === "object")
+    ? event.payload as Record<string, unknown>
+    : {};
+  const actor = payload.actorUserId ?? payload.userId ?? payload.publishedBy ?? null;
+  const correlation = payload.correlationId ?? null;
+  await sql`
+    insert into audit_logs (
+      workspace_id, actor_user_id, action, subject_type, subject_id,
+      changes, correlation_id, source_event_id
+    ) values (
+      ${event.workspace_id}, ${typeof actor === "string" ? actor : null}, ${event.event_type},
+      ${event.aggregate_type}, ${event.aggregate_id}, ${JSON.stringify(event.payload)}::jsonb,
+      ${typeof correlation === "string" ? correlation : null}, ${event.id}
+    ) on conflict (source_event_id) do nothing
+  `;
+}
+
 /**
  * Delivers transactional outbox rows with PostgreSQL row locks. The audit
  * handler is idempotent on source_event_id, so a crash between delivery and
@@ -82,21 +100,7 @@ export class PostgresOutboxDispatcher {
   }
 
   async #writeAudit(event: OutboxEventRow): Promise<void> {
-    const payload = (event.payload && typeof event.payload === "object")
-      ? event.payload as Record<string, unknown>
-      : {};
-    const actor = payload.actorUserId ?? payload.userId ?? payload.publishedBy ?? null;
-    const correlation = payload.correlationId ?? null;
-    await this.sql`
-      insert into audit_logs (
-        workspace_id, actor_user_id, action, subject_type, subject_id,
-        changes, correlation_id, source_event_id
-      ) values (
-        ${event.workspace_id}, ${typeof actor === "string" ? actor : null}, ${event.event_type},
-        ${event.aggregate_type}, ${event.aggregate_id}, ${JSON.stringify(event.payload)}::jsonb,
-        ${typeof correlation === "string" ? correlation : null}, ${event.id}
-      ) on conflict (source_event_id) do nothing
-    `;
+    await writeOutboxEventAudit(this.sql, event);
     console.info(JSON.stringify({
       event: "outbox_event_delivered",
       outboxEventId: event.id,
