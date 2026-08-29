@@ -11,6 +11,7 @@ import {
   check,
   customType,
   foreignKey,
+  ForeignKeyBuilder,
   index,
   integer,
   jsonb,
@@ -3322,6 +3323,81 @@ export const approvalItemStatusEnum = pgEnum("approval_item_status", [
   "invalidated",
 ]);
 
+type McpEffectTableRef = {
+  workspaceId: AnyPgColumn;
+  id: AnyPgColumn;
+};
+
+// ForeignKeyBuilder evaluates these callbacks after module initialization,
+// which allows the circular proposal/approval/reconciliation references to
+// retain the concrete pgTable inference without widening either table.
+const mcpEffectProposalsRef = {} as McpEffectTableRef;
+const approvalItemsRef = {} as McpEffectTableRef;
+const mcpEffectReconciliationsRef = {} as McpEffectTableRef;
+
+/** Workspace-scoped, redacted proposal snapshots for governed external effects. */
+export const mcpEffectProposals = pgTable(
+  "mcp_effect_proposals",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    clientId: varchar("client_id", { length: 180 }).notNull(),
+    kind: varchar("kind", { length: 40 }).notNull(),
+    requestKey: uuid("request_key").notNull(),
+    inputHash: varchar("input_hash", { length: 64 }).notNull(),
+    aggregateId: uuid("aggregate_id").notNull(),
+    intentSnapshot: jsonb("intent_snapshot").notNull(),
+    sourceSnapshot: jsonb("source_snapshot").notNull(),
+    revision: integer("revision").notNull().default(1),
+    sourceVersion: integer("source_version").notNull().default(1),
+    policyPreview: jsonb("policy_preview"),
+    policyFinal: jsonb("policy_final"),
+    status: varchar("status", { length: 32 }).notNull().default("approval_required"),
+    version: integer("version").notNull().default(1),
+    approvalItemId: uuid("approval_item_id"),
+    operationId: uuid("operation_id"),
+    jobId: uuid("job_id"),
+    reconciliationId: uuid("reconciliation_id"),
+    correlationId: uuid("correlation_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique("mcp_effect_proposals_workspace_id_uq").on(table.workspaceId, table.id),
+    uniqueIndex("mcp_effect_proposals_idempotency_uq").on(table.workspaceId, table.clientId, table.kind, table.requestKey),
+    index("mcp_effect_proposals_workspace_status_idx").on(table.workspaceId, table.status, table.updatedAt),
+    index("mcp_effect_proposals_aggregate_idx").on(table.workspaceId, table.kind, table.aggregateId),
+    index("mcp_effect_proposals_correlation_idx").on(table.workspaceId, table.correlationId),
+    check("mcp_effect_proposals_kind_ck", sql`${table.kind} in ('conversation_reply', 'content_publication', 'meeting_proposal', 'campaign_activation')`),
+    check("mcp_effect_proposals_status_ck", sql`${table.status} in ('approval_required', 'policy_denied', 'queued', 'accepted', 'unknown', 'reconciling', 'delivered', 'failed', 'rejected', 'invalidated')`),
+    check("mcp_effect_proposals_input_hash_ck", sql`length(${table.inputHash}) = 64`),
+    check("mcp_effect_proposals_snapshot_ck", sql`jsonb_typeof(${table.intentSnapshot}) = 'object' and jsonb_typeof(${table.sourceSnapshot}) = 'object' and octet_length(${table.intentSnapshot}::text) <= 32768 and octet_length(${table.sourceSnapshot}::text) <= 32768`),
+    check("mcp_effect_proposals_policy_preview_ck", sql`${table.policyPreview} is null or (jsonb_typeof(${table.policyPreview}) = 'object' and octet_length(${table.policyPreview}::text) <= 32768)`),
+    check("mcp_effect_proposals_policy_final_ck", sql`${table.policyFinal} is null or (jsonb_typeof(${table.policyFinal}) = 'object' and octet_length(${table.policyFinal}::text) <= 32768)`),
+    check("mcp_effect_proposals_versions_ck", sql`${table.revision} > 0 and ${table.sourceVersion} > 0 and ${table.version} > 0`),
+    new ForeignKeyBuilder((): { columns: [AnyPgColumn, AnyPgColumn]; foreignColumns: [AnyPgColumn, AnyPgColumn]; name: string } => ({
+      columns: [table.workspaceId, table.approvalItemId],
+      foreignColumns: [approvalItemsRef.workspaceId, approvalItemsRef.id],
+      name: "mcp_effect_proposals_approval_item_fk",
+    })).onDelete("restrict"),
+    new ForeignKeyBuilder((): { columns: [AnyPgColumn, AnyPgColumn]; foreignColumns: [AnyPgColumn, AnyPgColumn]; name: string } => ({
+      columns: [table.workspaceId, table.operationId],
+      foreignColumns: [mcpOperations.workspaceId, mcpOperations.operationId],
+      name: "mcp_effect_proposals_operation_fk",
+    })).onDelete("restrict"),
+    foreignKey({
+      columns: [table.workspaceId, table.jobId],
+      foreignColumns: [jobs.workspaceId, jobs.id],
+      name: "mcp_effect_proposals_job_fk",
+    }).onDelete("restrict"),
+    new ForeignKeyBuilder((): { columns: [AnyPgColumn, AnyPgColumn]; foreignColumns: [AnyPgColumn, AnyPgColumn]; name: string } => ({
+      columns: [table.workspaceId, table.reconciliationId],
+      foreignColumns: [mcpEffectReconciliationsRef.workspaceId, mcpEffectReconciliationsRef.id],
+      name: "mcp_effect_proposals_reconciliation_fk",
+    })).onDelete("restrict"),
+  ],
+);
+
 export const approvalItems = pgTable(
   "approval_items",
   {
@@ -3330,6 +3406,7 @@ export const approvalItems = pgTable(
     campaignId: uuid("campaign_id"),
     contactId: uuid("contact_id"),
     enrollmentId: uuid("enrollment_id"),
+    proposalId: uuid("proposal_id"),
     itemType: varchar("item_type", { length: 100 }).notNull(),
     channel: varchar("channel", { length: 40 }).notNull(),
     stepPosition: integer("step_position"),
@@ -3348,11 +3425,17 @@ export const approvalItems = pgTable(
   (table) => [
     foreignKey({ columns: [table.workspaceId], foreignColumns: [workspaces.id], name: "approval_items_workspace_fk" }).onDelete("cascade"),
     foreignKey({ columns: [table.workspaceId, table.campaignId], foreignColumns: [campaigns.workspaceId, campaigns.id], name: "approval_items_campaign_fk" }).onDelete("cascade"),
+    new ForeignKeyBuilder((): { columns: [AnyPgColumn, AnyPgColumn]; foreignColumns: [AnyPgColumn, AnyPgColumn]; name: string } => ({
+      columns: [table.workspaceId, table.proposalId],
+      foreignColumns: [mcpEffectProposalsRef.workspaceId, mcpEffectProposalsRef.id],
+      name: "approval_items_proposal_fk",
+    })).onDelete("cascade"),
     foreignKey({ columns: [table.contactId], foreignColumns: [contacts.id], name: "approval_items_contact_fk" }).onDelete("set null"),
     foreignKey({ columns: [table.enrollmentId], foreignColumns: [campaignEnrollments.id], name: "approval_items_enrollment_fk" }).onDelete("set null"),
     unique("approval_items_workspace_id_uq").on(table.workspaceId, table.id),
     index("approval_items_workspace_status_idx").on(table.workspaceId, table.status, table.createdAt),
     index("approval_items_campaign_status_idx").on(table.workspaceId, table.campaignId, table.status, table.createdAt),
+    unique("approval_items_workspace_proposal_uq").on(table.workspaceId, table.proposalId),
   ],
 );
 
@@ -4109,6 +4192,8 @@ export const meetingProposals = pgTable(
     selectedSlotStart: timestamp("selected_slot_start", { withTimezone: true }),
     idempotencyKey: varchar("idempotency_key", { length: 500 }).notNull(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    revision: integer("revision").notNull().default(1),
+    sourceVersion: integer("source_version").notNull().default(1),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -4130,6 +4215,8 @@ export const meetingProposals = pgTable(
       table.conversationId,
       table.createdAt,
     ),
+    check("meeting_proposals_revision_ck", sql`${table.revision} > 0`),
+    check("meeting_proposals_source_version_ck", sql`${table.sourceVersion} > 0`),
   ],
 );
 
@@ -4621,8 +4708,121 @@ export const mcpOperations = pgTable(
   },
   (table) => [
     unique("mcp_operations_request_uq").on(table.workspaceId, table.clientId, table.tool, table.requestKey),
+    unique("mcp_operations_workspace_id_uq").on(table.workspaceId, table.operationId),
     index("mcp_operations_workspace_status_idx").on(table.workspaceId, table.status, table.updatedAt),
     index("mcp_operations_job_idx").on(table.workspaceId, table.jobId),
     check("mcp_operations_status_ck", sql`${table.status} in ('queued', 'running', 'completed', 'failed', 'cancelled')`),
   ],
 );
+
+/** Immutable, lease-aware execution claim created with the governed job. */
+export const mcpEffectIntentions = pgTable(
+  "mcp_effect_intentions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull(),
+    proposalId: uuid("proposal_id").notNull(),
+    kind: varchar("kind", { length: 40 }).notNull(),
+    aggregateId: uuid("aggregate_id").notNull(),
+    state: varchar("state", { length: 16 }).notNull().default("queued"),
+    idempotencyKey: varchar("idempotency_key", { length: 500 }).notNull(),
+    jobId: uuid("job_id").notNull(),
+    leaseToken: uuid("lease_token"),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    correlationId: uuid("correlation_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({ columns: [table.workspaceId, table.proposalId], foreignColumns: [mcpEffectProposals.workspaceId, mcpEffectProposals.id], name: "mcp_effect_intentions_proposal_fk" }).onDelete("cascade"),
+    foreignKey({ columns: [table.workspaceId, table.jobId], foreignColumns: [jobs.workspaceId, jobs.id], name: "mcp_effect_intentions_job_fk" }).onDelete("cascade"),
+    unique("mcp_effect_intentions_workspace_proposal_uq").on(table.workspaceId, table.proposalId),
+    unique("mcp_effect_intentions_workspace_identity_uq").on(table.workspaceId, table.kind, table.aggregateId, table.idempotencyKey),
+    index("mcp_effect_intentions_expiration_idx").on(table.workspaceId, table.state, table.leaseExpiresAt),
+    index("mcp_effect_intentions_job_idx").on(table.workspaceId, table.jobId),
+    check("mcp_effect_intentions_kind_ck", sql`${table.kind} in ('conversation_reply', 'content_publication', 'meeting_proposal', 'campaign_activation')`),
+    check("mcp_effect_intentions_state_ck", sql`${table.state} in ('queued', 'started', 'unknown', 'completed')`),
+    check("mcp_effect_intentions_idempotency_ck", sql`length(${table.idempotencyKey}) between 1 and 500`),
+    check("mcp_effect_intentions_lease_ck", sql`(${table.state} = 'started' and ${table.leaseToken} is not null and ${table.leaseExpiresAt} is not null) or (${table.state} <> 'started' and ${table.leaseToken} is null and ${table.leaseExpiresAt} is null)`),
+  ],
+);
+
+/** Append-only, redacted correlation facts across the governed effect lifecycle. */
+export const mcpEffectTraces = pgTable(
+  "mcp_effect_traces",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull(),
+    proposalId: uuid("proposal_id").notNull(),
+    stage: varchar("stage", { length: 24 }).notNull(),
+    sequence: integer("sequence").notNull(),
+    sourceEventId: uuid("source_event_id").notNull(),
+    idempotencyKey: varchar("idempotency_key", { length: 500 }).notNull(),
+    eventType: varchar("event_type", { length: 160 }).notNull(),
+    redactedPayload: jsonb("redacted_payload").notNull().default({}),
+    actor: varchar("actor", { length: 120 }),
+    correlationId: uuid("correlation_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({ columns: [table.workspaceId, table.proposalId], foreignColumns: [mcpEffectProposals.workspaceId, mcpEffectProposals.id], name: "mcp_effect_traces_proposal_fk" }).onDelete("cascade"),
+    unique("mcp_effect_traces_workspace_id_uq").on(table.workspaceId, table.id),
+    unique("mcp_effect_traces_stage_sequence_uq").on(table.workspaceId, table.proposalId, table.stage, table.sequence),
+    uniqueIndex("mcp_effect_traces_source_event_uq").on(table.workspaceId, table.sourceEventId),
+    uniqueIndex("mcp_effect_traces_idempotency_uq").on(table.workspaceId, table.proposalId, table.idempotencyKey),
+    index("mcp_effect_traces_proposal_sequence_idx").on(table.workspaceId, table.proposalId, table.sequence),
+    index("mcp_effect_traces_correlation_idx").on(table.workspaceId, table.correlationId),
+    index("mcp_effect_traces_stage_idx").on(table.workspaceId, table.stage, table.createdAt),
+    check("mcp_effect_traces_stage_ck", sql`${table.stage} in ('proposal', 'approval', 'policy', 'outbox', 'attempt', 'result')`),
+    check("mcp_effect_traces_sequence_ck", sql`${table.sequence} > 0`),
+    check("mcp_effect_traces_payload_ck", sql`jsonb_typeof(${table.redactedPayload}) = 'object' and octet_length(${table.redactedPayload}::text) <= 32768`),
+  ],
+);
+
+/** Read-only reconciliation state for unknown provider outcomes. */
+export const mcpEffectReconciliations = pgTable(
+  "mcp_effect_reconciliations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull(),
+    proposalId: uuid("proposal_id").notNull(),
+    status: varchar("status", { length: 16 }).notNull().default("pending"),
+    criteriaSnapshot: jsonb("criteria_snapshot").notNull().default({}),
+    attempts: integer("attempts").notNull().default(0),
+    maxAttempts: integer("max_attempts").notNull().default(5),
+    leaseToken: uuid("lease_token"),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    candidateCount: integer("candidate_count").notNull().default(0),
+    errorCode: varchar("error_code", { length: 120 }),
+    errorMessage: varchar("error_message", { length: 500 }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({ columns: [table.workspaceId, table.proposalId], foreignColumns: [mcpEffectProposals.workspaceId, mcpEffectProposals.id], name: "mcp_effect_reconciliations_proposal_fk" }).onDelete("cascade"),
+    unique("mcp_effect_reconciliations_workspace_id_uq").on(table.workspaceId, table.id),
+    uniqueIndex("mcp_effect_reconciliations_proposal_uq").on(table.workspaceId, table.proposalId),
+    index("mcp_effect_reconciliations_due_idx").on(table.workspaceId, table.status, table.nextAttemptAt),
+    index("mcp_effect_reconciliations_expiration_idx").on(table.workspaceId, table.status, table.leaseExpiresAt),
+    check("mcp_effect_reconciliations_status_ck", sql`${table.status} in ('pending', 'searching', 'matched', 'not_found', 'ambiguous', 'error')`),
+    check("mcp_effect_reconciliations_attempts_ck", sql`${table.attempts} >= 0 and ${table.maxAttempts} > 0 and ${table.attempts} <= ${table.maxAttempts}`),
+    check("mcp_effect_reconciliations_candidates_ck", sql`${table.candidateCount} >= 0`),
+    check("mcp_effect_reconciliations_snapshot_ck", sql`jsonb_typeof(${table.criteriaSnapshot}) = 'object' and octet_length(${table.criteriaSnapshot}::text) <= 32768`),
+    check("mcp_effect_reconciliations_terminal_ck", sql`${table.completedAt} is null or ${table.status} in ('matched', 'not_found', 'ambiguous', 'error')`),
+  ],
+);
+
+Object.assign(mcpEffectProposalsRef, {
+  workspaceId: mcpEffectProposals.workspaceId,
+  id: mcpEffectProposals.id,
+});
+Object.assign(approvalItemsRef, {
+  workspaceId: approvalItems.workspaceId,
+  id: approvalItems.id,
+});
+Object.assign(mcpEffectReconciliationsRef, {
+  workspaceId: mcpEffectReconciliations.workspaceId,
+  id: mcpEffectReconciliations.id,
+});

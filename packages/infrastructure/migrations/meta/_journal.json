@@ -722,6 +722,20 @@
       "when": 1798009200000,
       "tag": "0102_mcp_durable_operations",
       "breakpoints": true
+    },
+    {
+      "idx": 103,
+      "version": "7",
+      "when": 1798012800000,
+      "tag": "0103_mcp_governed_external_effects",
+      "breakpoints": true
+    },
+    {
+      "idx": 104,
+      "version": "7",
+      "when": 1798016400000,
+      "tag": "0104_mcp_governed_external_effects_repair",
+      "breakpoints": true
     }
   ]
 }
