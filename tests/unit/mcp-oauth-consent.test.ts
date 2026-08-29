@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   createMcpOAuthConsentGateway,
+  parseMcpOAuthAuthorizationRequest,
   type McpOAuthAuthorizationRequest,
 } from "../../apps/web/lib/mcp-oauth-consent";
 
@@ -34,6 +35,20 @@ function gateway(fetchImpl: typeof fetch, overrides: { session?: unknown | null;
 }
 
 describe("MCP OAuth browser consent gateway", () => {
+  test("parses and normalizes the approval scope", () => {
+    const parsed = parseMcpOAuthAuthorizationRequest(new URLSearchParams({
+      response_type: "code",
+      client_id: "client-public",
+      redirect_uri: request.redirectUri,
+      state: request.state,
+      code_challenge: request.codeChallenge,
+      code_challenge_method: "S256",
+      scope: "mcp:approve mcp:read mcp:approve mcp:write",
+      workspace_slug: request.workspaceSlug,
+    }));
+    expect(parsed.scope).toBe("mcp:approve mcp:read mcp:write");
+  });
+
   test("accept revalidates the complete request server-side and returns only code/state", async () => {
     let submitted: Request | undefined;
     const consent = gateway(fakeFetch(async (input, init) => {

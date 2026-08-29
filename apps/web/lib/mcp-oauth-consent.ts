@@ -1,4 +1,4 @@
-const SUPPORTED_SCOPES = new Set(["mcp:read", "mcp:write"]);
+const SUPPORTED_SCOPES = new Set(["mcp:read", "mcp:write", "mcp:approve"]);
 
 export interface McpOAuthAuthorizationRequest {
   readonly responseType: "code";

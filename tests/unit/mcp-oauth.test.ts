@@ -89,7 +89,121 @@ describe("MCP workspace OAuth", () => {
     });
     const resource = await handler(new Request(`${issuer}/.well-known/oauth-protected-resource`));
     expect(resource.status).toBe(200);
-    expect(await resource.json()).toMatchObject({ resource: `${issuer}${MCP_OAUTH_RESOURCE}`, authorization_servers: [issuer] });
+    expect(await resource.json()).toMatchObject({ resource: `${issuer}${MCP_OAUTH_RESOURCE}`, authorization_servers: [issuer], scopes_supported: [...MCP_OAUTH_SCOPES] });
+  });
+
+  test("advertises mcp:approve and intersects it by fresh non-hierarchical role membership", async () => {
+    const metadata = createMcpOAuthService(memoryStore(), { issuer, resource: `${issuer}${MCP_OAUTH_RESOURCE}` });
+    expect(metadata.metadata().scopes_supported).toEqual(["mcp:read", "mcp:write", "mcp:approve"]);
+    expect(metadata.protectedResourceMetadata().scopes_supported).toEqual(["mcp:read", "mcp:write", "mcp:approve"]);
+
+    const requestedScopes = [...MCP_OAUTH_SCOPES];
+    const expectedByRole = {
+      viewer: ["mcp:read"],
+      operator: ["mcp:read", "mcp:write"],
+      reviewer: ["mcp:read", "mcp:write", "mcp:approve"],
+      admin: ["mcp:read", "mcp:write", "mcp:approve"],
+      owner: ["mcp:read", "mcp:write", "mcp:approve"],
+    } as const;
+    for (const role of Object.keys(expectedByRole) as (keyof typeof expectedByRole)[]) {
+      const store = memoryStore(role);
+      const oauth = createMcpOAuthService(store, { issuer, resource: `${issuer}${MCP_OAUTH_RESOURCE}` });
+      const client = await oauth.registerClient({
+        clientName: `Role ${role}`,
+        redirectUris: ["https://client.example/callback"],
+        userId: "user-1",
+        workspaceId: "workspace-1",
+        workspaceSlug: "acme",
+        allowedScopes: requestedScopes,
+      });
+      const consent = await oauth.beginAuthorization({
+        clientId: client.clientId,
+        redirectUri: "https://client.example/callback",
+        state: "state",
+        codeChallenge: challenge,
+        codeChallengeMethod: "S256",
+        requestedScopes,
+        resource: `${issuer}${MCP_OAUTH_RESOURCE}`,
+        approved: false,
+        userId: "user-1",
+        workspaceId: "workspace-1",
+        workspaceSlug: "acme",
+        role,
+      });
+      expect(consent.effectiveScopes).toEqual(expectedByRole[role]);
+    }
+  });
+
+  test("revalidates role membership on each authorization call", async () => {
+    const store = memoryStore("admin");
+    const oauth = createMcpOAuthService(store, { issuer, resource: `${issuer}${MCP_OAUTH_RESOURCE}` });
+    const client = await oauth.registerClient({
+      clientName: "Fresh membership",
+      redirectUris: ["https://client.example/callback"],
+      userId: "user-1",
+      workspaceId: "workspace-1",
+      workspaceSlug: "acme",
+      allowedScopes: [...MCP_OAUTH_SCOPES],
+    });
+    const input = {
+      clientId: client.clientId,
+      redirectUri: "https://client.example/callback",
+      state: "state",
+      codeChallenge: challenge,
+      codeChallengeMethod: "S256" as const,
+      requestedScopes: [...MCP_OAUTH_SCOPES],
+      resource: `${issuer}${MCP_OAUTH_RESOURCE}`,
+      approved: false,
+      userId: "user-1",
+      workspaceId: "workspace-1",
+      workspaceSlug: "acme",
+      role: "admin" as const,
+    };
+    expect((await oauth.beginAuthorization(input)).effectiveScopes).toEqual([...MCP_OAUTH_SCOPES]);
+    store.setRole("viewer");
+    expect((await oauth.beginAuthorization(input)).effectiveScopes).toEqual(["mcp:read"]);
+  });
+
+  test("revalidates approval scope against fresh bearer membership", async () => {
+    const store = memoryStore("admin");
+    const oauth = createMcpOAuthService(store, { issuer, resource: `${issuer}${MCP_OAUTH_RESOURCE}`, now: () => new Date("2026-08-29T00:00:00Z") });
+    const client = await oauth.registerClient({
+      clientName: "Bearer membership",
+      redirectUris: ["https://client.example/callback"],
+      userId: "user-1",
+      workspaceId: "workspace-1",
+      workspaceSlug: "acme",
+      allowedScopes: [...MCP_OAUTH_SCOPES],
+    });
+    const verifier = "verifier-that-is-long-enough-for-pkce-0123456789";
+    const authorization = await oauth.beginAuthorization({
+      clientId: client.clientId,
+      redirectUri: "https://client.example/callback",
+      state: "state",
+      codeChallenge: await oauth.createPkceChallenge(verifier),
+      codeChallengeMethod: "S256",
+      requestedScopes: [...MCP_OAUTH_SCOPES],
+      resource: `${issuer}${MCP_OAUTH_RESOURCE}`,
+      approved: true,
+      userId: "user-1",
+      workspaceId: "workspace-1",
+      workspaceSlug: "acme",
+      role: "admin",
+    });
+    const token = await oauth.exchangeAuthorizationCode({
+      clientId: client.clientId,
+      code: new URL(authorization.redirect!).searchParams.get("code")!,
+      redirectUri: "https://client.example/callback",
+      codeVerifier: verifier,
+      resource: `${issuer}${MCP_OAUTH_RESOURCE}`,
+    });
+    await expect(oauth.authenticateMcpRequest({ accessToken: token.accessToken, resource: `${issuer}${MCP_OAUTH_RESOURCE}`, requiredScopes: ["mcp:approve"] }))
+      .resolves.toMatchObject({ role: "admin", scopes: ["mcp:read", "mcp:write", "mcp:approve"] });
+    store.setRole("operator");
+    await expect(oauth.authenticateMcpRequest({ accessToken: token.accessToken, resource: `${issuer}${MCP_OAUTH_RESOURCE}`, requiredScopes: ["mcp:approve"] }))
+      .rejects.toMatchObject({ oauthCode: "insufficient_scope" });
+    await expect(oauth.authenticateMcpRequest({ accessToken: token.accessToken, resource: `${issuer}${MCP_OAUTH_RESOURCE}`, requiredScopes: ["mcp:read"] }))
+      .resolves.toMatchObject({ role: "operator", scopes: ["mcp:read", "mcp:write"] });
   });
 
   test("requires state, exact redirect and S256 PKCE before returning consent", async () => {
@@ -101,6 +215,20 @@ describe("MCP workspace OAuth", () => {
     const consent = await handler(new Request(`${issuer}/oauth/authorize?response_type=code&client_id=client-public&redirect_uri=https%3A%2F%2Fclient.example%2Fcallback&state=s&code_challenge=${challenge}&code_challenge_method=S256`));
     expect(consent.status).toBe(200);
     expect(await consent.json()).toMatchObject({ consentRequired: true, client: { clientId: "client-public" }, state: "s" });
+  });
+
+  test("parses mcp:approve from the OAuth authorization request", async () => {
+    let parsedScopes: McpOAuthClient["allowedScopes"] | undefined;
+    const base = service();
+    const handler = createMcpOAuthHandler(service({
+      beginAuthorization: async (input) => {
+        parsedScopes = input.requestedScopes;
+        return base.beginAuthorization(input);
+      },
+    }), { issuer, resource: `${issuer}${MCP_OAUTH_RESOURCE}` });
+    const response = await handler(new Request(`${issuer}/oauth/authorize?response_type=code&client_id=client-public&redirect_uri=https%3A%2F%2Fclient.example%2Fcallback&state=s&code_challenge=${challenge}&code_challenge_method=S256&scope=mcp%3Aread+mcp%3Awrite+mcp%3Aapprove`));
+    expect(response.status).toBe(200);
+    expect(parsedScopes).toEqual(["mcp:read", "mcp:write", "mcp:approve"]);
   });
 
   test("redirects only after explicit consent and preserves state", async () => {
@@ -297,12 +425,12 @@ describe("MCP workspace OAuth", () => {
   });
 });
 
-function memoryStore(): McpOAuthStore {
+function memoryStore(initialRole: OAuthPrincipal["role"] = "viewer"): McpOAuthStore & { setRole: (role: OAuthPrincipal["role"]) => void } {
   const clients = new Map<string, McpOAuthClient>();
   const codes = new Map<string, McpOAuthAuthorizationCode>();
   const access = new Map<string, McpOAuthAccessToken>();
   const refresh = new Map<string, McpOAuthRefreshToken>();
-  const memberships = new Map<string, { role: "viewer" | "operator" | "reviewer" | "admin" | "owner"; workspaceSlug: string }>([["user-1:workspace-1", { role: "viewer", workspaceSlug: "acme" }]]);
+  let role = initialRole;
   return {
     async findClient(clientId) { return clients.get(clientId) ?? null; },
     async insertClient(client) { clients.set(client.clientId, client); },
@@ -335,7 +463,8 @@ function memoryStore(): McpOAuthStore {
       const refreshToken = refresh.get(tokenHash);
       if (refreshToken) refresh.set(tokenHash, { ...refreshToken, revokedAt: now });
     },
-    async findActiveMembership(userId, workspaceId) { return memberships.get(`${userId}:${workspaceId}`) ?? null; },
+    async findActiveMembership(userId, workspaceId) { return userId === "user-1" && workspaceId === "workspace-1" ? { role, workspaceSlug: "acme" } : null; },
     async audit() { return undefined; },
+    setRole(nextRole) { role = nextRole; },
   };
 }

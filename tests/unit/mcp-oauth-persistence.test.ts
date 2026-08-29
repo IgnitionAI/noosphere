@@ -33,6 +33,14 @@ describe("MCP OAuth persistence boundaries", () => {
     expect(source).toContain("revokeRefreshFamily");
   });
 
+  test("persists and decodes the generic mcp:approve OAuth scope", async () => {
+    const source = await text("packages/infrastructure/src/auth/postgres-mcp-oauth-store.ts");
+    expect(source).toContain('item === "mcp:approve"');
+    const schema = await text("packages/infrastructure/src/database/schema.ts");
+    expect(schema).toContain('allowedScopes: jsonb("allowed_scopes")');
+    expect(schema).toContain('scopes: jsonb("scopes")');
+  });
+
   test("repository rate limiting is durable and serialized instead of process-local", async () => {
     const source = await text("packages/infrastructure/src/auth/postgres-mcp-oauth-store.ts");
     expect(source).toContain("async consume(input");

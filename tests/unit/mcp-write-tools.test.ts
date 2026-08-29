@@ -43,6 +43,24 @@ describe("MCP safe-write tools", () => {
     await client.close();
   });
 
+  test("keeps reviewer writes forbidden even when mcp:approve is granted", async () => {
+    const instance = createMcpTransport({
+      capabilities: {
+        ...baseCapabilities(),
+        mcpWrite: { execute: async () => { throw new Error("must not run"); } },
+      },
+      allowedHosts: ["example.test"],
+      authorize: async () => ({ ...context, role: "reviewer" as const, scopes: ["mcp:read", "mcp:write", "mcp:approve"] as const }),
+    });
+    const client = new Client({ name: "mcp-write-reviewer", version: "1.0.0" });
+    const transport = new StreamableHTTPClientTransport(new URL("https://example.test/mcp"), { fetch: async (input, init) => instance.handle(input instanceof Request ? input : new Request(input, init)) });
+    await client.connect(transport);
+    const result = await client.callTool({ name: "company_upsert", arguments: { requestKey: crypto.randomUUID(), name: "Acme" } });
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toEqual({ error: "WRITE_FORBIDDEN" });
+    await client.close();
+  });
+
   test("exposes every internal mutation as an executable capability", async () => {
     const operations = [
       "company_upsert", "contact_upsert", "opportunity_update", "opportunity_change_stage",

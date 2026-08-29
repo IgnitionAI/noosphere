@@ -1,7 +1,7 @@
 import type { WorkspaceRole } from "@outbound/interface/http/request-context";
 
 export const MCP_OAUTH_RESOURCE = "/mcp";
-export const MCP_OAUTH_SCOPES = ["mcp:read", "mcp:write"] as const;
+export const MCP_OAUTH_SCOPES = ["mcp:read", "mcp:write", "mcp:approve"] as const;
 /** Strict upper bound for OAuth form bodies (well below the API upload limit). */
 export const MCP_OAUTH_MAX_BODY_BYTES = 16 * 1024;
 export const MCP_OAUTH_FORWARDED_PROTO_HEADER = "x-noosphere-forwarded-proto";
@@ -739,7 +739,9 @@ function normalizeScopes(scopes: readonly McpOAuthScope[]): readonly McpOAuthSco
 }
 
 function roleScopes(role: WorkspaceRole): readonly McpOAuthScope[] {
-  return role === "viewer" || role === "reviewer" ? ["mcp:read"] : [...MCP_OAUTH_SCOPES];
+  if (role === "viewer") return ["mcp:read"];
+  if (role === "operator") return ["mcp:read", "mcp:write"];
+  return [...MCP_OAUTH_SCOPES];
 }
 
 function intersectScopes(...sets: readonly (readonly McpOAuthScope[])[]): readonly McpOAuthScope[] {

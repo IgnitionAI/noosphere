@@ -1,5 +1,5 @@
 export type McpReadRole = "viewer" | "operator" | "reviewer" | "admin" | "owner";
-export type McpReadScope = "mcp:read" | "mcp:write";
+export type McpReadScope = "mcp:read" | "mcp:write" | "mcp:approve";
 import type { McpOperationView } from "./mcp-durable-operations";
 
 /** Identity supplied by the MCP OAuth resource server for one request. */

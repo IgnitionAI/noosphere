@@ -168,7 +168,7 @@ function executionContextFromExtra(extra: Record<string, unknown> | undefined): 
   const clientId = typeof extra.clientId === "string" ? extra.clientId : null;
   const role = typeof extra.role === "string" ? extra.role : null;
   const audience = typeof extra.audience === "string" ? extra.audience : null;
-  const scopes = Array.isArray(extra.scopes) && extra.scopes.every((scope) => scope === "mcp:read" || scope === "mcp:write")
+  const scopes = Array.isArray(extra.scopes) && extra.scopes.every((scope) => scope === "mcp:read" || scope === "mcp:write" || scope === "mcp:approve")
     ? extra.scopes as McpExecutionContext["scopes"]
     : null;
   if (!userId || !workspaceId || !clientId || !audience || !scopes || !["viewer", "operator", "reviewer", "admin", "owner"].includes(role ?? "")) return null;

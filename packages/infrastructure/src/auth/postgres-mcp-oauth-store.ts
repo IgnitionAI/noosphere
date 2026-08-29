@@ -247,5 +247,5 @@ function stringArray(value: unknown): readonly string[] {
 }
 
 function scopeArray(value: unknown): readonly McpOAuthScope[] {
-  return stringArray(value).filter((item): item is McpOAuthScope => item === "mcp:read" || item === "mcp:write");
+  return stringArray(value).filter((item): item is McpOAuthScope => item === "mcp:read" || item === "mcp:write" || item === "mcp:approve");
 }

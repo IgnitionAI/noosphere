@@ -264,4 +264,33 @@ describe("stateless MCP transport", () => {
       expect.objectContaining({ uri: "noosphere://runtime", mimeType: "application/json" }),
     ]) });
   });
+
+  test("preserves mcp:approve in the execution context while reviewer writes stay forbidden", async () => {
+    let executed = false;
+    const instance = transport({
+      capabilities: {
+        ...capabilities(),
+        mcpWrite: {
+          execute: async () => {
+            executed = true;
+            return { id: crypto.randomUUID(), version: 1, state: "applied", operation: "company_upsert", correlationId: crypto.randomUUID() };
+          },
+        },
+      },
+      authorize: async () => ({
+        userId: "reviewer",
+        workspaceId: "workspace",
+        clientId: "client",
+        role: "reviewer" as const,
+        scopes: ["mcp:read", "mcp:write", "mcp:approve"] as const,
+        audience: "https://example.test/mcp",
+      }),
+    });
+    const response = await post(instance, "tools/call", {
+      name: "company_upsert",
+      arguments: { requestKey: crypto.randomUUID(), name: "Acme" },
+    });
+    expect((await body(response)).result).toMatchObject({ isError: true, structuredContent: { error: "WRITE_FORBIDDEN" } });
+    expect(executed).toBe(false);
+  });
 });
