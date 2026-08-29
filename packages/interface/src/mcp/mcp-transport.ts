@@ -16,6 +16,8 @@ export interface McpTransportOptions {
   readonly allowedOrigins?: readonly string[];
   /** Hostnames (or host:port values) accepted by the endpoint. */
   readonly allowedHosts?: readonly string[];
+  /** RFC 9728 metadata URL advertised for bearer challenges. */
+  readonly oauthResourceMetadataUrl?: string;
   readonly maxBodyBytes?: number;
 }
 
@@ -64,7 +66,12 @@ export function createMcpTransport(options: McpTransportOptions): McpTransport {
       if (!authorized) {
         return new Response(JSON.stringify({ error: "MCP authentication required" }), {
           status: 401,
-          headers: { "content-type": "application/json; charset=utf-8", "www-authenticate": "Bearer" },
+          headers: {
+            "content-type": "application/json; charset=utf-8",
+            "www-authenticate": options.oauthResourceMetadataUrl
+              ? `Bearer resource_metadata="${options.oauthResourceMetadataUrl}"`
+              : "Bearer",
+          },
         });
       }
       if (request.method !== "POST") {

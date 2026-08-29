@@ -1,3 +1,14 @@
+(api_upstream) {
+	# Caddy is the sole public ingress. Strip client-supplied forwarding
+	# headers, then stamp values derived from the actual edge connection.
+	header_up -X-Forwarded-Proto
+	header_up X-Forwarded-Proto {http.request.scheme}
+	header_up -X-Noosphere-Forwarded-Proto
+	header_up X-Noosphere-Forwarded-Proto {http.request.scheme}
+	header_up -X-Noosphere-Client-IP
+	header_up X-Noosphere-Client-IP {http.request.remote.host}
+}
+
 {$PUBLIC_HOST} {
 	encode zstd gzip
 	request_body {
@@ -19,13 +30,32 @@
 	}
 
 	@health path /health/*
-	reverse_proxy @health api:3001
+	reverse_proxy @health api:3001 {
+		import api_upstream
+	}
+
+	@oauth_metadata path /.well-known/oauth-*
+	reverse_proxy @oauth_metadata api:3001 {
+		import api_upstream
+	}
+
+	@oauth_consent path /oauth/authorize
+	reverse_proxy @oauth_consent web:3000
+
+	@oauth path /oauth/*
+	reverse_proxy @oauth api:3001 {
+		import api_upstream
+	}
 
 	@mcp path /mcp
-	reverse_proxy @mcp api:3001
+	reverse_proxy @mcp api:3001 {
+		import api_upstream
+	}
 
 	@api path /api/v1/*
-	reverse_proxy @api api:3001
+	reverse_proxy @api api:3001 {
+		import api_upstream
+	}
 
 	@auth path /api/auth/*
 	reverse_proxy @auth web:3000

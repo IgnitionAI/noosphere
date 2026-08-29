@@ -4427,3 +4427,135 @@ export const accountHealthAlerts = pgTable(
     index("account_health_alerts_workspace_status_idx").on(table.workspaceId, table.status, table.createdAt),
   ],
 );
+
+/** OAuth clients and grants for the stateless MCP resource server. Secrets are
+ * stored as SHA-256 digests only; token payloads never contain workspace ids. */
+export const mcpOauthClients = pgTable(
+  "mcp_oauth_clients",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    clientId: varchar("client_id", { length: 180 }).notNull().unique(),
+    clientName: varchar("client_name", { length: 200 }).notNull(),
+    redirectUris: jsonb("redirect_uris").notNull(),
+    userId: uuid("user_id").notNull().references(() => authUsers.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    workspaceSlug: varchar("workspace_slug", { length: 120 }).notNull(),
+    allowedScopes: jsonb("allowed_scopes").notNull().default(sql`'["mcp:read"]'::jsonb`),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("mcp_oauth_clients_client_id_uq").on(table.clientId),
+    index("mcp_oauth_clients_workspace_idx").on(table.workspaceId, table.createdAt),
+    index("mcp_oauth_clients_user_idx").on(table.userId, table.createdAt),
+  ],
+);
+
+export const mcpOauthAuthorizationCodes = pgTable(
+  "mcp_oauth_authorization_codes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    codeHash: varchar("code_hash", { length: 128 }).notNull().unique(),
+    clientId: varchar("client_id", { length: 180 }).notNull().references(() => mcpOauthClients.clientId, { onDelete: "cascade" }),
+    userId: uuid("user_id").notNull().references(() => authUsers.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    redirectUri: text("redirect_uri").notNull(),
+    codeChallenge: varchar("code_challenge", { length: 128 }).notNull(),
+    codeChallengeMethod: varchar("code_challenge_method", { length: 16 }).notNull().default("S256"),
+    scopes: jsonb("scopes").notNull(),
+    resource: text("resource").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("mcp_oauth_codes_hash_uq").on(table.codeHash),
+    index("mcp_oauth_codes_client_expiry_idx").on(table.clientId, table.expiresAt),
+    index("mcp_oauth_codes_workspace_idx").on(table.workspaceId, table.createdAt),
+  ],
+);
+
+export const mcpOauthAccessTokens = pgTable(
+  "mcp_oauth_access_tokens",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    tokenHash: varchar("token_hash", { length: 128 }).notNull().unique(),
+    familyId: uuid("family_id").notNull(),
+    clientId: varchar("client_id", { length: 180 }).notNull().references(() => mcpOauthClients.clientId, { onDelete: "cascade" }),
+    userId: uuid("user_id").notNull().references(() => authUsers.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    scopes: jsonb("scopes").notNull(),
+    audience: text("audience").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("mcp_oauth_access_hash_uq").on(table.tokenHash),
+    index("mcp_oauth_access_client_idx").on(table.clientId, table.expiresAt),
+    index("mcp_oauth_access_workspace_idx").on(table.workspaceId, table.createdAt),
+  ],
+);
+
+export const mcpOauthRefreshTokens = pgTable(
+  "mcp_oauth_refresh_tokens",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    tokenHash: varchar("token_hash", { length: 128 }).notNull().unique(),
+    familyId: uuid("family_id").notNull(),
+    clientId: varchar("client_id", { length: 180 }).notNull().references(() => mcpOauthClients.clientId, { onDelete: "cascade" }),
+    userId: uuid("user_id").notNull().references(() => authUsers.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    scopes: jsonb("scopes").notNull(),
+    audience: text("audience").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    rotatedAt: timestamp("rotated_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("mcp_oauth_refresh_hash_uq").on(table.tokenHash),
+    index("mcp_oauth_refresh_family_idx").on(table.familyId, table.createdAt),
+    index("mcp_oauth_refresh_client_idx").on(table.clientId, table.expiresAt),
+    index("mcp_oauth_refresh_workspace_idx").on(table.workspaceId, table.createdAt),
+  ],
+);
+
+export const mcpOauthTokenRevocations = pgTable(
+  "mcp_oauth_token_revocations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    tokenHash: varchar("token_hash", { length: 128 }).notNull().unique(),
+    tokenType: varchar("token_type", { length: 32 }).notNull(),
+    clientId: varchar("client_id", { length: 180 }).references(() => mcpOauthClients.clientId, { onDelete: "cascade" }),
+    userId: uuid("user_id").references(() => authUsers.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id").references(() => workspaces.id, { onDelete: "cascade" }),
+    reason: varchar("reason", { length: 200 }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("mcp_oauth_revocations_hash_uq").on(table.tokenHash),
+    index("mcp_oauth_revocations_workspace_idx").on(table.workspaceId, table.createdAt),
+    index("mcp_oauth_revocations_expiry_idx").on(table.expiresAt),
+  ],
+);
+
+export const mcpOauthAuditEvents = pgTable(
+  "mcp_oauth_audit_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    action: varchar("action", { length: 160 }).notNull(),
+    clientId: varchar("client_id", { length: 180 }),
+    userId: uuid("user_id").references(() => authUsers.id, { onDelete: "set null" }),
+    workspaceId: uuid("workspace_id").references(() => workspaces.id, { onDelete: "set null" }),
+    subjectId: varchar("subject_id", { length: 180 }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("mcp_oauth_audit_workspace_idx").on(table.workspaceId, table.createdAt),
+    index("mcp_oauth_audit_client_idx").on(table.clientId, table.createdAt),
+    index("mcp_oauth_audit_rate_limit_idx").on(table.action, table.subjectId, table.createdAt),
+  ],
+);

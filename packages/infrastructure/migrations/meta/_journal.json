@@ -687,6 +687,13 @@
       "when": 1797991200000,
       "tag": "0097_embedding_revision_vector_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 98,
+      "version": "7",
+      "when": 1797994800000,
+      "tag": "0098_mcp_oauth_workspace",
+      "breakpoints": true
     }
   ]
 }

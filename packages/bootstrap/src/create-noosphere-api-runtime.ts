@@ -123,19 +123,46 @@ import { createNoosphereRuntime } from "@outbound/bootstrap/create-noosphere-run
 import type { RuntimeCapabilities } from "@outbound/bootstrap/runtime-capabilities";
 import type { NoosphereRuntime } from "@outbound/bootstrap/noosphere-runtime";
 import { createMcpTransport } from "@outbound/interface/mcp/mcp-transport";
+import { createMcpOAuthHandler, createMcpOAuthService } from "@outbound/interface/mcp/mcp-oauth";
+import { PostgresMcpOAuthStore } from "@outbound/infrastructure/auth/postgres-mcp-oauth-store";
 
 /** Compose the complete API application once for HTTP or a future MCP adapter. */
 export function createNoosphereApiRuntime(environment: NodeJS.ProcessEnv = process.env): NoosphereRuntime {
+const publicAppOrigin = securePublicOrigin(requiredEnvironment("BETTER_AUTH_URL"));
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
 const auth = createBetterAuthRuntime(database.db, {
-  baseUrl: requiredEnvironment("BETTER_AUTH_URL"),
+  baseUrl: publicAppOrigin,
   secret: requiredSecretEnvironment("BETTER_AUTH_SECRET"),
   trustedOrigins: commaSeparatedEnvironment(
     "BETTER_AUTH_TRUSTED_ORIGINS",
-    requiredEnvironment("BETTER_AUTH_URL"),
+    publicAppOrigin,
   ),
   allowSignUp: environment.BETTER_AUTH_ALLOW_SIGN_UP === "true",
+});
+const mcpIssuer = publicAppOrigin;
+const mcpResource = `${mcpIssuer}/mcp`;
+const mcpOAuthStore = new PostgresMcpOAuthStore(database.db);
+const mcpOAuthService = createMcpOAuthService(mcpOAuthStore, {
+  issuer: mcpIssuer,
+  resource: mcpResource,
+});
+const mcpOAuth = createMcpOAuthHandler(mcpOAuthService, {
+  issuer: mcpIssuer,
+  resource: mcpResource,
+  allowedHosts: mcpAllowedHostsFromEnvironment(),
+  trustedInternalHosts: commaSeparatedEnvironment("MCP_TRUSTED_INTERNAL_HOSTS", "api,localhost,127.0.0.1,[::1]"),
+  rateLimiter: mcpOAuthStore,
+  resolveUserContext: async (request, workspaceSlug) => {
+    const headers = new Headers(request.headers);
+    headers.set("x-workspace-slug", workspaceSlug);
+    try {
+      const context = await auth.contextResolver.resolve(new Request(request, { headers }));
+      return { userId: context.userId, workspaceId: context.workspaceId, workspaceSlug, role: context.role };
+    } catch {
+      return null;
+    }
+  },
 });
 const repository = new PostgresProductResearchRepository(database.db);
 const queue = new PostgresJobQueue(database.client);
@@ -477,6 +504,7 @@ const attribution = createAttributionHttpHandler({
 });
 async function dispatch(request: Request): Promise<Response> {
     const pathname = new URL(request.url).pathname;
+    if (pathname.startsWith("/oauth/") || pathname === "/.well-known/oauth-authorization-server" || pathname.startsWith("/.well-known/oauth-protected-resource")) return mcpOAuth(request);
     if (pathname === "/mcp") return mcpTransport.handle(request);
     if (pathname.startsWith("/api/auth/")) return runtime.handleAuth(request);
     if (pathname === "/api/v1/webhooks/unipile") {
@@ -604,16 +632,27 @@ const runtimeCapabilities: RuntimeCapabilities = {
 };
 const mcpTransport = createMcpTransport({
   capabilities: runtimeCapabilities,
+  oauthResourceMetadataUrl: `${mcpIssuer}/.well-known/oauth-protected-resource`,
   allowedHosts: mcpAllowedHostsFromEnvironment(),
   allowedOrigins: commaSeparatedEnvironment(
     "MCP_ALLOWED_ORIGINS",
     commaSeparatedEnvironment("BETTER_AUTH_TRUSTED_ORIGINS", requiredEnvironment("BETTER_AUTH_URL")).join(","),
   ),
   authorize: async (request) => {
+    const authorization = request.headers.get("authorization");
+    if (authorization?.startsWith("Bearer ")) {
+      try {
+        await mcpOAuthService.authenticateMcpRequest({ accessToken: authorization.slice("Bearer ".length).trim(), resource: mcpResource, requiredScopes: ["mcp:read"] });
+        return true;
+      } catch {
+        return false;
+      }
+    }
     const devToken = environment.MCP_DEV_AUTH_TOKEN;
     if (environment.NODE_ENV !== "production" && devToken !== undefined && devToken.length > 0 && request.headers.get("authorization") === `Bearer ${devToken}`) {
       return true;
     }
+    if (environment.NODE_ENV === "production") return false;
     try {
       await auth.contextResolver.resolve(request);
       return true;
@@ -675,6 +714,20 @@ function mcpAllowedHostsFromEnvironment(): string[] {
   } catch {
     throw new Error("BETTER_AUTH_URL must be an absolute URL for MCP host validation");
   }
+}
+
+function securePublicOrigin(value: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error("BETTER_AUTH_URL must be an absolute URL");
+  }
+  const local = parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1" || parsed.hostname === "[::1]";
+  if (parsed.protocol !== "https:" && !(local && parsed.protocol === "http:")) {
+    throw new Error("BETTER_AUTH_URL must use HTTPS outside localhost");
+  }
+  return parsed.origin;
 }
 
 function positiveIntegerEnvironment(name: string, fallback: number): number {
