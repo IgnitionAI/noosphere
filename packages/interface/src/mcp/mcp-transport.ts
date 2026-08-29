@@ -3,15 +3,18 @@ import {
   McpServer,
 } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
+import type { McpExecutionContext } from "@outbound/application/mcp/mcp-read-capabilities";
 import type { RuntimeCapabilities } from "@outbound/bootstrap/runtime-capabilities";
+import { registerMcpReadResources } from "@outbound/interface/mcp/mcp-read-resources";
+import { registerMcpReadTools } from "@outbound/interface/mcp/mcp-read-tools";
 
 /** The maximum body accepted by the stateless MCP endpoint. */
 export const MCP_MAX_BODY_BYTES = 1_048_576;
 
 export interface McpTransportOptions {
   readonly capabilities: RuntimeCapabilities;
-  /** Return true only when the request has a valid application identity. */
-  readonly authorize?: (request: Request) => Promise<boolean> | boolean;
+  /** Return true or an OAuth execution context only when identity is valid. */
+  readonly authorize?: (request: Request) => Promise<boolean | McpExecutionContext> | boolean | McpExecutionContext;
   /** Exact origins allowed to send browser requests; an absent Origin is allowed. */
   readonly allowedOrigins?: readonly string[];
   /** Hostnames (or host:port values) accepted by the endpoint. */
@@ -41,7 +44,7 @@ export function createMcpTransport(options: McpTransportOptions): McpTransport {
   const allowedOrigins = normalizeOrigins(options.allowedOrigins ?? []);
   const allowedHosts = normalizeHosts(options.allowedHosts ?? []);
   const authorize = options.authorize ?? (() => false);
-  const handler = createMcpHandler(() => createServer(options.capabilities), {
+  const handler = createMcpHandler((ctx) => createServer(options.capabilities, ctx.authInfo?.extra), {
     // Keep the legacy (2025) path stateless and force JSON responses for the
     // modern path. The SDK handles initialize, negotiation, JSON-RPC errors,
     // notification acknowledgements and tool/resource dispatch.
@@ -57,7 +60,7 @@ export function createMcpTransport(options: McpTransportOptions): McpTransport {
       if (url.pathname !== "/mcp") return httpError(404, "Not Found");
       if (!isAllowedHost(request, url, allowedHosts)) return httpError(403, "MCP host is not allowed");
       if (!isAllowedOrigin(request, allowedOrigins)) return httpError(403, "MCP origin is not allowed");
-      let authorized = false;
+      let authorized: boolean | McpExecutionContext = false;
       try {
         authorized = await authorize(request);
       } catch {
@@ -99,12 +102,32 @@ export function createMcpTransport(options: McpTransportOptions): McpTransport {
       // particular, do not validate MCP-Protocol-Version against the legacy
       // SUPPORTED_PROTOCOL_VERSIONS list here: 2026-07-28 is a modern
       // per-request envelope revision and must reach createMcpHandler.
+      if (typeof authorized === "object") {
+        return handler.fetch(request, {
+          authInfo: {
+            // The token has already been validated by the OAuth boundary and
+            // is deliberately not propagated to MCP tool callbacks.
+            token: "",
+            clientId: authorized.clientId,
+            scopes: [...authorized.scopes],
+            resource: new URL(authorized.audience),
+            extra: {
+              userId: authorized.userId,
+              workspaceId: authorized.workspaceId,
+              clientId: authorized.clientId,
+              role: authorized.role,
+              scopes: [...authorized.scopes],
+              audience: authorized.audience,
+            },
+          },
+        });
+      }
       return handler.fetch(request);
     },
   });
 }
 
-function createServer(capabilities: RuntimeCapabilities): McpServer {
+function createServer(capabilities: RuntimeCapabilities, authExtra?: Record<string, unknown>): McpServer {
   const server = new McpServer({ name: "noosphere", version: "0.0.0" });
   const traceInput = z.object({
     traceId: z.string().optional(),
@@ -128,7 +151,26 @@ function createServer(capabilities: RuntimeCapabilities): McpServer {
       text: JSON.stringify({ status: "ok", capabilities: Object.keys(capabilities) }),
     }],
   }));
+  const context = executionContextFromExtra(authExtra);
+  if (context && capabilities.mcpRead) {
+    registerMcpReadTools(server, capabilities.mcpRead, context);
+    registerMcpReadResources(server, capabilities.mcpRead, context);
+  }
   return server;
+}
+
+function executionContextFromExtra(extra: Record<string, unknown> | undefined): McpExecutionContext | null {
+  if (!extra) return null;
+  const userId = typeof extra.userId === "string" ? extra.userId : null;
+  const workspaceId = typeof extra.workspaceId === "string" ? extra.workspaceId : null;
+  const clientId = typeof extra.clientId === "string" ? extra.clientId : null;
+  const role = typeof extra.role === "string" ? extra.role : null;
+  const audience = typeof extra.audience === "string" ? extra.audience : null;
+  const scopes = Array.isArray(extra.scopes) && extra.scopes.every((scope) => scope === "mcp:read" || scope === "mcp:write")
+    ? extra.scopes as McpExecutionContext["scopes"]
+    : null;
+  if (!userId || !workspaceId || !clientId || !audience || !scopes || !["viewer", "operator", "reviewer", "admin", "owner"].includes(role ?? "")) return null;
+  return { userId, workspaceId, clientId, role: role as McpExecutionContext["role"], scopes, audience };
 }
 
 function traceResult(traceId: string | undefined, message: string | undefined) {

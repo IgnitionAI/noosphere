@@ -99,7 +99,7 @@ export interface ContentPublicationRepository {
     readonly account: ContentPublicationAccountSnapshot;
     readonly now: Date;
   }): Promise<ContentPublicationView>;
-  list(input: { readonly workspaceId: string; readonly cursor?: string; readonly limit: number }): Promise<{ readonly data: readonly ContentPublicationView[]; readonly nextCursor: string | null }>;
+  list(input: { readonly workspaceId: string; readonly cursor?: string; readonly from?: Date; readonly to?: Date; readonly limit: number }): Promise<{ readonly data: readonly ContentPublicationView[]; readonly nextCursor: string | null }>;
   find(input: { readonly workspaceId: string; readonly publicationId: string }): Promise<ContentPublicationView | null>;
   findLatestForAsset(input: { readonly workspaceId: string; readonly assetId: string }): Promise<ContentPublicationView | null>;
   reschedule(input: { readonly workspaceId: string; readonly userId: string; readonly publicationId: string; readonly requestKey: string; readonly scheduledFor: Date; readonly now: Date }): Promise<ContentPublicationView>;

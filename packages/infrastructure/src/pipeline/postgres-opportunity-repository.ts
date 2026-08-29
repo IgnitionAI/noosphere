@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
 import {
   canTransitionOpportunity,
   isOpportunityStage,
@@ -34,8 +34,16 @@ export const DEFAULT_LOST_REASONS = [
 export class PostgresOpportunityRepository {
   constructor(private readonly database: Database) {}
 
-  async list(workspaceId: string) {
-    const rows = await this.database
+  async list(workspaceId: string, options: { readonly cursor?: string; readonly limit?: number } = {}) {
+    const cursor = options.cursor === undefined ? null : decodeOpportunityCursor(options.cursor);
+    const conditions = [eq(opportunities.workspaceId, workspaceId)];
+    if (cursor) {
+      conditions.push(or(
+        lt(opportunities.updatedAt, cursor.updatedAt),
+        and(eq(opportunities.updatedAt, cursor.updatedAt), lt(opportunities.id, cursor.id)),
+      )!);
+    }
+    const query = this.database
       .select({
         id: opportunities.id,
         contactId: opportunities.contactId,
@@ -82,10 +90,13 @@ export class PostgresOpportunityRepository {
         eq(icpVersions.workspaceId, campaigns.workspaceId),
         eq(icpVersions.id, campaigns.icpVersionId),
       ))
-      .where(eq(opportunities.workspaceId, workspaceId))
-      .orderBy(desc(opportunities.updatedAt));
-    const opportunityIds = rows.map((row) => row.id);
-    const contactIds = [...new Set(rows.map((row) => row.contactId))];
+      .where(and(...conditions))
+      .orderBy(desc(opportunities.updatedAt), desc(opportunities.id));
+    const rows = options.limit === undefined ? await query : await query.limit(options.limit + 1);
+    const hasMore = options.limit !== undefined && rows.length > options.limit;
+    const pageRows = options.limit === undefined ? rows : rows.slice(0, options.limit);
+    const opportunityIds = pageRows.map((row) => row.id);
+    const contactIds = [...new Set(pageRows.map((row) => row.contactId))];
     const [historyRows, bookingRows] = await Promise.all([
       opportunityIds.length
         ? this.database
@@ -123,7 +134,7 @@ export class PostgresOpportunityRepository {
       const key = `${booking.contactId}:${booking.campaignId ?? "none"}`;
       if (!bookings.has(key)) bookings.set(key, booking);
     }
-    const data = rows.map((row) => ({
+    const data = pageRows.map((row) => ({
       ...row,
       column: pipelineColumn(row.stage),
       meeting: bookings.get(`${row.contactId}:${row.campaignId ?? "none"}`)
@@ -133,6 +144,7 @@ export class PostgresOpportunityRepository {
     }));
     return {
       data,
+      nextCursor: hasMore && data.at(-1) ? encodeOpportunityCursor(data.at(-1)!.updatedAt, data.at(-1)!.id) : null,
       metrics: {
         total: data.length,
         qualified: data.filter((item) => item.column === "qualified").length,
@@ -415,6 +427,22 @@ function redactChanges(row: { amount?: number | null; currency?: string | null; 
     lostReason: row.lostReason ?? null,
     offerVersionId: row.offerVersionId ?? null,
   };
+}
+
+function encodeOpportunityCursor(updatedAt: Date, id: string): string {
+  return Buffer.from(JSON.stringify({ updatedAt: updatedAt.toISOString(), id }), "utf8").toString("base64url");
+}
+
+function decodeOpportunityCursor(value: string): { readonly updatedAt: Date; readonly id: string } {
+  if (!value || value.length > 512) throw new Error("OPPORTUNITY_CURSOR_INVALID");
+  try {
+    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as { updatedAt?: unknown; id?: unknown };
+    const updatedAt = typeof parsed.updatedAt === "string" ? new Date(parsed.updatedAt) : null;
+    if (!updatedAt || Number.isNaN(updatedAt.getTime()) || typeof parsed.id !== "string" || !/^[0-9a-f-]{36}$/i.test(parsed.id)) throw new Error("invalid");
+    return { updatedAt, id: parsed.id };
+  } catch {
+    throw new Error("OPPORTUNITY_CURSOR_INVALID");
+  }
 }
 
 function groupBy<T, K>(rows: readonly T[], key: (row: T) => K): Map<K, T[]> {

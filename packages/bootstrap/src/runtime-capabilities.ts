@@ -16,6 +16,7 @@ export interface CrmRuntimeCapability {
 
 import type { ProspectMemoryCapability } from "@outbound/domain/prospect-memory/prospect-memory";
 import type { ProspectMemoryPrincipalRole } from "@outbound/application/prospect-memory/prospect-memory";
+import type { McpReadCapabilities } from "@outbound/application/mcp/mcp-read-capabilities";
 
 export interface ProspectMemoryRuntimeCapability {
   readonly status: (workspaceId: string, contactId: string) => Promise<unknown>;
@@ -86,6 +87,8 @@ export interface OperationsRuntimeCapability {
 }
 
 export interface RuntimeCapabilities {
+  /** Optional read surface consumed by the MCP adapter; absent in minimal test runtimes. */
+  readonly mcpRead?: McpReadCapabilities;
   readonly crm: CrmRuntimeCapability;
   readonly prospectMemory: ProspectMemoryGroupCapability;
   readonly pipeline: EmptyRuntimeCapability;

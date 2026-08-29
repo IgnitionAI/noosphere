@@ -125,6 +125,10 @@ import type { NoosphereRuntime } from "@outbound/bootstrap/noosphere-runtime";
 import { createMcpTransport } from "@outbound/interface/mcp/mcp-transport";
 import { createMcpOAuthHandler, createMcpOAuthService } from "@outbound/interface/mcp/mcp-oauth";
 import { PostgresMcpOAuthStore } from "@outbound/infrastructure/auth/postgres-mcp-oauth-store";
+import { PostgresCrmRepository } from "@outbound/infrastructure/crm/postgres-crm-repository";
+import { PostgresProspectViewRepository } from "@outbound/infrastructure/crm/postgres-prospect-view-repository";
+import { PostgresOperationalViews } from "@outbound/infrastructure/workspaces/postgres-operational-views";
+import { createMcpReadCapabilities, type McpReadCapabilities, type McpReadPage, type McpReadValue } from "@outbound/application/mcp/mcp-read-capabilities";
 
 /** Compose the complete API application once for HTTP or a future MCP adapter. */
 export function createNoosphereApiRuntime(environment: NodeJS.ProcessEnv = process.env): NoosphereRuntime {
@@ -281,6 +285,9 @@ const crm = createCrmHttpHandler({
   database: database.db,
   contextResolver: auth.contextResolver,
 });
+const mcpCrmRepository = new PostgresCrmRepository(database.db);
+const mcpProspectViews = new PostgresProspectViewRepository(database.db);
+const mcpOperationalViews = new PostgresOperationalViews(database.db);
 const unipileDsn = environment.UNIPILE_DSN ?? "";
 const unipileApiKey = environment.UNIPILE_API_KEY ?? "";
 const connectedAccountClient = unipileDsn && unipileApiKey
@@ -502,6 +509,80 @@ const attribution = createAttributionHttpHandler({
   contextResolver: auth.contextResolver,
   application: attributionApplication,
 });
+const mcpReadCapabilities: McpReadCapabilities = createMcpReadCapabilities({
+  workspace: {
+    getSummary: async (context, input) => toMcpReadValue(await mcpOperationalViews.getSummary(context.workspaceId, { attentionLimit: input.limit })),
+  },
+  crm: {
+    search: async (context, input) => {
+      const query = input.query;
+      if (input.entity === "contact") {
+        const cursor = input.cursor ? decodeMcpCursor(input.cursor) : null;
+        if (cursor && (!isMcpCursorDate(cursor.updatedAt) || !isMcpCursorId(cursor.id))) throw new Error("MCP_CURSOR_INVALID");
+        const result = await mcpProspectViews.list({ workspaceId: context.workspaceId, ...(query ? { search: query } : {}), ...(cursor ? { cursor: { updatedAt: new Date(cursor.updatedAt as string), id: cursor.id as string } } : {}), limit: input.limit });
+        return toMcpReadPage({ data: result.data, nextCursor: result.nextCursor ? encodeMcpCursor(result.nextCursor) : null });
+      }
+      const cursor = input.cursor ? decodeMcpCursor(input.cursor) : null;
+      if (cursor && (!isMcpCursorDate(cursor.createdAt) || !isMcpCursorId(cursor.id))) throw new Error("MCP_CURSOR_INVALID");
+      const result = await mcpCrmRepository.listCompanies({ workspaceId: context.workspaceId, ...(query ? { search: query } : {}), ...(cursor ? { cursor: { createdAt: new Date(cursor.createdAt as string), id: cursor.id as string } } : {}), limit: input.limit });
+      return toMcpReadPage({ data: result.data, nextCursor: result.nextCursor ? encodeMcpCursor(result.nextCursor) : null });
+    },
+    getCompany: async (context, input) => toMcpReadValue(await mcpCrmRepository.getCompany({ workspaceId: context.workspaceId, companyId: input.companyId })),
+  },
+  prospect: {
+    get360: async (context, input) => {
+      const principalRole = context.role === "operator" ? "operator" : context.role === "admin" || context.role === "owner" ? "admin" : "viewer";
+      return toMcpReadValue(await prospectMemoryApplication.view({
+        workspaceId: context.workspaceId,
+        contactId: input.contactId,
+        capability: "inbound_aggregate",
+        principalRole,
+        requestKey: `mcp:${context.clientId}:${input.contactId}`,
+      }));
+    },
+  },
+  pipeline: {
+    list: async (context, input) => {
+      const result = await new PostgresOpportunityRepository(database.db).list(context.workspaceId, { limit: input.limit, ...(input.cursor ? { cursor: input.cursor } : {}) });
+      return toMcpReadPage({ data: result.data, nextCursor: result.nextCursor });
+    },
+  },
+  opportunity: {
+    get: async (context, input) => {
+      const result = await new PostgresOpportunityRepository(database.db).list(context.workspaceId, { limit: 100 });
+      return toMcpReadValue(result.data.find((item) => item.id === input.opportunityId) ?? null);
+    },
+  },
+  conversation: {
+    list: async (context, input) => {
+      const page = input.cursor ? decodeConversationCursor(input.cursor) : input.page ?? 1;
+      const result = await mcpOperationalViews.listConversations({ workspaceId: context.workspaceId, ...(input.channel ? { channel: input.channel } : {}), ...(input.search ? { search: input.search } : {}), page, pageSize: input.limit });
+      return toMcpReadPage({ data: result.data, nextCursor: result.pagination.hasNext ? encodeMcpCursor({ kind: "conversation", page: page + 1 }) : null });
+    },
+  },
+  campaign: {
+    getStatus: async (context, input) => toMcpReadValue(await mcpOperationalViews.getCampaignView(context.workspaceId, input.campaignId)),
+  },
+  content: {
+    getCalendar: async (context, input) => toMcpReadPage(await contentPublicationRepository.list({
+      workspaceId: context.workspaceId,
+      ...(input.cursor ? { cursor: input.cursor } : {}),
+      ...(input.from ? { from: new Date(input.from) } : {}),
+      ...(input.to ? { to: new Date(input.to) } : {}),
+      limit: input.limit,
+    })),
+  },
+  operations: {
+    getHealth: async () => {
+      try {
+        await database.client`select 1`;
+        return { status: "ready" };
+      } catch {
+        return { status: "not_ready" };
+      }
+    },
+  },
+});
 async function dispatch(request: Request): Promise<Response> {
     const pathname = new URL(request.url).pathname;
     if (pathname.startsWith("/oauth/") || pathname === "/.well-known/oauth-authorization-server" || pathname.startsWith("/.well-known/oauth-protected-resource")) return mcpOAuth(request);
@@ -583,6 +664,7 @@ async function dispatch(request: Request): Promise<Response> {
   return productResearch(request);
 }
 const runtimeCapabilities: RuntimeCapabilities = {
+  mcpRead: mcpReadCapabilities,
   crm: {
     productResearch: {
       get: (input) => application.get(input),
@@ -642,8 +724,7 @@ const mcpTransport = createMcpTransport({
     const authorization = request.headers.get("authorization");
     if (authorization?.startsWith("Bearer ")) {
       try {
-        await mcpOAuthService.authenticateMcpRequest({ accessToken: authorization.slice("Bearer ".length).trim(), resource: mcpResource, requiredScopes: ["mcp:read"] });
-        return true;
+        return await mcpOAuthService.authenticateMcpRequest({ accessToken: authorization.slice("Bearer ".length).trim(), resource: mcpResource, requiredScopes: ["mcp:read"] });
       } catch {
         return false;
       }
@@ -654,8 +735,15 @@ const mcpTransport = createMcpTransport({
     }
     if (environment.NODE_ENV === "production") return false;
     try {
-      await auth.contextResolver.resolve(request);
-      return true;
+      const context = await auth.contextResolver.resolve(request);
+      return {
+        userId: context.userId,
+        workspaceId: context.workspaceId,
+        clientId: "dev-session",
+        role: context.role,
+        scopes: ["mcp:read"],
+        audience: mcpResource,
+      };
     } catch {
       return false;
     }
@@ -678,6 +766,46 @@ const runtime = createNoosphereRuntime({
     await database.close();
   },
 });
+function toMcpReadValue(value: unknown): McpReadValue {
+  return JSON.parse(JSON.stringify(value)) as McpReadValue;
+}
+
+function toMcpReadPage(value: { readonly data: readonly unknown[]; readonly nextCursor: unknown }): McpReadPage {
+  return {
+    data: JSON.parse(JSON.stringify(value.data)) as readonly McpReadValue[],
+    nextCursor: typeof value.nextCursor === "string" ? value.nextCursor : null,
+  };
+}
+
+function encodeMcpCursor(value: unknown): string {
+  return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
+}
+
+function decodeMcpCursor(value: string): Record<string, unknown> {
+  if (!value || value.length > 512) throw new Error("MCP_CURSOR_INVALID");
+  try {
+    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("invalid");
+    return parsed as Record<string, unknown>;
+  } catch {
+    throw new Error("MCP_CURSOR_INVALID");
+  }
+}
+
+function isMcpCursorDate(value: unknown): value is string {
+  return typeof value === "string" && !Number.isNaN(new Date(value).getTime());
+}
+
+function isMcpCursorId(value: unknown): value is string {
+  return typeof value === "string" && /^[0-9a-f-]{36}$/i.test(value);
+}
+
+function decodeConversationCursor(value: string): number {
+  const cursor = decodeMcpCursor(value);
+  if (cursor.kind !== "conversation" || typeof cursor.page !== "number" || !Number.isInteger(cursor.page) || cursor.page < 1 || cursor.page > 100) throw new Error("MCP_CURSOR_INVALID");
+  return cursor.page;
+}
+
 function unavailableSocialPublisher(): SocialPublisher {
   const unavailable = () => Promise.reject(new SocialProviderError("SOCIAL_PROVIDER_UNAVAILABLE", "Unipile is not configured", "not_sent", true));
   return { observeCapabilities: unavailable, publishText: unavailable };

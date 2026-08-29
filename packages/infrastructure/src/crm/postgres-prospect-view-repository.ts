@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, ilike, inArray, ne, or, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, gte, ilike, inArray, lt, ne, or, sql, type SQL } from "drizzle-orm";
 import type { SocialProspectSignalAssessment } from "@outbound/domain/crm/social-prospect-signal";
 import type { Database } from "@outbound/infrastructure/database/client";
 import {
@@ -31,6 +31,7 @@ export class PostgresProspectViewRepository {
   async list(input: {
     workspaceId: string;
     search?: string;
+    cursor?: { readonly updatedAt: Date; readonly id: string };
     icpVersionId?: string;
     campaignId?: string;
     campaignScope?: "in_campaign" | "outside_campaign";
@@ -45,6 +46,12 @@ export class PostgresProspectViewRepository {
     if (input.search) {
       const pattern = `%${input.search}%`;
       conditions.push(or(ilike(contacts.firstName, pattern), ilike(contacts.lastName, pattern))!);
+    }
+    if (input.cursor) {
+      conditions.push(or(
+        lt(contacts.updatedAt, input.cursor.updatedAt),
+        and(eq(contacts.updatedAt, input.cursor.updatedAt), lt(contacts.id, input.cursor.id)),
+      )!);
     }
     if (input.icpVersionId) {
       conditions.push(sql`exists (
@@ -88,9 +95,10 @@ export class PostgresProspectViewRepository {
       .select()
       .from(contacts)
       .where(and(...conditions))
-      .orderBy(desc(contacts.updatedAt), desc(contacts.createdAt))
-      .limit(input.limit);
-    const data = await this.#hydrate(input.workspaceId, rows);
+      .orderBy(desc(contacts.updatedAt), desc(contacts.id))
+      .limit(input.limit + 1);
+    const pageRows = rows.slice(0, input.limit);
+    const data = await this.#hydrate(input.workspaceId, pageRows);
     const icps = await this.db
       .selectDistinct({ id: icpVersions.id, name: icpVersions.name })
       .from(icpVersions)
@@ -109,7 +117,12 @@ export class PostgresProspectViewRepository {
         ne(campaigns.status, "archived"),
       ))
       .orderBy(campaigns.name);
-    return { data, filters: { icps, campaigns: campaignOptions } };
+    const last = pageRows.at(-1);
+    return {
+      data,
+      nextCursor: rows.length > input.limit && last ? { updatedAt: last.updatedAt, id: last.id } : null,
+      filters: { icps, campaigns: campaignOptions },
+    };
   }
 
   async get(input: { workspaceId: string; contactId: string }) {

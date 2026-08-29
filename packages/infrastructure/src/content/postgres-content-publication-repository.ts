@@ -1,4 +1,4 @@
-import { and, count, desc, eq, gte, inArray, lt, ne, or, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, lt, lte, ne, or, sql } from "drizzle-orm";
 import type {
   ContentPublicationAccountSnapshot,
   ContentPublicationContentSnapshot,
@@ -189,6 +189,8 @@ export class PostgresContentPublicationRepository implements ContentPublicationR
     const cursor = input.cursor ? publicationCursor(input.cursor) : null;
     const rows = await this.database.select().from(contentPublications).where(and(
       eq(contentPublications.workspaceId, input.workspaceId),
+      ...(input.from ? [gte(contentPublications.scheduledFor, input.from)] : []),
+      ...(input.to ? [lte(contentPublications.scheduledFor, input.to)] : []),
       ...(cursor ? [or(
         lt(contentPublications.createdAt, cursor.createdAt),
         and(eq(contentPublications.createdAt, cursor.createdAt), lt(contentPublications.id, cursor.id)),
