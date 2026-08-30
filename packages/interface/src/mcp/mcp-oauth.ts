@@ -134,6 +134,28 @@ export interface McpOAuthRefreshToken {
   readonly revokedAt: Date | null;
 }
 
+/** Token material is generated only after the durable refresh lock is held. */
+export interface McpOAuthTokenBundle {
+  readonly response: OAuthTokenResponse;
+  readonly accessToken: McpOAuthAccessToken;
+  readonly refreshToken: McpOAuthRefreshToken;
+}
+
+export interface McpOAuthRefreshRotationInput {
+  readonly tokenHash: string;
+  readonly clientId: string;
+  readonly audience: string;
+  readonly now: Date;
+  readonly createTokens: (
+    record: McpOAuthRefreshToken,
+    membership: { readonly role: WorkspaceRole },
+  ) => Promise<McpOAuthTokenBundle>;
+}
+
+export type McpOAuthRefreshRotationResult =
+  | { readonly status: "rotated"; readonly tokens: McpOAuthTokenBundle }
+  | { readonly status: "concurrent" | "replayed" | "missing" | "invalid" };
+
 export interface McpOAuthStore {
   findClient(clientId: string): Promise<McpOAuthClient | null>;
   insertClient(client: McpOAuthClient): Promise<void>;
@@ -141,6 +163,18 @@ export interface McpOAuthStore {
   consumeAuthorizationCode(codeHash: string, now: Date): Promise<McpOAuthAuthorizationCode | null>;
   insertAccessToken(token: McpOAuthAccessToken): Promise<void>;
   findAccessToken(tokenHash: string): Promise<McpOAuthAccessToken | null>;
+  /**
+   * Family revocation is durable state, not process-local cache state. Stores
+   * must answer from their authoritative token rows so every API replica and
+   * a restarted service apply refresh-reuse revocation consistently.
+   */
+  isTokenFamilyRevoked(familyId: string): Promise<boolean>;
+  /**
+   * Atomically consumes one refresh token and persists its replacement and
+   * access token while holding the durable family lock. Token material is
+   * created by the callback only after this operation owns that lock.
+   */
+  rotateRefreshToken(input: McpOAuthRefreshRotationInput): Promise<McpOAuthRefreshRotationResult>;
   insertRefreshToken(token: McpOAuthRefreshToken): Promise<void>;
   findRefreshToken(tokenHash: string): Promise<McpOAuthRefreshToken | null>;
   replaceRefreshToken(tokenHash: string, now: Date, replacement: McpOAuthRefreshToken): Promise<"rotated" | "reused" | "missing">;
@@ -547,8 +581,6 @@ export function createMcpOAuthService(
   const codeTtl = positiveTtl(options.authorizationCodeTtlSeconds, 300);
   const accessTtl = positiveTtl(options.accessTokenTtlSeconds, 300);
   const refreshTtl = positiveTtl(options.refreshTokenTtlSeconds, 2_592_000);
-  const accessFamilies = new Map<string, string>();
-  const revokedFamilies = new Set<string>();
 
   const service: McpOAuthService = {
     metadata: () => ({
@@ -645,37 +677,30 @@ export function createMcpOAuthService(
       const tokenHash = await hashOpaque(input.refreshToken);
       const record = await store.findRefreshToken(tokenHash);
       if (!record || record.clientId !== client.clientId || record.audience !== resource || record.revokedAt || record.expiresAt <= now()) throw invalidGrant("refresh token is invalid or expired");
-      if (record.rotatedAt) {
+      if (!record.rotatedAt) {
+        const membership = await store.findActiveMembership(record.userId, record.workspaceId);
+        if (!membership) throw invalidGrant("workspace membership is inactive");
+        if (intersectScopes(record.scopes, roleScopes(membership.role)).length === 0) throw invalidGrant("workspace scope is no longer permitted");
+      }
+      const result = await store.rotateRefreshToken({
+        tokenHash,
+        clientId: client.clientId,
+        audience: resource,
+        now: now(),
+        createTokens: async (current, membership) => {
+          const scopes = intersectScopes(current.scopes, roleScopes(membership.role));
+          if (scopes.length === 0) throw invalidGrant("workspace scope is no longer permitted");
+          return createTokenBundle(current.clientId, current.userId, current.workspaceId, scopes, current.familyId);
+        },
+      });
+      if (result.status === "rotated") return result.tokens.response;
+      if (result.status === "replayed") {
         await store.revokeRefreshFamily(record.familyId, now());
-        revokedFamilies.add(record.familyId);
         await audit({ action: "mcp_oauth_refresh_reuse_detected", clientId: client.clientId, userId: record.userId, workspaceId: record.workspaceId });
         throw invalidGrant("refresh token reuse detected");
       }
-      const membership = await store.findActiveMembership(record.userId, record.workspaceId);
-      if (!membership) throw invalidGrant("workspace membership is inactive");
-      const scopes = intersectScopes(record.scopes, roleScopes(membership.role));
-      if (scopes.length === 0) throw invalidGrant("workspace scope is no longer permitted");
-      const tokens = await issueTokens(record.clientId, record.userId, record.workspaceId, scopes, record.familyId, false);
-      const replacement: McpOAuthRefreshToken = {
-        id: crypto.randomUUID(),
-        tokenHash: await hashOpaque(tokens.refreshToken!),
-        familyId: record.familyId,
-        clientId: record.clientId,
-        userId: record.userId,
-        workspaceId: record.workspaceId,
-        scopes,
-        audience: resource,
-        expiresAt: new Date(now().getTime() + refreshTtl * 1000),
-        rotatedAt: null,
-        revokedAt: null,
-      };
-      const result = await store.replaceRefreshToken(tokenHash, now(), replacement);
-      if (result !== "rotated") {
-        await store.revokeRefreshFamily(record.familyId, now());
-        revokedFamilies.add(record.familyId);
-        throw invalidGrant("refresh token reuse detected");
-      }
-      return tokens;
+      if (result.status === "concurrent") throw invalidGrant("refresh token rotation is already in progress");
+      throw invalidGrant("refresh token is invalid or expired");
     },
     revokeToken: async (input) => {
       const tokenHash = await hashOpaque(input.token);
@@ -685,7 +710,10 @@ export function createMcpOAuthService(
     authenticateMcpRequest: async (input) => {
       const tokenHash = await hashOpaque(input.accessToken);
       const token = await store.findAccessToken(tokenHash);
-      if (!token || token.audience !== resource || token.revokedAt || token.expiresAt <= now() || (accessFamilies.get(tokenHash) ? revokedFamilies.has(accessFamilies.get(tokenHash)!) : false)) {
+      if (!token || token.audience !== resource || token.revokedAt || token.expiresAt <= now()) {
+        throw new McpOAuthError(401, "invalid_token", "Bearer token is invalid or expired", { "www-authenticate": `Bearer resource_metadata="${issuer}/.well-known/oauth-protected-resource", error="invalid_token"` });
+      }
+      if (await store.isTokenFamilyRevoked(token.familyId)) {
         throw new McpOAuthError(401, "invalid_token", "Bearer token is invalid or expired", { "www-authenticate": `Bearer resource_metadata="${issuer}/.well-known/oauth-protected-resource", error="invalid_token"` });
       }
       const membership = await store.findActiveMembership(token.userId, token.workspaceId);
@@ -699,17 +727,21 @@ export function createMcpOAuthService(
   };
   return service;
 
-  async function issueTokens(clientId: string, userId: string, workspaceId: string, scopes: readonly McpOAuthScope[], familyId = crypto.randomUUID(), persistRefresh = true): Promise<OAuthTokenResponse> {
+  async function createTokenBundle(clientId: string, userId: string, workspaceId: string, scopes: readonly McpOAuthScope[], familyId = crypto.randomUUID()): Promise<McpOAuthTokenBundle> {
     const accessToken = await randomOpaque();
     const refreshToken = await randomOpaque();
     const issuedAt = now();
-    await store.insertAccessToken({ id: crypto.randomUUID(), tokenHash: await hashOpaque(accessToken), familyId, clientId, userId, workspaceId, scopes, audience: resource, expiresAt: new Date(issuedAt.getTime() + accessTtl * 1000), revokedAt: null });
-    accessFamilies.set(await hashOpaque(accessToken), familyId);
-    const record: McpOAuthRefreshToken = { id: crypto.randomUUID(), tokenHash: await hashOpaque(refreshToken), familyId, clientId, userId, workspaceId, scopes, audience: resource, expiresAt: new Date(issuedAt.getTime() + refreshTtl * 1000), rotatedAt: null, revokedAt: null };
-    // Refresh rotation replaces the old row atomically; initial issuance inserts it.
-    if (persistRefresh) await store.insertRefreshToken(record);
+    const accessRecord: McpOAuthAccessToken = { id: crypto.randomUUID(), tokenHash: await hashOpaque(accessToken), familyId, clientId, userId, workspaceId, scopes, audience: resource, expiresAt: new Date(issuedAt.getTime() + accessTtl * 1000), revokedAt: null };
+    const refreshRecord: McpOAuthRefreshToken = { id: crypto.randomUUID(), tokenHash: await hashOpaque(refreshToken), familyId, clientId, userId, workspaceId, scopes, audience: resource, expiresAt: new Date(issuedAt.getTime() + refreshTtl * 1000), rotatedAt: null, revokedAt: null };
+    return { response: { accessToken, tokenType: "Bearer", expiresIn: accessTtl, refreshToken, scope: scopes.join(" ") }, accessToken: accessRecord, refreshToken: refreshRecord };
+  }
+
+  async function issueTokens(clientId: string, userId: string, workspaceId: string, scopes: readonly McpOAuthScope[], familyId = crypto.randomUUID()): Promise<OAuthTokenResponse> {
+    const bundle = await createTokenBundle(clientId, userId, workspaceId, scopes, familyId);
+    await store.insertAccessToken(bundle.accessToken);
+    await store.insertRefreshToken(bundle.refreshToken);
     await audit({ action: "mcp_oauth_token_issued", clientId, userId, workspaceId });
-    return { accessToken, tokenType: "Bearer", expiresIn: accessTtl, refreshToken, scope: scopes.join(" ") };
+    return bundle.response;
   }
 
   async function audit(input: Parameters<McpOAuthStore["audit"]>[0]): Promise<void> {

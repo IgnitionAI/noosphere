@@ -422,14 +422,67 @@ describe("MCP workspace OAuth", () => {
     expect(second.refreshToken).not.toBe(first.refreshToken);
     await expect(oauth.refreshAccessToken({ clientId: registered.clientId, refreshToken: first.refreshToken!, resource: `${issuer}${MCP_OAUTH_RESOURCE}` })).rejects.toMatchObject({ oauthCode: "invalid_grant" });
     await expect(oauth.authenticateMcpRequest({ accessToken: second.accessToken, resource: `${issuer}${MCP_OAUTH_RESOURCE}`, requiredScopes: ["mcp:read"] })).rejects.toMatchObject({ oauthCode: "invalid_token" });
+
+    // A fresh service instance must observe the durable family revocation; it
+    // cannot rely on process-local refresh/access maps.
+    const restarted = createMcpOAuthService(store, { issuer, resource: `${issuer}${MCP_OAUTH_RESOURCE}`, now: () => new Date("2026-08-29T00:00:00Z") });
+    await expect(restarted.authenticateMcpRequest({ accessToken: second.accessToken, resource: `${issuer}${MCP_OAUTH_RESOURCE}`, requiredScopes: ["mcp:read"] })).rejects.toMatchObject({ oauthCode: "invalid_token" });
+  });
+
+  test("uses an atomic rotation port so a concurrent loser cannot revoke the winner", async () => {
+    const store = memoryStore() as AtomicMemoryStore;
+    const oauth = createMcpOAuthService(store, { issuer, resource: `${issuer}${MCP_OAUTH_RESOURCE}`, now: () => new Date("2026-08-29T00:00:00Z") });
+    const registered = await oauth.registerClient({ clientName: "Concurrent Refresh", redirectUris: ["https://client.example/callback"], userId: "user-1", workspaceId: "workspace-1", workspaceSlug: "acme" });
+    const verifier = "verifier-that-is-long-enough-for-pkce-0123456789";
+    const authorization = await oauth.beginAuthorization({ clientId: registered.clientId, redirectUri: "https://client.example/callback", state: "state", codeChallenge: await oauth.createPkceChallenge(verifier), codeChallengeMethod: "S256", requestedScopes: ["mcp:read"], resource: `${issuer}${MCP_OAUTH_RESOURCE}`, approved: true, userId: "user-1", workspaceId: "workspace-1", workspaceSlug: "acme", role: "viewer" });
+    const code = new URL(authorization.redirect!).searchParams.get("code")!;
+    const issued = await oauth.exchangeAuthorizationCode({ clientId: registered.clientId, code, redirectUri: "https://client.example/callback", codeVerifier: verifier, resource: `${issuer}${MCP_OAUTH_RESOURCE}` });
+
+    let rotationCalls = 0;
+    store.rotateRefreshToken = async (input) => {
+      rotationCalls += 1;
+      if (rotationCalls > 1) return { status: "concurrent" };
+      const current = await store.findRefreshToken(input.tokenHash);
+      if (!current) return { status: "missing" };
+      const tokens = await input.createTokens(current, { role: "viewer" });
+      await store.insertAccessToken(tokens.accessToken);
+      if (await store.replaceRefreshToken(input.tokenHash, input.now, tokens.refreshToken) !== "rotated") return { status: "replayed" };
+      return { status: "rotated", tokens };
+    };
+
+    const outcomes = await Promise.allSettled([
+      oauth.refreshAccessToken({ clientId: registered.clientId, refreshToken: issued.refreshToken!, resource: `${issuer}${MCP_OAUTH_RESOURCE}` }),
+      oauth.refreshAccessToken({ clientId: registered.clientId, refreshToken: issued.refreshToken!, resource: `${issuer}${MCP_OAUTH_RESOURCE}` }),
+    ]);
+    const winner = outcomes.find((result): result is PromiseFulfilledResult<OAuthTokenResponse> => result.status === "fulfilled")?.value;
+    const loser = outcomes.find((result) => result.status === "rejected");
+    expect(rotationCalls).toBe(2);
+    expect(winner?.accessToken).toBeDefined();
+    expect(loser?.status).toBe("rejected");
+    await expect(oauth.authenticateMcpRequest({ accessToken: winner!.accessToken, resource: `${issuer}${MCP_OAUTH_RESOURCE}`, requiredScopes: ["mcp:read"] })).resolves.toMatchObject({ userId: "user-1" });
   });
 });
+
+type AtomicMemoryStore = McpOAuthStore & {
+  rotateRefreshToken: (input: {
+    readonly tokenHash: string;
+    readonly clientId: string;
+    readonly audience: string;
+    readonly now: Date;
+    readonly createTokens: (record: McpOAuthRefreshToken, membership: { readonly role: OAuthPrincipal["role"] }) => Promise<{
+      readonly response: OAuthTokenResponse;
+      readonly accessToken: McpOAuthAccessToken;
+      readonly refreshToken: McpOAuthRefreshToken;
+    }>;
+  }) => Promise<{ readonly status: "rotated"; readonly tokens: { readonly response: OAuthTokenResponse; readonly accessToken: McpOAuthAccessToken; readonly refreshToken: McpOAuthRefreshToken } } | { readonly status: "concurrent" | "replayed" | "missing" }>;
+};
 
 function memoryStore(initialRole: OAuthPrincipal["role"] = "viewer"): McpOAuthStore & { setRole: (role: OAuthPrincipal["role"]) => void } {
   const clients = new Map<string, McpOAuthClient>();
   const codes = new Map<string, McpOAuthAuthorizationCode>();
   const access = new Map<string, McpOAuthAccessToken>();
   const refresh = new Map<string, McpOAuthRefreshToken>();
+  const revokedFamilies = new Set<string>();
   let role = initialRole;
   return {
     async findClient(clientId) { return clients.get(clientId) ?? null; },
@@ -444,6 +497,20 @@ function memoryStore(initialRole: OAuthPrincipal["role"] = "viewer"): McpOAuthSt
     },
     async insertAccessToken(token) { access.set(token.tokenHash, token); },
     async findAccessToken(tokenHash) { return access.get(tokenHash) ?? null; },
+    async isTokenFamilyRevoked(familyId) { return revokedFamilies.has(familyId); },
+    async rotateRefreshToken(input) {
+      const current = refresh.get(input.tokenHash);
+      if (!current) return { status: "missing" };
+      if (current.clientId !== input.clientId || current.audience !== input.audience || current.revokedAt || current.expiresAt <= input.now) return { status: "invalid" };
+      if (current.rotatedAt) return { status: "replayed" };
+      const membership = await this.findActiveMembership(current.userId, current.workspaceId);
+      if (!membership) return { status: "invalid" };
+      const tokens = await input.createTokens(current, membership);
+      const result = await this.replaceRefreshToken(input.tokenHash, input.now, tokens.refreshToken);
+      if (result !== "rotated") return { status: "replayed" };
+      await this.insertAccessToken(tokens.accessToken);
+      return { status: "rotated", tokens };
+    },
     async insertRefreshToken(token) { refresh.set(token.tokenHash, token); },
     async findRefreshToken(tokenHash) { return refresh.get(tokenHash) ?? null; },
     async replaceRefreshToken(tokenHash, now, replacement) {
@@ -455,6 +522,7 @@ function memoryStore(initialRole: OAuthPrincipal["role"] = "viewer"): McpOAuthSt
       return "rotated";
     },
     async revokeRefreshFamily(familyId, now) {
+      revokedFamilies.add(familyId);
       for (const [hash, token] of refresh) if (token.familyId === familyId) refresh.set(hash, { ...token, revokedAt: now });
     },
     async revokeToken(tokenHash, now) {

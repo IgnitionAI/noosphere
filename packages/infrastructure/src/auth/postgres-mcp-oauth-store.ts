@@ -20,6 +20,7 @@ import type {
   McpOAuthRefreshToken,
   McpOAuthRateLimitRequest,
   McpOAuthRateLimitResult,
+  McpOAuthRefreshRotationResult,
   McpOAuthScope,
   McpOAuthStore,
 } from "@outbound/interface/mcp/mcp-oauth";
@@ -97,6 +98,18 @@ export class PostgresMcpOAuthStore implements McpOAuthStore {
     return row ? mapAccess(row) : null;
   }
 
+  async isTokenFamilyRevoked(familyId: string): Promise<boolean> {
+    const [revocation] = await this.db.select({ id: mcpOauthTokenRevocations.id })
+      .from(mcpOauthTokenRevocations)
+      .where(and(
+        eq(mcpOauthTokenRevocations.tokenHash, familyRevocationHash(familyId)),
+        eq(mcpOauthTokenRevocations.tokenType, "refresh_family"),
+        eq(mcpOauthTokenRevocations.reason, "refresh_family_revoked"),
+      ))
+      .limit(1);
+    return Boolean(revocation);
+  }
+
   async insertRefreshToken(token: McpOAuthRefreshToken): Promise<void> {
     await this.db.insert(mcpOauthRefreshTokens).values({
       id: token.id,
@@ -116,6 +129,81 @@ export class PostgresMcpOAuthStore implements McpOAuthStore {
   async findRefreshToken(tokenHash: string): Promise<McpOAuthRefreshToken | null> {
     const [row] = await this.db.select().from(mcpOauthRefreshTokens).where(eq(mcpOauthRefreshTokens.tokenHash, tokenHash)).limit(1);
     return row ? mapRefresh(row) : null;
+  }
+
+  async rotateRefreshToken(input: Parameters<McpOAuthStore["rotateRefreshToken"]>[0]): Promise<McpOAuthRefreshRotationResult> {
+    return this.db.transaction(async (tx) => {
+      const advisory = await tx.execute(sql`select pg_try_advisory_xact_lock(hashtextextended(${`mcp-oauth-refresh:${input.tokenHash}`}, 0)) as acquired`);
+      if (!(advisory[0] as { readonly acquired?: boolean } | undefined)?.acquired) return { status: "concurrent" };
+
+      const [current] = await tx.select().from(mcpOauthRefreshTokens).where(eq(mcpOauthRefreshTokens.tokenHash, input.tokenHash)).for("update").limit(1);
+      if (!current) return { status: "missing" };
+      if (current.clientId !== input.clientId || current.audience !== input.audience || current.revokedAt || current.expiresAt <= input.now) return { status: "invalid" };
+      if (current.rotatedAt) return { status: "replayed" };
+
+      const [client] = await tx.select({ clientId: mcpOauthClients.clientId, userId: mcpOauthClients.userId, workspaceId: mcpOauthClients.workspaceId })
+        .from(mcpOauthClients)
+        .where(and(eq(mcpOauthClients.clientId, input.clientId), isNull(mcpOauthClients.revokedAt)))
+        .for("update")
+        .limit(1);
+      if (!client || client.userId !== current.userId || client.workspaceId !== current.workspaceId) return { status: "invalid" };
+
+      const [membership] = await tx.select({ role: workspaceMembers.role })
+        .from(workspaceMembers)
+        .innerJoin(workspaces, eq(workspaces.id, workspaceMembers.workspaceId))
+        .where(and(
+          eq(workspaceMembers.userId, current.userId),
+          eq(workspaceMembers.workspaceId, current.workspaceId),
+          eq(workspaceMembers.status, "active"),
+          eq(workspaces.status, "active"),
+          isNull(workspaces.deletedAt),
+        ))
+        .for("update")
+        .limit(1);
+      if (!membership) return { status: "invalid" };
+
+      const tokens = await input.createTokens(mapRefresh(current), membership);
+      if (!validReplacement(tokens, current)) return { status: "invalid" };
+
+      const [consumed] = await tx.update(mcpOauthRefreshTokens)
+        .set({ rotatedAt: input.now })
+        .where(and(eq(mcpOauthRefreshTokens.id, current.id), isNull(mcpOauthRefreshTokens.rotatedAt), isNull(mcpOauthRefreshTokens.revokedAt)))
+        .returning({ id: mcpOauthRefreshTokens.id });
+      if (!consumed) return { status: "replayed" };
+
+      await tx.insert(mcpOauthAccessTokens).values({
+        id: tokens.accessToken.id,
+        tokenHash: tokens.accessToken.tokenHash,
+        familyId: tokens.accessToken.familyId,
+        clientId: tokens.accessToken.clientId,
+        userId: tokens.accessToken.userId,
+        workspaceId: tokens.accessToken.workspaceId,
+        scopes: [...tokens.accessToken.scopes],
+        audience: tokens.accessToken.audience,
+        expiresAt: tokens.accessToken.expiresAt,
+        revokedAt: tokens.accessToken.revokedAt,
+      });
+      await tx.insert(mcpOauthRefreshTokens).values({
+        id: tokens.refreshToken.id,
+        tokenHash: tokens.refreshToken.tokenHash,
+        familyId: tokens.refreshToken.familyId,
+        clientId: tokens.refreshToken.clientId,
+        userId: tokens.refreshToken.userId,
+        workspaceId: tokens.refreshToken.workspaceId,
+        scopes: [...tokens.refreshToken.scopes],
+        audience: tokens.refreshToken.audience,
+        expiresAt: tokens.refreshToken.expiresAt,
+        rotatedAt: tokens.refreshToken.rotatedAt,
+        revokedAt: tokens.refreshToken.revokedAt,
+      });
+      await tx.insert(mcpOauthAuditEvents).values({
+        action: "mcp_oauth_token_issued",
+        clientId: current.clientId,
+        userId: current.userId,
+        workspaceId: current.workspaceId,
+      });
+      return { status: "rotated", tokens };
+    });
   }
 
   async replaceRefreshToken(tokenHash: string, now: Date, replacement: McpOAuthRefreshToken): Promise<"rotated" | "reused" | "missing"> {
@@ -147,12 +235,27 @@ export class PostgresMcpOAuthStore implements McpOAuthStore {
 
   async revokeRefreshFamily(familyId: string, now: Date): Promise<void> {
     await this.db.transaction(async (tx) => {
+      const [family] = await tx.select({ clientId: mcpOauthRefreshTokens.clientId, userId: mcpOauthRefreshTokens.userId, workspaceId: mcpOauthRefreshTokens.workspaceId, expiresAt: mcpOauthRefreshTokens.expiresAt })
+        .from(mcpOauthRefreshTokens)
+        .where(eq(mcpOauthRefreshTokens.familyId, familyId))
+        .limit(1);
       await tx.update(mcpOauthRefreshTokens)
         .set({ revokedAt: now })
         .where(and(eq(mcpOauthRefreshTokens.familyId, familyId), isNull(mcpOauthRefreshTokens.revokedAt)));
       await tx.update(mcpOauthAccessTokens)
         .set({ revokedAt: now })
         .where(and(eq(mcpOauthAccessTokens.familyId, familyId), isNull(mcpOauthAccessTokens.revokedAt)));
+      if (family) {
+        await tx.insert(mcpOauthTokenRevocations).values({
+          tokenHash: familyRevocationHash(familyId),
+          tokenType: "refresh_family",
+          clientId: family.clientId,
+          userId: family.userId,
+          workspaceId: family.workspaceId,
+          reason: "refresh_family_revoked",
+          expiresAt: family.expiresAt,
+        }).onConflictDoNothing({ target: mcpOauthTokenRevocations.tokenHash });
+      }
     });
   }
 
@@ -219,6 +322,28 @@ export class PostgresMcpOAuthStore implements McpOAuthStore {
   }
 }
 
+function validReplacement(
+  tokens: Awaited<ReturnType<Parameters<McpOAuthStore["rotateRefreshToken"]>[0]["createTokens"]>>,
+  current: typeof mcpOauthRefreshTokens.$inferSelect,
+): boolean {
+  const access = tokens.accessToken;
+  const refresh = tokens.refreshToken;
+  return access.familyId === current.familyId
+    && refresh.familyId === current.familyId
+    && access.clientId === current.clientId
+    && refresh.clientId === current.clientId
+    && access.userId === current.userId
+    && refresh.userId === current.userId
+    && access.workspaceId === current.workspaceId
+    && refresh.workspaceId === current.workspaceId
+    && access.audience === current.audience
+    && refresh.audience === current.audience
+    && refresh.tokenHash !== current.tokenHash
+    && refresh.rotatedAt === null
+    && refresh.revokedAt === null
+    && access.revokedAt === null;
+}
+
 /** Convenience composition for API bootstrap and tests. */
 export function createPostgresMcpOAuthService(db: Database, options: McpOAuthServiceOptions): McpOAuthService {
   return createMcpOAuthService(new PostgresMcpOAuthStore(db), options);
@@ -248,4 +373,8 @@ function stringArray(value: unknown): readonly string[] {
 
 function scopeArray(value: unknown): readonly McpOAuthScope[] {
   return stringArray(value).filter((item): item is McpOAuthScope => item === "mcp:read" || item === "mcp:write" || item === "mcp:approve");
+}
+
+function familyRevocationHash(familyId: string): string {
+  return createHash("sha256").update(`mcp-oauth-refresh-family:${familyId}`).digest("hex");
 }
