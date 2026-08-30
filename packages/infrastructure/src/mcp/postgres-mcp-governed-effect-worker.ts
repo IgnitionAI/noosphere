@@ -343,7 +343,7 @@ async function lockAggregate(tx: DatabaseExecutor, kind: McpGovernedEffectKind, 
   }
   if (kind === "content_publication") {
     const row = (await tx.select({ id: contentPublications.id, status: contentPublications.status }).from(contentPublications).where(and(eq(contentPublications.workspaceId, workspaceId), eq(contentPublications.id, aggregateId))).for("update").limit(1))[0];
-    if (!row) throw new McpGovernedEffectWorkerError("MCP_EFFECT_SOURCE_STALE");
+    if (!row || (row.status !== "scheduled" && row.status !== "retry")) throw new McpGovernedEffectWorkerError("MCP_EFFECT_SOURCE_STALE");
     return;
   }
   if (kind === "meeting_proposal") {

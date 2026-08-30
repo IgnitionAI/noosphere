@@ -147,6 +147,7 @@ import { ExternalEffectPolicy } from "@outbound/application/mcp/external-effect-
 import { PostgresExternalEffectFactsReader } from "@outbound/infrastructure/mcp/postgres-external-effect-facts-reader";
 import { PostgresMcpGovernedEffectWorker } from "@outbound/infrastructure/mcp/postgres-mcp-governed-effect-worker";
 import { PostgresMcpExternalEffectAttemptRepository } from "@outbound/infrastructure/mcp/postgres-mcp-effect-attempt-repository";
+import { PostgresMcpGovernedEffectExecutor } from "@outbound/infrastructure/mcp/postgres-mcp-governed-effect-executor";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
@@ -180,21 +181,6 @@ const mcpTrackedJobLifecycle = new McpTrackedJobLifecycle(
     : persistedMcpResultRefs(job.payload),
   clock,
 );
-const mcpGovernedEffectWorker = new PostgresMcpGovernedEffectWorker(
-  database.db,
-  new ExternalEffectPolicy(new PostgresExternalEffectFactsReader(database.db, () => clock.now())),
-  {
-    now: () => clock.now(),
-    leaseMs: positiveIntegerEnvironment("JOB_LEASE_MS", 60_000),
-    queue,
-    // No provider adapter is composed in this slice. The attempt boundary
-    // still records a durable fail-closed outcome after the final claim.
-    attemptPort: new PostgresMcpExternalEffectAttemptRepository(database.db),
-  },
-);
-const mcpGovernedEffectProcessor = {
-  process: (job: import("@outbound/application/jobs/job-queue").LeasedJob) => mcpGovernedEffectWorker.process({ ...job, status: "running" }),
-};
 const ids = new CryptoIdGenerator();
 const contentHasher = new Sha256ContentHasher();
 const workspaceDataLifecycle = new PostgresWorkspaceDataLifecycle(database.db, clock, ids);
@@ -520,6 +506,26 @@ const socialContentReader = unipileDsn && unipileApiKey
       timeoutMs: positiveIntegerEnvironment("UNIPILE_TIMEOUT_MS", 10_000),
     })
   : null;
+const mcpGovernedEffectExecutor = new PostgresMcpGovernedEffectExecutor(database.db, {
+  outbound: createOutboundGateway(),
+  publisher: socialPublisher,
+  ...(socialContentReader ? { socialContentReader } : {}),
+  calendar: calendarIntegration,
+});
+const mcpGovernedEffectWorker = new PostgresMcpGovernedEffectWorker(
+  database.db,
+  new ExternalEffectPolicy(new PostgresExternalEffectFactsReader(database.db, () => clock.now())),
+  {
+    now: () => clock.now(),
+    leaseMs: positiveIntegerEnvironment("JOB_LEASE_MS", 60_000),
+    queue,
+    attemptPort: new PostgresMcpExternalEffectAttemptRepository(database.db, mcpGovernedEffectExecutor),
+    executor: (input) => mcpGovernedEffectExecutor.execute(input),
+  },
+);
+const mcpGovernedEffectProcessor = {
+  process: (job: import("@outbound/application/jobs/job-queue").LeasedJob) => mcpGovernedEffectWorker.process({ ...job, status: "running" }),
+};
 const socialContentSynchronizer = socialContentReader && process.env.UNIPILE_SOCIAL_CONTENT_SYNC_ENABLED !== "false"
   ? new SocialContentSynchronizer(
       new PostgresSocialContentSyncRepository(database.db),

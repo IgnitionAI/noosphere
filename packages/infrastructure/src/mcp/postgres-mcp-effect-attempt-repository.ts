@@ -14,11 +14,15 @@ import type { McpGovernedEffectKind } from "@outbound/application/mcp/mcp-govern
 import type { Database, DatabaseExecutor } from "@outbound/infrastructure/database/client";
 import {
   approvalItems,
+  campaigns,
+  contentPublications,
+  conversations,
   jobs,
   mcpEffectIntentions,
   mcpEffectProposals,
   mcpEffectReconciliations,
   mcpEffectTraces,
+  meetingProposals,
   workspaces,
 } from "@outbound/infrastructure/database/schema";
 import {
@@ -78,6 +82,12 @@ export class PostgresMcpExternalEffectAttemptRepository implements ExternalEffec
           idempotencyKey,
         };
       }
+      // Re-check the authoritative aggregate while the proposal and intention
+      // locks are held. This closes the durable pre-provider window: a source
+      // cancelled/deleted/revised before this marker commits cannot cross the
+      // provider boundary. The provider call itself remains outside this
+      // transaction and is therefore intentionally not claimed race-free.
+      await lockAttemptAggregate(tx, input.kind, input.workspaceId, input.aggregateId, now);
       const job = rows.job;
       if (!job) throw new McpExternalEffectAttemptRepositoryError("MCP_EFFECT_JOB_LEASE_INVALID");
       const attempt = Number.isSafeInteger(job.attempts) && job.attempts > 0 ? job.attempts : 1;
@@ -152,7 +162,7 @@ export class PostgresMcpExternalEffectAttemptRepository implements ExternalEffec
       assertStartedLease(rows, input, now);
       let reconciliationId: string | null = null;
       if (result.outcome === "unknown") {
-        reconciliationId = await ensureReconciliation(tx, input, now);
+        reconciliationId = await ensureReconciliation(tx, input, now, redactedResult);
       }
       const state = result.outcome === "unknown" ? "unknown" : "completed";
       const proposalStatus = result.outcome === "delivered" ? "delivered" : result.outcome === "failed" ? "failed" : "reconciling";
@@ -351,6 +361,26 @@ async function lockIdentity(tx: DatabaseExecutor, input: ExternalEffectAttemptId
   return { workspace, proposal, intention, job };
 }
 
+async function lockAttemptAggregate(tx: DatabaseExecutor, kind: McpGovernedEffectKind, workspaceId: string, aggregateId: string, now: Date): Promise<void> {
+  if (kind === "conversation_reply") {
+    const row = (await tx.select({ id: conversations.id, status: conversations.status }).from(conversations).where(and(eq(conversations.workspaceId, workspaceId), eq(conversations.id, aggregateId))).for("update").limit(1))[0];
+    if (!row || row.status === "deleted") throw new McpExternalEffectAttemptRepositoryError("MCP_EFFECT_SOURCE_STALE");
+    return;
+  }
+  if (kind === "content_publication") {
+    const row = (await tx.select({ id: contentPublications.id, status: contentPublications.status }).from(contentPublications).where(and(eq(contentPublications.workspaceId, workspaceId), eq(contentPublications.id, aggregateId))).for("update").limit(1))[0];
+    if (!row || (row.status !== "scheduled" && row.status !== "retry")) throw new McpExternalEffectAttemptRepositoryError("MCP_EFFECT_SOURCE_STALE");
+    return;
+  }
+  if (kind === "meeting_proposal") {
+    const row = (await tx.select({ id: meetingProposals.id, status: meetingProposals.status, expiresAt: meetingProposals.expiresAt }).from(meetingProposals).where(and(eq(meetingProposals.workspaceId, workspaceId), eq(meetingProposals.id, aggregateId))).for("update").limit(1))[0];
+    if (!row || row.status !== "offered" || !Number.isFinite(row.expiresAt.getTime()) || row.expiresAt <= now) throw new McpExternalEffectAttemptRepositoryError("MCP_EFFECT_SOURCE_STALE");
+    return;
+  }
+  const row = (await tx.select({ id: campaigns.id, archivedAt: campaigns.archivedAt }).from(campaigns).where(and(eq(campaigns.workspaceId, workspaceId), eq(campaigns.id, aggregateId))).for("update").limit(1))[0];
+  if (!row || row.archivedAt) throw new McpExternalEffectAttemptRepositoryError("MCP_EFFECT_SOURCE_STALE");
+}
+
 function assertJobLease(job: Awaited<ReturnType<typeof lockIdentity>>["job"], input: ExternalEffectAttemptIdentity, now: Date): void {
   if (!job || job.type !== JOB_TYPE || job.status !== "running" || !job.lockedUntil || job.lockedUntil <= now || !job.lockedBy || input.jobLeaseOwner !== undefined && job.lockedBy !== input.jobLeaseOwner) throw new McpExternalEffectAttemptRepositoryError("MCP_EFFECT_JOB_LEASE_INVALID");
 }
@@ -404,12 +434,17 @@ function redactResult(value: unknown): Record<string, unknown> {
   return result;
 }
 
-async function ensureReconciliation(tx: DatabaseExecutor, input: ExternalEffectAttemptIdentity, now: Date): Promise<string> {
+async function ensureReconciliation(tx: DatabaseExecutor, input: ExternalEffectAttemptIdentity, now: Date, result: Record<string, unknown> = {}): Promise<string> {
   const existing = (await tx.select({ id: mcpEffectReconciliations.id }).from(mcpEffectReconciliations).where(and(eq(mcpEffectReconciliations.workspaceId, input.workspaceId), eq(mcpEffectReconciliations.proposalId, input.proposalId))).for("update").limit(1))[0];
   if (existing) return existing.id;
   const [created] = await tx.insert(mcpEffectReconciliations).values({
     workspaceId: input.workspaceId, proposalId: input.proposalId, status: "pending",
-    criteriaSnapshot: { proposalId: input.proposalId, kind: input.kind, aggregateId: input.aggregateId },
+    criteriaSnapshot: {
+      proposalId: input.proposalId,
+      kind: input.kind,
+      aggregateId: input.aggregateId,
+      ...(typeof result.providerPostId === "string" ? { providerPostId: result.providerPostId } : {}),
+    },
     attempts: 0, maxAttempts: 5, nextAttemptAt: now, candidateCount: 0, createdAt: now, updatedAt: now,
   }).returning({ id: mcpEffectReconciliations.id });
   if (!created) throw new McpExternalEffectAttemptRepositoryError("MCP_EFFECT_RECONCILIATION_CREATE_FAILED");
