@@ -512,6 +512,15 @@ const mcpGovernedEffectExecutor = new PostgresMcpGovernedEffectExecutor(database
   ...(socialContentReader ? { socialContentReader } : {}),
   calendar: calendarIntegration,
 });
+// Keep the attempt boundary shared by the queue processor and maintenance.
+// Recovery is deliberately bounded and tenant-filtered by the repository's
+// transaction; it only handles expired started attempts and performs
+// read-only reconciliation, never the original mutation.
+const mcpGovernedEffectAttemptRepository = new PostgresMcpExternalEffectAttemptRepository(
+  database.db,
+  mcpGovernedEffectExecutor,
+  () => clock.now(),
+);
 const mcpGovernedEffectWorker = new PostgresMcpGovernedEffectWorker(
   database.db,
   new ExternalEffectPolicy(new PostgresExternalEffectFactsReader(database.db, () => clock.now())),
@@ -519,7 +528,7 @@ const mcpGovernedEffectWorker = new PostgresMcpGovernedEffectWorker(
     now: () => clock.now(),
     leaseMs: positiveIntegerEnvironment("JOB_LEASE_MS", 60_000),
     queue,
-    attemptPort: new PostgresMcpExternalEffectAttemptRepository(database.db, mcpGovernedEffectExecutor),
+    attemptPort: mcpGovernedEffectAttemptRepository,
     executor: (input) => mcpGovernedEffectExecutor.execute(input),
   },
 );
@@ -562,6 +571,23 @@ const editorialLearningReconciler = new EditorialLearningReconciler(
 );
 const maintenance = {
   async reconcile() {
+    const mcpEffectRecoveryLimit = Math.min(
+      25,
+      positiveIntegerEnvironment("MCP_EFFECT_RECOVERY_BATCH", 10),
+    );
+    // One bounded pass includes due reconciliation rows for every recovered
+    // attempt. It is awaited as part of the existing non-blocking maintenance
+    // hook, so normal queue leasing remains independent of this work.
+    const recoveredMcpEffects = await mcpGovernedEffectAttemptRepository.recoverExpiredStarted({
+      now: clock.now(),
+      limit: mcpEffectRecoveryLimit,
+    }).catch((error) => {
+      console.warn(JSON.stringify({
+        event: "mcp_effect_recovery_deferred",
+        error: error instanceof Error ? error.message : String(error),
+      }));
+      return 0;
+    });
     const purgedEmbeddingRevisions = await embeddingRevisionManager.purgeExpired();
     const projectedKnowledgeDocuments = await knowledgeProjectionReconciler.reconcile().catch((error) => {
       console.warn(JSON.stringify({
@@ -603,6 +629,9 @@ const maintenance = {
     if (reconciledMcpOperations > 0) {
       console.info(JSON.stringify({ event: "mcp_job_outcomes_reconciled", count: reconciledMcpOperations }));
     }
+    if (recoveredMcpEffects > 0) {
+      console.info(JSON.stringify({ event: "mcp_effect_attempts_recovered", count: recoveredMcpEffects }));
+    }
     if (reconciledStaleProviderActions > 0) {
       console.info(JSON.stringify({ event: "stale_outreach_actions_failed_closed", count: reconciledStaleProviderActions }));
     }
@@ -632,7 +661,7 @@ const maintenance = {
     if (editorialLearningVersions > 0) {
       console.info(JSON.stringify({ event: "linkedin_editorial_learning_updated", versions: editorialLearningVersions }));
     }
-    return dailyRuns + dailyIdeaRuns + automatedContentActions + assessmentJobs + repairedCampaigns + retainedSourcing + inboundEvents + reconciledProviderEffects + observedSocialPosts + observedSocialEngagements + attributedInteractions + editorialLearningVersions + reconciledJobOutcomes + prospectMemoryBackfills + reconciledMcpOperations + reconciledPreSendWaits + reconciledRecoverableProviderRefusals + reconciledStaleProviderActions + purgedEmbeddingRevisions + projectedKnowledgeDocuments;
+    return dailyRuns + dailyIdeaRuns + automatedContentActions + assessmentJobs + repairedCampaigns + retainedSourcing + inboundEvents + reconciledProviderEffects + observedSocialPosts + observedSocialEngagements + attributedInteractions + editorialLearningVersions + reconciledJobOutcomes + prospectMemoryBackfills + reconciledMcpOperations + recoveredMcpEffects + reconciledPreSendWaits + reconciledRecoverableProviderRefusals + reconciledStaleProviderActions + purgedEmbeddingRevisions + projectedKnowledgeDocuments;
   },
 };
 const orchestrator = new ResearchOrchestrator(
