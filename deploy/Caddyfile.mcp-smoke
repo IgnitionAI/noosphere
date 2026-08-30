@@ -1,0 +1,47 @@
+# Local-only TLS harness for A4. Production continues to use deploy/Caddyfile.
+(api_upstream) {
+	header_up -X-Forwarded-Proto
+	header_up X-Forwarded-Proto {http.request.scheme}
+	header_up -X-Noosphere-Forwarded-Proto
+	header_up X-Noosphere-Forwarded-Proto {http.request.scheme}
+	header_up -X-Noosphere-Client-IP
+	header_up X-Noosphere-Client-IP {http.request.remote.host}
+}
+
+{$PUBLIC_HOST} {
+	tls internal
+	encode gzip
+	request_body {
+		max_size 53MB
+	}
+	header {
+		-Server
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+		Strict-Transport-Security "max-age=31536000"
+	}
+
+	@health path /health/*
+	reverse_proxy @health api:3001 {
+		import api_upstream
+	}
+
+	@oauth_metadata path /.well-known/oauth-*
+	reverse_proxy @oauth_metadata api:3001 {
+		import api_upstream
+	}
+
+	@oauth path /oauth/*
+	reverse_proxy @oauth api:3001 {
+		import api_upstream
+	}
+
+	@mcp path /mcp
+	reverse_proxy @mcp api:3001 {
+		import api_upstream
+	}
+
+	reverse_proxy web:3000
+}

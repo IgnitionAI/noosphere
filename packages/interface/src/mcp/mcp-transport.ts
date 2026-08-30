@@ -487,9 +487,15 @@ function normalizeOrigins(origins: readonly string[]): ReadonlySet<string> {
 }
 
 function normalizeHosts(hosts: readonly string[]): ReadonlySet<string> {
-  return new Set(hosts.map((host) => {
-    try { return new URL(host).host.toLowerCase(); } catch { return host.trim().toLowerCase(); }
-  }).filter(Boolean));
+  const normalized = hosts.map((host) => {
+    try {
+      return normalizeAllowedHost(host);
+    } catch {
+      throw new Error("MCP_ALLOWED_HOST_INVALID");
+    }
+  });
+  if (normalized.length === 0) throw new Error("MCP_ALLOWED_HOST_INVALID");
+  return new Set(normalized);
 }
 
 function isAllowedOrigin(request: Request, allowedOrigins: ReadonlySet<string>): boolean {
@@ -501,6 +507,87 @@ function isAllowedOrigin(request: Request, allowedOrigins: ReadonlySet<string>):
 function isAllowedHost(request: Request, url: URL, allowedHosts: ReadonlySet<string>): boolean {
   if (allowedHosts.size === 0) return false;
   const suppliedHost = request.headers.get("host");
-  const host = (suppliedHost ?? url.host).toLowerCase();
-  return allowedHosts.has(host) || (suppliedHost === null && allowedHosts.has(url.hostname.toLowerCase()));
+  const host = suppliedHost === null ? normalizeRequestUrlHost(url) : normalizeHostHeader(suppliedHost);
+  return host !== null && allowedHosts.has(host);
+}
+
+const HOST_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
+
+/** Normalize the operator's allowlist entry without accepting URL authority tricks. */
+function normalizeAllowedHost(value: string): string {
+  if (typeof value !== "string" || value.length === 0 || value !== value.trim()) throw new Error("invalid host");
+  if (/^https?:\/\//i.test(value)) {
+    let parsed: URL;
+    try {
+      parsed = new URL(value);
+    } catch {
+      throw new Error("invalid host");
+    }
+    if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.pathname !== "/" || parsed.search || parsed.hash) {
+      throw new Error("invalid host");
+    }
+    const authority = value.slice(value.indexOf("://") + 3).split(/[/?#]/, 1)[0] ?? "";
+    return normalizeHostAuthority(authority);
+  }
+  if (value.includes("://") || /[/?#]/.test(value)) throw new Error("invalid host");
+  return normalizeHostAuthority(value);
+}
+
+function normalizeHostHeader(value: string): string | null {
+  try {
+    return normalizeHostAuthority(value);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeRequestUrlHost(url: URL): string | null {
+  try {
+    return normalizeHostAuthority(url.host);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeHostAuthority(value: string): string {
+  if (value.length === 0 || value !== value.trim()) throw new Error("invalid host");
+  if (value.startsWith("[")) {
+    const closingBracket = value.indexOf("]");
+    if (closingBracket < 0 || !isValidIpv6(value.slice(1, closingBracket))) throw new Error("invalid host");
+    const port = value.slice(closingBracket + 1);
+    if (!port.startsWith(":")) throw new Error("invalid host");
+    return `[${value.slice(1, closingBracket).toLowerCase()}]:${normalizePort(port.slice(1))}`;
+  }
+  if (value.includes("[") || value.includes("]")) throw new Error("invalid host");
+  const separator = value.lastIndexOf(":");
+  const hostname = separator < 0 ? value : value.slice(0, separator);
+  const port = separator < 0 ? null : normalizePort(value.slice(separator + 1));
+  if (!isValidHostname(hostname)) throw new Error("invalid host");
+  return `${hostname.toLowerCase()}${port === null ? "" : `:${port}`}`;
+}
+
+function normalizePort(value: string): string {
+  if (!/^\d{1,5}$/.test(value)) throw new Error("invalid host");
+  const port = Number(value);
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65535) throw new Error("invalid host");
+  return String(port);
+}
+
+function isValidHostname(value: string): boolean {
+  if (value.length === 0 || value.length > 253 || value.endsWith(".")) return false;
+  const labels = value.split(".");
+  if (!labels.every((label) => label.length <= 63 && HOST_LABEL.test(label))) return false;
+  if (labels.every((label) => /^\d+$/.test(label))) {
+    return labels.length === 4 && labels.every((label) => Number(label) <= 255);
+  }
+  return true;
+}
+
+function isValidIpv6(value: string): boolean {
+  if (!value.includes(":") || !/^[0-9a-f:]+$/i.test(value)) return false;
+  const compressed = value.includes("::");
+  if (compressed && value.indexOf("::") !== value.lastIndexOf("::")) return false;
+  const groups = value.split(":").filter(Boolean);
+  if (!groups.every((group) => group.length <= 4)) return false;
+  return compressed ? groups.length < 8 : groups.length === 8;
 }

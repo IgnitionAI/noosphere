@@ -105,17 +105,45 @@ export interface RuntimeCapabilities {
   readonly knowledge: EmptyRuntimeCapability;
 }
 
-/** Deep-freeze all capability groups, wrappers and nested values. */
+/**
+ * Freeze only the runtime-owned capability graph wrappers.
+ *
+ * Optional MCP capabilities are ports/adapters supplied by composition. They
+ * may be class instances (and can retain cyclic repository/database state),
+ * so this boundary must not traverse or freeze them. The same rule applies to
+ * anything reachable from an adapter method or wrapper property: ownership of
+ * that state remains with the adapter.
+ */
 export function freezeRuntimeCapabilities(value: RuntimeCapabilities): RuntimeCapabilities {
-  return deepFreeze(value);
+  shallowFreeze(value.crm);
+  shallowFreeze(value.crm.productResearch);
+  shallowFreeze(value.prospectMemory);
+  shallowFreeze(value.prospectMemory.operations);
+  shallowFreeze(value.pipeline);
+  shallowFreeze(value.campaigns);
+  shallowFreeze(value.conversations);
+  shallowFreeze(value.content);
+  shallowFreeze(value.content.strategies);
+  shallowFreeze(value.content.ideas);
+  shallowFreeze(value.content.generation);
+  shallowFreeze(value.content.publications);
+  shallowFreeze(value.content.socialContent);
+  shallowFreeze(value.content.socialEngagement);
+  shallowFreeze(value.content.attribution);
+  shallowFreeze(value.approvals);
+  shallowFreeze(value.operations);
+  shallowFreeze(value.operations.contentPerformance);
+  shallowFreeze(value.knowledge);
+  return Object.freeze(value);
 }
 
-function deepFreeze<T>(value: T): T {
-  if ((typeof value !== "object" || value === null) && typeof value !== "function") return value;
-  const objectValue = value as unknown as Record<PropertyKey, unknown>;
-  for (const key of Reflect.ownKeys(objectValue)) {
-    const child = objectValue[key];
-    if (child !== value) deepFreeze(child);
-  }
-  return Object.freeze(value);
+function shallowFreeze(value: unknown): void {
+  if (!isPlainObject(value)) return;
+  Object.freeze(value);
+}
+
+function isPlainObject(value: unknown): value is Record<PropertyKey, unknown> {
+  if (value === null || typeof value !== "object") return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
 }

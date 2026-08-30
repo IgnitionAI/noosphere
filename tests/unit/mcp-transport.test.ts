@@ -264,6 +264,95 @@ describe("stateless MCP transport", () => {
     expect(spoofedHost.status).toBe(403);
   });
 
+  test("normalizes hostname, explicit port, HTTPS URL and bracketed IPv6 hosts", async () => {
+    const cases = [
+      {
+        allowedHost: "MCP-SMOKE.LOCALHOST",
+        url: "https://mcp-smoke.localhost/mcp",
+        suppliedHost: "MCP-SMOKE.LOCALHOST",
+        audience: "https://mcp-smoke.localhost/mcp",
+      },
+      {
+        allowedHost: "mcp-smoke.localhost:18443",
+        url: "https://mcp-smoke.localhost:18443/mcp",
+        suppliedHost: "MCP-SMOKE.LOCALHOST:18443",
+        audience: "https://mcp-smoke.localhost:18443/mcp",
+      },
+      {
+        allowedHost: "https://MCP-SMOKE.LOCALHOST:18443",
+        url: "https://mcp-smoke.localhost:18443/mcp",
+        suppliedHost: "mcp-smoke.localhost:18443",
+        audience: "https://mcp-smoke.localhost:18443/mcp",
+      },
+      {
+        allowedHost: "[::1]:18443",
+        url: "https://[::1]:18443/mcp",
+        suppliedHost: "[::1]:18443",
+        audience: "https://[::1]:18443/mcp",
+      },
+    ] as const;
+
+    for (const value of cases) {
+      const instance = transport({
+        allowedHosts: [value.allowedHost],
+        allowedOrigins: [],
+        expectedAudience: value.audience,
+        authorize: async () => ({ ...transportContext, audience: value.audience }),
+      });
+      const response = await instance.handle(new Request(value.url, {
+        method: "POST",
+        headers: {
+          host: value.suppliedHost,
+          accept: "application/json, text/event-stream",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" }),
+      }));
+      expect(response.status).toBe(200);
+    }
+  });
+
+  test("rejects host credentials, paths, queries, schemes, trailing dots and invalid ports", () => {
+    const invalid = [
+      "",
+      " ",
+      "https://user:pass@example.test:18443",
+      "https://example.test:18443/mcp",
+      "https://example.test:18443?tenant=other",
+      "https://example.test:18443#fragment",
+      "http://example.test:18443",
+      "example.test.",
+      "example.test:0",
+      "example.test:65536",
+      "example.test:not-a-port",
+      "[::1]",
+      "1234",
+    ];
+    for (const allowedHost of invalid) {
+      expect(() => transport({ allowedHosts: [allowedHost] })).toThrow("MCP_ALLOWED_HOST");
+    }
+  });
+
+  test("accepts only the configured smoke host and rejects neighbor host attacks", async () => {
+    const audience = "https://mcp-smoke.localhost:18443/mcp";
+    const instance = transport({
+      allowedHosts: ["mcp-smoke.localhost:18443"],
+      allowedOrigins: [],
+      expectedAudience: audience,
+      authorize: async () => ({ ...transportContext, audience }),
+    });
+    const request = (host: string) => instance.handle(new Request("https://mcp-smoke.localhost:18443/mcp", {
+      method: "POST",
+      headers: { host, accept: "application/json, text/event-stream", "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" }),
+    }));
+
+    expect((await request("mcp-smoke.localhost:18443")).status).toBe(200);
+    expect((await request("mcp-smoke.localhost.evil:18443")).status).toBe(403);
+    expect((await request("mcp-smoke.localhost:18443.evil")).status).toBe(403);
+    expect((await request("user:pass@mcp-smoke.localhost:18443")).status).toBe(403);
+  });
+
   test("accepts initialized notifications and reads the runtime resource", async () => {
     const instance = transport();
     const notification = await post(instance, "notifications/initialized", undefined, null);

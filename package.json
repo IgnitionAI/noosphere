@@ -16,6 +16,7 @@
     "dev:infra:down": "docker compose --env-file .env -f compose.infrastructure.yml -f compose.development.yml down",
     "dev": "bun scripts/start-development.ts",
     "dev:smoke": "bun scripts/smoke-development.ts",
+    "smoke:mcp-production": "bun scripts/smoke-mcp-production.ts",
     "check": "bun run check:prototype && bun run check:types && bun run check:architecture && bun run check:self-hosting && bun test tests/unit tests/http && bun run check:crawler && bun run check:build && bun run check:web",
     "check:prototype": "bun scripts/verify-prototype.ts",
     "check:types": "tsc --noEmit && tsc -p apps/web/tsconfig.json --noEmit",

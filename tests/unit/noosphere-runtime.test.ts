@@ -76,6 +76,49 @@ describe("Noosphere runtime", () => {
     expect(handled).toBe(2);
   });
 
+  test("freezes runtime-owned wrappers without traversing capability instances or repositories", async () => {
+    class FakeRepository {
+      owner: unknown;
+      calls = 0;
+    }
+    class CyclicGovernedEffects {
+      constructor(readonly repository: FakeRepository) {}
+
+      prepare = async () => undefined as never;
+      list = async () => {
+        this.repository.calls += 1;
+        return [];
+      };
+      status = async () => null;
+      decide = async () => undefined as never;
+    }
+
+    const repository = new FakeRepository();
+    const governed = new CyclicGovernedEffects(repository);
+    repository.owner = governed;
+    const runtime = createNoosphereRuntime({
+      capabilities: {
+        ...capabilities(),
+        mcpGovernedEffects: governed as unknown as NonNullable<RuntimeCapabilities["mcpGovernedEffects"]>,
+      },
+    });
+
+    expect(Object.isFrozen(runtime.capabilities)).toBe(true);
+    expect(Object.isFrozen(runtime.capabilities.crm)).toBe(true);
+    expect(Object.isFrozen(runtime.capabilities.crm.productResearch)).toBe(true);
+    expect(Object.isFrozen(governed)).toBe(false);
+    expect(Object.isFrozen(repository)).toBe(false);
+    await runtime.capabilities.mcpGovernedEffects!.list({
+      userId: "user",
+      workspaceId: "workspace",
+      clientId: "client",
+      role: "reviewer",
+      scopes: ["mcp:read", "mcp:write", "mcp:approve"],
+      audience: "https://example.test/mcp",
+    }, { limit: 1 });
+    expect(repository.calls).toBe(1);
+  });
+
   test("closes the composed runtime at most once", async () => {
     let closed = 0;
     const runtime = createNoosphereRuntime({
