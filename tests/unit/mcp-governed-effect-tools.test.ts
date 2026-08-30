@@ -43,8 +43,8 @@ const status: McpEffectStatusView = {
 
 function context(role: McpExecutionContext["role"] = "reviewer", scopes: readonly McpExecutionContext["scopes"][number][] = allScopes): McpExecutionContext {
   return {
-    userId: "user-1",
-    workspaceId: "workspace-1",
+    userId: "00000000-0000-4000-8000-000000000001",
+    workspaceId: "00000000-0000-4000-8000-000000000002",
     clientId: "client-1",
     role,
     scopes,
@@ -113,7 +113,7 @@ describe("MCP governed effect tools", () => {
         body: "Bounded body",
       } });
       expect(result.isError).not.toBe(true);
-      expect(receivedContext).toMatchObject({ userId: "user-1", workspaceId: "workspace-1", role: "operator", scopes: ["mcp:read", "mcp:write"] });
+      expect(receivedContext).toMatchObject({ userId: "00000000-0000-4000-8000-000000000001", workspaceId: "00000000-0000-4000-8000-000000000002", role: "operator", scopes: ["mcp:read", "mcp:write"] });
       expect(receivedCommand).toMatchObject({ kind: "conversation_reply", conversationId: expect.any(String), body: "Bounded body", inputHash: expect.stringMatching(/^[a-f0-9]{64}$/) });
       expect(receivedCommand).not.toHaveProperty("workspaceId");
 

@@ -6,6 +6,7 @@ import {
   PROTOCOL_VERSION_META_KEY,
 } from "@modelcontextprotocol/server";
 import { createMcpTransport, MCP_MAX_BODY_BYTES } from "@outbound/interface/mcp/mcp-transport";
+import { MCP_CORRELATION_HEADER } from "@outbound/interface/mcp/mcp-request-governance";
 import type { RuntimeCapabilities } from "@outbound/bootstrap/runtime-capabilities";
 
 const capabilities = (): RuntimeCapabilities => ({
@@ -28,12 +29,21 @@ const capabilities = (): RuntimeCapabilities => ({
   knowledge: { available: false },
 });
 
+const transportContext = {
+  userId: "00000000-0000-4000-8000-000000000011",
+  workspaceId: "00000000-0000-4000-8000-000000000012",
+  clientId: "transport-test",
+  role: "viewer" as const,
+  scopes: ["mcp:read"] as const,
+  audience: "https://example.test/mcp",
+};
+
 function transport(overrides: Partial<Parameters<typeof createMcpTransport>[0]> = {}) {
   return createMcpTransport({
     capabilities: capabilities(),
     allowedHosts: ["example.test"],
     allowedOrigins: ["https://example.test"],
-    authorize: async () => true,
+    authorize: async () => transportContext,
     ...overrides,
   });
 }
@@ -278,8 +288,8 @@ describe("stateless MCP transport", () => {
         },
       },
       authorize: async () => ({
-        userId: "reviewer",
-        workspaceId: "workspace",
+        userId: "00000000-0000-4000-8000-000000000001",
+        workspaceId: "00000000-0000-4000-8000-000000000002",
         clientId: "client",
         role: "reviewer" as const,
         scopes: ["mcp:read", "mcp:write", "mcp:approve"] as const,
@@ -292,5 +302,150 @@ describe("stateless MCP transport", () => {
     });
     expect((await body(response)).result).toMatchObject({ isError: true, structuredContent: { error: "WRITE_FORBIDDEN" } });
     expect(executed).toBe(false);
+  });
+
+  test("rejects an authorization context with a foreign or malformed tenant identity", async () => {
+    const instance = transport({
+      authorize: async () => ({
+        userId: "not-a-uuid",
+        workspaceId: crypto.randomUUID(),
+        clientId: "client",
+        role: "viewer" as const,
+        scopes: ["mcp:read"] as const,
+        audience: "https://example.test/mcp",
+      }),
+    });
+    const response = await post(instance, "ping");
+    expect(response.status).toBe(401);
+    expect(await response.json()).toMatchObject({ code: "MCP_AUTH_CONTEXT_INVALID", correlationId: expect.any(String) });
+  });
+
+  test("generates or preserves a bounded request correlation header", async () => {
+    const context = {
+      userId: crypto.randomUUID(), workspaceId: crypto.randomUUID(), clientId: "client", role: "viewer" as const,
+      scopes: ["mcp:read"] as const, audience: "https://example.test/mcp",
+    };
+    const instance = transport({ authorize: async () => context });
+    const supplied = await post(instance, "ping", {}, 1, { [MCP_CORRELATION_HEADER]: "request-123" });
+    expect(supplied.headers.get(MCP_CORRELATION_HEADER)).toBe("request-123");
+    const generated = await post(instance, "tools/call", { name: "tracer", arguments: {} }, 2, { [MCP_CORRELATION_HEADER]: "contains whitespace" });
+    expect(generated.headers.get(MCP_CORRELATION_HEADER)).toMatch(/^[A-Za-z0-9-]{20,}$/);
+    expect((await body(generated)).result).toMatchObject({ structuredContent: { correlationId: expect.any(String) } });
+  });
+
+  test("fails closed with a retryable bounded quota response", async () => {
+    const context = {
+      userId: crypto.randomUUID(), workspaceId: crypto.randomUUID(), clientId: "client", role: "viewer" as const,
+      scopes: ["mcp:read"] as const, audience: "https://example.test/mcp",
+    };
+    const instance = transport({ authorize: async () => context, rateLimiter: { consume: () => ({ allowed: false, retryAfterSeconds: 7 }) } });
+    const response = await post(instance, "ping");
+    expect(response.status).toBe(429);
+    expect(response.headers.get("retry-after")).toBe("7");
+    expect(await response.json()).toMatchObject({ code: "RATE_LIMITED", retryable: true, correlationId: expect.any(String) });
+  });
+
+  test("returns a safe protocol error for primitive JSON-RPC messages", async () => {
+    const instance = transport();
+    const response = await instance.handle(new Request("https://example.test/mcp", {
+      method: "POST",
+      headers: { accept: "application/json", "content-type": "application/json" },
+      body: "null",
+    }));
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ jsonrpc: "2.0", error: { code: -32600, data: { code: "INVALID_JSON_RPC", correlationId: expect.any(String) } } });
+  });
+
+  test("rejects malformed JSON-RPC envelopes before SDK dispatch", async () => {
+    const instance = transport();
+    const malformed = [
+      JSON.stringify({ jsonrpc: "1.0", id: 1, method: "ping" }),
+      JSON.stringify({ jsonrpc: "2.0", id: 1 }),
+      JSON.stringify({ jsonrpc: "2.0", id: 1, method: "" }),
+      JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping", params: null }),
+      JSON.stringify({ jsonrpc: "2.0", id: {}, method: "ping" }),
+    ];
+    for (const body of malformed) {
+      const response = await instance.handle(new Request("https://example.test/mcp", {
+        method: "POST",
+        headers: { accept: "application/json", "content-type": "application/json" },
+        body,
+      }));
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ jsonrpc: "2.0", error: { code: -32600, data: { code: "INVALID_JSON_RPC" } } });
+    }
+  });
+
+  test("bounds serialized MCP responses before emission", async () => {
+    const instance = transport({ maxResponseBytes: 100 });
+    const response = await post(instance, "tools/call", { name: "tracer", arguments: { message: "x" } });
+    expect(response.status).toBe(500);
+    expect(await response.json()).toMatchObject({ code: "MCP_RESPONSE_TOO_LARGE", correlationId: expect.any(String) });
+  });
+
+  test("rejects boolean authorization instead of inventing a tenant context", async () => {
+    const instance = transport({ authorize: async () => true });
+    const response = await post(instance, "ping");
+    expect(response.status).toBe(401);
+    expect(await response.json()).toMatchObject({ code: "MCP_AUTH_CONTEXT_INVALID" });
+  });
+
+  test("accepts a public HTTPS audience when the upstream request URL is internal HTTP", async () => {
+    const context = {
+      userId: crypto.randomUUID(), workspaceId: crypto.randomUUID(), clientId: "edge-client", role: "viewer" as const,
+      scopes: ["mcp:read"] as const, audience: "https://public.example/mcp",
+    };
+    const instance = transport({
+      expectedAudience: "https://public.example/mcp",
+      allowedHosts: ["public.example"],
+      allowedOrigins: [],
+      authorize: async () => context,
+    });
+    const response = await instance.handle(new Request("http://api:3001/mcp", {
+      method: "POST",
+      headers: { host: "public.example", accept: "application/json, text/event-stream", "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" }),
+    }));
+    expect(response.status).toBe(200);
+    expect(response.headers.get(MCP_CORRELATION_HEADER)).toBeTruthy();
+  });
+
+  test("rejects an audience that differs from the configured public resource", async () => {
+    const instance = transport({
+      expectedAudience: "https://public.example/mcp",
+      allowedHosts: ["public.example"],
+      authorize: async () => ({
+        userId: crypto.randomUUID(), workspaceId: crypto.randomUUID(), clientId: "edge-client", role: "viewer" as const,
+        scopes: ["mcp:read"] as const, audience: "https://attacker.example/mcp",
+      }),
+    });
+    const response = await instance.handle(new Request("http://api:3001/mcp", {
+      method: "POST",
+      headers: { host: "public.example", accept: "application/json", "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" }),
+    }));
+    expect(response.status).toBe(401);
+    expect(await response.json()).toMatchObject({ code: "MCP_AUTH_CONTEXT_INVALID" });
+  });
+
+  test("passes legacy and modern batches to the SDK while charging a bounded rpc:batch quota", async () => {
+    const calls: { tool: string; cost: number }[] = [];
+    const context = {
+      userId: crypto.randomUUID(), workspaceId: crypto.randomUUID(), clientId: "batch-client", role: "viewer" as const,
+      scopes: ["mcp:read"] as const, audience: "https://example.test/mcp",
+    };
+    const instance = transport({
+      authorize: async () => context,
+      rateLimiter: { consume: (input) => { calls.push({ tool: input.tool, cost: input.cost }); return { allowed: true }; } },
+    });
+    const batch = JSON.stringify([
+      { jsonrpc: "2.0", id: 1, method: "ping" },
+      { jsonrpc: "2.0", id: 2, method: "ping" },
+    ]);
+    const legacy = await instance.handle(new Request("https://example.test/mcp", {
+      method: "POST", headers: { accept: "application/json", "content-type": "application/json" }, body: batch,
+    }));
+    expect(legacy.status).not.toBe(401);
+    expect(calls).toEqual([{ tool: "rpc:batch", cost: 2 }]);
   });
 });

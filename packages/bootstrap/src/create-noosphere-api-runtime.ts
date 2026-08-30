@@ -135,12 +135,77 @@ import { assertMcpExpectedRevision, type McpWriteCapabilities } from "@outbound/
 import { PostgresCrmRepository } from "@outbound/infrastructure/crm/postgres-crm-repository";
 import { PostgresProspectViewRepository } from "@outbound/infrastructure/crm/postgres-prospect-view-repository";
 import { PostgresOperationalViews } from "@outbound/infrastructure/workspaces/postgres-operational-views";
-import { createMcpReadCapabilities, type McpReadCapabilities, type McpReadPage, type McpReadValue } from "@outbound/application/mcp/mcp-read-capabilities";
+import { createMcpReadCapabilities, type McpExecutionContext, type McpReadCapabilities, type McpReadPage, type McpReadValue } from "@outbound/application/mcp/mcp-read-capabilities";
 import { toMcpOperationView } from "@outbound/application/mcp/mcp-durable-operations";
 import { ExternalEffectPolicy } from "@outbound/application/mcp/external-effect-policy";
 import { PostgresExternalEffectFactsReader } from "@outbound/infrastructure/mcp/postgres-external-effect-facts-reader";
 import { PostgresMcpGovernedEffectRepository } from "@outbound/infrastructure/mcp/postgres-mcp-governed-effect-repository";
 import { createPostgresMcpGovernedEffectCapabilities } from "@outbound/infrastructure/mcp/postgres-mcp-governed-effect-capabilities";
+
+export interface McpDevAuthorization {
+  readonly token: string;
+  readonly context: McpExecutionContext;
+}
+
+/**
+ * Resolve an explicitly configured local development identity. Development
+ * auth is opt-in and never creates a universal tenant or trusts request data.
+ */
+export function resolveMcpDevAuthorization(environment: NodeJS.ProcessEnv, mcpResource: string): McpDevAuthorization | null {
+  const enabled = environment.MCP_DEV_AUTH_ENABLED;
+  if (enabled === undefined || enabled === "false") return null;
+  if (enabled !== "true") throw new Error("MCP_DEV_AUTH_CONFIG_INVALID");
+  if (environment.NODE_ENV === "production") throw new Error("MCP_DEV_AUTH_DISABLED_IN_PRODUCTION");
+  let resource: URL;
+  try { resource = new URL(mcpResource); } catch { throw new Error("MCP_DEV_AUTH_CONFIG_INVALID"); }
+  if (resource.protocol !== "https:" || resource.pathname !== "/mcp" || resource.search !== "" || resource.hash !== "") throw new Error("MCP_DEV_AUTH_CONFIG_INVALID");
+  const token = environment.MCP_DEV_AUTH_TOKEN;
+  const userId = environment.MCP_DEV_USER_ID;
+  const workspaceId = environment.MCP_DEV_WORKSPACE_ID;
+  const clientId = environment.MCP_DEV_CLIENT_ID;
+  const role = environment.MCP_DEV_ROLE;
+  const rawScopes = environment.MCP_DEV_SCOPES;
+  if (!isBoundedDevValue(token, 4_096) || !isUuid(userId) || !isUuid(workspaceId) || !isBoundedDevClientId(clientId) || !isMcpRole(role) || !rawScopes) {
+    throw new Error("MCP_DEV_AUTH_CONFIG_INVALID");
+  }
+  const scopes = rawScopes.split(",").map((scope) => scope.trim()).filter(Boolean);
+  if (scopes.length === 0 || scopes.length > 3 || !scopes.every(isMcpScope) || new Set(scopes).size !== scopes.length || !scopes.includes("mcp:read")) {
+    throw new Error("MCP_DEV_AUTH_CONFIG_INVALID");
+  }
+  const configuredAudience = environment.MCP_DEV_AUDIENCE;
+  if (configuredAudience !== undefined && configuredAudience !== resource.href) throw new Error("MCP_DEV_AUTH_CONFIG_INVALID");
+  return {
+    token,
+    context: {
+      userId,
+      workspaceId,
+      clientId,
+      role,
+      scopes,
+      audience: resource.href,
+    },
+  };
+}
+
+function isBoundedDevValue(value: string | undefined, maxLength: number): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= maxLength && !/[\u0000-\u001f\u007f]/.test(value);
+}
+
+function isBoundedDevClientId(value: string | undefined): value is string {
+  return isBoundedDevValue(value, 200) && /^[\x21-\x7e]+$/.test(value);
+}
+
+function isUuid(value: string | undefined): value is string {
+  return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function isMcpRole(value: string | undefined): value is McpExecutionContext["role"] {
+  return value === "viewer" || value === "operator" || value === "reviewer" || value === "admin" || value === "owner";
+}
+
+function isMcpScope(value: string): value is McpExecutionContext["scopes"][number] {
+  return value === "mcp:read" || value === "mcp:write" || value === "mcp:approve";
+}
 
 /** Compose the production MCP write capabilities around a database transaction. */
 export function createMcpWriteCapabilities(database: Database, clock: Clock): McpWriteCapabilities {
@@ -336,6 +401,7 @@ const auth = createBetterAuthRuntime(database.db, {
 });
 const mcpIssuer = publicAppOrigin;
 const mcpResource = `${mcpIssuer}/mcp`;
+const mcpDevAuthorization = resolveMcpDevAuthorization(environment, mcpResource);
 const mcpOAuthStore = new PostgresMcpOAuthStore(database.db);
 const mcpOperationStore = new PostgresMcpOperationStore(database.db);
 const mcpOAuthService = createMcpOAuthService(mcpOAuthStore, {
@@ -925,6 +991,7 @@ const runtimeCapabilities: RuntimeCapabilities = {
 };
 const mcpTransport = createMcpTransport({
   capabilities: runtimeCapabilities,
+  expectedAudience: mcpResource,
   oauthResourceMetadataUrl: `${mcpIssuer}/.well-known/oauth-protected-resource`,
   allowedHosts: mcpAllowedHostsFromEnvironment(),
   allowedOrigins: commaSeparatedEnvironment(
@@ -933,16 +1000,13 @@ const mcpTransport = createMcpTransport({
   ),
   authorize: async (request) => {
     const authorization = request.headers.get("authorization");
+    if (mcpDevAuthorization && authorization === `Bearer ${mcpDevAuthorization.token}`) return mcpDevAuthorization.context;
     if (authorization?.startsWith("Bearer ")) {
       try {
         return await mcpOAuthService.authenticateMcpRequest({ accessToken: authorization.slice("Bearer ".length).trim(), resource: mcpResource, requiredScopes: ["mcp:read"] });
       } catch {
         return false;
       }
-    }
-    const devToken = environment.MCP_DEV_AUTH_TOKEN;
-    if (environment.NODE_ENV !== "production" && devToken !== undefined && devToken.length > 0 && request.headers.get("authorization") === `Bearer ${devToken}`) {
-      return true;
     }
     if (environment.NODE_ENV === "production") return false;
     try {
