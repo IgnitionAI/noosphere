@@ -1,4 +1,5 @@
 import type { SqlClient } from "@outbound/infrastructure/database/client";
+import { classifySafeError } from "@outbound/application/shared/safe-error";
 
 export interface OutboxEventRow {
   id: string;
@@ -92,7 +93,7 @@ export class PostgresOutboxDispatcher {
           event: "outbox_delivery_error",
           outboxEventId: event.id,
           eventType: event.event_type,
-          error: error instanceof Error ? error.message : String(error),
+          errorCode: classifySafeError(error, "OUTBOX_DELIVERY_ERROR"),
         }));
       }
     }

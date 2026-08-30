@@ -141,6 +141,7 @@ import { ExternalEffectPolicy } from "@outbound/application/mcp/external-effect-
 import { PostgresExternalEffectFactsReader } from "@outbound/infrastructure/mcp/postgres-external-effect-facts-reader";
 import { PostgresMcpGovernedEffectRepository } from "@outbound/infrastructure/mcp/postgres-mcp-governed-effect-repository";
 import { createPostgresMcpGovernedEffectCapabilities } from "@outbound/infrastructure/mcp/postgres-mcp-governed-effect-capabilities";
+import { createMcpObservabilityLogger } from "@outbound/interface/mcp/mcp-observability";
 
 export interface McpDevAuthorization {
   readonly token: string;
@@ -992,6 +993,7 @@ const runtimeCapabilities: RuntimeCapabilities = {
 const mcpTransport = createMcpTransport({
   capabilities: runtimeCapabilities,
   expectedAudience: mcpResource,
+  observability: createMcpObservabilityLogger(),
   oauthResourceMetadataUrl: `${mcpIssuer}/.well-known/oauth-protected-resource`,
   allowedHosts: mcpAllowedHostsFromEnvironment(),
   allowedOrigins: commaSeparatedEnvironment(

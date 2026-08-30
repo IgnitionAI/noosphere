@@ -3,6 +3,7 @@ import type { ResearchOrchestrator } from "@outbound/application/gtm/research-or
 import type { Clock } from "@outbound/application/shared/ports";
 import type { LeasedJob } from "@outbound/application/jobs/job-queue";
 import type { McpTrackedJobContext, McpTrackedJobLifecycle } from "@outbound/application/mcp/mcp-tracked-job-lifecycle";
+import { classifySafeError } from "@outbound/application/shared/safe-error";
 
 export interface ResearchWorkerOptions {
   readonly workerId: string;
@@ -224,7 +225,7 @@ export class ResearchWorker {
         console.error(JSON.stringify({
           event: "mcp_tracked_job_lifecycle_error",
           jobId: job.id,
-          error: error instanceof Error ? error.message : String(error),
+          errorCode: classifySafeError(error, "MCP_TRACKED_JOB_LIFECYCLE_ERROR"),
         }));
         return;
       }
@@ -236,7 +237,7 @@ export class ResearchWorker {
           jobId: job.id,
           jobType: job.type,
           attempts: job.attempts,
-          error: error instanceof Error ? error.message : String(error),
+          errorCode: classifySafeError(error, "WORKER_UNHANDLED_ERROR"),
         }),
       );
       try {
@@ -245,7 +246,7 @@ export class ResearchWorker {
           workerId: job.lockedBy,
           availableAt: new Date(this.clock.now().getTime() + 30_000),
           errorCode: "WORKER_UNHANDLED_ERROR",
-          errorMessage: error instanceof Error ? error.message : String(error),
+          errorMessage: classifySafeError(error, "WORKER_UNHANDLED_ERROR"),
         });
         if (this.trackedJobLifecycle) await this.trackedJobLifecycle.afterRetry(tracked, outcome, error);
       } catch (retryError) {
@@ -256,7 +257,7 @@ export class ResearchWorker {
           JSON.stringify({
             event: "research_worker_retry_error",
             jobId: job.id,
-            error: retryError instanceof Error ? retryError.message : String(retryError),
+            errorCode: classifySafeError(retryError, "WORKER_RETRY_ERROR"),
           }),
         );
       }
@@ -286,7 +287,7 @@ export class ResearchWorker {
           JSON.stringify({
             event: "research_worker_lease_renewal_error",
             jobId: job.id,
-            error: error instanceof Error ? error.message : String(error),
+            errorCode: classifySafeError(error, "WORKER_LEASE_RENEWAL_ERROR"),
           }),
         );
       } finally {
@@ -301,6 +302,6 @@ export class ResearchWorker {
 function logMaintenanceError(error: unknown): void {
   console.error(JSON.stringify({
     event: "research_worker_maintenance_error",
-    error: error instanceof Error ? error.message : String(error),
+    errorCode: classifySafeError(error, "WORKER_MAINTENANCE_ERROR"),
   }));
 }

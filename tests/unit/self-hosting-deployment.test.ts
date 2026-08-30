@@ -124,6 +124,61 @@ describe("self-hosting distribution", () => {
     );
   });
 
+  test("requires mode 0600 and rejects production development auth", () => {
+    const directory = temporaryDirectory();
+    const environmentFile = join(directory, ".env");
+    const passwordFile = join(directory, "restic-password");
+    const configured = runBash(
+      [
+        "bash deploy/configure.sh",
+        "--non-interactive",
+        "--profile production",
+        "--mode local-build",
+        "--version v1.2.3",
+        "--domain noosphere.example.com",
+        "--admin-email owner@example.com",
+        "--admin-name Owner",
+        "--restic-repository s3:s3.example.com/noosphere",
+        `--restic-password-file '${passwordFile}'`,
+        `--output '${environmentFile}'`,
+      ].join(" "),
+    );
+    expect(configured.exitCode).toBe(0);
+
+    chmodSync(environmentFile, 0o644);
+    const insecure = runBash(`ENV_FILE='${environmentFile}' bash deploy/validate-production-env.sh`);
+    expect(insecure.exitCode).not.toBe(0);
+    expect(insecure.stderr.toString()).toContain("mode 0600");
+
+    chmodSync(environmentFile, 0o600);
+    writeFileSync(environmentFile, `${readFileSync(environmentFile, "utf8")}\nMCP_DEV_AUTH_ENABLED=true\n`);
+    const devAuth = runBash(`ENV_FILE='${environmentFile}' bash deploy/validate-production-env.sh`);
+    expect(devAuth.exitCode).not.toBe(0);
+    expect(devAuth.stderr.toString()).toContain("MCP_DEV_AUTH_ENABLED");
+  });
+
+  test("documents MCP host/origin policy and keeps dev credentials out of Compose", () => {
+    const quickstart = readFileSync(join(repositoryRoot, "deploy/.env.quickstart.example"), "utf8");
+    const production = readFileSync(join(repositoryRoot, "deploy/.env.production.example"), "utf8");
+    const runtime = readFileSync(join(repositoryRoot, "docs/architecture/runtime-boundaries.md"), "utf8");
+    const compose = readFileSync(join(repositoryRoot, "compose.production.yml"), "utf8");
+    for (const content of [quickstart, production]) {
+      expect(content).toContain("MCP_ALLOWED_HOSTS=");
+      expect(content).toContain("MCP_ALLOWED_ORIGINS=");
+      expect(content).toContain("MCP_DEV_AUTH_ENABLED=");
+      expect(content).toContain("MCP_DEV_AUTH_TOKEN=");
+      expect(content).toContain("MCP_DEV_USER_ID=");
+      expect(content).toContain("MCP_DEV_WORKSPACE_ID=");
+      expect(content).toContain("MCP_DEV_CLIENT_ID=");
+      expect(content).toContain("MCP_DEV_ROLE=");
+      expect(content).toContain("MCP_DEV_SCOPES=");
+    }
+    expect(runtime).toContain("MCP_DEV_AUTH_ENABLED");
+    expect(runtime).toContain("MCP_ALLOWED_HOSTS");
+    expect(runtime).toContain("MCP_ALLOWED_ORIGINS");
+    expect(compose).not.toContain("MCP_DEV_AUTH_TOKEN");
+  });
+
   test("keeps private deployment coordinates out of public release scripts", () => {
     const publicFiles = [
       "deploy/release.sh",

@@ -7,6 +7,16 @@ if [[ ! -f "$ENV_FILE" ]]; then
   exit 1
 fi
 
+if stat -c '%a' "$ENV_FILE" >/dev/null 2>&1; then
+  ENV_MODE="$(stat -c '%a' "$ENV_FILE")"
+else
+  ENV_MODE="$(stat -f '%Lp' "$ENV_FILE")"
+fi
+if [[ "$ENV_MODE" != "600" ]]; then
+  echo "Production environment file must have mode 0600: $ENV_FILE (found $ENV_MODE)" >&2
+  exit 1
+fi
+
 set -a
 # shellcheck disable=SC1090
 source "$ENV_FILE"
@@ -36,6 +46,8 @@ required = [
     "PUBLIC_HOST",
     "BETTER_AUTH_URL",
     "BETTER_AUTH_TRUSTED_ORIGINS",
+    "MCP_ALLOWED_HOSTS",
+    "MCP_ALLOWED_ORIGINS",
     "PUBLIC_WEBHOOK_BASE_URL",
     "POSTGRES_PASSWORD",
     "S3_ACCESS_KEY_ID",
@@ -119,8 +131,22 @@ if os.environ["PUBLIC_WEBHOOK_BASE_URL"].rstrip("/") != expected_origin:
     raise SystemExit("PUBLIC_WEBHOOK_BASE_URL must use PUBLIC_HOST")
 if expected_origin not in [item.rstrip("/") for item in trusted]:
     raise SystemExit("BETTER_AUTH_TRUSTED_ORIGINS must include the PUBLIC_HOST HTTPS origin")
+allowed_hosts = [item.strip() for item in os.environ["MCP_ALLOWED_HOSTS"].split(",") if item.strip()]
+if allowed_hosts != [host]:
+    raise SystemExit("MCP_ALLOWED_HOSTS must contain only PUBLIC_HOST")
+allowed_origins = [item.strip().rstrip("/") for item in os.environ["MCP_ALLOWED_ORIGINS"].split(",") if item.strip()]
+if not allowed_origins or any(
+    urlparse(item).scheme != "https" or not urlparse(item).netloc or urlparse(item).path not in ("", "/")
+    or urlparse(item).params or urlparse(item).query or urlparse(item).fragment
+    for item in allowed_origins
+):
+    raise SystemExit("MCP_ALLOWED_ORIGINS must contain HTTPS origins without paths or queries")
+if expected_origin not in allowed_origins:
+    raise SystemExit("MCP_ALLOWED_ORIGINS must include the PUBLIC_HOST HTTPS origin")
 if os.environ.get("BETTER_AUTH_ALLOW_SIGN_UP", "").lower() != "false":
     raise SystemExit("BETTER_AUTH_ALLOW_SIGN_UP must be false for a private deployment")
+if profile == "production" and enabled("MCP_DEV_AUTH_ENABLED"):
+    raise SystemExit("MCP_DEV_AUTH_ENABLED must be false or absent in production")
 if not re.fullmatch(r"v\d+\.\d+\.\d+(?:[.-][A-Za-z0-9._-]+)?", os.environ["APP_VERSION"]):
     raise SystemExit("APP_VERSION must be an immutable vX.Y.Z release tag")
 

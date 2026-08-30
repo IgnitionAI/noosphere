@@ -18,6 +18,13 @@ import {
   type McpRateLimiter,
   validateMcpExecutionContext,
 } from "@outbound/interface/mcp/mcp-request-governance";
+import {
+  recordMcpObservation,
+  type McpObservabilityCallback,
+  type McpObservabilityEvent,
+  type McpObservationOutcome,
+  type McpObservabilityPort,
+} from "@outbound/interface/mcp/mcp-observability";
 
 /** The maximum body accepted by the stateless MCP endpoint. */
 export const MCP_MAX_BODY_BYTES = 1_048_576;
@@ -38,6 +45,8 @@ export interface McpTransportOptions {
   readonly maxResponseBytes?: number;
   /** In-process by default; implementations must key from authenticated context. */
   readonly rateLimiter?: McpRateLimiter;
+  /** Request-local structured observations; logger failures never affect requests. */
+  readonly observability?: McpObservabilityPort | McpObservabilityCallback;
 }
 
 export interface McpTransport {
@@ -79,11 +88,37 @@ export function createMcpTransport(options: McpTransportOptions): McpTransport {
     maxResponseBytes,
     close: handler.close,
     handle: async (request: Request): Promise<Response> => {
+      const startedAt = Date.now();
       const correlationId = deriveMcpCorrelationId(request.headers.get(MCP_CORRELATION_HEADER));
+      const finish = (response: Response, event: string, fields: Partial<Omit<McpObservabilityEvent, "event" | "correlationId" | "durationMs" | "outcome">> & { readonly outcome?: McpObservationOutcome } = {}) => {
+        const outcome = fields.outcome ?? (response.status >= 200 && response.status < 300
+          ? "success" as const
+          : response.status === 401 || response.status === 403 || response.status === 429
+            ? "denied" as const
+            : "failure" as const);
+        recordMcpObservation(options.observability, {
+          event,
+          correlationId,
+          durationMs: Date.now() - startedAt,
+          outcome,
+          httpStatus: response.status,
+          code: fields.code ?? `MCP_HTTP_${response.status}`,
+          ...fields,
+        });
+        return response;
+      };
+      const hash = async (bytes: ArrayBuffer): Promise<string | undefined> => {
+        try {
+          const digest = await crypto.subtle.digest("SHA-256", bytes);
+          return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+        } catch {
+          return undefined;
+        }
+      };
       const url = new URL(request.url);
-      if (url.pathname !== "/mcp") return httpError(404, "MCP_NOT_FOUND", correlationId, "Not Found");
-      if (!isAllowedHost(request, url, allowedHosts)) return httpError(403, "MCP_HOST_NOT_ALLOWED", correlationId, "MCP host is not allowed");
-      if (!isAllowedOrigin(request, allowedOrigins)) return httpError(403, "MCP_ORIGIN_NOT_ALLOWED", correlationId, "MCP origin is not allowed");
+      if (url.pathname !== "/mcp") return finish(httpError(404, "MCP_NOT_FOUND", correlationId, "Not Found"), "mcp_preflight", { code: "MCP_NOT_FOUND" });
+      if (!isAllowedHost(request, url, allowedHosts)) return finish(httpError(403, "MCP_HOST_NOT_ALLOWED", correlationId, "MCP host is not allowed"), "mcp_preflight", { code: "MCP_HOST_NOT_ALLOWED" });
+      if (!isAllowedOrigin(request, allowedOrigins)) return finish(httpError(403, "MCP_ORIGIN_NOT_ALLOWED", correlationId, "MCP origin is not allowed"), "mcp_preflight", { code: "MCP_ORIGIN_NOT_ALLOWED" });
       let authorized: boolean | McpExecutionContext = false;
       try {
         authorized = await authorize(request);
@@ -91,42 +126,52 @@ export function createMcpTransport(options: McpTransportOptions): McpTransport {
         authorized = false;
       }
       if (!authorized) {
-        return httpError(401, "MCP_AUTH_REQUIRED", correlationId, "MCP authentication required", {
+        return finish(httpError(401, "MCP_AUTH_REQUIRED", correlationId, "MCP authentication required", {
           "www-authenticate": options.oauthResourceMetadataUrl
             ? `Bearer resource_metadata="${options.oauthResourceMetadataUrl}"`
             : "Bearer",
-        });
+        }), "mcp_auth", { code: "MCP_AUTH_REQUIRED", authDecision: "denied" });
       }
       const expectedAudience = options.expectedAudience ?? `${url.origin}/mcp`;
       const executionContext = typeof authorized === "object" ? validateMcpExecutionContext(authorized, expectedAudience) : null;
       if (!executionContext) {
-        return httpError(401, "MCP_AUTH_CONTEXT_INVALID", correlationId, "MCP authentication context is invalid");
+        return finish(httpError(401, "MCP_AUTH_CONTEXT_INVALID", correlationId, "MCP authentication context is invalid"), "mcp_auth", { code: "MCP_AUTH_CONTEXT_INVALID", authDecision: "invalid" });
       }
+      const identity = {
+        authDecision: "accepted" as const,
+        userId: executionContext.userId,
+        workspaceId: executionContext.workspaceId,
+        clientId: executionContext.clientId,
+        resource: executionContext.audience,
+      };
       if (request.method !== "POST") {
-        return httpError(405, "MCP_METHOD_NOT_ALLOWED", correlationId, "MCP requires POST", { allow: "POST" });
+        return finish(httpError(405, "MCP_METHOD_NOT_ALLOWED", correlationId, "MCP requires POST", { allow: "POST" }), "mcp_preflight", { ...identity, code: "MCP_METHOD_NOT_ALLOWED" });
       }
       if (!acceptsJsonOrEventStream(request.headers.get("accept"))) {
-        return httpError(406, "MCP_ACCEPT_UNSUPPORTED", correlationId, "MCP requires an application/json or text/event-stream Accept header");
+        return finish(httpError(406, "MCP_ACCEPT_UNSUPPORTED", correlationId, "MCP requires an application/json or text/event-stream Accept header"), "mcp_preflight", { ...identity, code: "MCP_ACCEPT_UNSUPPORTED" });
       }
       if (!isJsonContentType(request.headers.get("content-type"))) {
-        return httpError(415, "MCP_CONTENT_TYPE_UNSUPPORTED", correlationId, "MCP requests must use application/json");
+        return finish(httpError(415, "MCP_CONTENT_TYPE_UNSUPPORTED", correlationId, "MCP requests must use application/json"), "mcp_preflight", { ...identity, code: "MCP_CONTENT_TYPE_UNSUPPORTED" });
       }
       const contentLength = request.headers.get("content-length");
       if (contentLength !== null && (!/^\d+$/.test(contentLength) || Number(contentLength) > maxBodyBytes)) {
-        return httpError(413, "MCP_REQUEST_TOO_LARGE", correlationId, "MCP request body exceeds the configured limit");
+        return finish(httpError(413, "MCP_REQUEST_TOO_LARGE", correlationId, "MCP request body exceeds the configured limit"), "mcp_preflight", { ...identity, code: "MCP_REQUEST_TOO_LARGE" });
       }
       // Read a clone so the SDK receives the original, untouched Web Request.
       let bodyBytes: ArrayBuffer;
       try {
         bodyBytes = await request.clone().arrayBuffer();
       } catch {
-        return httpError(400, "MCP_BODY_UNREADABLE", correlationId, "Unable to read MCP request body");
+        return finish(httpError(400, "MCP_BODY_UNREADABLE", correlationId, "Unable to read MCP request body"), "mcp_preflight", { ...identity, code: "MCP_BODY_UNREADABLE" });
       }
-      if (bodyBytes.byteLength > maxBodyBytes) return httpError(413, "MCP_REQUEST_TOO_LARGE", correlationId, "MCP request body exceeds the configured limit");
+      const inputHash = await hash(bodyBytes);
+      if (bodyBytes.byteLength > maxBodyBytes) return finish(httpError(413, "MCP_REQUEST_TOO_LARGE", correlationId, "MCP request body exceeds the configured limit"), "mcp_preflight", { ...identity, code: "MCP_REQUEST_TOO_LARGE", ...(inputHash === undefined ? {} : { inputHash }) });
       const parsed = parseJsonRpcBody(new TextDecoder().decode(bodyBytes));
-      if (!parsed.valid) return protocolError(correlationId, parsed.id);
+      if (!parsed.valid) return finish(protocolError(correlationId, parsed.id), "mcp_protocol", { ...identity, code: "INVALID_JSON_RPC", protocolCode: -32600, ...(inputHash === undefined ? {} : { inputHash }) });
       const quotaContext = executionContext;
       const tool = jsonRpcToolName(parsed.value);
+      const rpcEvent = eventForRpc(parsed.value);
+      const rpcObservationTool = tool === "rpc:batch" || rpcEvent === "mcp_tool" ? { tool } : {};
       const cost = jsonRpcCost(parsed.value);
       let quota: McpRateLimitDecision;
       try {
@@ -140,32 +185,55 @@ export function createMcpTransport(options: McpTransportOptions): McpTransport {
         quota = { allowed: false, retryAfterSeconds: 1 };
       }
       if (!isRateLimitDecision(quota) || !quota.allowed) {
-        return rateLimitError(correlationId, isRateLimitDecision(quota) ? quota.retryAfterSeconds : undefined);
+        return finish(rateLimitError(correlationId, isRateLimitDecision(quota) ? quota.retryAfterSeconds : undefined), "mcp_rate_limit", {
+          ...identity,
+          code: "RATE_LIMITED",
+          ...(inputHash === undefined ? {} : { inputHash }),
+        });
       }
       // The SDK owns era classification and protocol negotiation. In
       // particular, do not validate MCP-Protocol-Version against the legacy
       // SUPPORTED_PROTOCOL_VERSIONS list here: 2026-07-28 is a modern
       // per-request envelope revision and must reach createMcpHandler.
-      const sdkResponse = await handler.fetch(request, {
-        authInfo: {
-          // The token has already been validated by the OAuth boundary and
-          // is deliberately not propagated to MCP tool callbacks.
-          token: "",
-          clientId: executionContext.clientId,
-          scopes: [...executionContext.scopes],
-          resource: new URL(executionContext.audience),
-          extra: {
-            userId: executionContext.userId,
-            workspaceId: executionContext.workspaceId,
+      let sdkResponse: Response;
+      try {
+        sdkResponse = await handler.fetch(request, {
+          authInfo: {
+            // The token has already been validated by the OAuth boundary and
+            // is deliberately not propagated to MCP tool callbacks.
+            token: "",
             clientId: executionContext.clientId,
-            role: executionContext.role,
             scopes: [...executionContext.scopes],
-            audience: executionContext.audience,
-            correlationId,
+            resource: new URL(executionContext.audience),
+            extra: {
+              userId: executionContext.userId,
+              workspaceId: executionContext.workspaceId,
+              clientId: executionContext.clientId,
+              role: executionContext.role,
+              scopes: [...executionContext.scopes],
+              audience: executionContext.audience,
+              correlationId,
+            },
           },
-        },
+        });
+      } catch {
+        return finish(httpError(500, "MCP_HANDLER_FAILURE", correlationId, "MCP request failed"), rpcEvent, {
+          ...identity,
+          ...rpcObservationTool,
+          code: "MCP_HANDLER_FAILURE",
+          ...(inputHash === undefined ? {} : { inputHash }),
+        });
+      }
+      const response = await boundResponse(sdkResponse, correlationId, maxResponseBytes);
+      const responseDetails = await safeResponseDetails(response);
+      return finish(response, rpcEvent, {
+        ...identity,
+        ...rpcObservationTool,
+        code: responseDetails.code,
+        ...(responseDetails.protocolCode === undefined ? {} : { protocolCode: responseDetails.protocolCode }),
+        ...(responseDetails.outcome === undefined ? {} : { outcome: responseDetails.outcome }),
+        ...(inputHash === undefined ? {} : { inputHash }),
       });
-      return boundResponse(sdkResponse, correlationId, maxResponseBytes);
     },
   });
 }
@@ -310,6 +378,72 @@ function jsonRpcToolName(value: unknown): string {
 function jsonRpcCost(value: unknown): number {
   if (!Array.isArray(value)) return 1;
   return Math.max(1, Math.min(100, value.length));
+}
+
+function eventForRpc(value: unknown): "mcp_tool" | "mcp_resource" | "mcp_request" {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return "mcp_request";
+  const method = (value as Record<string, unknown>).method;
+  if (method === "tools/call") return "mcp_tool";
+  if (typeof method === "string" && method.startsWith("resources/")) return "mcp_resource";
+  return "mcp_request";
+}
+
+async function safeResponseDetails(response: Response): Promise<{ readonly code: string; readonly protocolCode?: number; readonly outcome?: "failure" }> {
+  const payload = await readBoundedJsonResponse(response);
+  if (!payload || typeof payload !== "object") return { code: `MCP_HTTP_${response.status}` };
+  const record = payload as Record<string, unknown>;
+  const error = record.error;
+  if (error && typeof error === "object" && !Array.isArray(error)) return safeRpcErrorDetails(error as Record<string, unknown>, response.status);
+  const result = record.result;
+  if (result && typeof result === "object" && !Array.isArray(result) && (result as Record<string, unknown>).isError === true) {
+    return { code: "MCP_TOOL_ERROR", outcome: "failure" };
+  }
+  return { code: `MCP_HTTP_${response.status}` };
+}
+
+async function readBoundedJsonResponse(response: Response): Promise<unknown> {
+  let text: string;
+  try {
+    // `boundResponse` has already consumed and bounded the SDK response. Read
+    // a clone here only to classify its envelope; never retain or log payload.
+    text = await response.clone().text();
+  } catch {
+    return undefined;
+  }
+  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+  const candidate = contentType.includes("text/event-stream")
+    ? text.match(/(?:^|\r?\n)data:\s?([^\r\n]*)/)?.[1]
+    : text;
+  if (candidate === undefined || candidate.length === 0) return undefined;
+  try { return JSON.parse(candidate) as unknown; } catch { return undefined; }
+}
+
+function safeRpcErrorDetails(error: Record<string, unknown>, status: number): { readonly code: string; readonly protocolCode?: number; readonly outcome: "failure" } {
+  const data = error.data;
+  const dataRecord = data && typeof data === "object" && !Array.isArray(data) ? data as Record<string, unknown> : null;
+  const protocolCode = typeof error.code === "number" && Number.isSafeInteger(error.code) && error.code >= -32_768 && error.code <= 32_767
+    ? error.code
+    : undefined;
+  const explicitCode = dataRecord?.code;
+  const code = typeof explicitCode === "string" && /^[A-Z][A-Z0-9_.:-]{0,119}$/.test(explicitCode)
+    ? explicitCode
+    : rpcErrorCode(protocolCode, status);
+  return {
+    code,
+    ...(protocolCode === undefined ? {} : { protocolCode }),
+    outcome: "failure",
+  };
+}
+
+function rpcErrorCode(protocolCode: number | undefined, status: number): string {
+  switch (protocolCode) {
+    case -32_700: return "MCP_RPC_PARSE_ERROR";
+    case -32_600: return "MCP_RPC_INVALID_REQUEST";
+    case -32_601: return "MCP_RPC_METHOD_NOT_FOUND";
+    case -32_602: return "MCP_RPC_INVALID_PARAMS";
+    case -32_603: return "MCP_RPC_INTERNAL_ERROR";
+    default: return status >= 400 ? `MCP_HTTP_${status}` : "MCP_RPC_ERROR";
+  }
 }
 
 function correlationIdFromExtra(extra: Record<string, unknown> | undefined): string {

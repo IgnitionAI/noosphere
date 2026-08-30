@@ -148,6 +148,7 @@ import { PostgresExternalEffectFactsReader } from "@outbound/infrastructure/mcp/
 import { PostgresMcpGovernedEffectWorker } from "@outbound/infrastructure/mcp/postgres-mcp-governed-effect-worker";
 import { PostgresMcpExternalEffectAttemptRepository } from "@outbound/infrastructure/mcp/postgres-mcp-effect-attempt-repository";
 import { PostgresMcpGovernedEffectExecutor } from "@outbound/infrastructure/mcp/postgres-mcp-governed-effect-executor";
+import { classifySafeError } from "@outbound/application/shared/safe-error";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
@@ -584,7 +585,7 @@ const maintenance = {
     }).catch((error) => {
       console.warn(JSON.stringify({
         event: "mcp_effect_recovery_deferred",
-        error: error instanceof Error ? error.message : String(error),
+        errorCode: classifySafeError(error, "MCP_EFFECT_RECOVERY_DEFERRED"),
       }));
       return 0;
     });
@@ -592,7 +593,7 @@ const maintenance = {
     const projectedKnowledgeDocuments = await knowledgeProjectionReconciler.reconcile().catch((error) => {
       console.warn(JSON.stringify({
         event: "knowledge_projection_deferred",
-        error: error instanceof Error ? error.message : String(error),
+        errorCode: classifySafeError(error, "KNOWLEDGE_PROJECTION_DEFERRED"),
       }));
       return 0;
     });

@@ -20,7 +20,13 @@ It uses the official `@modelcontextprotocol/server@2.0.0` Web Standard
 to 1 MiB, and exposes only read-only discovery plus the `noosphere_ping` and
 `tracer` smoke tools. `MCP_ALLOWED_HOSTS` and `MCP_ALLOWED_ORIGINS` are
 allowlists; requests still require Better Auth in production. An explicit
-`MCP_DEV_AUTH_TOKEN` may be used only outside production. No MCP request loops
+deployment identity declares `MCP_DEV_AUTH_ENABLED=false` plus the explicit
+`MCP_DEV_AUTH_TOKEN`, `MCP_DEV_USER_ID`, `MCP_DEV_WORKSPACE_ID`,
+`MCP_DEV_CLIENT_ID`, `MCP_DEV_ROLE`, `MCP_DEV_SCOPES`, and
+`MCP_DEV_AUDIENCE` fields for local-only opt-in. A dev identity is accepted
+only when `NODE_ENV` is not production, the flag is exactly `true`, all
+bounded UUID/context fields are configured, and the bearer token matches
+exactly. Production validation rejects enabled dev auth. No MCP request loops
 back through HTTP, and no provider or database handle is exposed.
 
 Inbound adapter boundaries are checked by `scripts/verify-architecture.ts`.
