@@ -31,6 +31,7 @@ import {
   isUniqueViolationForConstraint,
   redactReconciliationJson,
 } from "./postgres-mcp-effect-reconciliation-repository";
+import type { McpEffectReconciliationLease } from "./postgres-mcp-effect-reconciliation-repository";
 
 const JOB_TYPE = "mcp.external-effect.execute";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -324,9 +325,78 @@ export class PostgresMcpExternalEffectAttemptRepository implements ExternalEffec
     return tasks.length;
   }
 
-  private async applyReadOnlyObservation(task: AttemptTask, observation: ExternalEffectReadOnlyResult, now: Date): Promise<void> {
+  /**
+   * Processes durable reconciliation rows that were already due before this
+   * process started. This scan is independent of started-attempt recovery;
+   * each row is claimed with proposal → reconciliation SKIP LOCKED semantics,
+   * then only the injected read-only port is consulted.
+   */
+  async reconcileDue(input: { readonly workspaceId?: string; readonly now: Date; readonly limit?: number }): Promise<number> {
+    if (input.workspaceId !== undefined) assertUuid(input.workspaceId, "MCP_EFFECT_WORKSPACE_INVALID");
+    if (!(input.now instanceof Date) || !Number.isFinite(input.now.getTime())) throw new McpExternalEffectAttemptRepositoryError("MCP_EFFECT_RECOVERY_INPUT_INVALID");
+    const limit = normalizeLimit(input.limit);
+    if (limit === 0) return 0;
+    const reconciliationRepository = new PostgresMcpEffectReconciliationRepository(this.database, () => input.now);
+    const due = await reconciliationRepository.listDue(input);
+    let processed = 0;
+    for (const row of due) {
+      // Resolve the complete read-only task from tenant-scoped authoritative
+      // rows. The reconciliation snapshot intentionally contains no provider
+      // credentials or mutable execution payload.
+      const proposal = (await this.database.select().from(mcpEffectProposals).where(and(
+        eq(mcpEffectProposals.workspaceId, row.workspaceId), eq(mcpEffectProposals.id, row.proposalId),
+      )).limit(1))[0];
+      const intention = (await this.database.select().from(mcpEffectIntentions).where(and(
+        eq(mcpEffectIntentions.workspaceId, row.workspaceId), eq(mcpEffectIntentions.proposalId, row.proposalId),
+        eq(mcpEffectIntentions.state, "unknown"),
+      )).limit(1))[0];
+      if (!proposal || proposal.status !== "reconciling" || !intention) continue;
+      const task: AttemptTask = {
+        workspaceId: row.workspaceId,
+        proposalId: row.proposalId,
+        intentionId: intention.id,
+        kind: intention.kind as McpGovernedEffectKind,
+        aggregateId: intention.aggregateId,
+        correlationId: intention.correlationId,
+        reconciliationId: row.reconciliationId,
+        criteriaSnapshot: row.criteriaSnapshot,
+      };
+      const lease = await reconciliationRepository.claim({
+        workspaceId: row.workspaceId,
+        reconciliationId: row.reconciliationId,
+        now: input.now,
+        leaseMs: 60_000,
+        skipLocked: true,
+      });
+      if (!lease) continue;
+      try {
+        const observation = await this.reconcileReadOnly(task);
+        await this.applyReadOnlyObservation(task, observation, input.now, lease);
+        processed += 1;
+      } catch {
+        // A malformed adapter result must not strand a lease forever. Keep
+        // the same bounded retry/manual state machine as other read-only
+        // observations, without ever retrying the original mutation.
+        try {
+          await reconciliationRepository.markError({
+            workspaceId: task.workspaceId,
+            reconciliationId: task.reconciliationId,
+            leaseToken: lease.leaseToken,
+            now: input.now,
+            code: "RECONCILIATION_ERROR",
+            terminal: lease.attempt >= lease.maxAttempts,
+          });
+        } catch {
+          // A concurrent owner may have completed the row; no second action.
+        }
+      }
+    }
+    return processed;
+  }
+
+  private async applyReadOnlyObservation(task: AttemptTask, observation: ExternalEffectReadOnlyResult, now: Date, existingLease?: McpEffectReconciliationLease): Promise<void> {
     const repository = new PostgresMcpEffectReconciliationRepository(this.database, () => now);
-    const lease = await repository.claim({ workspaceId: task.workspaceId, reconciliationId: task.reconciliationId, now, leaseMs: 60_000 });
+    const lease = existingLease ?? await repository.claim({ workspaceId: task.workspaceId, reconciliationId: task.reconciliationId, now, leaseMs: 60_000, skipLocked: true });
     if (!lease) return;
     if (observation.outcome === "matched") {
       await repository.markMatched({ workspaceId: task.workspaceId, reconciliationId: task.reconciliationId, leaseToken: lease.leaseToken, now, authoritative: true, candidateCount: 1, result: observation.result, sourceEventId: stableUuid(`mcp-effect:${task.intentionId}:reconciled:v1`), idempotencyKey: `mcp-effect:${task.intentionId}:reconciled:v1` });
@@ -341,7 +411,7 @@ export class PostgresMcpExternalEffectAttemptRepository implements ExternalEffec
     } else if (observation.outcome === "ambiguous") {
       await repository.markAmbiguous({ workspaceId: task.workspaceId, reconciliationId: task.reconciliationId, leaseToken: lease.leaseToken, now, candidateCount: observation.candidateCount });
     } else {
-      await repository.markError({ workspaceId: task.workspaceId, reconciliationId: task.reconciliationId, leaseToken: lease.leaseToken, now, code: observation.code ?? "ADAPTER_UNAVAILABLE", terminal: true });
+      await repository.markError({ workspaceId: task.workspaceId, reconciliationId: task.reconciliationId, leaseToken: lease.leaseToken, now, code: observation.code ?? "ADAPTER_UNAVAILABLE", terminal: lease.attempt >= lease.maxAttempts });
     }
   }
 }

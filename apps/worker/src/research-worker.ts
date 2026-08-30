@@ -229,6 +229,30 @@ export class ResearchWorker {
         }));
         return;
       }
+      if (job.type === "mcp.external-effect.execute" && isMcpGovernedEffectWorkerError(error)) {
+        const errorCode = error.code;
+        // Governed effects are never retried after a trust-boundary failure:
+        // replaying a malformed/foreign envelope could repeat a mutation. A
+        // durable queue implementation may quarantine an owned row; foreign
+        // or lost leases are deliberately left untouched and unacknowledged.
+        console.error(JSON.stringify({
+          event: "research_worker_mcp_effect_quarantine",
+          jobId: job.id,
+          errorCode,
+        }));
+        if (job.lockedBy === this.options.workerId && this.queue.quarantine) {
+          try {
+            await this.queue.quarantine({ jobId: job.id, workerId: job.lockedBy, errorCode });
+          } catch (quarantineError) {
+            console.error(JSON.stringify({
+              event: "research_worker_mcp_effect_quarantine_error",
+              jobId: job.id,
+              errorCode: classifySafeError(quarantineError, "WORKER_QUARANTINE_ERROR"),
+            }));
+          }
+        }
+        return;
+      }
       // A poisoned job must never kill the worker: requeue it with backoff and
       // let the job table keep the error trail.
       console.error(
@@ -304,4 +328,16 @@ function logMaintenanceError(error: unknown): void {
     event: "research_worker_maintenance_error",
     errorCode: classifySafeError(error, "WORKER_MAINTENANCE_ERROR"),
   }));
+}
+
+function isMcpGovernedEffectWorkerError(error: unknown): error is { readonly code: string } {
+  if (!error || typeof error !== "object") return false;
+  const value = error as { readonly name?: unknown; readonly code?: unknown };
+  // The attempt repository is the same trust boundary and can fail after the
+  // final gate (for example a lost lease while writing the marker/result).
+  // Treat its stable MCP codes identically so those failures cannot requeue a
+  // mutation either.
+  return (value.name === "McpGovernedEffectWorkerError" || value.name === "McpExternalEffectAttemptRepositoryError")
+    && typeof value.code === "string"
+    && /^MCP_EFFECT_[A-Z0-9_]{1,100}$/.test(value.code);
 }

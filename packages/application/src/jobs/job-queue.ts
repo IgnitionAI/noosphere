@@ -14,6 +14,8 @@ export interface LeasedJob<TPayload = unknown> extends NewJob<TPayload> {
   readonly attempts: number;
   readonly lockedBy: string;
   readonly lockedUntil: Date;
+  /** The persisted queue status when the backing store can provide it. */
+  readonly status?: string;
   readonly priority?: number;
 }
 
@@ -41,6 +43,14 @@ export interface RetryJobRequest {
  */
 export interface DeferJobRequest extends RetryJobRequest {}
 
+/** Terminally quarantines a malformed or unsafe governed job. */
+export interface QuarantineJobRequest {
+  readonly jobId: string;
+  readonly workerId: string;
+  readonly errorCode: string;
+  readonly errorMessage?: string;
+}
+
 export interface JobQueue {
   enqueue(job: NewJob): Promise<{ inserted: boolean }>;
   lease(request: LeaseJobsRequest): Promise<readonly LeasedJob[]>;
@@ -48,4 +58,6 @@ export interface JobQueue {
   acknowledge(jobId: string, workerId: string, completedAt: Date): Promise<void>;
   defer(request: DeferJobRequest): Promise<void>;
   retry(request: RetryJobRequest): Promise<"scheduled" | "dead_lettered">;
+  /** Optional until all queue implementations support durable quarantine. */
+  quarantine?(request: QuarantineJobRequest): Promise<void>;
 }

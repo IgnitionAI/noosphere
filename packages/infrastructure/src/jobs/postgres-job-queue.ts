@@ -4,6 +4,7 @@ import type {
   LeaseJobsRequest,
   LeasedJob,
   NewJob,
+  QuarantineJobRequest,
   RetryJobRequest,
 } from "@outbound/application/jobs/job-queue";
 import type { SqlClient } from "@outbound/infrastructure/database/client";
@@ -12,6 +13,7 @@ interface JobRow {
   id: string;
   workspace_id: string;
   type: string;
+  status: string;
   payload: unknown;
   idempotency_key: string;
   correlation_id: string;
@@ -160,6 +162,25 @@ export class PostgresJobQueue implements JobQueue {
     return row.status === "retry" ? "scheduled" : "dead_lettered";
   }
 
+  async quarantine(request: QuarantineJobRequest): Promise<void> {
+    const rows = await this.sql`
+      update jobs
+      set status = 'dead_lettered',
+          completed_at = now(),
+          locked_at = null,
+          locked_until = null,
+          locked_by = null,
+          last_error_code = ${request.errorCode.slice(0, 120)},
+          last_error_message = ${request.errorMessage?.slice(0, 4_000) ?? request.errorCode.slice(0, 120)},
+          updated_at = now()
+      where id = ${request.jobId}
+        and status = 'running'
+        and locked_by = ${request.workerId}
+      returning id
+    `;
+    if (rows.length !== 1) throw new Error("JOB_LEASE_LOST");
+  }
+
   async defer(request: DeferJobRequest): Promise<void> {
     const rows = await this.sql`
       update jobs
@@ -186,6 +207,7 @@ function toLeasedJob(row: JobRow): LeasedJob {
     id: row.id,
     workspaceId: row.workspace_id,
     type: row.type,
+    status: row.status,
     payload: row.payload,
     idempotencyKey: row.idempotency_key,
     correlationId: row.correlation_id,

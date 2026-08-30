@@ -33,6 +33,7 @@ import {
 } from "@outbound/infrastructure/database/schema";
 import type { ExternalEffectAttemptIdentity, ExternalEffectReadOnlyResult } from "@outbound/application/mcp/external-effect-attempt";
 import { PostgresMcpExternalEffectAttemptRepository } from "@outbound/infrastructure/mcp/postgres-mcp-effect-attempt-repository";
+import { PostgresMcpEffectReconciliationRepository } from "@outbound/infrastructure/mcp/postgres-mcp-effect-reconciliation-repository";
 import { PostgresMcpGovernedEffectWorker } from "@outbound/infrastructure/mcp/postgres-mcp-governed-effect-worker";
 import { PostgresMcpGovernedEffectExecutor, PostgresMcpGovernedEffectSourceReader } from "@outbound/infrastructure/mcp/postgres-mcp-governed-effect-executor";
 import { PostgresExternalEffectFactsReader } from "@outbound/infrastructure/mcp/postgres-external-effect-facts-reader";
@@ -82,18 +83,21 @@ databaseDescribe("durable governed-effect attempt boundary", () => {
     }
   });
 
-  async function fixture(options: { readonly expired?: boolean; readonly kind?: "conversation_reply" | "meeting_proposal" } = {}): Promise<ExternalEffectAttemptIdentity> {
+  type FixtureTenant = { readonly workspaceId: string; readonly contactId: string; readonly conversationId: string };
+
+  async function fixture(options: { readonly expired?: boolean; readonly kind?: "conversation_reply" | "meeting_proposal"; readonly tenant?: FixtureTenant } = {}): Promise<ExternalEffectAttemptIdentity> {
     const kind = options.kind ?? "conversation_reply";
-    const aggregateId = kind === "meeting_proposal" ? crypto.randomUUID() : conversationId;
+    const tenant = options.tenant ?? { workspaceId, contactId, conversationId };
+    const aggregateId = kind === "meeting_proposal" ? crypto.randomUUID() : tenant.conversationId;
     if (kind === "meeting_proposal") {
       const meetingConversationId = crypto.randomUUID();
       const meetingExpiresAt = options.expired ? now : new Date(now.getTime() + 60_000);
       await database.db.insert(conversations).values({
-        id: meetingConversationId, workspaceId, contactId, provider: "unipile", providerAccountId: "fixture-account",
+        id: meetingConversationId, workspaceId: tenant.workspaceId, contactId: tenant.contactId, provider: "unipile", providerAccountId: "fixture-account",
         providerThreadId: `thread-${meetingConversationId}`, channel: "linkedin", status: "open", lastMessageAt: now, createdAt: now, updatedAt: now,
       });
       await database.db.insert(meetingProposals).values({
-        id: aggregateId, workspaceId, conversationId: meetingConversationId, contactId, status: "offered", timeZone: "UTC",
+        id: aggregateId, workspaceId: tenant.workspaceId, conversationId: meetingConversationId, contactId: tenant.contactId, status: "offered", timeZone: "UTC",
         slots: [{ start: "2026-08-29T13:00:00.000Z", end: "2026-08-29T13:30:00.000Z" }],
         idempotencyKey: `attempt-meeting-${aggregateId}`, expiresAt: meetingExpiresAt, revision: 1, sourceVersion: 1, createdAt: now, updatedAt: now,
       });
@@ -106,7 +110,7 @@ databaseDescribe("durable governed-effect attempt boundary", () => {
     const leaseToken = crypto.randomUUID();
     const leaseExpiresAt = new Date(now.getTime() + (options.expired ? -1 : 60_000));
     await database.db.insert(mcpEffectProposals).values({
-      id: proposalId, workspaceId, clientId: "attempt-test", kind, requestKey: crypto.randomUUID(), inputHash: "a".repeat(64), aggregateId,
+      id: proposalId, workspaceId: tenant.workspaceId, clientId: "attempt-test", kind, requestKey: crypto.randomUUID(), inputHash: "a".repeat(64), aggregateId,
       intentSnapshot: kind === "meeting_proposal" ? { kind, aggregateId, slotPosition: 1 } : { kind, aggregateId, body: "bounded" },
       sourceSnapshot: kind === "meeting_proposal"
         ? { kind, aggregateId, status: "offered", sourceId: "meeting:fixture", sourceUpdatedAt: now.toISOString(), factsVersion: 1, revision: 1, sourceVersion: 1, slotPosition: 1, slotStart: "2026-08-29T13:00:00.000Z", slotEnd: "2026-08-29T13:30:00.000Z", timeZone: "UTC", expiresAt: new Date(now.getTime() + (options.expired ? 0 : 60_000)).toISOString() }
@@ -116,21 +120,42 @@ databaseDescribe("durable governed-effect attempt boundary", () => {
     });
     if (approvalId) {
       await database.db.insert(approvalItems).values({
-        id: approvalId, workspaceId, proposalId, itemType: "mcp_external_effect", channel: "mcp",
+        id: approvalId, workspaceId: tenant.workspaceId, proposalId, itemType: "mcp_external_effect", channel: "mcp",
         contentOriginal: { kind, aggregateId, slotPosition: 1 }, context: { proposalId, kind, aggregateId }, status: "approved", createdAt: now, updatedAt: now,
       });
       await database.db.update(mcpEffectProposals).set({ approvalItemId: approvalId }).where(eq(mcpEffectProposals.id, proposalId));
     }
     await database.db.insert(jobs).values({
-      id: jobId, workspaceId, type: "mcp.external-effect.execute", payload: { workspaceId, proposalId, intentionId, kind, aggregateId, correlationId },
+      id: jobId, workspaceId: tenant.workspaceId, type: "mcp.external-effect.execute", payload: { workspaceId: tenant.workspaceId, proposalId, intentionId, kind, aggregateId, correlationId },
       idempotencyKey: `attempt:${proposalId}`, correlationId, maxAttempts: 5, status: "running", attempts: 1, availableAt: now, lockedAt: now,
       lockedUntil: new Date(now.getTime() + 60_000), lockedBy: "attempt-worker", createdAt: now, updatedAt: now,
     });
     await database.db.insert(mcpEffectIntentions).values({
-      id: intentionId, workspaceId, proposalId, kind, aggregateId, state: "started", idempotencyKey: `attempt:${proposalId}`,
+      id: intentionId, workspaceId: tenant.workspaceId, proposalId, kind, aggregateId, state: "started", idempotencyKey: `attempt:${proposalId}`,
       jobId, leaseToken, leaseExpiresAt, correlationId, createdAt: now, updatedAt: now,
     });
-    return { workspaceId, proposalId, intentionId, jobId, kind, aggregateId, correlationId, leaseToken, leaseExpiresAt };
+    return { workspaceId: tenant.workspaceId, proposalId, intentionId, jobId, kind, aggregateId, correlationId, leaseToken, leaseExpiresAt };
+  }
+
+  async function createIsolatedTenant(label: string): Promise<FixtureTenant> {
+    const tenant: FixtureTenant = { workspaceId: crypto.randomUUID(), contactId: crypto.randomUUID(), conversationId: crypto.randomUUID() };
+    await database.db.insert(workspaces).values({ id: tenant.workspaceId, slug: `${label}-${tenant.workspaceId}`, name: `${label} fixture` });
+    await database.db.insert(contacts).values({ id: tenant.contactId, workspaceId: tenant.workspaceId, firstName: "Isolated", lastName: "Fixture", status: "active", source: "manual", createdAt: now, updatedAt: now });
+    await database.db.insert(conversations).values({ id: tenant.conversationId, workspaceId: tenant.workspaceId, contactId: tenant.contactId, provider: "fixture", providerAccountId: "fixture-account", providerThreadId: `thread-${tenant.conversationId}`, channel: "linkedin", status: "open", lastMessageAt: now, createdAt: now, updatedAt: now });
+    return tenant;
+  }
+
+  async function cleanupIsolatedTenant(tenant: FixtureTenant): Promise<void> {
+    await database.client`delete from mcp_effect_traces where workspace_id = ${tenant.workspaceId}`;
+    await database.client`update mcp_effect_proposals set approval_item_id = null, reconciliation_id = null, job_id = null where workspace_id = ${tenant.workspaceId}`;
+    await database.client`delete from mcp_effect_reconciliations where workspace_id = ${tenant.workspaceId}`;
+    await database.client`delete from approval_items where workspace_id = ${tenant.workspaceId}`;
+    await database.client`delete from mcp_effect_intentions where workspace_id = ${tenant.workspaceId}`;
+    await database.client`delete from mcp_effect_proposals where workspace_id = ${tenant.workspaceId}`;
+    await database.client`delete from jobs where workspace_id = ${tenant.workspaceId}`;
+    await database.client`delete from conversations where workspace_id = ${tenant.workspaceId}`;
+    await database.client`delete from contacts where workspace_id = ${tenant.workspaceId}`;
+    await database.client`delete from workspaces where id = ${tenant.workspaceId}`;
   }
 
   async function queuedWorkerFixture() {
@@ -747,6 +772,62 @@ databaseDescribe("durable governed-effect attempt boundary", () => {
       expect(intention?.state).toBe(scenario.intentionState);
       expect(traces.filter((trace) => trace.stage === "attempt")).toHaveLength(0);
       expect(job).toMatchObject({ status: "completed", lockedBy: null, lockedUntil: null });
+    }
+  });
+
+  test("restarts with a pre-existing due reconciliation and processes it once read-only", async () => {
+    const isolated = await createIsolatedTenant("attempt-due");
+    try {
+      const identity = await fixture({ tenant: isolated });
+      await database.db.update(mcpEffectIntentions).set({ state: "unknown", leaseToken: null, leaseExpiresAt: null }).where(eq(mcpEffectIntentions.id, identity.intentionId));
+      const reconciliation = await new PostgresMcpEffectReconciliationRepository(database.db).createOrGet({
+        workspaceId: isolated.workspaceId, proposalId: identity.proposalId, criteriaSnapshot: { aggregateId: identity.aggregateId }, now: new Date(now.getTime() - 1),
+      });
+      let readOnlyCalls = 0;
+      const repository = new PostgresMcpExternalEffectAttemptRepository(database.db, {
+        reconcileReadOnly: async (input) => {
+          readOnlyCalls += 1;
+          expect(input.workspaceId).toBe(isolated.workspaceId);
+          expect(input.reconciliationId).toBe(reconciliation.reconciliationId);
+          return { outcome: "not_found" as const, candidateCount: 0 as const };
+        },
+      }, () => now);
+      await expect(repository.reconcileDue({ workspaceId: isolated.workspaceId, now, limit: 1 })).resolves.toBe(1);
+      await expect(repository.reconcileDue({ workspaceId: isolated.workspaceId, now, limit: 1 })).resolves.toBe(0);
+      expect(readOnlyCalls).toBe(1);
+      expect(await new PostgresMcpEffectReconciliationRepository(database.db).get({ workspaceId: isolated.workspaceId, reconciliationId: reconciliation.reconciliationId })).toMatchObject({ status: "not_found", completedAt: now });
+      const [intention] = await database.db.select({ state: mcpEffectIntentions.state }).from(mcpEffectIntentions).where(eq(mcpEffectIntentions.id, identity.intentionId));
+      expect(intention?.state).toBe("completed");
+    } finally {
+      await cleanupIsolatedTenant(isolated);
+    }
+  });
+
+  test("concurrent maintenance workers claim one due reconciliation", async () => {
+    const isolated = await createIsolatedTenant("attempt-concurrent");
+    try {
+      const identity = await fixture({ tenant: isolated });
+      await database.db.update(mcpEffectIntentions).set({ state: "unknown", leaseToken: null, leaseExpiresAt: null }).where(eq(mcpEffectIntentions.id, identity.intentionId));
+      const reconciliation = await new PostgresMcpEffectReconciliationRepository(database.db).createOrGet({ workspaceId: isolated.workspaceId, proposalId: identity.proposalId, now });
+      let readOnlyCalls = 0;
+      const makeRepository = () => new PostgresMcpExternalEffectAttemptRepository(database.db, {
+        reconcileReadOnly: async (input) => {
+          readOnlyCalls += 1;
+          expect(input.workspaceId).toBe(isolated.workspaceId);
+          expect(input.reconciliationId).toBe(reconciliation.reconciliationId);
+          await Bun.sleep(5);
+          return { outcome: "not_found" as const, candidateCount: 0 as const };
+        },
+      }, () => now);
+      const [first, second] = await Promise.all([
+        makeRepository().reconcileDue({ workspaceId: isolated.workspaceId, now, limit: 1 }),
+        makeRepository().reconcileDue({ workspaceId: isolated.workspaceId, now, limit: 1 }),
+      ]);
+      expect(first + second).toBe(1);
+      expect(readOnlyCalls).toBe(1);
+      expect(await new PostgresMcpEffectReconciliationRepository(database.db).get({ workspaceId: isolated.workspaceId, reconciliationId: reconciliation.reconciliationId })).toMatchObject({ status: "not_found" });
+    } finally {
+      await cleanupIsolatedTenant(isolated);
     }
   });
 });

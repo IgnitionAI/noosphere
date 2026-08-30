@@ -53,6 +53,82 @@ describe("ResearchWorker job leases", () => {
     expect(acknowledged).toBe(0);
   });
 
+  test("quarantines an owned governed-effect worker error without retry or acknowledgement", async () => {
+    const now = new Date("2026-08-29T12:00:00.000Z");
+    const job: LeasedJob = {
+      id: crypto.randomUUID(), workspaceId: crypto.randomUUID(), type: "mcp.external-effect.execute", payload: {},
+      idempotencyKey: "mcp-effect:quarantine", correlationId: crypto.randomUUID(), attempts: 1, maxAttempts: 5,
+      availableAt: now, lockedBy: "worker-test", lockedUntil: new Date(now.getTime() + 60_000),
+    };
+    let retries = 0;
+    let acknowledged = 0;
+    let quarantined: unknown;
+    const queue: JobQueue = {
+      async enqueue() { return { inserted: true }; },
+      async lease() { return [job]; },
+      async renewLease() { return true; },
+      async acknowledge() { acknowledged += 1; },
+      async defer() {},
+      async retry() { retries += 1; return "scheduled"; },
+      async quarantine(request) { quarantined = request; },
+    };
+    const worker = new ResearchWorker(
+      queue,
+      { async process() {} } as unknown as ResearchOrchestrator,
+      { now: () => now },
+      { workerId: "worker-test", leaseMs: 60_000, batchSize: 1, pollIntervalMs: 1, jobTypes: ["mcp.external-effect.execute"] },
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined,
+      { async process() { throw Object.assign(new Error("provider secret"), { name: "McpGovernedEffectWorkerError", code: "MCP_EFFECT_JOB_LEASE_INVALID" }); } },
+    );
+
+    await worker.tick();
+
+    expect(retries).toBe(0);
+    expect(acknowledged).toBe(0);
+    expect(quarantined).toMatchObject({ jobId: job.id, workerId: job.lockedBy, errorCode: "MCP_EFFECT_JOB_LEASE_INVALID" });
+  });
+
+  test("does not quarantine or retry a governed-effect error for a foreign lease", async () => {
+    const now = new Date("2026-08-29T12:00:00.000Z");
+    const job: LeasedJob = {
+      id: crypto.randomUUID(), workspaceId: crypto.randomUUID(), type: "mcp.external-effect.execute", payload: {},
+      idempotencyKey: "mcp-effect:foreign", correlationId: crypto.randomUUID(), attempts: 1, maxAttempts: 5,
+      availableAt: now, lockedBy: "other-worker", lockedUntil: new Date(now.getTime() + 60_000),
+    };
+    let retries = 0;
+    let acknowledged = 0;
+    let quarantined = 0;
+    const queue: JobQueue = {
+      async enqueue() { return { inserted: true }; },
+      async lease() { return [job]; },
+      async renewLease() { return true; },
+      async acknowledge() { acknowledged += 1; },
+      async defer() {},
+      async retry() { retries += 1; return "scheduled"; },
+      async quarantine() { quarantined += 1; },
+    };
+    const worker = new ResearchWorker(
+      queue,
+      { async process() {} } as unknown as ResearchOrchestrator,
+      { now: () => now },
+      { workerId: "worker-test", leaseMs: 60_000, batchSize: 1, pollIntervalMs: 1, jobTypes: ["mcp.external-effect.execute"] },
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined,
+      { async process() { throw Object.assign(new Error("secret"), { name: "McpGovernedEffectWorkerError", code: "MCP_EFFECT_JOB_LEASE_INVALID" }); } },
+    );
+
+    await worker.tick();
+
+    expect(retries).toBe(0);
+    expect(acknowledged).toBe(0);
+    expect(quarantined).toBe(0);
+  });
+
   test("maintenance cannot block leasing ready business jobs", async () => {
     const events: string[] = [];
     const queue: JobQueue = {

@@ -11,6 +11,7 @@ import type {
   LeaseJobsRequest,
   LeasedJob,
   NewJob,
+  QuarantineJobRequest,
   RetryJobRequest,
 } from "@outbound/application/jobs/job-queue";
 import type {
@@ -480,6 +481,16 @@ export class InMemoryResearchBackend
     return job.status === "retry" ? "scheduled" : "dead_lettered";
   }
 
+  async quarantine(request: QuarantineJobRequest): Promise<void> {
+    const job = this.#jobs.get(request.jobId);
+    if (!job || job.status !== "running" || job.lockedBy !== request.workerId) throw new Error("JOB_LEASE_LOST");
+    job.status = "dead_lettered";
+    job.completedAt = new Date();
+    job.lockedBy = null;
+    job.lockedUntil = null;
+    job.lastErrorCode = request.errorCode;
+  }
+
   async defer(request: DeferJobRequest): Promise<void> {
     const job = this.#jobs.get(request.jobId);
     if (!job || job.status !== "running" || job.lockedBy !== request.workerId) {
@@ -619,6 +630,7 @@ function toLeasedJob(job: StoredJob): LeasedJob {
     id: job.id,
     workspaceId: job.workspaceId,
     type: job.type,
+    status: job.status,
     payload: clone(job.payload),
     idempotencyKey: job.idempotencyKey,
     correlationId: job.correlationId,

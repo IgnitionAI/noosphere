@@ -153,7 +153,7 @@ databaseDescribe("MCP governed effects canary", () => {
 
     let providerCalls = 0;
     let markerSeen = false;
-    const attempt = new PostgresMcpExternalEffectAttemptRepository(database.db);
+    const attempt = new PostgresMcpExternalEffectAttemptRepository(database.db, undefined, () => now);
     const job = await lease(decision.jobId!);
     const worker = new PostgresMcpGovernedEffectWorker(database.db, policy, {
       now: () => now,
@@ -192,7 +192,7 @@ databaseDescribe("MCP governed effects canary", () => {
     const worker = new PostgresMcpGovernedEffectWorker(database.db, policy, {
       now: () => now,
       leaseMs: 60_000,
-      attemptPort: new PostgresMcpExternalEffectAttemptRepository(database.db),
+      attemptPort: new PostgresMcpExternalEffectAttemptRepository(database.db, undefined, () => now),
       queue: { acknowledge: async () => { acknowledgements += 1; } },
       executor: async () => {
         providerCalls += 1;

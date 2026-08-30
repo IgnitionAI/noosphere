@@ -534,7 +534,7 @@ const mcpGovernedEffectWorker = new PostgresMcpGovernedEffectWorker(
   },
 );
 const mcpGovernedEffectProcessor = {
-  process: (job: import("@outbound/application/jobs/job-queue").LeasedJob) => mcpGovernedEffectWorker.process({ ...job, status: "running" }),
+  process: (job: import("@outbound/application/jobs/job-queue").LeasedJob) => mcpGovernedEffectWorker.process({ ...job, status: job.status ?? "running" }),
 };
 const socialContentSynchronizer = socialContentReader && process.env.UNIPILE_SOCIAL_CONTENT_SYNC_ENABLED !== "false"
   ? new SocialContentSynchronizer(
@@ -576,9 +576,9 @@ const maintenance = {
       25,
       positiveIntegerEnvironment("MCP_EFFECT_RECOVERY_BATCH", 10),
     );
-    // One bounded pass includes due reconciliation rows for every recovered
-    // attempt. It is awaited as part of the existing non-blocking maintenance
-    // hook, so normal queue leasing remains independent of this work.
+    // Bounded passes recover expired attempts and independently scan durable
+    // due reconciliation rows. They are awaited by the existing non-blocking
+    // maintenance hook, so normal queue leasing remains independent of this work.
     const recoveredMcpEffects = await mcpGovernedEffectAttemptRepository.recoverExpiredStarted({
       now: clock.now(),
       limit: mcpEffectRecoveryLimit,
@@ -586,6 +586,16 @@ const maintenance = {
       console.warn(JSON.stringify({
         event: "mcp_effect_recovery_deferred",
         errorCode: classifySafeError(error, "MCP_EFFECT_RECOVERY_DEFERRED"),
+      }));
+      return 0;
+    });
+    const reconciledDueMcpEffects = await mcpGovernedEffectAttemptRepository.reconcileDue({
+      now: clock.now(),
+      limit: mcpEffectRecoveryLimit,
+    }).catch((error) => {
+      console.warn(JSON.stringify({
+        event: "mcp_effect_due_reconciliation_deferred",
+        errorCode: classifySafeError(error, "MCP_EFFECT_DUE_RECONCILIATION_DEFERRED"),
       }));
       return 0;
     });
@@ -633,6 +643,9 @@ const maintenance = {
     if (recoveredMcpEffects > 0) {
       console.info(JSON.stringify({ event: "mcp_effect_attempts_recovered", count: recoveredMcpEffects }));
     }
+    if (reconciledDueMcpEffects > 0) {
+      console.info(JSON.stringify({ event: "mcp_effect_due_reconciled", count: reconciledDueMcpEffects }));
+    }
     if (reconciledStaleProviderActions > 0) {
       console.info(JSON.stringify({ event: "stale_outreach_actions_failed_closed", count: reconciledStaleProviderActions }));
     }
@@ -662,7 +675,7 @@ const maintenance = {
     if (editorialLearningVersions > 0) {
       console.info(JSON.stringify({ event: "linkedin_editorial_learning_updated", versions: editorialLearningVersions }));
     }
-    return dailyRuns + dailyIdeaRuns + automatedContentActions + assessmentJobs + repairedCampaigns + retainedSourcing + inboundEvents + reconciledProviderEffects + observedSocialPosts + observedSocialEngagements + attributedInteractions + editorialLearningVersions + reconciledJobOutcomes + prospectMemoryBackfills + reconciledMcpOperations + recoveredMcpEffects + reconciledPreSendWaits + reconciledRecoverableProviderRefusals + reconciledStaleProviderActions + purgedEmbeddingRevisions + projectedKnowledgeDocuments;
+    return dailyRuns + dailyIdeaRuns + automatedContentActions + assessmentJobs + repairedCampaigns + retainedSourcing + inboundEvents + reconciledProviderEffects + observedSocialPosts + observedSocialEngagements + attributedInteractions + editorialLearningVersions + reconciledJobOutcomes + prospectMemoryBackfills + reconciledMcpOperations + recoveredMcpEffects + reconciledDueMcpEffects + reconciledPreSendWaits + reconciledRecoverableProviderRefusals + reconciledStaleProviderActions + purgedEmbeddingRevisions + projectedKnowledgeDocuments;
   },
 };
 const orchestrator = new ResearchOrchestrator(

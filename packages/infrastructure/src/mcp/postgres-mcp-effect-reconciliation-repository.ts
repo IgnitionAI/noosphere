@@ -214,7 +214,7 @@ export class PostgresMcpEffectReconciliationRepository {
     return this.listDue(input);
   }
 
-  async claim(input: { readonly workspaceId: string; readonly reconciliationId: string; readonly now: Date; readonly leaseMs: number }): Promise<McpEffectReconciliationLease | null> {
+  async claim(input: { readonly workspaceId: string; readonly reconciliationId: string; readonly now: Date; readonly leaseMs: number; readonly skipLocked?: boolean }): Promise<McpEffectReconciliationLease | null> {
     assertWorkspaceAndId(input.workspaceId, input.reconciliationId, "MCP_RECONCILIATION_ID_INVALID");
     if (!Number.isFinite(input.leaseMs) || input.leaseMs <= 0 || input.leaseMs > 24 * 60 * 60_000) throw new McpEffectReconciliationRepositoryError("MCP_RECONCILIATION_LEASE_INVALID");
     return this.database.transaction(async (tx) => {
@@ -222,9 +222,13 @@ export class PostgresMcpEffectReconciliationRepository {
         eq(mcpEffectReconciliations.workspaceId, input.workspaceId), eq(mcpEffectReconciliations.id, input.reconciliationId),
       )).limit(1);
       if (!ref[0]) return null;
-      const proposal = await lockedProposal(tx, input.workspaceId, ref[0].proposalId);
-      if (!proposal) throw new McpEffectReconciliationRepositoryError("MCP_RECONCILIATION_PROPOSAL_NOT_FOUND");
-      const row = await lockedReconciliation(tx, input.workspaceId, input.reconciliationId);
+      const proposal = await lockedProposal(tx, input.workspaceId, ref[0].proposalId, ...(input.skipLocked === undefined ? [] : [{ skipLocked: input.skipLocked }]));
+      if (!proposal) {
+        if (input.skipLocked) return null;
+        throw new McpEffectReconciliationRepositoryError("MCP_RECONCILIATION_PROPOSAL_NOT_FOUND");
+      }
+      const row = await lockedReconciliation(tx, input.workspaceId, input.reconciliationId, ...(input.skipLocked === undefined ? [] : [{ skipLocked: input.skipLocked }]));
+      if (!row && input.skipLocked) return null;
       if (!row || row.completedAt || row.attempts >= row.maxAttempts) return null;
       const due = row.status === "searching" ? Boolean(row.leaseExpiresAt && row.leaseExpiresAt <= input.now) : Boolean(row.nextAttemptAt && row.nextAttemptAt <= input.now);
       if (!due || !["pending", "searching", "error"].includes(row.status)) return null;

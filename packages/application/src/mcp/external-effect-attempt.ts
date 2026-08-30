@@ -97,4 +97,6 @@ export interface ExternalEffectAttemptPort {
   recordOutcome(input: ExternalEffectOutcomeInput): Promise<ExternalEffectAttemptResult>;
   reconcileReadOnly(input: ExternalEffectReadOnlyInput): Promise<ExternalEffectReadOnlyResult>;
   recoverExpiredStarted(input: { readonly workspaceId?: string; readonly now: Date; readonly limit?: number }): Promise<number>;
+  /** Independently scans durable due reconciliation rows after restart. */
+  reconcileDue?(input: { readonly workspaceId?: string; readonly now: Date; readonly limit?: number }): Promise<number>;
 }
