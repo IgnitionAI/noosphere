@@ -17,6 +17,8 @@
   "mcp:local:start": "bun scripts/start-local-mcp.ts",
   "mcp:local:stop": "bun scripts/stop-local-mcp.ts",
   "mcp:local:status": "bun scripts/start-local-mcp.ts status",
+  "mcp:local:seed": "bun scripts/prepare-mcp-local.ts seed",
+  "mcp:local:cleanup": "bun scripts/prepare-mcp-local.ts cleanup",
   "dev": "bun scripts/start-development.ts",
     "dev:smoke": "bun scripts/smoke-development.ts",
     "smoke:mcp-production": "bun scripts/smoke-mcp-production.ts",

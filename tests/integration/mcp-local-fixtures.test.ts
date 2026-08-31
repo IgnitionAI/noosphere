@@ -1,0 +1,141 @@
+import { describe, expect, test } from "bun:test";
+import { randomBytes } from "node:crypto";
+import { chmod, readFile, unlink, writeFile } from "node:fs/promises";
+import { createDatabase } from "@outbound/infrastructure/database/client";
+import { PostgresMcpOAuthStore } from "@outbound/infrastructure/auth/postgres-mcp-oauth-store";
+import { createMcpOAuthService } from "@outbound/interface/mcp/mcp-oauth";
+import { cleanupMcpLocal, createMcpLocalFixtureDatabaseClient, loadMcpLocalPrivateCredential, prepareMcpLocal, readMcpLocalFixtureFingerprint } from "../../scripts/prepare-mcp-local";
+
+const databaseUrl = process.env.TEST_DATABASE_URL;
+const enabled = process.env.MCP_LOCAL_FIXTURES_INTEGRATION === "1" && Boolean(databaseUrl);
+const fixtureKey = `local-it-${randomBytes(6).toString("hex")}`;
+const envFilePath = `/tmp/mcp-local-fixtures-${fixtureKey}.env`;
+
+describe.skipIf(!enabled)("MCP local fixture integration", () => {
+  test("creates then reuses one two-workspace fixture without changing its fingerprint", async () => {
+    if (!databaseUrl) throw new Error("MCP_LOCAL_FIXTURES_INTEGRATION=1 and TEST_DATABASE_URL are required");
+    const client = createMcpLocalFixtureDatabaseClient(databaseUrl);
+    const privateFiles = new Map<string, string>();
+    const readPrivateFile = async (path: string) => privateFiles.get(path) ?? await readFile(path, "utf8").catch(() => null);
+    const writePrivateFile = async (path: string, content: string) => {
+      privateFiles.set(path, content);
+      await writeFile(path, content, { encoding: "utf8", mode: 0o600 });
+      await chmod(path, 0o600);
+    };
+    try {
+      const first = await prepareMcpLocal({ databaseUrl, fixtureKey, envFilePath, readPrivateFile, writePrivateFile });
+      const before = await readMcpLocalFixtureFingerprint(databaseUrl, fixtureKey);
+      const second = await prepareMcpLocal({ databaseUrl, fixtureKey, envFilePath, readPrivateFile, writePrivateFile });
+      const after = await readMcpLocalFixtureFingerprint(databaseUrl, fixtureKey);
+      expect(second.fixtureIds).toEqual(first.fixtureIds);
+      expect(second.credentials).toEqual(first.credentials);
+      expect(after).toEqual(before);
+      expect((await readFile(envFilePath, "utf8"))).toContain("MCP_LOCAL_FIXTURE_KEY");
+    } finally {
+      try {
+        await cleanupMcpLocal({ databaseUrl, fixtureKey, envFilePath, client });
+      } finally {
+        await client.close();
+        await unlink(envFilePath).catch(() => undefined);
+      }
+    }
+  });
+
+  test("accepts a fresh OAuth access token and immediately observes demotion and revocation", async () => {
+    if (!databaseUrl) throw new Error("MCP_LOCAL_FIXTURES_INTEGRATION=1 and TEST_DATABASE_URL are required");
+    const localFixtureKey = `local-oauth-${randomBytes(6).toString("hex")}`;
+    const localEnvFilePath = `/tmp/mcp-local-oauth-${localFixtureKey}.env`;
+    const client = createMcpLocalFixtureDatabaseClient(databaseUrl);
+    const database = createDatabase(databaseUrl);
+    try {
+      const io = privateFileIo(localEnvFilePath);
+      const fixture = await prepareMcpLocal({ databaseUrl, fixtureKey: localFixtureKey, envFilePath: localEnvFilePath, ...io });
+      const reviewer = loadMcpLocalPrivateCredential(fixture.credentials, fixture.identities, fixture.fixtureIds, "reviewer");
+      const service = createMcpOAuthService(new PostgresMcpOAuthStore(database.db), { issuer: "https://mcp.localhost:18443", resource: fixture.resource });
+      const fresh = await service.authenticateMcpRequest({ accessToken: reviewer.token, resource: fixture.resource, requiredScopes: ["mcp:read"] });
+      expect(fresh.workspaceId).toBe(fixture.workspaceIds[0]);
+      await database.client`update workspace_members set role = 'viewer' where workspace_id = ${fixture.workspaceIds[0]} and user_id = ${fresh.userId}`;
+      await expect(service.authenticateMcpRequest({ accessToken: reviewer.token, resource: fixture.resource, requiredScopes: ["mcp:approve"] })).rejects.toMatchObject({ status: 403 });
+      const demoted = await service.authenticateMcpRequest({ accessToken: reviewer.token, resource: fixture.resource, requiredScopes: ["mcp:read"] });
+      expect(demoted.role).toBe("viewer");
+      await database.client`update workspace_members set role = 'reviewer' where workspace_id = ${fixture.workspaceIds[0]} and user_id = ${fresh.userId}`;
+      await service.revokeToken({ token: reviewer.token });
+      await expect(service.authenticateMcpRequest({ accessToken: reviewer.token, resource: fixture.resource, requiredScopes: ["mcp:read"] })).rejects.toMatchObject({ status: 401 });
+    } finally {
+      try {
+        await cleanupMcpLocal({ databaseUrl, fixtureKey: localFixtureKey, envFilePath: localEnvFilePath, client });
+      } finally {
+        await client.close();
+        await database.close();
+        await unlink(localEnvFilePath).catch(() => undefined);
+      }
+    }
+  });
+
+  test("keeps an older fixture isolated when a newer fixture is cleaned", async () => {
+    if (!databaseUrl) throw new Error("MCP_LOCAL_FIXTURES_INTEGRATION=1 and TEST_DATABASE_URL are required");
+    const olderKey = `local-old-${randomBytes(6).toString("hex")}`;
+    const newerKey = `local-new-${randomBytes(6).toString("hex")}`;
+    const olderPath = `/tmp/mcp-local-old-${olderKey}.env`;
+    const newerPath = `/tmp/mcp-local-new-${newerKey}.env`;
+    const client = createMcpLocalFixtureDatabaseClient(databaseUrl);
+    try {
+      const oldFixture = await prepareMcpLocal({ databaseUrl, fixtureKey: olderKey, envFilePath: olderPath, ...privateFileIo(olderPath) });
+      const oldFingerprint = await readMcpLocalFixtureFingerprint(databaseUrl, olderKey);
+      await prepareMcpLocal({ databaseUrl, fixtureKey: newerKey, envFilePath: newerPath, ...privateFileIo(newerPath) });
+      await cleanupMcpLocal({ databaseUrl, fixtureKey: newerKey, envFilePath: newerPath, client });
+      expect(await readMcpLocalFixtureFingerprint(databaseUrl, olderKey)).toEqual(oldFingerprint);
+      expect(oldFixture.fixtureKey).toBe(olderKey);
+    } finally {
+      try {
+        await cleanupMcpLocal({ databaseUrl, fixtureKey: olderKey, envFilePath: olderPath, client });
+      } finally {
+        await client.close();
+        await unlink(olderPath).catch(() => undefined);
+        await unlink(newerPath).catch(() => undefined);
+      }
+    }
+  });
+
+  test("serializes concurrent same-key creates and rejects a hash mismatch", async () => {
+    if (!databaseUrl) throw new Error("MCP_LOCAL_FIXTURES_INTEGRATION=1 and TEST_DATABASE_URL are required");
+    const localFixtureKey = `local-concurrent-${randomBytes(6).toString("hex")}`;
+    const firstPath = `/tmp/mcp-local-concurrent-a-${localFixtureKey}.env`;
+    const secondPath = `/tmp/mcp-local-concurrent-b-${localFixtureKey}.env`;
+    const client = createMcpLocalFixtureDatabaseClient(databaseUrl);
+    try {
+      const results = await Promise.allSettled([
+        prepareMcpLocal({ databaseUrl, fixtureKey: localFixtureKey, envFilePath: firstPath, ...privateFileIo(firstPath) }),
+        prepareMcpLocal({ databaseUrl, fixtureKey: localFixtureKey, envFilePath: secondPath, ...privateFileIo(secondPath) }),
+      ]);
+      expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+      expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+      const winningPath = results.find((result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof prepareMcpLocal>>> => result.status === "fulfilled")!.value.envFilePath;
+      const winningContent = await readFile(winningPath, "utf8");
+      const mismatchedContent = winningContent.replace(/MCP_LOCAL_REVIEWER_TOKEN='[^']*'/, "MCP_LOCAL_REVIEWER_TOKEN='mismatch-reviewer-token'");
+      await writeFile(winningPath, mismatchedContent, { encoding: "utf8", mode: 0o600 });
+      await expect(prepareMcpLocal({ databaseUrl, fixtureKey: localFixtureKey, envFilePath: winningPath, ...privateFileIo(winningPath) })).rejects.toMatchObject({ code: "MCP_LOCAL_FIXTURE_MISMATCH" });
+    } finally {
+      try {
+        await cleanupMcpLocal({ databaseUrl, fixtureKey: localFixtureKey, envFilePath: firstPath, client });
+      } finally {
+        await client.close();
+        await unlink(firstPath).catch(() => undefined);
+        await unlink(secondPath).catch(() => undefined);
+      }
+    }
+  });
+});
+
+function privateFileIo(path: string): {
+  readonly readPrivateFile: (path: string) => Promise<string | null>;
+  readonly writePrivateFile: (path: string, content: string) => Promise<void>;
+} {
+  return {
+    readPrivateFile: async (candidate) => readFile(candidate, "utf8").catch(() => null),
+    writePrivateFile: async (candidate, content) => {
+      await writeFile(candidate, content, { encoding: "utf8", mode: 0o600 });
+      await chmod(candidate, 0o600);
+    },
+  };
+}

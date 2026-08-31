@@ -43,9 +43,43 @@ commands read those values from that `0600` file; do not export host-side port
 variables or pass a second port configuration. Compose interpolation and the
 reported resource then stay identical.
 
-The Docker integration test is opt-in only and requires a separate local,
-disposable `TEST_DATABASE_URL` whose credentials and database name match this
-private environment. It is never printed or included in status output.
+## Seed the scoped OAuth fixtures
+
+After migrations and readiness, provide the local disposable database explicitly
+through `MCP_LOCAL_DATABASE_URL` (or `MCP_LOCAL_TEST_DATABASE_URL`). Never use a
+production, QA, or ambient database URL, and never print the value. The seed
+command creates two deterministic workspaces: reviewer (`mcp:read`,
+`mcp:write`, `mcp:approve`) and operator (`mcp:read`, `mcp:write`) in workspace
+A, plus viewer (`mcp:read`) in workspace B. Tokens are written only to the
+private environment file with mode `0600`.
+
+```sh
+export MCP_LOCAL_DATABASE_URL='postgres://local-only-user:local-only-password@127.0.0.1:5432/noosphere_local'
+export MCP_LOCAL_FIXTURE_KEY='local-demo'
+export MCP_LOCAL_ENV_FILE="$PWD/.mcp-local/fixture.env"
+umask 077
+npx --yes bun@1.3.4 run mcp:local:seed
+```
+
+Running seed again with the same key and file performs a read/verify/reuse:
+identifiers and token hashes must match, and no rows or credentials are
+recreated. A partial file or mismatch fails closed. Resolve credentials in the
+private process that runs the MCP client; they are not part of status or report
+output. The integration test is opt-in only:
+
+```sh
+MCP_LOCAL_FIXTURES_INTEGRATION=1 TEST_DATABASE_URL="$MCP_LOCAL_DATABASE_URL" \
+  npx --yes bun@1.3.4 test tests/integration/mcp-local-fixtures.test.ts
+```
+
+`TEST_DATABASE_URL` above must be a disposable database explicitly dedicated
+to this run; it must never be inherited accidentally. The test does not reset
+or drop a database.
+
+The cleanup wrapper receives an explicit, local database client and deletes only
+the named fixture key; it does not own project stop or volume lifecycle. Callers
+must close that client in a `finally` block before invoking the local stop
+command.
 
 ## Start and inspect
 

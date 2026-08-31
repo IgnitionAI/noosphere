@@ -16,6 +16,31 @@ export interface McpSmokeSeedTokens {
   readonly revoked: string;
 }
 
+export interface McpSmokeFixtureIds {
+  readonly proposal: { readonly foreign: string; readonly viewer: string };
+  readonly aggregate: { readonly foreign: string; readonly viewer: string };
+  readonly revoked: { readonly accessTokenId: string; readonly familyId: string };
+}
+
+/** Resolve every fixture identifier without touching the database. */
+export function resolveMcpSmokeFixtureIds(fixtureKey: string): McpSmokeFixtureIds {
+  if (!FIXTURE_KEY.test(fixtureKey)) throw new Error("MCP smoke fixture key is invalid");
+  return {
+    proposal: {
+      foreign: stableUuid(`${fixtureKey}:proposal:foreign`),
+      viewer: stableUuid(`${fixtureKey}:proposal:viewer`),
+    },
+    aggregate: {
+      foreign: stableUuid(`${fixtureKey}:aggregate:foreign`),
+      viewer: stableUuid(`${fixtureKey}:aggregate:viewer`),
+    },
+    revoked: {
+      accessTokenId: stableUuid(`${fixtureKey}:access:revoked`),
+      familyId: stableUuid(`${fixtureKey}:family:revoked`),
+    },
+  };
+}
+
 export interface McpSmokeSeedPlan {
   readonly fixtureKey: string;
   readonly workspaceIds: readonly [string, string];
@@ -35,6 +60,20 @@ export interface McpSmokeSeedPlanInput {
   readonly host: string;
   readonly httpsPort: number;
   readonly tokens?: McpSmokeSeedTokens;
+}
+
+export interface McpSmokePrepareOptions {
+  readonly mode: "create" | "reuse";
+}
+
+export class McpSmokeFixtureError extends Error {
+  readonly code: "MCP_SMOKE_FIXTURE_EXISTS" | "MCP_SMOKE_FIXTURE_PARTIAL" | "MCP_SMOKE_FIXTURE_MISMATCH";
+
+  constructor(code: McpSmokeFixtureError["code"]) {
+    super(code);
+    this.name = "McpSmokeFixtureError";
+    this.code = code;
+  }
 }
 
 /** Build deterministic IDs so rerunning prepare with one fixture key is safe. */
@@ -61,8 +100,8 @@ export function createMcpSmokeSeedPlan(input: McpSmokeSeedPlanInput): McpSmokeSe
     workspaceIds,
     workspaceSlugs,
     identities,
-    foreignProposalId: stableUuid(`${input.fixtureKey}:proposal:foreign`),
-    viewerProposalId: stableUuid(`${input.fixtureKey}:proposal:viewer`),
+    foreignProposalId: resolveMcpSmokeFixtureIds(input.fixtureKey).proposal.foreign,
+    viewerProposalId: resolveMcpSmokeFixtureIds(input.fixtureKey).proposal.viewer,
     revokedToken: tokens.revoked,
   };
 }
@@ -98,38 +137,36 @@ export async function prepareMcpProductionSmoke(
   databaseUrl: string,
   outputPath: string,
   input: McpSmokeSeedPlanInput,
+  options: McpSmokePrepareOptions = { mode: "create" },
 ): Promise<McpSmokeSeedPlan> {
   const plan = createMcpSmokeSeedPlan(input);
+  const mode = options.mode;
+  if (mode !== "create" && mode !== "reuse") throw new Error("MCP smoke fixture mode is invalid");
   const sql = postgres(databaseUrl, { max: 1, connect_timeout: 10, idle_timeout: 20 });
   const now = new Date();
   try {
     await prepareMcpSmokeEnvironmentDirectory(outputPath);
     await sql.begin(async (tx) => {
-      await removeFixtureRows(tx, plan.workspaceSlugs);
-      for (const [index, workspaceId] of plan.workspaceIds.entries()) {
-        await tx`insert into workspaces (id, slug, name, status) values (${workspaceId}, ${plan.workspaceSlugs[index]!}, ${`MCP smoke ${input.fixtureKey} ${index === 0 ? "A" : "B"}`}, 'active')`;
+      await tx`select pg_advisory_xact_lock(hashtext(${plan.fixtureKey}))`;
+      const fixtureState = await readFixtureState(tx, plan, input.tokens);
+      if (mode === "create" && fixtureState !== "absent") {
+        throw new McpSmokeFixtureError(fixtureState === "mismatch" ? "MCP_SMOKE_FIXTURE_MISMATCH" : "MCP_SMOKE_FIXTURE_EXISTS");
       }
-      for (const identity of plan.identities) {
-        const email = `${identity.name}-${plan.fixtureKey}@mcp-smoke.invalid`;
-        const allowedScopes = identity.scopes;
-        const accessAudience = `https://${input.host}:${input.httpsPort}/mcp`;
-        await tx`insert into auth_users (id, name, email, email_verified) values (${stableUuid(`${plan.fixtureKey}:user:${identity.name}`)}, ${`MCP smoke ${identity.name}`}, ${email}, true)`;
-        await tx`insert into workspace_members (workspace_id, user_id, role, status) values (${identity.workspaceId}, ${stableUuid(`${plan.fixtureKey}:user:${identity.name}`)}, ${identity.role}, 'active')`;
-        await tx`insert into mcp_oauth_clients (id, client_id, client_name, redirect_uris, user_id, workspace_id, workspace_slug, allowed_scopes) values (${stableUuid(`${plan.fixtureKey}:client:${identity.name}`)}, ${identity.clientId}, ${`MCP smoke ${identity.name}`}, ${tx.json(EMPTY_REDIRECT_URIS as never)}, ${stableUuid(`${plan.fixtureKey}:user:${identity.name}`)}, ${identity.workspaceId}, ${plan.workspaceSlugs[identity.workspaceId === plan.workspaceIds[0] ? 0 : 1]}, ${tx.json(allowedScopes as never)})`;
-        await tx`insert into mcp_oauth_access_tokens (id, token_hash, family_id, client_id, user_id, workspace_id, scopes, audience, expires_at, revoked_at) values (${stableUuid(`${plan.fixtureKey}:access:${identity.name}`)}, ${hashToken(identity.token)}, ${stableUuid(`${plan.fixtureKey}:family:${identity.name}`)}, ${identity.clientId}, ${stableUuid(`${plan.fixtureKey}:user:${identity.name}`)}, ${identity.workspaceId}, ${tx.json(allowedScopes as never)}, ${accessAudience}, ${new Date(now.getTime() + 3_600_000)}, null)`;
+      if (mode === "reuse" && fixtureState === "complete") return;
+      if (mode === "reuse" && fixtureState !== "absent") {
+        throw new McpSmokeFixtureError(fixtureState === "mismatch" ? "MCP_SMOKE_FIXTURE_MISMATCH" : "MCP_SMOKE_FIXTURE_PARTIAL");
       }
-      const revoked = plan.identities[2]!;
-      const revokedAudience = `https://${input.host}:${input.httpsPort}/mcp`;
-      await tx`insert into mcp_oauth_access_tokens (id, token_hash, family_id, client_id, user_id, workspace_id, scopes, audience, expires_at, revoked_at) values (${stableUuid(`${plan.fixtureKey}:access:revoked`)}, ${hashToken(plan.revokedToken)}, ${stableUuid(`${plan.fixtureKey}:family:revoked`)}, ${revoked.clientId}, ${stableUuid(`${plan.fixtureKey}:user:viewer`)}, ${revoked.workspaceId}, ${tx.json(revoked.scopes as never)}, ${revokedAudience}, ${new Date(now.getTime() + 3_600_000)}, ${now})`;
-      await insertProposal(tx, plan, plan.workspaceIds[0], plan.identities[0]!.clientId, plan.foreignProposalId, stableUuid(`${plan.fixtureKey}:aggregate:foreign`), "Foreign proposal");
-      await insertProposal(tx, plan, plan.workspaceIds[1], plan.identities[2]!.clientId, plan.viewerProposalId, stableUuid(`${plan.fixtureKey}:aggregate:viewer`), "Viewer proposal");
+      await insertFixtureRows(tx, plan, input, now);
     });
-    await writeFile(outputPath, formatMcpSmokeEnvironmentFile(plan, input.host, input.httpsPort), { encoding: "utf8", mode: 0o600 });
-    await chmod(outputPath, 0o600);
-    const mode = (await stat(outputPath)).mode & 0o777;
-    if (mode !== 0o600) throw new Error("MCP smoke environment file must be mode 0600");
+    if (!(await fileExists(outputPath))) {
+      await writeFile(outputPath, formatMcpSmokeEnvironmentFile(plan, input.host, input.httpsPort), { encoding: "utf8", mode: 0o600 });
+      await chmod(outputPath, 0o600);
+    }
+    const outputMode = (await stat(outputPath)).mode & 0o777;
+    if (outputMode !== 0o600) throw new Error("MCP smoke environment file must be mode 0600");
     return plan;
-  } catch {
+  } catch (error) {
+    if (error instanceof McpSmokeFixtureError) throw error;
     throw new Error("MCP smoke fixture preparation failed");
   } finally {
     await sql.end({ timeout: 5 });
@@ -172,6 +209,70 @@ export async function revokeMcpProductionSmoke(databaseUrl: string, fixtureKey: 
   } finally {
     await sql.end({ timeout: 5 });
   }
+}
+
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+type FixtureState = "absent" | "complete" | "partial" | "mismatch";
+
+async function readFixtureState(tx: any, plan: McpSmokeSeedPlan, tokens?: McpSmokeSeedTokens): Promise<FixtureState> {
+  const workspaces = await tx`select id, slug from workspaces where slug in (${plan.workspaceSlugs[0]}, ${plan.workspaceSlugs[1]}) order by slug` as Array<{ readonly id: string; readonly slug: string }>;
+  if (workspaces.length === 0) return "absent";
+  if (workspaces.length !== 2) return "partial";
+  for (const [index, workspace] of workspaces.entries()) {
+    if (workspace.id !== plan.workspaceIds[index] || workspace.slug !== plan.workspaceSlugs[index]) return "mismatch";
+  }
+
+  for (const identity of plan.identities) {
+    const userId = stableUuid(`${plan.fixtureKey}:user:${identity.name}`);
+    const clientId = stableUuid(`${plan.fixtureKey}:client:${identity.name}`);
+    const accessId = stableUuid(`${plan.fixtureKey}:access:${identity.name}`);
+    const users = await tx`select id from auth_users where id = ${userId}` as Array<{ readonly id: string }>;
+    const members = await tx`select user_id from workspace_members where workspace_id = ${identity.workspaceId} and user_id = ${userId} and role = ${identity.role} and status = 'active'` as Array<{ readonly user_id: string }>;
+    const clients = await tx`select id from mcp_oauth_clients where id = ${clientId} and client_id = ${identity.clientId} and workspace_id = ${identity.workspaceId}` as Array<{ readonly id: string }>;
+    const access = await tx`select token_hash from mcp_oauth_access_tokens where id = ${accessId} and client_id = ${identity.clientId} and user_id = ${userId} and workspace_id = ${identity.workspaceId} and revoked_at is null` as Array<{ readonly token_hash: string }>;
+    if (users.length !== 1 || members.length !== 1 || clients.length !== 1 || access.length !== 1) return "partial";
+    if (tokens && access[0]!.token_hash !== hashToken(tokens[identity.name])) return "mismatch";
+  }
+
+  const revoked = plan.identities[2]!;
+  const revokedRows = await tx`select token_hash, family_id, revoked_at from mcp_oauth_access_tokens where id = ${resolveMcpSmokeFixtureIds(plan.fixtureKey).revoked.accessTokenId} and client_id = ${revoked.clientId} and workspace_id = ${revoked.workspaceId}` as Array<{ readonly token_hash: string; readonly family_id: string; readonly revoked_at: Date | null }>;
+  if (revokedRows.length !== 1 || revokedRows[0]!.family_id !== resolveMcpSmokeFixtureIds(plan.fixtureKey).revoked.familyId || revokedRows[0]!.revoked_at === null) return "partial";
+  if (tokens && revokedRows[0]!.token_hash !== hashToken(tokens.revoked)) return "mismatch";
+
+  const foreignProposal = await tx`select id, approval_item_id from mcp_effect_proposals where id = ${plan.foreignProposalId} and workspace_id = ${plan.workspaceIds[0]}` as Array<{ readonly id: string; readonly approval_item_id: string | null }>;
+  const viewerProposal = await tx`select id, approval_item_id from mcp_effect_proposals where id = ${plan.viewerProposalId} and workspace_id = ${plan.workspaceIds[1]}` as Array<{ readonly id: string; readonly approval_item_id: string | null }>;
+  if (foreignProposal.length !== 1 || viewerProposal.length !== 1 || !foreignProposal[0]!.approval_item_id || !viewerProposal[0]!.approval_item_id) return "partial";
+  const approvalRows = await tx`select id from approval_items where id in (${foreignProposal[0]!.approval_item_id}, ${viewerProposal[0]!.approval_item_id}) and proposal_id in (${plan.foreignProposalId}, ${plan.viewerProposalId})` as Array<{ readonly id: string }>;
+  if (approvalRows.length !== 2) return "partial";
+  return "complete";
+}
+
+async function insertFixtureRows(tx: any, plan: McpSmokeSeedPlan, input: McpSmokeSeedPlanInput, now: Date): Promise<void> {
+  for (const [index, workspaceId] of plan.workspaceIds.entries()) {
+    await tx`insert into workspaces (id, slug, name, status) values (${workspaceId}, ${plan.workspaceSlugs[index]!}, ${`MCP smoke ${input.fixtureKey} ${index === 0 ? "A" : "B"}`}, 'active')`;
+  }
+  for (const identity of plan.identities) {
+    const email = `${identity.name}-${plan.fixtureKey}@mcp-smoke.invalid`;
+    const allowedScopes = identity.scopes;
+    const accessAudience = `https://${input.host}:${input.httpsPort}/mcp`;
+    await tx`insert into auth_users (id, name, email, email_verified) values (${stableUuid(`${plan.fixtureKey}:user:${identity.name}`)}, ${`MCP smoke ${identity.name}`}, ${email}, true)`;
+    await tx`insert into workspace_members (workspace_id, user_id, role, status) values (${identity.workspaceId}, ${stableUuid(`${plan.fixtureKey}:user:${identity.name}`)}, ${identity.role}, 'active')`;
+    await tx`insert into mcp_oauth_clients (id, client_id, client_name, redirect_uris, user_id, workspace_id, workspace_slug, allowed_scopes) values (${stableUuid(`${plan.fixtureKey}:client:${identity.name}`)}, ${identity.clientId}, ${`MCP smoke ${identity.name}`}, ${tx.json(EMPTY_REDIRECT_URIS as never)}, ${stableUuid(`${plan.fixtureKey}:user:${identity.name}`)}, ${identity.workspaceId}, ${plan.workspaceSlugs[identity.workspaceId === plan.workspaceIds[0] ? 0 : 1]}, ${tx.json(allowedScopes as never)})`;
+    await tx`insert into mcp_oauth_access_tokens (id, token_hash, family_id, client_id, user_id, workspace_id, scopes, audience, expires_at, revoked_at) values (${stableUuid(`${plan.fixtureKey}:access:${identity.name}`)}, ${hashToken(identity.token)}, ${stableUuid(`${plan.fixtureKey}:family:${identity.name}`)}, ${identity.clientId}, ${stableUuid(`${plan.fixtureKey}:user:${identity.name}`)}, ${identity.workspaceId}, ${tx.json(allowedScopes as never)}, ${accessAudience}, ${new Date(now.getTime() + 3_600_000)}, null)`;
+  }
+  const revoked = plan.identities[2]!;
+  const revokedAudience = `https://${input.host}:${input.httpsPort}/mcp`;
+  await tx`insert into mcp_oauth_access_tokens (id, token_hash, family_id, client_id, user_id, workspace_id, scopes, audience, expires_at, revoked_at) values (${resolveMcpSmokeFixtureIds(plan.fixtureKey).revoked.accessTokenId}, ${hashToken(plan.revokedToken)}, ${resolveMcpSmokeFixtureIds(plan.fixtureKey).revoked.familyId}, ${revoked.clientId}, ${stableUuid(`${plan.fixtureKey}:user:viewer`)}, ${revoked.workspaceId}, ${tx.json(revoked.scopes as never)}, ${revokedAudience}, ${new Date(now.getTime() + 3_600_000)}, ${now})`;
+  await insertProposal(tx, plan, plan.workspaceIds[0], plan.identities[0]!.clientId, plan.foreignProposalId, resolveMcpSmokeFixtureIds(plan.fixtureKey).aggregate.foreign, "Foreign proposal");
+  await insertProposal(tx, plan, plan.workspaceIds[1], plan.identities[2]!.clientId, plan.viewerProposalId, resolveMcpSmokeFixtureIds(plan.fixtureKey).aggregate.viewer, "Viewer proposal");
 }
 
 async function insertProposal(tx: any, plan: McpSmokeSeedPlan, workspaceId: string, clientId: string, proposalId: string, aggregateId: string, body: string): Promise<void> {
@@ -223,6 +324,8 @@ function stableUuid(seed: string): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+export function stableMcpSmokeUuid(seed: string): string { return stableUuid(seed); }
+
 function randomToken(): string { return randomBytes(32).toString("base64url"); }
 function hashToken(value: string): string { return createHash("sha256").update(value).digest("base64url"); }
 export function mcpSmokeProposalInputHash(value: string): string { return createHash("sha256").update(value).digest("hex"); }
@@ -230,6 +333,8 @@ function shellQuote(value: string): string { return `'${value.replaceAll("'", "'
 
 if (import.meta.main) {
   const command = process.argv[2] ?? "prepare";
+  const requestedMode = process.argv[3] ?? process.env.MCP_SMOKE_MODE ?? "create";
+  if (requestedMode !== "create" && requestedMode !== "reuse") throw new Error("MCP smoke fixture mode is invalid");
   const databaseUrl = process.env.SMOKE_DATABASE_URL ?? process.env.TEST_DATABASE_URL;
   if (!databaseUrl) throw new Error("SMOKE_DATABASE_URL or TEST_DATABASE_URL is required");
   const fixtureKey = process.env.MCP_SMOKE_FIXTURE_KEY ?? `a4-${randomBytes(6).toString("hex")}`;
@@ -237,13 +342,13 @@ if (import.meta.main) {
   const httpsPort = Number(process.env.MCP_SMOKE_HTTPS_PORT ?? "18443");
   const outputPath = process.env.MCP_SMOKE_ENV_FILE ?? join(MCP_SMOKE_PRIVATE_ENV_DIRECTORY, `mcp-smoke-${fixtureKey}.env`);
   if (command === "prepare") {
-    await prepareMcpProductionSmoke(databaseUrl, outputPath, { fixtureKey, host, httpsPort });
+    await prepareMcpProductionSmoke(databaseUrl, outputPath, { fixtureKey, host, httpsPort }, { mode: requestedMode });
     console.log(outputPath);
   } else if (command === "revoke") {
     await revokeMcpProductionSmoke(databaseUrl, fixtureKey);
   } else if (command === "cleanup") {
     await cleanupMcpProductionSmoke(databaseUrl, fixtureKey, outputPath);
   } else {
-    throw new Error("Usage: prepare-mcp-production-smoke.ts [prepare|revoke|cleanup]");
+    throw new Error("Usage: prepare-mcp-production-smoke.ts [prepare [create|reuse]|revoke|cleanup]");
   }
 }
