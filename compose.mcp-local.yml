@@ -1,0 +1,56 @@
+# Local-only MCP development stack. Production deployment never uses this file.
+# The overlay keeps all infrastructure private and publishes only loopback Caddy.
+name: noosphere-mcp-local
+
+services:
+  database:
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-noosphere_mcp_local}
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    env_file: !override
+      - ${APP_ENV_FILE:-.env.mcp-local}
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    env_file: !override
+      - ${APP_ENV_FILE:-.env.mcp-local}
+    environment:
+      BETTER_AUTH_URL: https://mcp.localhost:${MCP_LOCAL_HTTPS_PORT:-18443}
+      BETTER_AUTH_TRUSTED_ORIGINS: https://mcp.localhost:${MCP_LOCAL_HTTPS_PORT:-18443}
+      MCP_ALLOWED_HOSTS: mcp.localhost:${MCP_LOCAL_HTTPS_PORT:-18443}
+      MCP_ALLOWED_ORIGINS: https://mcp.localhost:${MCP_LOCAL_HTTPS_PORT:-18443}
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    env_file: !override
+      - ${APP_ENV_FILE:-.env.mcp-local}
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    env_file: !override
+      - ${APP_ENV_FILE:-.env.mcp-local}
+    environment:
+      WORKER_ID: mcp-local-worker
+      JOB_BATCH_SIZE: "2"
+      JOB_POLL_INTERVAL_MS: "500"
+
+  proxy:
+    environment:
+      PUBLIC_HOST: mcp.localhost
+    ports: !override
+      - "127.0.0.1:${MCP_LOCAL_HTTP_PORT:-18080}:80"
+      - "127.0.0.1:${MCP_LOCAL_HTTPS_PORT:-18443}:443"
+    volumes: !override
+      - ./deploy/Caddyfile.mcp-smoke:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
