@@ -196,27 +196,34 @@ async def test_real_browser_never_connects_to_private_redirect_or_subresource():
                 proxy={"server": f"http://127.0.0.1:{proxy_port}"},
             )
             try:
-                redirect_page = await browser.new_page()
-                await install_safe_request_interceptor(redirect_page)
+                # Keep both probes in one context: browser.new_page() creates
+                # an independent context for each page, which needlessly
+                # doubles Chromium's renderer/thread footprint in CI.
+                context = await browser.new_context()
                 try:
-                    await redirect_page.goto(
-                        "http://1.1.1.1/redirect",
+                    redirect_page = await context.new_page()
+                    await install_safe_request_interceptor(redirect_page)
+                    try:
+                        await redirect_page.goto(
+                            "http://1.1.1.1/redirect",
+                            wait_until="networkidle",
+                        )
+                    except Exception:
+                        pass
+                    await asyncio.sleep(0.05)
+                    assert connections == 0
+
+                    subresource_page = await context.new_page()
+                    await install_safe_request_interceptor(subresource_page)
+                    await subresource_page.goto(
+                        "http://1.1.1.1/page",
                         wait_until="networkidle",
                     )
-                except Exception:
-                    pass
-                await asyncio.sleep(0.05)
-                assert connections == 0
-
-                subresource_page = await browser.new_page()
-                await install_safe_request_interceptor(subresource_page)
-                await subresource_page.goto(
-                    "http://1.1.1.1/page",
-                    wait_until="networkidle",
-                )
-                await asyncio.sleep(0.05)
-                assert connections == 0
-                assert all("127.0.0.1" not in request for request in proxy_requests), proxy_requests
+                    await asyncio.sleep(0.05)
+                    assert connections == 0
+                    assert all("127.0.0.1" not in request for request in proxy_requests), proxy_requests
+                finally:
+                    await context.close()
             finally:
                 await browser.close()
     finally:
