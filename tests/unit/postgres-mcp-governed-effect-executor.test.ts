@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { ExternalEffectExecutorInput } from "@outbound/application/mcp/external-effect-attempt";
+import { ExternalEffectAmbiguousError, type ExternalEffectExecutorInput } from "@outbound/application/mcp/external-effect-attempt";
 import { OutboundDeliveryError } from "@outbound/application/campaigns/outbound-channel-gateway";
 import { CalendarIntegrationError } from "@outbound/infrastructure/calendar/postgres-calendar-integration";
 import {
@@ -75,6 +75,24 @@ describe("Postgres governed-effect provider executor", () => {
 
     await expect(executor.execute({ identity: identity("content_publication"), marker: marker("content_publication") })).resolves.toEqual({
       outcome: "unknown", code: "EFFECT_EXECUTOR_AMBIGUOUS",
+    });
+  });
+
+  test("carries a bounded provider reference as internal reconciliation criteria", async () => {
+    const source: McpGovernedEffectExecutionSource = {
+      kind: "content_publication", accountId: "account-1", text: "Post text", attachments: [],
+    };
+    const executor = new PostgresMcpGovernedEffectExecutor({} as never, {
+      publisher: {
+        observeCapabilities: async () => ({ network: "linkedin", accountId: "account-1", accountHealthy: true, textPublishing: "available", observedAt: new Date() }),
+        publishText: async () => {
+          throw new ExternalEffectAmbiguousError("SOCIAL_PROVIDER_UNAVAILABLE", "post-1");
+        },
+      },
+    }, sourceReader(source));
+
+    await expect(executor.execute({ identity: identity("content_publication"), marker: marker("content_publication") })).resolves.toEqual({
+      outcome: "unknown", code: "SOCIAL_PROVIDER_UNAVAILABLE", reconciliationCriteria: { providerPostId: "post-1" },
     });
   });
 

@@ -142,6 +142,7 @@ import { PostgresExternalEffectFactsReader } from "@outbound/infrastructure/mcp/
 import { PostgresMcpGovernedEffectRepository } from "@outbound/infrastructure/mcp/postgres-mcp-governed-effect-repository";
 import { createPostgresMcpGovernedEffectCapabilities } from "@outbound/infrastructure/mcp/postgres-mcp-governed-effect-capabilities";
 import { createMcpObservabilityLogger } from "@outbound/interface/mcp/mcp-observability";
+import { resolveLocalFakeMode } from "@outbound/infrastructure/mcp/local-governed-effect-fakes";
 
 export interface McpDevAuthorization {
   readonly token: string;
@@ -388,6 +389,7 @@ export function createMcpWriteCapabilities(database: Database, clock: Clock): Mc
 
 /** Compose the complete API application once for HTTP or a future MCP adapter. */
 export function createNoosphereApiRuntime(environment: NodeJS.ProcessEnv = process.env): NoosphereRuntime {
+resolveLocalFakeMode(environment);
 const publicAppOrigin = securePublicOrigin(requiredEnvironment("BETTER_AUTH_URL"));
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);

@@ -6,6 +6,7 @@ import type {
   ExternalEffectReadOnlyPort,
   ExternalEffectReadOnlyResult,
 } from "@outbound/application/mcp/external-effect-attempt";
+import { ExternalEffectAmbiguousError } from "@outbound/application/mcp/external-effect-attempt";
 import type { McpGovernedEffectKind } from "@outbound/application/mcp/mcp-governed-effects";
 import type { OutboundChannelGateway } from "@outbound/application/campaigns/outbound-channel-gateway";
 import { OutboundDeliveryError } from "@outbound/application/campaigns/outbound-channel-gateway";
@@ -36,6 +37,7 @@ import {
 const MAX_TEXT_BYTES = 32_000;
 const MAX_ID_BYTES = 500;
 const MAX_RECONCILIATION_RESULTS = 100;
+const SAFE_CODE = /^[A-Z][A-Z0-9_.-]{0,119}$/;
 const CHANNELS = new Set<ProspectingChannel>(["email", "linkedin", "whatsapp"]);
 
 /** Provider implementations that have an explicit, existing contract. */
@@ -248,6 +250,16 @@ function delivered(result: Record<string, unknown>): ExternalEffectExecutorResul
 }
 
 function mapProviderError(error: unknown): ExternalEffectExecutorResult {
+  if (error instanceof ExternalEffectAmbiguousError) {
+    if (!SAFE_CODE.test(error.code) || !boundedText(error.providerReference, MAX_ID_BYTES)) {
+      return { outcome: "unknown", code: "EFFECT_EXECUTOR_AMBIGUOUS" };
+    }
+    return {
+      outcome: "unknown",
+      code: error.code,
+      reconciliationCriteria: { providerPostId: error.providerReference },
+    };
+  }
   if (error instanceof OutboundDeliveryError || error instanceof SocialProviderError) {
     return error.deliveryState === "unknown" ? { outcome: "unknown", code: error.code } : { outcome: "failed", code: error.code };
   }

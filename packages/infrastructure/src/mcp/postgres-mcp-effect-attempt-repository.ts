@@ -5,6 +5,7 @@ import type {
   ExternalEffectAttemptMarker,
   ExternalEffectAttemptPort,
   ExternalEffectAttemptResult,
+  ExternalEffectReconciliationCriteria,
   ExternalEffectOutcomeInput,
   ExternalEffectReadOnlyInput,
   ExternalEffectReadOnlyPort,
@@ -37,6 +38,7 @@ const JOB_TYPE = "mcp.external-effect.execute";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SAFE_CODE = /^[A-Z][A-Z0-9_.-]{0,119}$/;
 const MAX_LIMIT = 100;
+const MAX_ID_BYTES = 500;
 const MAX_RESULT_BYTES = 32_768;
 
 export class McpExternalEffectAttemptRepositoryError extends Error {
@@ -121,6 +123,7 @@ export class PostgresMcpExternalEffectAttemptRepository implements ExternalEffec
     assertIdentity(input);
     const now = this.now();
     const result = normalizeOutcome(input);
+    const reconciliationCriteria = normalizeReconciliationCriteria(input.reconciliationCriteria);
     const resultIdempotencyKey = input.idempotencyKey ?? `mcp-effect:${input.intentionId}:result:v1`;
     if (!resultIdempotencyKey || resultIdempotencyKey.length > 500) throw new McpExternalEffectAttemptRepositoryError("MCP_EFFECT_OUTCOME_IDEMPOTENCY_INVALID");
     if (input.sourceEventId !== undefined) assertUuid(input.sourceEventId, "MCP_EFFECT_OUTCOME_SOURCE_EVENT_INVALID");
@@ -163,7 +166,7 @@ export class PostgresMcpExternalEffectAttemptRepository implements ExternalEffec
       assertStartedLease(rows, input, now);
       let reconciliationId: string | null = null;
       if (result.outcome === "unknown") {
-        reconciliationId = await ensureReconciliation(tx, input, now, redactedResult);
+        reconciliationId = await ensureReconciliation(tx, input, now, reconciliationCriteria);
       }
       const state = result.outcome === "unknown" ? "unknown" : "completed";
       const proposalStatus = result.outcome === "delivered" ? "delivered" : result.outcome === "failed" ? "failed" : "reconciling";
@@ -337,7 +340,7 @@ export class PostgresMcpExternalEffectAttemptRepository implements ExternalEffec
     const limit = normalizeLimit(input.limit);
     if (limit === 0) return 0;
     const reconciliationRepository = new PostgresMcpEffectReconciliationRepository(this.database, () => input.now);
-    const due = await reconciliationRepository.listDue(input);
+    const due = await reconciliationRepository.listDueInternal(input);
     let processed = 0;
     for (const row of due) {
       // Resolve the complete read-only task from tenant-scoped authoritative
@@ -470,7 +473,50 @@ function assertIdentity(input: ExternalEffectAttemptIdentity): void {
 function normalizeReadOnlyInput(input: ExternalEffectReadOnlyInput): ExternalEffectReadOnlyInput {
   for (const value of [input.workspaceId, input.proposalId, input.intentionId, input.aggregateId, input.correlationId, input.reconciliationId]) assertUuid(value, "MCP_EFFECT_RECONCILIATION_INPUT_INVALID");
   if (!KINDS.has(input.kind)) throw new McpExternalEffectAttemptRepositoryError("MCP_EFFECT_RECONCILIATION_INPUT_INVALID");
-  return { ...input, criteriaSnapshot: redactReconciliationJson(input.criteriaSnapshot) };
+  return { ...input, criteriaSnapshot: normalizeReadOnlyCriteria(input.criteriaSnapshot) };
+}
+
+function normalizeReadOnlyCriteria(value: unknown): Record<string, unknown> {
+  if (value === undefined || value === null) {
+    throw new McpExternalEffectAttemptRepositoryError("MCP_EFFECT_RECONCILIATION_CRITERIA_INVALID");
+  }
+  const raw = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+  const hasProviderPostId = raw ? Object.prototype.hasOwnProperty.call(raw, "providerPostId") : false;
+  if (raw && hasProviderPostId && (!boundedText(raw.providerPostId, MAX_ID_BYTES) || raw.providerPostId.trim().length === 0)) {
+    throw new McpExternalEffectAttemptRepositoryError("MCP_EFFECT_RECONCILIATION_CRITERIA_INVALID");
+  }
+  const redacted = redactReconciliationJson(value);
+  if (!raw || !hasProviderPostId) return redacted;
+  return { ...redacted, providerPostId: raw.providerPostId };
+}
+
+function normalizeReconciliationCriteria(value: unknown): ExternalEffectReconciliationCriteria {
+  if (value === undefined) return {};
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new McpExternalEffectAttemptRepositoryError("MCP_EFFECT_RECONCILIATION_CRITERIA_INVALID");
+  }
+  const record = value as Record<string, unknown>;
+  const allowed = new Set(["providerPostId", "proposalId", "kind", "aggregateId"]);
+  const keys = Reflect.ownKeys(record);
+  if (keys.some((key) => typeof key !== "string" || !allowed.has(key))) {
+    throw new McpExternalEffectAttemptRepositoryError("MCP_EFFECT_RECONCILIATION_CRITERIA_INVALID");
+  }
+  const providerPostId = record.providerPostId;
+  if (providerPostId !== undefined && (!boundedText(providerPostId, MAX_ID_BYTES) || providerPostId.trim().length === 0)) {
+    throw new McpExternalEffectAttemptRepositoryError("MCP_EFFECT_RECONCILIATION_CRITERIA_INVALID");
+  }
+  for (const key of ["proposalId", "aggregateId"]) {
+    const id = record[key];
+    if (id !== undefined) assertUuid(id, "MCP_EFFECT_RECONCILIATION_CRITERIA_INVALID");
+  }
+  if (record.kind !== undefined && (typeof record.kind !== "string" || !KINDS.has(record.kind as McpGovernedEffectKind))) {
+    throw new McpExternalEffectAttemptRepositoryError("MCP_EFFECT_RECONCILIATION_CRITERIA_INVALID");
+  }
+  try {
+    return JSON.parse(canonicalJson(record)) as ExternalEffectReconciliationCriteria;
+  } catch {
+    throw new McpExternalEffectAttemptRepositoryError("MCP_EFFECT_RECONCILIATION_CRITERIA_INVALID");
+  }
 }
 
 function normalizeOutcome(input: ExternalEffectOutcomeInput): { outcome: "delivered" | "failed" | "unknown"; code: string } {
@@ -504,7 +550,7 @@ function redactResult(value: unknown): Record<string, unknown> {
   return result;
 }
 
-async function ensureReconciliation(tx: DatabaseExecutor, input: ExternalEffectAttemptIdentity, now: Date, result: Record<string, unknown> = {}): Promise<string> {
+async function ensureReconciliation(tx: DatabaseExecutor, input: ExternalEffectAttemptIdentity, now: Date, criteria: ExternalEffectReconciliationCriteria = {}): Promise<string> {
   const existing = (await tx.select({ id: mcpEffectReconciliations.id }).from(mcpEffectReconciliations).where(and(eq(mcpEffectReconciliations.workspaceId, input.workspaceId), eq(mcpEffectReconciliations.proposalId, input.proposalId))).for("update").limit(1))[0];
   if (existing) return existing.id;
   const [created] = await tx.insert(mcpEffectReconciliations).values({
@@ -513,7 +559,7 @@ async function ensureReconciliation(tx: DatabaseExecutor, input: ExternalEffectA
       proposalId: input.proposalId,
       kind: input.kind,
       aggregateId: input.aggregateId,
-      ...(typeof result.providerPostId === "string" ? { providerPostId: result.providerPostId } : {}),
+      ...(typeof criteria.providerPostId === "string" ? { providerPostId: criteria.providerPostId } : {}),
     },
     attempts: 0, maxAttempts: 5, nextAttemptAt: now, candidateCount: 0, createdAt: now, updatedAt: now,
   }).returning({ id: mcpEffectReconciliations.id });
@@ -555,6 +601,10 @@ function normalizeLimit(value: number | undefined): number {
   if (value === undefined) return 50;
   if (!Number.isInteger(value) || value < 0 || value > MAX_LIMIT) throw new McpExternalEffectAttemptRepositoryError("MCP_EFFECT_RECOVERY_LIMIT_INVALID");
   return value;
+}
+
+function boundedText(value: unknown, maxBytes: number): value is string {
+  return typeof value === "string" && value.length > 0 && new TextEncoder().encode(value).byteLength <= maxBytes;
 }
 
 const KINDS = new Set<McpGovernedEffectKind>(["conversation_reply", "content_publication", "meeting_proposal", "campaign_activation"]);

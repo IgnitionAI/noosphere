@@ -149,7 +149,9 @@ import { PostgresMcpGovernedEffectWorker } from "@outbound/infrastructure/mcp/po
 import { PostgresMcpExternalEffectAttemptRepository } from "@outbound/infrastructure/mcp/postgres-mcp-effect-attempt-repository";
 import { PostgresMcpGovernedEffectExecutor } from "@outbound/infrastructure/mcp/postgres-mcp-governed-effect-executor";
 import { classifySafeError } from "@outbound/application/shared/safe-error";
+import { createLocalGovernedEffectFakes, resolveLocalFakeMode, type LocalFakeOptions } from "@outbound/infrastructure/mcp/local-governed-effect-fakes";
 
+const mcpLocalFakeMode = resolveLocalFakeMode(process.env);
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const database = createDatabase(databaseUrl);
 const unipileChannelConnections = process.env.UNIPILE_DSN && process.env.UNIPILE_API_KEY
@@ -507,12 +509,26 @@ const socialContentReader = unipileDsn && unipileApiKey
       timeoutMs: positiveIntegerEnvironment("UNIPILE_TIMEOUT_MS", 10_000),
     })
   : null;
-const mcpGovernedEffectExecutor = new PostgresMcpGovernedEffectExecutor(database.db, {
+const localMcpFakes = mcpLocalFakeMode
+  ? createLocalGovernedEffectFakes({
+      mode: "local-fake",
+      allowNetwork: false,
+      outcomes: {
+        conversation_reply: { kind: "success", safeCode: "MCP_LOCAL_FAKE_ACCEPTED", providerReference: "fake-message" },
+        content_publication: { kind: "success", safeCode: "MCP_LOCAL_FAKE_ACCEPTED", providerReference: "fake-post" },
+        meeting_proposal: { kind: "success", safeCode: "MCP_LOCAL_FAKE_ACCEPTED", providerReference: "fake-booking" },
+        campaign_activation: { kind: "failure", safeCode: "ADAPTER_UNAVAILABLE" },
+      },
+      counters: { conversationReply: 0, contentPublication: 0, meetingProposal: 0, campaignActivation: 0 },
+    } satisfies LocalFakeOptions)
+  : null;
+const mcpGovernedEffectAdapters = localMcpFakes?.adapters ?? {
   outbound: createOutboundGateway(),
   publisher: socialPublisher,
   ...(socialContentReader ? { socialContentReader } : {}),
   calendar: calendarIntegration,
-});
+};
+const mcpGovernedEffectExecutor = new PostgresMcpGovernedEffectExecutor(database.db, mcpGovernedEffectAdapters);
 // Keep the attempt boundary shared by the queue processor and maintenance.
 // Recovery is deliberately bounded and tenant-filtered by the repository's
 // transaction; it only handles expired started attempts and performs

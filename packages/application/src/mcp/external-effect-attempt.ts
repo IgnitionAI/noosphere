@@ -45,8 +45,33 @@ export interface ExternalEffectOutcomeInput extends ExternalEffectAttemptIdentit
   readonly authoritative?: boolean;
   readonly code?: string;
   readonly result?: unknown;
+  /** Internal, bounded lookup criteria; never emitted on public traces. */
+  readonly reconciliationCriteria?: ExternalEffectReconciliationCriteria;
   readonly sourceEventId?: string;
   readonly idempotencyKey?: string;
+}
+
+/**
+ * Provider-neutral, bounded evidence needed for a read-only reconciliation.
+ * This is intentionally separate from `result`, which is always redacted
+ * before persistence or exposure through a public record.
+ */
+export interface ExternalEffectReconciliationCriteria {
+  readonly providerPostId?: string;
+}
+
+/**
+ * Internal error used when a provider accepted a mutation ambiguously but
+ * returned a safe opaque reference that can be checked read-only later.
+ */
+export class ExternalEffectAmbiguousError extends Error {
+  constructor(
+    readonly code: string,
+    readonly providerReference: string,
+  ) {
+    super(code);
+    this.name = "ExternalEffectAmbiguousError";
+  }
 }
 
 export interface ExternalEffectExecutorResult {
@@ -54,6 +79,8 @@ export interface ExternalEffectExecutorResult {
   readonly authoritative?: boolean;
   readonly code?: string;
   readonly result?: unknown;
+  /** Internal criteria, persisted separately from redacted result evidence. */
+  readonly reconciliationCriteria?: ExternalEffectReconciliationCriteria;
 }
 
 export type ExternalEffectExecutor = (

@@ -47,6 +47,37 @@ describe("provider-neutral governed-effect attempt boundary", () => {
     })).resolves.toEqual({ outcome: "error", code: "ADAPTER_UNAVAILABLE" });
   });
 
+  test("passes only bounded internal provider criteria to the read-only adapter", async () => {
+    let seenCriteria: Record<string, unknown> | undefined;
+    const repository = new PostgresMcpExternalEffectAttemptRepository({} as never, {
+      reconcileReadOnly: async (input) => {
+        seenCriteria = input.criteriaSnapshot;
+        return { outcome: "not_found", candidateCount: 0 };
+      },
+    });
+    await repository.reconcileReadOnly({
+      ...ids,
+      kind: "content_publication",
+      criteriaSnapshot: { providerPostId: "post-1" },
+    });
+    expect(seenCriteria).toEqual({ providerPostId: "post-1" });
+    await expect(repository.reconcileReadOnly({
+      ...ids,
+      kind: "content_publication",
+      criteriaSnapshot: { providerPostId: "  " },
+    })).rejects.toMatchObject({ code: "MCP_EFFECT_RECONCILIATION_CRITERIA_INVALID" });
+    await expect(repository.reconcileReadOnly({
+      ...ids,
+      kind: "content_publication",
+      criteriaSnapshot: { providerPostId: "x".repeat(501) },
+    })).rejects.toMatchObject({ code: "MCP_EFFECT_RECONCILIATION_CRITERIA_INVALID" });
+    await expect(repository.reconcileReadOnly({
+      ...ids,
+      kind: "content_publication",
+      criteriaSnapshot: undefined as never,
+    })).rejects.toMatchObject({ code: "MCP_EFFECT_RECONCILIATION_CRITERIA_INVALID" });
+  });
+
   test("rejects malformed or non-finite read-only criteria before adapter access", async () => {
     let calls = 0;
     const repository = new PostgresMcpExternalEffectAttemptRepository({} as never, {

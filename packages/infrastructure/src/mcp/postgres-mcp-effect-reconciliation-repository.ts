@@ -207,7 +207,31 @@ export class PostgresMcpEffectReconciliationRepository {
       asc(mcpEffectReconciliations.status),
       asc(mcpEffectReconciliations.id),
     ).limit(limit);
-    return rows.map(toRecord);
+    return rows.map((row) => toRecord(row));
+  }
+
+  /**
+   * Internal processing view. Criteria are deliberately kept out of the
+   * public record projection because they may contain an opaque provider
+   * identifier required only by a read-only reconciliation adapter.
+   */
+  async listDueInternal(input: { readonly workspaceId?: string; readonly now: Date; readonly limit?: number }): Promise<readonly McpEffectReconciliationRecord[]> {
+    if (input.workspaceId !== undefined) assertUuid(input.workspaceId, "MCP_RECONCILIATION_WORKSPACE_ID_INVALID");
+    const limit = normalizeLimit(input.limit);
+    if (limit === 0) return [];
+    const due = or(
+      and(eq(mcpEffectReconciliations.status, "pending"), lte(mcpEffectReconciliations.nextAttemptAt, input.now)),
+      and(eq(mcpEffectReconciliations.status, "error"), lte(mcpEffectReconciliations.nextAttemptAt, input.now)),
+      and(eq(mcpEffectReconciliations.status, "searching"), lte(mcpEffectReconciliations.leaseExpiresAt, input.now)),
+    );
+    const rows = await this.database.select().from(mcpEffectReconciliations).where(and(
+      isNull(mcpEffectReconciliations.completedAt), due, ...(input.workspaceId ? [eq(mcpEffectReconciliations.workspaceId, input.workspaceId)] : []),
+    )).orderBy(
+      asc(sql`case when ${mcpEffectReconciliations.status} = 'searching' then ${mcpEffectReconciliations.leaseExpiresAt} else ${mcpEffectReconciliations.nextAttemptAt} end`),
+      asc(mcpEffectReconciliations.status),
+      asc(mcpEffectReconciliations.id),
+    ).limit(limit);
+    return rows.map((row) => toRecord(row, { exposeInternalCriteria: true }));
   }
 
   async list(input: { readonly workspaceId?: string; readonly now: Date; readonly limit?: number }): Promise<readonly McpEffectReconciliationRecord[]> {
@@ -633,7 +657,7 @@ async function lockedReconciliation(tx: DatabaseExecutor, workspaceId: string, r
   return (await (options?.skipLocked ? query.for("update", { skipLocked: true }) : query.for("update")))[0];
 }
 
-function toRecord(row: typeof mcpEffectReconciliations.$inferSelect): McpEffectReconciliationRecord {
+function toRecord(row: typeof mcpEffectReconciliations.$inferSelect, options: { readonly exposeInternalCriteria?: boolean } = {}): McpEffectReconciliationRecord {
   const status = row.status as McpReconciliationStatus;
   const resultSnapshot = row.resultSnapshot === null ? null : redactReconciliationJson(row.resultSnapshot);
   if (status === "matched" && (row.candidateCount !== 1 || !resultSnapshot || Object.keys(resultSnapshot).length === 0)) {
@@ -641,9 +665,20 @@ function toRecord(row: typeof mcpEffectReconciliations.$inferSelect): McpEffectR
   }
   return {
     reconciliationId: row.id, workspaceId: row.workspaceId, proposalId: row.proposalId, status,
-    proposalStatus: mapReconciliationProposalStatus(status), criteriaSnapshot: redactReconciliationJson(row.criteriaSnapshot), attempts: row.attempts, maxAttempts: row.maxAttempts,
+    proposalStatus: mapReconciliationProposalStatus(status), criteriaSnapshot: options.exposeInternalCriteria ? cloneJsonObject(row.criteriaSnapshot) : redactReconciliationJson(row.criteriaSnapshot), attempts: row.attempts, maxAttempts: row.maxAttempts,
     leaseToken: row.leaseToken, leaseExpiresAt: row.leaseExpiresAt, nextAttemptAt: row.nextAttemptAt, completedAt: row.completedAt, candidateCount: row.candidateCount,
     errorCode: row.errorCode, errorMessage: row.errorMessage, resultSnapshot,
     evidenceSnapshot: resultSnapshot, createdAt: row.createdAt, updatedAt: row.updatedAt,
   };
+}
+
+function cloneJsonObject(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new McpEffectReconciliationRepositoryError("MCP_RECONCILIATION_SNAPSHOT_INVALID");
+  }
+  try {
+    return JSON.parse(canonicalJson(value)) as Record<string, unknown>;
+  } catch {
+    throw new McpEffectReconciliationRepositoryError("MCP_RECONCILIATION_SNAPSHOT_INVALID");
+  }
 }
