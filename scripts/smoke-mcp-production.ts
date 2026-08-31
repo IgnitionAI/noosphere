@@ -1,4 +1,8 @@
+import { chmod, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import { buildMcpLocalInspectorCommand, MCP_LOCAL_ROLE_SCOPES, type McpLocalRole } from "./write-mcp-local-client-config";
 
 export interface McpProductionSmokeEnvironment {
   readonly [name: string]: string | undefined;
@@ -39,6 +43,36 @@ export interface McpProductionSmokeReport {
   readonly inspector: "not_configured" | "passed";
 }
 
+export interface McpInspectorProxy {
+  readonly port: number;
+  stop(force?: boolean): void;
+}
+
+export interface McpInspectorChild {
+  readonly exited: Promise<number>;
+  readonly pid?: number;
+  kill(signal?: string | number): void;
+}
+
+export interface McpInspectorSpawnOptions {
+  readonly env: Record<string, string>;
+  readonly cwd: string;
+  readonly stdout: "ignore";
+  readonly stderr: "ignore";
+  readonly detached: true;
+  readonly killSignal: "SIGTERM";
+}
+
+export interface McpInspectorRuntime {
+  serve(fetch: (request: Request) => Promise<Response>): McpInspectorProxy;
+  spawn(args: readonly string[], options: McpInspectorSpawnOptions): McpInspectorChild;
+  createHome(): Promise<string>;
+  removeHome(path: string): Promise<void>;
+  readonly childCleanupTimeoutMs?: number;
+  isProcessGroupAlive?(pid: number): boolean;
+  killProcessGroup?(pid: number, signal: "SIGTERM" | "SIGKILL"): void;
+}
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
 const ROLES = new Set<McpSmokeRole>(["viewer", "operator", "reviewer", "admin", "owner"]);
@@ -47,24 +81,45 @@ const MAX_IDENTITIES = 12;
 const MAX_TOKEN_BYTES = 4_096;
 const MAX_TIMEOUT_MS = 120_000;
 const MAX_RESPONSE_BYTES = 1_048_576;
-const MCP_INSPECTOR_VERSION = "0.16.3";
-
+const DEFAULT_FORWARDER_TIMEOUT_MS = 30_000;
+const INSPECTOR_CHILD_CLEANUP_TIMEOUT_MS = 2_000;
+const INSPECTOR_HOME_PREFIX = "noosphere-mcp-inspector-";
+const MCP_FORWARDER_RESPONSE_TOO_LARGE = "MCP_RESPONSE_TOO_LARGE";
+const MCP_FORWARDER_RESPONSE_DEADLINE = "MCP_RESPONSE_DEADLINE_EXCEEDED";
+const MCP_FORWARDER_CLIENT_CLOSED = "MCP_CLIENT_CLOSED";
+export const MCP_FORWARDER_STREAM_FAILED = "MCP_FORWARDER_STREAM_FAILED";
+export const MCP_INSPECTOR_CLEANUP_FAILED = "MCP_INSPECTOR_CLEANUP_FAILED";
+const INSPECTOR_ENV_KEYS = ["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TERM"] as const;
+const FORWARDER_REQUEST_HEADERS = new Set([
+  "accept",
+  "cache-control",
+  "content-type",
+  "last-event-id",
+  "mcp-protocol-version",
+  "mcp-session-id",
+  "x-correlation-id",
+]);
+const FORWARDER_RESPONSE_HEADERS = new Set([
+  "allow",
+  "cache-control",
+  "content-encoding",
+  "content-type",
+  "last-event-id",
+  "mcp-protocol-version",
+  "mcp-session-id",
+  "retry-after",
+  "www-authenticate",
+  "x-correlation-id",
+]);
 /** Build the real Inspector 0.16.3 CLI invocation. The token is injected by
  * the local forwarding server below because this Inspector release has no
  * direct CLI header option (and therefore must not receive a bearer in argv).
  */
 export function buildMcpInspectorCommand(targetUrl: string | URL): string[] {
-  return [
-    "npx",
-    "--yes",
-    `@modelcontextprotocol/inspector@${MCP_INSPECTOR_VERSION}`,
-    "--cli",
-    typeof targetUrl === "string" ? targetUrl : targetUrl.href,
-    "--transport",
-    "http",
-    "--method",
-    "tools/list",
-  ];
+  return buildMcpLocalInspectorCommand({
+    forwarderUrl: typeof targetUrl === "string" ? targetUrl : targetUrl.href,
+    method: "tools/list",
+  });
 }
 
 /**
@@ -334,49 +389,377 @@ async function assertRoleSurface(config: McpProductionSmokeConfig, reviewer: Mcp
   if (deniedResponse.status !== 200 || !deniedSerialized.includes("MCP_GOVERNED_EFFECT_FORBIDDEN")) throw new Error(`MCP operator decision guard failed (${deniedResponse.status})`);
 }
 
-async function runInspector(config: McpProductionSmokeConfig, identity: McpSmokeIdentity): Promise<"passed"> {
+const defaultMcpInspectorRuntime: McpInspectorRuntime = {
+  serve: (fetch) => {
+    const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch });
+    if (server.port === undefined) {
+      server.stop(true);
+      throw new Error("MCP Inspector proxy did not bind a port");
+    }
+    return { port: server.port, stop: (force?: boolean) => server.stop(force) };
+  },
+  spawn: (args, options) => Bun.spawn([...args], options),
+  killProcessGroup: (pid, signal) => {
+    if (Number.isSafeInteger(pid) && pid > 1) process.kill(-pid, signal);
+  },
+  isProcessGroupAlive: (pid) => {
+    if (!Number.isSafeInteger(pid) || pid <= 1) return false;
+    try {
+      process.kill(-pid, 0);
+      return true;
+    } catch (error) {
+      return error instanceof Error && "code" in error && error.code === "EPERM";
+    }
+  },
+  createHome: async () => {
+    const home = await mkdtemp(join(tmpdir(), INSPECTOR_HOME_PREFIX));
+    try {
+      await chmod(home, 0o700);
+      return home;
+    } catch (error) {
+      await rm(home, { recursive: true, force: true }).catch(() => undefined);
+      throw error;
+    }
+  },
+  removeHome: (path) => rm(path, { recursive: true, force: true }),
+};
+
+export async function runInspector(
+  config: McpProductionSmokeConfig,
+  identity: McpSmokeIdentity,
+  runtime: McpInspectorRuntime = defaultMcpInspectorRuntime,
+): Promise<"passed"> {
   // Inspector 0.16.3's CLI transport does not accept custom headers. Keep the
   // target local and inject the OAuth header only while forwarding to Caddy's
   // HTTPS endpoint; no token appears in Inspector argv or child output.
-  const proxy = Bun.serve({
-    hostname: "127.0.0.1",
-    port: 0,
-    async fetch(request) {
-      const requestUrl = new URL(request.url);
-      if (requestUrl.pathname !== "/mcp") return new Response("Not found", { status: 404 });
-      let body: Uint8Array | undefined;
-      try {
-        body = await boundedRequestBody(request);
-      } catch {
-        return new Response("Request too large", { status: 413 });
-      }
-      const headers = new Headers(request.headers);
-      headers.set("authorization", `Bearer ${identity.token}`);
-      headers.set("origin", config.endpoint.origin);
-      headers.delete("host");
-      headers.delete("content-length");
-      const upstream = await fetch(config.endpoint, {
-        method: request.method,
-        headers,
-        body: body === undefined ? null : body as unknown as BodyInit,
-      });
-      return new Response(upstream.body, { status: upstream.status, statusText: upstream.statusText, headers: upstream.headers });
-    },
-  });
-  const target = `http://127.0.0.1:${proxy.port}/mcp`;
-  const child = Bun.spawn(buildMcpInspectorCommand(target), {
-    env: { ...process.env, MCP_AUTO_OPEN_ENABLED: "false" },
-    stdout: "ignore",
-    stderr: "ignore",
-  });
+  let proxy: McpInspectorProxy | undefined;
+  let child: McpInspectorChild | undefined;
+  let detachedChildPid: number | undefined;
+  let home: string | undefined;
+  let primaryError: unknown;
+  let hasPrimaryError = false;
   try {
+    proxy = runtime.serve(async (request) => {
+      return forwardMcpInspectorRequest(request, {
+        endpoint: config.endpoint,
+        token: identity.token,
+        timeoutMs: config.timeoutMs,
+      });
+    });
+    home = await runtime.createHome();
+    const target = `http://127.0.0.1:${proxy.port}/mcp`;
+    child = runtime.spawn(buildMcpInspectorCommand(target), {
+      cwd: home,
+      env: {
+        ...buildMcpInspectorEnvironment(),
+        HOME: home,
+        NPM_CONFIG_USERCONFIG: "/dev/null",
+        NPM_CONFIG_GLOBALCONFIG: "/dev/null",
+      },
+      stdout: "ignore",
+      stderr: "ignore",
+      detached: true,
+      killSignal: "SIGTERM",
+    });
+    detachedChildPid = child.pid;
     const exitCode = await withTimeout(child.exited, config.timeoutMs, "MCP Inspector smoke");
     if (exitCode !== 0) throw new Error(`MCP Inspector smoke failed (${exitCode})`);
-    return "passed";
-  } finally {
-    child.kill();
-    proxy.stop(true);
+  } catch (error) {
+    hasPrimaryError = true;
+    primaryError = error;
   }
+
+  let cleanupFailed = false;
+  if (child !== undefined) {
+    try {
+      const terminated = await terminateMcpInspectorChild(child, runtime, detachedChildPid);
+      cleanupFailed = !terminated;
+    } catch {
+      cleanupFailed = true;
+    }
+  }
+  try {
+    proxy?.stop(true);
+  } catch {
+    cleanupFailed = true;
+  }
+  if (home !== undefined) {
+    try {
+      await runtime.removeHome(home);
+    } catch {
+      cleanupFailed = true;
+    }
+  }
+
+  if (hasPrimaryError) {
+    const detail = primaryError instanceof Error ? primaryError.message : "unknown error";
+    throw new Error(redactMcpInspectorDiagnostic(detail, [identity.token]));
+  }
+  if (cleanupFailed) throw new Error(MCP_INSPECTOR_CLEANUP_FAILED);
+  return "passed";
+}
+
+async function terminateMcpInspectorChild(
+  child: McpInspectorChild,
+  runtime: McpInspectorRuntime,
+  detachedChildPid: number | undefined,
+): Promise<boolean> {
+  const exit = observeMcpInspectorExit(child);
+  const childExited = await exit.hasExited();
+  if (!isValidDetachedChildPid(child, detachedChildPid)) return childExited;
+  const validDetachedChildPid = detachedChildPid;
+  const initialProbe = probeMcpInspectorGroup(child, runtime, validDetachedChildPid);
+  if (initialProbe === "dead") return true;
+  if (initialProbe !== "alive") return false;
+  if (!childExited) {
+    try {
+      child.kill();
+    } catch {
+      // The child may have exited between the smoke check and cleanup.
+    }
+  }
+  const beforeTermProbe = probeMcpInspectorGroup(child, runtime, validDetachedChildPid);
+  if (beforeTermProbe === "dead") return true;
+  if (beforeTermProbe !== "alive") return false;
+  signalMcpInspectorGroup(child, runtime, validDetachedChildPid, "SIGTERM");
+  if (await waitForMcpInspectorGroup(child, runtime, validDetachedChildPid, runtime.childCleanupTimeoutMs)) return true;
+  const beforeKillProbe = probeMcpInspectorGroup(child, runtime, validDetachedChildPid);
+  if (beforeKillProbe === "dead") return true;
+  if (beforeKillProbe !== "alive") return false;
+  signalMcpInspectorGroup(child, runtime, validDetachedChildPid, "SIGKILL");
+  return await waitForMcpInspectorGroup(child, runtime, validDetachedChildPid, runtime.childCleanupTimeoutMs);
+}
+
+function isValidDetachedChildPid(child: McpInspectorChild, detachedChildPid: number | undefined): detachedChildPid is number {
+  return detachedChildPid !== undefined
+    && detachedChildPid === child.pid
+    && Number.isSafeInteger(detachedChildPid)
+    && detachedChildPid > 1;
+}
+
+type McpInspectorGroupProbe = "alive" | "dead" | "invalid" | "unsupported" | "error";
+
+function probeMcpInspectorGroup(
+  child: McpInspectorChild,
+  runtime: McpInspectorRuntime,
+  detachedChildPid: number | undefined,
+): McpInspectorGroupProbe {
+  if (!isValidDetachedChildPid(child, detachedChildPid)) return "invalid";
+  if (runtime.isProcessGroupAlive === undefined) return "unsupported";
+  try {
+    return runtime.isProcessGroupAlive(detachedChildPid) ? "alive" : "dead";
+  } catch {
+    return "error";
+  }
+}
+
+function signalMcpInspectorGroup(
+  child: McpInspectorChild,
+  runtime: McpInspectorRuntime,
+  detachedChildPid: number | undefined,
+  signal: "SIGTERM" | "SIGKILL",
+): void {
+  if (
+    runtime.killProcessGroup === undefined
+    || detachedChildPid === undefined
+    || detachedChildPid !== child.pid
+    || !Number.isSafeInteger(detachedChildPid)
+    || detachedChildPid <= 1
+  ) return;
+  try {
+    // detached:true makes pid the process-group leader; a negative pid scopes
+    // termination to Inspector and descendants, never the parent group.
+    runtime.killProcessGroup(detachedChildPid, signal);
+  } catch {
+    // The group may have exited with the child already.
+  }
+}
+
+function observeMcpInspectorExit(child: McpInspectorChild): {
+  hasExited: () => Promise<boolean>;
+} {
+  let settled = false;
+  const exited = Promise.resolve(child.exited).then(
+    () => { settled = true; },
+    () => { settled = true; },
+  );
+  void exited.catch(() => undefined);
+  return {
+    hasExited: async () => {
+      await Promise.resolve();
+      return settled;
+    },
+  };
+}
+
+async function waitForMcpInspectorGroup(
+  child: McpInspectorChild,
+  runtime: McpInspectorRuntime,
+  detachedChildPid: number,
+  timeoutMs = INSPECTOR_CHILD_CLEANUP_TIMEOUT_MS,
+): Promise<boolean> {
+  const boundedTimeout = Number.isSafeInteger(timeoutMs) && timeoutMs > 0
+    ? Math.min(timeoutMs, MAX_TIMEOUT_MS)
+    : INSPECTOR_CHILD_CLEANUP_TIMEOUT_MS;
+  const deadline = Date.now() + boundedTimeout;
+  while (true) {
+    const probe = probeMcpInspectorGroup(child, runtime, detachedChildPid);
+    if (probe === "dead") return true;
+    if (probe !== "alive") return false;
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return false;
+    await new Promise<void>((resolve) => setTimeout(resolve, Math.min(remaining, 10)));
+  }
+}
+
+export interface McpInspectorForwarderOptions {
+  readonly endpoint: URL;
+  readonly token: string;
+  readonly fetchImpl?: typeof fetch;
+  readonly timeoutMs?: number;
+}
+
+/** Forward Inspector requests while keeping the bearer only in memory. */
+export async function forwardMcpInspectorRequest(
+  request: Request,
+  options: McpInspectorForwarderOptions,
+): Promise<Response> {
+  const requestUrl = new URL(request.url);
+  if (requestUrl.pathname !== "/mcp") return new Response("Not found", { status: 404 });
+  if (options.endpoint.protocol !== "https:" || options.endpoint.pathname !== "/mcp" || options.endpoint.username || options.endpoint.password || options.endpoint.search || options.endpoint.hash) {
+    return new Response("MCP upstream unavailable", { status: 502 });
+  }
+  let body: Uint8Array | undefined;
+  try {
+    body = await boundedRequestBody(request);
+  } catch {
+    if (request.signal.aborted) return new Response("MCP client closed", { status: 499 });
+    return new Response("Request too large", { status: 413 });
+  }
+  if (request.signal.aborted) return new Response("MCP client closed", { status: 499 });
+  const timeoutMs = options.timeoutMs ?? DEFAULT_FORWARDER_TIMEOUT_MS;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_TIMEOUT_MS) {
+    return new Response("MCP upstream unavailable", { status: 502 });
+  }
+  const headers = new Headers();
+  for (const [name, value] of request.headers) {
+    if (FORWARDER_REQUEST_HEADERS.has(name)) headers.set(name, value);
+  }
+  headers.set("authorization", `Bearer ${options.token}`);
+  headers.set("origin", options.endpoint.origin);
+  const abortController = new AbortController();
+  let responseReader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let responseController: ReadableStreamDefaultController<Uint8Array> | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let cleanedUp = false;
+  let deadlineReject: ((reason?: unknown) => void) | undefined;
+  const cleanup = (): void => {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    if (timer !== undefined) clearTimeout(timer);
+    request.signal.removeEventListener("abort", onClientAbort);
+  };
+  const abortAndCancel = (errorCode?: string): void => {
+    abortController.abort();
+    if (errorCode !== undefined) responseController?.error(new Error(errorCode));
+    if (responseReader !== undefined) {
+      void responseReader.cancel().catch(() => undefined).finally(cleanup);
+    } else {
+      cleanup();
+    }
+  };
+  const onClientAbort = (): void => {
+    abortAndCancel(MCP_FORWARDER_CLIENT_CLOSED);
+    deadlineReject?.(new Error("MCP client closed"));
+    if (responseReader === undefined) cleanup();
+  };
+  request.signal.addEventListener("abort", onClientAbort, { once: true });
+  timer = setTimeout(() => {
+    abortAndCancel(MCP_FORWARDER_RESPONSE_DEADLINE);
+    deadlineReject?.(new Error("MCP upstream deadline exceeded"));
+  }, timeoutMs);
+  try {
+    const fetchPromise = (options.fetchImpl ?? fetch)(options.endpoint, {
+      method: request.method,
+      headers,
+      signal: abortController.signal,
+      ...(body === undefined ? {} : { body: body as unknown as BodyInit }),
+    });
+    const upstream = await Promise.race([
+      fetchPromise,
+      new Promise<Response>((_, reject) => { deadlineReject = reject; }),
+    ]);
+    if (!upstream.body) {
+      cleanup();
+      return new Response(null, { status: upstream.status, statusText: upstream.statusText, headers: safeForwarderResponseHeaders(upstream.headers) });
+    }
+    responseReader = upstream.body.getReader();
+    let responseBytes = 0;
+    const boundedBody = new ReadableStream<Uint8Array>({
+      start(streamController) {
+        responseController = streamController;
+      },
+      async pull(streamController) {
+        try {
+          const next = await responseReader!.read();
+          if (next.done) {
+            cleanup();
+            streamController.close();
+            return;
+          }
+          responseBytes += next.value.byteLength;
+          if (responseBytes > MAX_RESPONSE_BYTES) {
+            abortAndCancel(MCP_FORWARDER_RESPONSE_TOO_LARGE);
+            cleanup();
+            return;
+          }
+          streamController.enqueue(next.value);
+        } catch (error) {
+          abortAndCancel();
+          cleanup();
+          streamController.error(new Error(MCP_FORWARDER_STREAM_FAILED));
+        }
+      },
+      async cancel(reason) {
+        abortAndCancel();
+        await responseReader?.cancel(reason).catch(() => undefined);
+        cleanup();
+      },
+    });
+    return new Response(boundedBody, {
+      status: upstream.status,
+      statusText: upstream.statusText,
+      headers: safeForwarderResponseHeaders(upstream.headers),
+    });
+  } catch {
+    cleanup();
+    return new Response("MCP upstream unavailable", { status: 502 });
+  }
+}
+
+/** Redact tokens from diagnostics before they can reach a test or log sink. */
+export function redactMcpInspectorDiagnostic(value: string, secrets: readonly string[]): string {
+  return secrets.reduce((result, secret) => secret.length > 0 ? result.split(secret).join("[REDACTED]") : result, value);
+}
+
+function safeForwarderResponseHeaders(source: Headers): Headers {
+  const headers = new Headers();
+  for (const [name, value] of source) {
+    if (FORWARDER_RESPONSE_HEADERS.has(name)) headers.set(name, value);
+  }
+  return headers;
+}
+
+export function buildMcpInspectorEnvironment(
+  source: McpProductionSmokeEnvironment = process.env,
+): Record<string, string> {
+  const environment: Record<string, string> = {};
+  for (const key of INSPECTOR_ENV_KEYS) {
+    const value = source[key];
+    if (value !== undefined) environment[key] = value;
+  }
+  environment.MCP_AUTO_OPEN_ENABLED = "false";
+  return environment;
 }
 
 function assertSmokeIdentityMatrix(identities: readonly McpSmokeIdentity[]): void {
@@ -394,10 +777,13 @@ function parseIdentities(raw: string): readonly McpSmokeIdentity[] {
   let parsed: unknown;
   try { parsed = JSON.parse(raw) as unknown; } catch { throw new Error("MCP_SMOKE_IDENTITIES_JSON must be valid JSON"); }
   if (!Array.isArray(parsed) || parsed.length < 2 || parsed.length > MAX_IDENTITIES) throw new Error("MCP_SMOKE_IDENTITIES_JSON must contain 2-12 identities");
+  const names = new Set<string>();
   return parsed.map((value, index) => {
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`MCP smoke identity ${index} is invalid`);
     const record = value as Record<string, unknown>;
     const name = boundedString(record.name, NAME, `identity ${index} name`, 64);
+    if (names.has(name)) throw new Error(`identity ${name} is duplicated`);
+    names.add(name);
     const token = boundedToken(record.token, `identity ${name} token`);
     const workspaceId = boundedString(record.workspaceId, UUID, `identity ${name} workspaceId`, 36);
     const role = record.role;
@@ -407,6 +793,11 @@ function parseIdentities(raw: string): readonly McpSmokeIdentity[] {
     }
     const scopes = record.scopes as McpSmokeScope[];
     if (new Set(scopes).size !== scopes.length) throw new Error(`identity ${name} scopes contain duplicates`);
+    const localRole: McpLocalRole = role === "admin" || role === "owner" ? "reviewer" : role as McpLocalRole;
+    const allowedScopes = MCP_LOCAL_ROLE_SCOPES[localRole];
+    if (!scopes.includes("mcp:read") || scopes.some((scope) => !allowedScopes.has(scope))) {
+      throw new Error(`identity ${name} scopes are invalid for role`);
+    }
     return { name, token, workspaceId, role: role as McpSmokeRole, scopes: [...scopes] };
   });
 }
@@ -473,8 +864,13 @@ async function boundedRequestBody(request: Request): Promise<Uint8Array | undefi
   const reader = request.body.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
+  const cancelOnAbort = (): void => {
+    void reader.cancel().catch(() => undefined);
+  };
+  request.signal.addEventListener("abort", cancelOnAbort, { once: true });
   try {
     while (true) {
+      if (request.signal.aborted) throw new Error("request aborted");
       const next = await reader.read();
       if (next.done) break;
       size += next.value.byteLength;
@@ -485,6 +881,7 @@ async function boundedRequestBody(request: Request): Promise<Uint8Array | undefi
       chunks.push(next.value);
     }
   } finally {
+    request.signal.removeEventListener("abort", cancelOnAbort);
     reader.releaseLock();
   }
   const bytes = new Uint8Array(size);

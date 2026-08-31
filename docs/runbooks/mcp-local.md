@@ -109,6 +109,43 @@ the CA only in the private client process that performs the later SDK smoke.
 Status output is bounded and redacted, and never contains subprocess output,
 credentials, or database URLs.
 
+## Client MCP et Inspector
+
+Générez une configuration prête à copier qui ne contient aucun bearer. Les
+identités sont des labels bornés (UUID, rôle et scopes) ; `caPath` et
+`tokenFilePath` restent des références vers des fichiers privés. Le fichier
+de sortie est écrit atomiquement en mode `0600` :
+
+```sh
+export MCP_LOCAL_CLIENT_CONFIG_PATH="$PWD/.mcp-local/client.json"
+export MCP_LOCAL_RESOURCE="https://mcp.localhost:18443/mcp"
+export MCP_LOCAL_CA_CERT="$PWD/.mcp-local/caddy-root.crt"
+export MCP_LOCAL_TOKEN_FILE="$MCP_LOCAL_ENV_FILE"
+export MCP_LOCAL_IDENTITIES_JSON='[{"name":"reviewer","workspaceId":"00000000-0000-4000-8000-000000000001","role":"reviewer","scopes":["mcp:read","mcp:write","mcp:approve"]},{"name":"operator","workspaceId":"00000000-0000-4000-8000-000000000001","role":"operator","scopes":["mcp:read","mcp:write"]},{"name":"viewer","workspaceId":"00000000-0000-4000-8000-000000000002","role":"viewer","scopes":["mcp:read"]}]'
+umask 077
+npx --yes bun@1.3.4 scripts/write-mcp-local-client-config.ts
+test "$(stat -c %a "$MCP_LOCAL_CLIENT_CONFIG_PATH")" = 600
+```
+
+La configuration expose `streamable-http` et le transport legacy `http`, avec
+la même audience HTTPS `/mcp`. Résolvez le bearer depuis le fichier privé dans
+le processus client ; ne l’ajoutez jamais au JSON, à l’URL, à la ligne de
+commande ou aux logs.
+
+Pour l’Inspector, le smoke démarre un forwarder HTTP limité à loopback. Il
+injecte l’Authorization uniquement en mémoire avant l’appel HTTPS vers Caddy,
+et rédige les diagnostics sans bearer. La commande exacte utilisée par Inspector `0.16.3`
+est :
+
+```text
+npx --yes @modelcontextprotocol/inspector@0.16.3 --cli http://127.0.0.1:19090/mcp --transport http --method tools/list
+```
+
+Activez ce probe dans le processus privé qui a déjà chargé le fichier de
+fixture, par exemple avec `MCP_SMOKE_INSPECTOR=true`; ne lancez pas la commande
+ci-dessus avec un token en argument. Le probe n’effectue aucun appel réseau
+Inspector avant le forwarder et reste optionnel.
+
 ## Stop and cleanup
 
 Use the fixture-key cleanup command before stopping the project. It must delete

@@ -44,6 +44,20 @@ describe("MCP production-like smoke harness", () => {
     })).toThrow("workspace");
   });
 
+  test("rejects duplicate identity names and role-incompatible scopes", () => {
+    const duplicateNames = JSON.stringify([
+      { name: "same", token: "token-a-123", workspaceId: workspaceA, role: "reviewer", scopes: ["mcp:read", "mcp:write", "mcp:approve"] },
+      { name: "same", token: "token-b-123", workspaceId: workspaceB, role: "viewer", scopes: ["mcp:read"] },
+    ]);
+    expect(() => parseMcpProductionSmokeConfig({ ...baseEnvironment, MCP_SMOKE_IDENTITIES_JSON: duplicateNames })).toThrow("duplicated");
+
+    const incompatibleScopes = JSON.stringify([
+      { name: "operator-a", token: "token-a-123", workspaceId: workspaceA, role: "operator", scopes: ["mcp:read", "mcp:approve"] },
+      { name: "viewer-b", token: "token-b-123", workspaceId: workspaceB, role: "viewer", scopes: ["mcp:read"] },
+    ]);
+    expect(() => parseMcpProductionSmokeConfig({ ...baseEnvironment, MCP_SMOKE_IDENTITIES_JSON: incompatibleScopes })).toThrow("scopes");
+  });
+
   test("redacts OAuth material and does not serialize bearer values", () => {
     const config = parseMcpProductionSmokeConfig(baseEnvironment);
     const safe = JSON.stringify(redactMcpProductionSmokeConfig(config));
