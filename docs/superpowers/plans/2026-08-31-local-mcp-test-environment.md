@@ -638,12 +638,12 @@ git commit -m "docs(mcp): publish local client configuration"
 - McpLocalSdkClient has initialize(): Promise<void>, listTools(): Promise<{ tools: readonly { name: string }[] }>, listResources(): Promise<{ resources: readonly { uri: string; name?: string }[] }>, readResource(uri: string): Promise<{ contents: readonly { uri: string; text?: string; mimeType?: string }[] }>, ping(): Promise<Readonly<Record<string, unknown>>>, callTool(name: string, args: Readonly<Record<string, string | number | boolean | null>>): Promise<McpLocalToolResult>, and close(): Promise<void>. Each method is bounded by the verifier deadline.
 - McpLocalSdkFactory is (identity: McpLocalSdkIdentity, connection: McpLocalConnection) => Promise<McpLocalSdkClient>.
 - McpLocalFixtureIdName is "foreignProposal" | "viewerProposal" | "foreignAggregate" | "viewerAggregate" | "revokedAccessToken".
-- VerifyMcpLocalOptions has configPath: string, timeoutMs: number, maxCalls: number, fixtureIds: McpSmokeFixtureIds, resolveFixtureId: (name: McpLocalFixtureIdName) => string, readDurableState: (ids: McpSmokeFixtureIds) => Promise<McpLocalDurableState>, and sdkFactory: McpLocalSdkFactory.
-- McpLocalDurableState has intentions: number, jobs: number, outbox: number, attempts: number, and terminalResults: number.
+- VerifyMcpLocalOptions has configPath: string, timeoutMs: number, maxCalls: number, fixtureIds: McpSmokeFixtureIds, resolveFixtureId: (name: McpLocalFixtureIdName) => string, readDurableStateForProposal: (proposalId: string, workspaceId: string) => Promise<McpLocalDurableState>, sdkFactory: McpLocalSdkFactory, and a mandatory edge-probe callback.
+- McpLocalDurableState has intentions: number, jobs: number, outbox: number, attempts: number, terminalResults: number, providerBoundaryAttempts: number, and bounded refs containing the scoped proposal, intention, job, outbox, trace, attempt-trace, result-trace, reconciliation, and terminal-status identifiers. `providerBoundaryAttempts` counts durable attempt markers crossing the provider boundary; it is not a measurement of calls made to an external provider.
 - McpLocalVerificationReport has correlationId: string, protocol: { modern: boolean; legacy: boolean },
   toolChecks: ReadonlyArray<{ name: string; outcome: "pass" | "fail"; code: string }>,
   durableChecks: ReadonlyArray<{ name: string; outcome: "pass" | "fail"; code: string }>,
-  providerCalls: number, fixtureIds: Readonly<Pick<McpSmokeFixtureIds, "proposal" | "aggregate">>, and redacted: true.
+  providerBoundaryAttempts: number, fixtureIds: Readonly<Pick<McpSmokeFixtureIds, "proposal" | "aggregate">>, and redacted: true. `providerBoundaryAttempts` is the bounded durable marker count, never an external-provider call counter.
 - The report contains no bearer, OAuth code, database URL, secret, raw error, or provider payload.
 
 - [ ] **Step 1: Write failing functional and report-safety tests**
@@ -666,7 +666,7 @@ const baseOptions = {
     viewerAggregate: fixtureIds.aggregate.viewer,
     revokedAccessToken: fixtureIds.revoked.accessTokenId,
   }[name]),
-  readDurableState: async () => ({ intentions: 0, jobs: 0, outbox: 0, attempts: 0, terminalResults: 0 }),
+  readDurableStateForProposal: async (_proposalId: string, _workspaceId: string) => ({ intentions: 0, jobs: 0, outbox: 0, attempts: 0, terminalResults: 0, providerBoundaryAttempts: 0, refs: { proposalIds: [], intentionIds: [], jobIds: [], outboxIds: [], traceIds: [], attemptTraceIds: [], resultTraceIds: [], reconciliationIds: [], terminalStatuses: [] } }),
   sdkFactory: async (_identity: McpLocalSdkIdentity, _connection: McpLocalConnection) => ({
     initialize: async () => undefined,
     listTools: async () => ({ tools: [] }),
@@ -686,7 +686,7 @@ test("reports protocol, tenant, approval, replay, and fake-effect checks", async
     maxCalls: 32,
   });
   expect(report.protocol.modern).toBe(true);
-  expect(report.providerCalls).toBe(0);
+  expect(report.providerBoundaryAttempts).toBe(0);
   expect(report.redacted).toBe(true);
 });
 
@@ -745,7 +745,8 @@ npx --yes bun@1.3.4 run check:types
 npx --yes bun@1.3.4 run check:architecture
 ~~~
 Expected: protocol, scope, tenant, redaction, replay, and durable-state tests
-pass; integration uses only the local fake and records providerCalls=0. Run the
+pass; integration uses only the local fake and records providerBoundaryAttempts=0
+(durable marker count, not an external-provider metric). Run the
 full unit suite only after the targeted integration process exits:
 ~~~sh
 npx --yes bun@1.3.4 test tests/unit
