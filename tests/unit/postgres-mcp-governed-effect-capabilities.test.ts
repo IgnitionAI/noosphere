@@ -70,6 +70,35 @@ function harness(readPrepare: (input: { readonly context: McpExecutionContext; r
 }
 
 describe("Postgres governed-effect capabilities", () => {
+  test("preserves the FactsReader receiver when preparing a real conversation source", async () => {
+    const created: unknown[] = [];
+    const repository = {
+      createProposal: async (input: unknown) => { created.push(input); return proposal(); },
+      listStatus: async () => [],
+      getStatus: async () => null,
+      decideAndQueue: async () => proposal(),
+    } as never;
+    const reader = {
+      expectedWorkspaceId: context.workspaceId,
+      async readPrepare(input: { readonly context: McpExecutionContext; readonly kind: string; readonly aggregateId: string }) {
+        if (this.expectedWorkspaceId !== input.context.workspaceId) throw new Error("reader receiver was lost");
+        return facts("conversation_reply", input.aggregateId, { suppressed: false, humanReplyAt: null });
+      },
+    };
+    const capabilities = new PostgresMcpGovernedEffectCapabilities(repository, reader, policy);
+
+    const prepared = await capabilities.prepare(context, {
+      kind: "conversation_reply",
+      requestKey: crypto.randomUUID(),
+      inputHash: "a".repeat(64),
+      conversationId: "conversation-1",
+      body: "Reply",
+    });
+
+    expect(prepared.approvalItemId).toBeString();
+    expect(created).toHaveLength(1);
+  });
+
   test("prepares authoritative conversation/content/meeting snapshots without execution artifacts", async () => {
     const seen: Array<{ readonly workspaceId: string; readonly kind: string; readonly aggregateId: string }> = [];
     const { capabilities, created } = harness(async (input) => {

@@ -40,4 +40,33 @@ describe("MCP deployment routing", () => {
     expect(caddy).toContain("header_up X-Noosphere-Forwarded-Proto {http.request.scheme}");
     expect(caddy).toContain("header_up X-Noosphere-Client-IP {http.request.remote.host}");
   });
+
+  test("fails closed for a foreign Host instead of falling through to web", async () => {
+    const caddy = await readFile(resolve(import.meta.dir, "../../deploy/Caddyfile.mcp-smoke"), "utf8");
+    const allowedHost = caddy.indexOf("@allowed_host host {$PUBLIC_HOST}");
+    const allowedHandle = caddy.indexOf("handle @allowed_host", allowedHost);
+    const rejectionHandle = caddy.indexOf("handle {", allowedHandle);
+    expect(allowedHost).toBeGreaterThanOrEqual(0);
+    expect(allowedHandle).toBeGreaterThan(allowedHost);
+    expect(rejectionHandle).toBeGreaterThan(allowedHandle);
+    const allowedRoutes = caddy.slice(allowedHandle, rejectionHandle);
+    expect(allowedRoutes).toContain("reverse_proxy @mcp api:3001");
+    expect(allowedRoutes).toContain("reverse_proxy web:3000");
+    expect(caddy.slice(rejectionHandle)).toContain("MCP_HOST_NOT_ALLOWED");
+    expect(caddy.slice(rejectionHandle)).toContain("respond");
+    expect(caddy.slice(rejectionHandle)).not.toContain("reverse_proxy web:3000");
+  });
+
+  test("defines a separate HTTPS catch-all with no upstream fallback", async () => {
+    const caddy = await readFile(resolve(import.meta.dir, "../../deploy/Caddyfile.mcp-smoke"), "utf8");
+    const publicSite = caddy.indexOf("{$PUBLIC_HOST} {");
+    const catchAllSite = caddy.indexOf("\n:443 {");
+    expect(publicSite).toBeGreaterThanOrEqual(0);
+    expect(catchAllSite).toBeGreaterThan(publicSite);
+
+    const catchAll = caddy.slice(catchAllSite);
+    expect(catchAll).toContain("tls internal");
+    expect(catchAll).toContain('respond `{"error":{"code":"MCP_HOST_NOT_ALLOWED"}}` 403');
+    expect(catchAll).not.toContain("reverse_proxy");
+  });
 });

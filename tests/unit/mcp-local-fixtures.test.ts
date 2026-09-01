@@ -209,6 +209,36 @@ describe("MCP local OAuth fixtures", () => {
     expect(result.resource).toBe("https://local.example.test:19443/mcp");
   });
 
+  test("derives the non-default local audience from the same private #80 stack environment", async () => {
+    const privateFiles = new Map<string, string>([
+      ["/private/stack.env", [
+        "MCP_LOCAL_HOST='mcp.localhost'",
+        "MCP_LOCAL_HTTPS_PORT='18484'",
+        "MCP_LOCAL_RESOURCE='https://mcp.localhost:18484/mcp'",
+      ].join("\n")],
+    ]);
+    let capturedInput: { readonly host?: string; readonly httpsPort?: number; readonly tokens?: unknown } | undefined;
+    const options = {
+      databaseUrl: "postgres://fixture-user:fixture-password@127.0.0.1:5432/noosphere_local",
+      fixtureKey: "unit-local",
+      envFilePath: "/private/fixture.env",
+      stackEnvFilePath: "/private/stack.env",
+      readPrivateFile: async (path: string) => privateFiles.get(path) ?? null,
+      writePrivateFile: async (path: string, content: string) => { privateFiles.set(path, content); },
+      seed: async (_databaseUrl: string, _outputPath: string, input: { readonly host: string; readonly httpsPort: number; readonly tokens?: unknown }) => {
+        capturedInput = input;
+        return seedPlan;
+      },
+    };
+    const result = await prepareMcpLocal(options);
+    expect(capturedInput?.host).toBe("mcp.localhost");
+    expect(capturedInput?.httpsPort).toBe(18484);
+    expect(result.resource).toBe("https://mcp.localhost:18484/mcp");
+    expect(privateFiles.get("/private/fixture.env")).toContain("MCP_LOCAL_HTTPS_PORT='18484'");
+    expect(privateFiles.get("/private/fixture.env")).toContain("MCP_LOCAL_REVIEWER_TOKEN='reviewer-secret-value'");
+    expect(loadMcpLocalPrivateCredential(result.credentials, result.identities, result.fixtureIds, "reviewer").token).toBe("reviewer-secret-value");
+  });
+
   test("classifies private write failures as cleanup-required without leaking path or token", async () => {
     const resultSeed = { ...seedPlan };
     await expect(prepareMcpLocal({

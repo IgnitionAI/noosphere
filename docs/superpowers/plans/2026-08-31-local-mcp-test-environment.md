@@ -718,9 +718,11 @@ yet exist.
 
 Load the generated config without printing token values. Construct fresh modern
 and legacy official SDK clients, then execute initialize, tools/list,
-resources/list, resources/read, and noosphere_ping. Use the reviewer for one
-safe internal write and one replay, one approve/decision, and one local fake
-effect. Use operator and viewer clients for write/approval guards. Assert a
+resources/list, resources/read, and noosphere_ping. Use the operator for the
+conversation and content safe writes and identical replays. Use the reviewer
+only for approval decisions, and assert that a reviewer prepare attempt is
+rejected with MCP_GOVERNED_EFFECT_FORBIDDEN. Use operator and viewer clients
+for the remaining write/tenant guards and one local fake effect. Assert a
 foreign workspace/proposal lookup is a safe not-found/forbidden response, viewer
 projection is redacted, revoked membership is rejected, malformed JSON-RPC and
 oversized body/response are rejected, correlation IDs are returned, and rate

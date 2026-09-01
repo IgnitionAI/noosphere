@@ -23,25 +23,47 @@
 		Strict-Transport-Security "max-age=31536000"
 	}
 
-	@health path /health/*
-	reverse_proxy @health api:3001 {
-		import api_upstream
+	@allowed_host host {$PUBLIC_HOST}
+	handle @allowed_host {
+		@health path /health/*
+		reverse_proxy @health api:3001 {
+			import api_upstream
+		}
+
+		@oauth_metadata path /.well-known/oauth-*
+		reverse_proxy @oauth_metadata api:3001 {
+			import api_upstream
+		}
+
+		@oauth path /oauth/*
+		reverse_proxy @oauth api:3001 {
+			import api_upstream
+		}
+
+		@mcp path /mcp
+		reverse_proxy @mcp api:3001 {
+			import api_upstream
+		}
+
+		reverse_proxy web:3000
 	}
 
-	@oauth_metadata path /.well-known/oauth-*
-	reverse_proxy @oauth_metadata api:3001 {
-		import api_upstream
+	# The TLS site can be selected by a valid SNI while the HTTP Host is
+	# different. Never let that request fall through to the web application.
+	handle {
+		header Content-Type application/json
+		respond `{"error":{"code":"MCP_HOST_NOT_ALLOWED"}}` 403
 	}
+}
 
-	@oauth path /oauth/*
-	reverse_proxy @oauth api:3001 {
-		import api_upstream
+# A bare HTTPS site address is selected for SNI/Host values which do not
+# select the configured public site. It is deliberately terminal: foreign
+# requests must never reach either application upstream.
+:443 {
+	tls internal
+	header {
+		-Server
+		Content-Type application/json
 	}
-
-	@mcp path /mcp
-	reverse_proxy @mcp api:3001 {
-		import api_upstream
-	}
-
-	reverse_proxy web:3000
+	respond `{"error":{"code":"MCP_HOST_NOT_ALLOWED"}}` 403
 }

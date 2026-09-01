@@ -38,7 +38,7 @@ COPY --from=build /app/dist/media-canary ./dist/media-canary
 COPY --from=build /app/dist/mcp-smoke ./dist/mcp-smoke
 COPY --from=build /app/dist/document-extractor ./dist/document-extractor
 COPY --from=build --chown=bun:bun /app/packages/infrastructure/migrations ./migrations
-COPY --from=build /app/packages/infrastructure/src/embeddings/tei.proto ./packages/infrastructure/src/embeddings/tei.proto
+COPY --from=build --chown=bun:bun /app/packages/infrastructure/src/embeddings/tei.proto ./packages/infrastructure/src/embeddings/tei.proto
 
 RUN mkdir -p /var/lib/noosphere-codex \
   && chown -R bun:bun /var/lib/noosphere-codex

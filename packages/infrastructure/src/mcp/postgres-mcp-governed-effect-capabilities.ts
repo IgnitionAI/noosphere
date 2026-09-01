@@ -79,7 +79,7 @@ export class PostgresMcpGovernedEffectCapabilities implements McpGovernedEffectC
     if (!readPrepare) throw new McpGovernedEffectCapabilitiesError("MCP_EFFECT_ADAPTER_UNAVAILABLE");
     let value: unknown;
     try {
-      value = await readPrepare({
+      value = await readPrepare.call(this.factsReader, {
         context,
         kind: descriptor.kind,
         aggregateId: descriptor.aggregateId,

@@ -108,6 +108,13 @@ describe("MCP production-like smoke harness", () => {
     expect(dockerfile).not.toMatch(/USER\s+root/);
   });
 
+  test("keeps the TEI proto readable by the non-root runtime user", () => {
+    const dockerfile = readFileSync(resolve(repositoryRoot, "Dockerfile.backend"), "utf8");
+    expect(dockerfile).toContain("COPY --from=build --chown=bun:bun /app/packages/infrastructure/src/embeddings/tei.proto ./packages/infrastructure/src/embeddings/tei.proto");
+    expect(dockerfile).toContain("USER bun");
+    expect(dockerfile).not.toMatch(/USER\s+root/);
+  });
+
   test("keeps seeder output private and extracts it without a bind mount", () => {
     const overlay = readFileSync(resolve(repositoryRoot, "compose.mcp-smoke.yml"), "utf8");
     const runbook = readFileSync(resolve(repositoryRoot, "docs/runbooks/mcp-production-smoke.md"), "utf8");

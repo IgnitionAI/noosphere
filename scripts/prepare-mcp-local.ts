@@ -76,6 +76,8 @@ export interface McpLocalPrepareOptions {
   readonly databaseUrl: string;
   readonly fixtureKey: string;
   readonly envFilePath: string;
+  /** Private #80 stack environment owning host, HTTPS port, and audience. */
+  readonly stackEnvFilePath?: string;
   readonly readPrivateFile: (path: string) => Promise<string | null>;
   readonly writePrivateFile: (path: string, content: string) => Promise<void>;
   readonly seed?: (
@@ -120,6 +122,7 @@ export class McpLocalFixtureError extends Error {
     | "MCP_LOCAL_FIXTURE_PARTIAL"
     | "MCP_LOCAL_FIXTURE_MISMATCH"
     | "MCP_LOCAL_DATABASE_INVALID"
+    | "MCP_LOCAL_STACK_ENV_REQUIRED"
     | "MCP_LOCAL_CLEANUP_CLIENT_REQUIRED"
     | "MCP_LOCAL_FIXTURE_CLEANUP_REQUIRED";
 
@@ -168,12 +171,19 @@ export async function prepareMcpLocal(options: PrepareMcpLocalOptions): Promise<
   if (!options.envFilePath.trim()) throw new McpLocalFixtureError("MCP_LOCAL_FIXTURE_INVALID");
   const privateContent = await options.readPrivateFile(options.envFilePath);
   const privateValues = privateContent ? parsePrivateEnvironment(privateContent) : {};
+  const stackEnvFilePath = options.stackEnvFilePath;
+  if (stackEnvFilePath?.trim() === options.envFilePath.trim()) throw new McpLocalFixtureError("MCP_LOCAL_FIXTURE_INVALID");
+  const stackContent = stackEnvFilePath ? await options.readPrivateFile(stackEnvFilePath) : null;
+  if (stackEnvFilePath && stackContent === null) throw new McpLocalFixtureError("MCP_LOCAL_STACK_ENV_REQUIRED");
+  const stackValues = stackContent === null ? {} : parsePrivateEnvironment(stackContent);
   const hasPrivateKeys = Object.keys(privateValues).some((key) => key.startsWith("MCP_LOCAL_"));
   const existingFixtureKey = privateValues.MCP_LOCAL_FIXTURE_KEY;
   if (hasPrivateKeys && !existingFixtureKey) throw new McpLocalFixtureError("MCP_LOCAL_FIXTURE_PARTIAL");
   if (existingFixtureKey && existingFixtureKey !== options.fixtureKey) throw new McpLocalFixtureError("MCP_LOCAL_FIXTURE_MISMATCH");
   const tokens = existingFixtureKey ? readPrivateTokens(privateValues) : undefined;
-  const endpoint = resolveEndpoint(privateValues, Boolean(existingFixtureKey));
+  const endpoint = stackEnvFilePath
+    ? resolveConfiguredEndpoint(stackValues, privateValues, Boolean(existingFixtureKey))
+    : resolveEndpoint(privateValues, Boolean(existingFixtureKey));
   const mode: McpLocalSeedOptions["mode"] = existingFixtureKey ? "reuse" : "create";
   const input: McpSmokeSeedPlanInput = {
     fixtureKey: options.fixtureKey,
@@ -297,6 +307,30 @@ interface LocalMcpEndpoint {
 }
 
 function resolveEndpoint(values: Record<string, string>, existingFixture: boolean): LocalMcpEndpoint {
+  return resolveEndpointStrict(values, existingFixture, true);
+}
+
+function resolveConfiguredEndpoint(
+  stackValues: Record<string, string>,
+  fixtureValues: Record<string, string>,
+  existingFixture: boolean,
+): LocalMcpEndpoint {
+  if (!hasEndpointValues(stackValues)) throw new McpLocalFixtureError("MCP_LOCAL_STACK_ENV_REQUIRED");
+  const endpoint = resolveEndpointStrict(stackValues, false, false);
+  if (hasEndpointValues(fixtureValues)) {
+    const fixtureEndpoint = resolveEndpointStrict(fixtureValues, existingFixture, false);
+    if (fixtureEndpoint.host !== endpoint.host || fixtureEndpoint.httpsPort !== endpoint.httpsPort) {
+      throw new McpLocalFixtureError("MCP_LOCAL_FIXTURE_MISMATCH");
+    }
+  }
+  return endpoint;
+}
+
+function hasEndpointValues(values: Record<string, string>): boolean {
+  return Boolean(values.MCP_LOCAL_RESOURCE || values.MCP_SMOKE_RESOURCE || values.MCP_LOCAL_HOST || values.MCP_LOCAL_HTTPS_PORT);
+}
+
+function resolveEndpointStrict(values: Record<string, string>, existingFixture: boolean, allowDefaults: boolean): LocalMcpEndpoint {
   const endpointValue = values.MCP_LOCAL_RESOURCE ?? values.MCP_SMOKE_RESOURCE;
   let resourceEndpoint: { readonly host: string; readonly port: number } | undefined;
   if (endpointValue) {
@@ -314,9 +348,11 @@ function resolveEndpoint(values: Record<string, string>, existingFixture: boolea
   const hostValue = values.MCP_LOCAL_HOST;
   const portValue = values.MCP_LOCAL_HTTPS_PORT;
   if (existingFixture && !endpointValue && (!hostValue || !portValue)) throw new McpLocalFixtureError("MCP_LOCAL_FIXTURE_PARTIAL");
-  const host = hostValue ?? resourceEndpoint?.host ?? "mcp.localhost";
+  const host = hostValue ?? resourceEndpoint?.host ?? (allowDefaults ? "mcp.localhost" : undefined);
+  if (!host) throw new McpLocalFixtureError("MCP_LOCAL_STACK_ENV_REQUIRED");
   validateHost(host);
-  const httpsPort = portValue ? parsePort(portValue) : resourceEndpoint?.port ?? 18443;
+  const httpsPort = portValue ? parsePort(portValue) : resourceEndpoint?.port ?? (allowDefaults ? 18443 : undefined);
+  if (!httpsPort) throw new McpLocalFixtureError("MCP_LOCAL_STACK_ENV_REQUIRED");
   if (resourceEndpoint && (resourceEndpoint.host !== host || resourceEndpoint.port !== httpsPort)) throw new McpLocalFixtureError("MCP_LOCAL_FIXTURE_MISMATCH");
   return { host, httpsPort, resource: `https://${host}:${httpsPort}/mcp` };
 }
@@ -336,7 +372,7 @@ function parsePort(port: string): number {
   return value;
 }
 
-function validateLocalDatabaseUrl(databaseUrl: string): void {
+export function validateLocalDatabaseUrl(databaseUrl: string): void {
   try {
     const url = new URL(databaseUrl);
     const hostname = url.hostname.replace(/^\[|\]$/g, "");
@@ -375,6 +411,7 @@ function formatPrivateEnvironment(fixtureKey: string, plan: McpSmokeSeedPlan, en
     `MCP_LOCAL_FIXTURE_KEY=${shellQuote(fixtureKey)}`,
     `MCP_LOCAL_HOST=${shellQuote(host)}`,
     `MCP_LOCAL_HTTPS_PORT=${shellQuote(String(httpsPort))}`,
+    `MCP_LOCAL_RESOURCE=${shellQuote(`https://${host}:${httpsPort}/mcp`)}`,
     `MCP_LOCAL_REVIEWER_TOKEN=${shellQuote(plan.identities[0]!.token)}`,
     `MCP_LOCAL_OPERATOR_TOKEN=${shellQuote(plan.identities[1]!.token)}`,
     `MCP_LOCAL_VIEWER_TOKEN=${shellQuote(plan.identities[2]!.token)}`,
@@ -407,12 +444,15 @@ if (import.meta.main) {
   const fixtureKey = process.env.MCP_LOCAL_FIXTURE_KEY ?? "local-default";
   const envFilePath = process.env.MCP_LOCAL_ENV_FILE ?? join(LOCAL_ENV_DIRECTORY, `${fixtureKey}.env`);
   if (command === "seed") {
+    const stackEnvFilePath = process.env.MCP_LOCAL_STACK_ENV_FILE;
+    if (!stackEnvFilePath) throw new McpLocalFixtureError("MCP_LOCAL_STACK_ENV_REQUIRED");
     await mkdir(dirname(envFilePath), { recursive: true, mode: 0o700 });
     await chmod(dirname(envFilePath), 0o700);
     const result = await prepareMcpLocal({
       databaseUrl,
       fixtureKey,
       envFilePath,
+      stackEnvFilePath,
       readPrivateFile: async (path) => readFile(path, "utf8").catch(() => null),
       writePrivateFile: async (path, content) => {
         await writeFile(path, content, { encoding: "utf8", mode: 0o600 });
