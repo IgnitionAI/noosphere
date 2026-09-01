@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import {
   createLocalGovernedEffectFakes,
   getLocalFakeCounters,
@@ -113,6 +115,26 @@ describe("local governed-effect fakes", () => {
     expect(resolveLocalFakeMode({ NODE_ENV: "development" })).toBe(false);
     expect(() => resolveLocalFakeMode({ NODE_ENV: "production", MCP_LOCAL_FAKE_EFFECTS: "true" })).toThrow("MCP_LOCAL_FAKE_DISABLED_IN_PRODUCTION");
     expect(() => resolveLocalFakeMode({ NODE_ENV: "development", MCP_LOCAL_FAKE_EFFECTS: "yes" })).toThrow("MCP_LOCAL_FAKE_CONFIG_INVALID");
+  });
+
+  test("selects local fake mode explicitly for both local services without changing production", async () => {
+    const localCompose = await readFile(resolve(import.meta.dir, "../../compose.mcp-local.yml"), "utf8");
+    const productionCompose = await readFile(resolve(import.meta.dir, "../../compose.production.yml"), "utf8");
+    const serviceSection = (compose: string, service: string): string => {
+      const start = compose.indexOf(`  ${service}:`);
+      if (start < 0) throw new Error(`MCP_LOCAL_SERVICE_MISSING:${service}`);
+      const nextHeading = /\n  [A-Za-z0-9_-]+:/.exec(compose.slice(start + 1));
+      const next = nextHeading === null ? -1 : start + 1 + nextHeading.index;
+      return compose.slice(start, next < 0 ? compose.length : next);
+    };
+    for (const service of ["api", "worker"]) {
+      const section = serviceSection(localCompose, service);
+      expect(section).toContain("NODE_ENV: development");
+      expect(section).toContain('MCP_LOCAL_FAKE_EFFECTS: "true"');
+      expect(resolveLocalFakeMode({ NODE_ENV: "development", MCP_LOCAL_FAKE_EFFECTS: "true" })).toBe(true);
+    }
+    expect(productionCompose).not.toContain("MCP_LOCAL_FAKE_EFFECTS: \"true\"");
+    expect(() => resolveLocalFakeMode({ NODE_ENV: "production", MCP_LOCAL_FAKE_EFFECTS: "true" })).toThrow("MCP_LOCAL_FAKE_DISABLED_IN_PRODUCTION");
   });
 
   test("deep-clones and freezes validated outcomes instead of retaining caller state", () => {

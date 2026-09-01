@@ -21,6 +21,10 @@ services:
     env_file: !override
       - ${APP_ENV_FILE:-.env.mcp-local}
     environment:
+      # The image defaults to production; local fake adapters require an
+      # explicit non-production mode in this local-only overlay.
+      NODE_ENV: development
+      MCP_LOCAL_FAKE_EFFECTS: "true"
       BETTER_AUTH_URL: https://mcp.localhost:${MCP_LOCAL_HTTPS_PORT:-18443}
       BETTER_AUTH_TRUSTED_ORIGINS: https://mcp.localhost:${MCP_LOCAL_HTTPS_PORT:-18443}
       MCP_ALLOWED_HOSTS: mcp.localhost:${MCP_LOCAL_HTTPS_PORT:-18443}
@@ -40,6 +44,9 @@ services:
     env_file: !override
       - ${APP_ENV_FILE:-.env.mcp-local}
     environment:
+      # Keep local worker composition aligned with the API fake boundary.
+      NODE_ENV: development
+      MCP_LOCAL_FAKE_EFFECTS: "true"
       WORKER_ID: mcp-local-worker
       JOB_BATCH_SIZE: "2"
       JOB_POLL_INTERVAL_MS: "500"

@@ -8,6 +8,11 @@ const LOCAL_HTTPS_PORT = 18443;
 const LOCAL_HOST = "127.0.0.1";
 const LOCAL_RESOURCE_HOST = "mcp.localhost";
 const COMMAND_TIMEOUT_MS = 30_000;
+// Cold image builds and first-time Compose health checks may legitimately take
+// several minutes. Keep both phases bounded while leaving preflight/readiness
+// checks on the short command timeout.
+const COLD_BUILD_TIMEOUT_MS = 10 * 60_000;
+const COMPOSE_START_TIMEOUT_MS = 10 * 60_000;
 const SAFE_CHILD_ENV_KEYS = ["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TERM"] as const;
 const SAFE_COMMAND_ENV_KEYS = new Set(["APP_ENV_FILE", "MCP_LOCAL_HTTP_PORT", "MCP_LOCAL_HTTPS_PORT"]);
 const COMPOSE_FILES = [
@@ -500,8 +505,8 @@ export async function startLocalMcp(options: LocalMcpStartOptions): Promise<Loca
   for (const port of [options.httpPort, options.httpsPort]) {
     if (!(await probePort(port))) fail("MCP_LOCAL_PORT_OCCUPIED");
   }
-  await runChecked(run, [...base, "build", "api", "web", "worker"], "MCP_LOCAL_BUILD_FAILED", composeEnv, options.commandTimeoutMs);
-  await runChecked(run, [...base, "up", "-d", "--wait", "database", "minio", "searxng", "crawler", "migrate", "api", "web", "proxy", "worker"], "MCP_LOCAL_COMPOSE_START_FAILED", composeEnv, options.commandTimeoutMs);
+  await runChecked(run, [...base, "build", "api", "web", "worker"], "MCP_LOCAL_BUILD_FAILED", composeEnv, options.commandTimeoutMs ?? COLD_BUILD_TIMEOUT_MS);
+  await runChecked(run, [...base, "up", "-d", "--wait", "database", "minio", "searxng", "crawler", "migrate", "api", "web", "proxy", "worker"], "MCP_LOCAL_COMPOSE_START_FAILED", composeEnv, options.commandTimeoutMs ?? COMPOSE_START_TIMEOUT_MS);
   const healthUrl = `https://${LOCAL_RESOURCE_HOST}:${options.httpsPort}/health/ready`;
   await runChecked(run, ["curl", "--fail", "--silent", "--show-error", "--max-time", "10", "--cacert", caCertificatePath, healthUrl], "MCP_LOCAL_HEALTH_FAILED", undefined, options.commandTimeoutMs);
   return {

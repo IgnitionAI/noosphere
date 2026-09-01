@@ -132,6 +132,37 @@ test("uses one worker and reports a canonical local resource", async () => {
   expect(up?.filter((argument) => argument === "worker")).toHaveLength(1);
 });
 
+test("gives cold build and Compose startup their own bounded long timeout", async () => {
+  const envFilePath = await privateEnvFile();
+  const caCertificatePath = await privateCaFile();
+  const timeouts = new Map<string, number>();
+  const run = async (argv: readonly string[], context?: { timeoutMs?: number }) => {
+    const phase = argv.includes("build") ? "build" : argv.includes("up") ? "up" : argv[0] === "curl" ? "health" : argv.includes("config") ? "config" : argv.includes("ls") ? "preflight" : "check";
+    if (context?.timeoutMs !== undefined) timeouts.set(phase, context.timeoutMs);
+    if (argv.includes("ls")) return { exitCode: 0, stdout: "[]", stderr: "" };
+    if (argv.includes("config")) return { exitCode: 0, stdout: composeConfig(), stderr: "" };
+    if (argv[0] === "curl") return { exitCode: 0, stdout: '{"status":"ready"}', stderr: "" };
+    return { exitCode: 0, stdout: "", stderr: "" };
+  };
+
+  await startLocalMcp({
+    envFilePath,
+    projectName: "noosphere-mcp-local",
+    httpPort: 18080,
+    httpsPort: 18443,
+    caCertificatePath,
+    run,
+  } as never);
+
+  expect(timeouts.get("build")).toBeGreaterThan(30_000);
+  expect(timeouts.get("up")).toBeGreaterThan(30_000);
+  expect(timeouts.get("build")).toBeLessThanOrEqual(10 * 60_000);
+  expect(timeouts.get("up")).toBeLessThanOrEqual(10 * 60_000);
+  expect(timeouts.get("preflight")).toBe(30_000);
+  expect(timeouts.get("config")).toBe(30_000);
+  expect(timeouts.get("health")).toBe(30_000);
+});
+
 test("fails closed when the private env file is not mode 0600", async () => {
   const path = `/tmp/mcp-local-startup-${crypto.randomUUID()}.env`;
   await Bun.write(path, "MCP_LOCAL_FIXTURE_KEY=test\n");
