@@ -1,3 +1,7 @@
+import { createInstanceAiRepository, InstanceWorkspaceAiPolicyReader, createInstanceWorkspaceAiAvailability, InstanceOpenAiModelGateway } from "@outbound/infrastructure/ai/instance-ai-runtime";
+import { InstanceAiConnectionsApplication } from "@outbound/application/ai/instance-ai-connections";
+import { InstanceModelConnectionTester } from "@outbound/infrastructure/ai/instance-ai-connection-tester";
+import { createInstanceAiConnectionsHttpHandler } from "@outbound/interface/http/instance-ai-connections-handler";
 import { createWorkspaceAiAvailabilityFromEnvironment, isEnvironmentModelRouteAvailable } from "@outbound/infrastructure/ai/workspace-ai-availability";
 import { requireWorkspaceAi, type WorkspaceAiAvailability } from "@outbound/application/ai/ai-availability";
 import { InstanceSetupApplication } from "@outbound/application/ai/instance-setup";
@@ -446,7 +450,13 @@ const documentService = new ResearchDocumentService(
   documentServiceOptionsFromEnvironment(),
 );
 const workspaceAiSettingsRepository = new PostgresWorkspaceAiSettingsRepository(database.db);
-const aiAvailable = createWorkspaceAiAvailabilityFromEnvironment(environment, workspaceAiSettingsRepository);
+const instanceAiRepository = createInstanceAiRepository(database.db, environment);
+const workspaceAiPolicies = new InstanceWorkspaceAiPolicyReader(workspaceAiSettingsRepository, instanceAiRepository);
+const aiAvailable = createInstanceWorkspaceAiAvailability(environment, workspaceAiPolicies, instanceAiRepository);
+const instanceAiConnections = createInstanceAiConnectionsHttpHandler({
+  application: new InstanceAiConnectionsApplication(new PostgresInstanceSetupRepository(database.db), instanceAiRepository, new InstanceModelConnectionTester(instanceAiRepository)),
+  sessions: auth.sessions,
+});
 const application = new ProductResearchApplication(
   repository,
   repository,
@@ -459,7 +469,7 @@ const productResearch = createProductResearchHttpHandler({
   contextResolver: auth.contextResolver,
 });
 const instanceSetup = createInstanceSetupHttpHandler({
-  application: new InstanceSetupApplication(new PostgresInstanceSetupRepository(database.db)),
+  application: new InstanceSetupApplication(new PostgresInstanceSetupRepository(database.db), async () => !!await instanceAiRepository.getDefault()),
   sessions: auth.sessions,
 });
 const workspace = createWorkspaceHttpHandler({
@@ -470,7 +480,7 @@ const workspace = createWorkspaceHttpHandler({
 });
 const workspaceDataLifecycle = new PostgresWorkspaceDataLifecycle(database.db, clock, ids);
 
-const workspaceStructuredModel = createWorkspaceStructuredModelFromEnvironment(environment, workspaceAiSettingsRepository);
+const workspaceStructuredModel = createWorkspaceStructuredModelFromEnvironment(environment, workspaceAiPolicies, [new InstanceOpenAiModelGateway(instanceAiRepository, environment)]);
 const workspaceArchiveStorage = new S3WorkspaceArchiveStorage(workspaceArchiveOptionsFromEnvironment());
 const workspaceData = createWorkspaceDataHttpHandler({
   contextResolver: auth.contextResolver,
@@ -484,7 +494,7 @@ const knowledge = createKnowledgeHttpHandler({
 });
 const evaluation = createEvaluationHttpHandler({
   contextResolver: auth.contextResolver,
-  service: new PostgresEvaluationService(database.db, clock, ids, workspaceAiSettingsRepository, async (route) => isEnvironmentModelRouteAvailable(environment, route, "evaluation")),
+  service: new PostgresEvaluationService(database.db, clock, ids, workspaceAiPolicies, async (route) => isEnvironmentModelRouteAvailable(environment, route, "evaluation")),
 });
 const operatorConsole = createOperatorConsoleHttpHandler({
   contextResolver: auth.contextResolver,
@@ -636,7 +646,7 @@ const sequenceHandler = createSequenceHttpHandler({
 const conversationDraftImprover = new LangChainConversationDraftImprover(
     database.db,
     environment,
-    workspaceAiSettingsRepository,
+    workspaceAiPolicies,
     undefined,
     contentBrandKitRepository,
     workspaceStructuredModel,
@@ -697,7 +707,7 @@ const contentStrategyApplication = new EditorialStrategyApplication(
   new PostgresEditorialStrategyRepository(database.db),
   new LangChainEditorialStrategyGenerator(
     environment,
-    workspaceAiSettingsRepository,
+    workspaceAiPolicies,
     new PostgresAiRunRecorder(database.db, clock, ids),
     undefined,
     workspaceStructuredModel,
@@ -729,7 +739,7 @@ const contentBrandKitApplication = new ContentBrandKitApplication(
   }),
   new LangChainContentBrandDirectionDesigner(
     environment,
-    workspaceAiSettingsRepository,
+    workspaceAiPolicies,
     new PostgresAiRunRecorder(database.db, clock, ids),
     undefined,
     workspaceStructuredModel,
@@ -872,7 +882,10 @@ const mcpReadCapabilities: McpReadCapabilities = createMcpReadCapabilities({
     },
   },
 });
-const mcpWriteCapabilities: McpWriteCapabilities = createMcpWriteCapabilities(database.db, clock, (tx) => createWorkspaceAiAvailabilityFromEnvironment(environment, new PostgresWorkspaceAiSettingsRepository(tx)));
+const mcpWriteCapabilities: McpWriteCapabilities = createMcpWriteCapabilities(database.db, clock, (tx) => {
+  const instance = createInstanceAiRepository(tx, environment);
+  return createInstanceWorkspaceAiAvailability(environment, new InstanceWorkspaceAiPolicyReader(new PostgresWorkspaceAiSettingsRepository(tx), instance), instance);
+});
 const mcpEffectFactsReader = new PostgresExternalEffectFactsReader(database.db, () => clock.now());
 const mcpEffectPolicy = new ExternalEffectPolicy(mcpEffectFactsReader);
 const mcpEffectRepository = new PostgresMcpGovernedEffectRepository(database.db, () => clock.now(), mcpEffectPolicy);
@@ -885,6 +898,7 @@ const approvals = createApprovalHttpHandler({
 async function dispatch(request: Request): Promise<Response> {
     const pathname = new URL(request.url).pathname;
     if (pathname.startsWith("/oauth/") || pathname === "/.well-known/oauth-authorization-server" || pathname.startsWith("/.well-known/oauth-protected-resource")) return mcpOAuth(request);
+    if (pathname.startsWith("/api/v1/instance/ai")) return instanceAiConnections(request);
     if (pathname.startsWith("/api/v1/instance/setup")) return instanceSetup(request);
     if (pathname === "/mcp") return mcpTransport.handle(request);
     if (pathname.startsWith("/api/auth/")) return runtime.handleAuth(request);

@@ -10,7 +10,7 @@ export default async function HomePage() {
   const workspace = workspaces[0];
   if (!workspace) {
     const setup = await getInstanceSetup();
-    if (setup.isAdministrator && !setup.skipped) redirect("/setup");
+    if (setup.isAdministrator && !setup.skipped && !setup.aiReady) redirect("/setup");
     redirect("/onboarding");
   }
   redirect(`/w/${workspace.slug}`);

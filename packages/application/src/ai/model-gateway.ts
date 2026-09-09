@@ -26,6 +26,8 @@ export const aiCapabilities = [
 export type AiCapability = (typeof aiCapabilities)[number];
 
 export interface ModelRoute {
+  readonly connectionId?: string;
+  readonly connectionVersion?: number;
   readonly provider: AiProviderId;
   readonly model: string;
   readonly reasoningEffort: AiReasoningEffort;
@@ -45,6 +47,8 @@ export interface ModelInvocationMetadata extends ModelRoute {
 }
 
 export interface StructuredModelRequest<T> {
+  readonly connectionId?: string;
+  readonly connectionVersion?: number;
   readonly workspaceId: string;
   readonly capability: AiCapability;
   readonly requestKey: string;

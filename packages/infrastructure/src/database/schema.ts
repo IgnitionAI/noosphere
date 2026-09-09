@@ -360,6 +360,31 @@ export const workspaceInvitations = pgTable(
   ],
 );
 
+export const instanceAiConnections = pgTable("instance_ai_connections", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  provider: text("provider").notNull(),
+  baseUrl: text("base_url").notNull(),
+  encryptedApiKey: text("encrypted_api_key").notNull(),
+  version: integer("version").notNull().default(1),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+export const instanceAiModels = pgTable("instance_ai_models", {
+  connectionId: uuid("connection_id").notNull().references(() => instanceAiConnections.id, { onDelete: "cascade" }),
+  model: text("model").notNull(),
+  reasoningEffort: text("reasoning_effort").notNull(),
+  connectionVersion: integer("connection_version").notNull(),
+  status: text("status").notNull().default("untested"),
+  testId: uuid("test_id"),
+  testedAt: timestamp("tested_at", { withTimezone: true }),
+  errorCode: text("error_code"),
+}, (table) => [primaryKey({ columns: [table.connectionId, table.model] })]);
+export const instanceAiDefaults = pgTable("instance_ai_defaults", {
+  id: boolean("id").primaryKey().default(true),
+  connectionId: uuid("connection_id").notNull().references(() => instanceAiConnections.id, { onDelete: "cascade" }),
+  model: text("model").notNull(),
+});
+
 export const instanceAdministrators = pgTable("instance_administrators", {
   userId: uuid("user_id").primaryKey().references(() => authUsers.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

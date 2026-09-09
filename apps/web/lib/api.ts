@@ -3956,6 +3956,7 @@ async function throwApiError(response: Response): Promise<never> {
 }
 
 export interface InstanceSetupState {
+  aiReady?: boolean;
   readonly isAdministrator: boolean;
   readonly skipped: boolean;
 }
@@ -3966,5 +3967,32 @@ export async function getInstanceSetup(): Promise<InstanceSetupState> {
 }
 export async function skipInstanceAiSetup(): Promise<void> {
   const response = await apiFetch("/api/v1/instance/setup/skip", { method: "POST" });
+  if (!response.ok) await throwApiError(response);
+}
+
+export interface InstanceAiConnectionSummary {
+  id: string; name: string; provider: "openai-api"; baseUrl: string; version: number; secretConfigured: boolean;
+  models: { model: string; reasoningEffort: string; status: "untested" | "testing" | "ready" | "failed"; testedAt: string | null; errorCode: string | null }[];
+}
+export interface InstanceAiConnectionsSummary {
+  connections: InstanceAiConnectionSummary[];
+  defaultModel: { connectionId: string; model: string } | null;
+}
+export async function getInstanceAiConnections(): Promise<InstanceAiConnectionsSummary> {
+  const response = await apiFetch("/api/v1/instance/ai");
+  if (!response.ok) await throwApiError(response);
+  return response.json();
+}
+export async function saveInstanceAiConnection(input: { id?: string; name: string; provider: "openai-api"; apiKey?: string; models: { model: string; reasoningEffort: "low" }[] }): Promise<void> {
+  const response = await apiFetch("/api/v1/instance/ai/connections", { method: "POST", body: JSON.stringify(input) });
+  if (!response.ok) await throwApiError(response);
+}
+export async function testInstanceAiModel(input: { connectionId: string; model: string }): Promise<{ status: "ready" | "failed"; errorCode: string | null }> {
+  const response = await apiFetch("/api/v1/instance/ai/test", { method: "POST", body: JSON.stringify(input) });
+  if (!response.ok) await throwApiError(response);
+  return response.json();
+}
+export async function selectInstanceAiDefault(input: { connectionId: string; model: string }): Promise<void> {
+  const response = await apiFetch("/api/v1/instance/ai/default", { method: "POST", body: JSON.stringify(input) });
   if (!response.ok) await throwApiError(response);
 }

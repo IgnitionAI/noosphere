@@ -754,8 +754,15 @@
     {
       "idx": 107,
       "version": "7",
-      "when": 1788950000000,
+      "when": 1798030800000,
       "tag": "0108_instance_ai_setup",
+      "breakpoints": true
+    },
+    {
+      "idx": 108,
+      "version": "7",
+      "when": 1798034400000,
+      "tag": "0109_instance_ai_connections",
       "breakpoints": true
     }
   ]

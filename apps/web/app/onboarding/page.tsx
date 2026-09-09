@@ -46,7 +46,7 @@ export default async function OnboardingPage({ searchParams }: { searchParams: P
     );
   }
   const setup = await getInstanceSetup();
-  if (setup.isAdministrator && !setup.skipped) redirect("/setup");
+  if (setup.isAdministrator && !setup.skipped && !setup.aiReady) redirect("/setup");
   const create = createWorkspaceAction.bind(null, "/onboarding");
   return (
     <main className="grid min-h-screen place-items-center bg-canvas p-5">

@@ -13,6 +13,7 @@ test("first administrator reaches setup before creating a workspace", async ({ p
       BOOTSTRAP_OWNER_NAME: "Initial administrator", BOOTSTRAP_CREATE_WORKSPACE: "false",
     }, stdio: "pipe" });
     await database.client`delete from instance_setup`;
+    await database.client`delete from instance_ai_defaults`;
   } finally { await database.close(); }
   await page.goto("/login");
   await page.getByLabel("Email professionnel").fill(email);

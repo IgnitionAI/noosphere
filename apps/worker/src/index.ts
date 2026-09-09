@@ -1,4 +1,4 @@
-import { createWorkspaceAiAvailabilityFromEnvironment } from "@outbound/infrastructure/ai/workspace-ai-availability";
+import { createInstanceAiRepository, InstanceWorkspaceAiPolicyReader, createInstanceWorkspaceAiAvailability, InstanceOpenAiModelGateway } from "@outbound/infrastructure/ai/instance-ai-runtime";
 import { ResearchOrchestrator } from "@outbound/application/gtm/research-orchestrator";
 import {
   CryptoIdGenerator,
@@ -231,9 +231,10 @@ const workspaceExportProcessor = new WorkspaceDataExportProcessor(
 );
 const retentionPurgeProcessor = new WorkspaceRetentionPurgeProcessor(database.db, queue, clock);
 const toolRunRecorder = new PostgresResearchToolRunRecorder(database.db);
-const workspaceAiSettings = new PostgresWorkspaceAiSettingsRepository(database.db);
-const aiAvailable = createWorkspaceAiAvailabilityFromEnvironment(process.env, workspaceAiSettings);
-const workspaceStructuredModel = createWorkspaceStructuredModelFromEnvironment(process.env, workspaceAiSettings);
+const instanceAiRepository = createInstanceAiRepository(database.db, process.env);
+const workspaceAiSettings = new InstanceWorkspaceAiPolicyReader(new PostgresWorkspaceAiSettingsRepository(database.db), instanceAiRepository);
+const aiAvailable = createInstanceWorkspaceAiAvailability(process.env, workspaceAiSettings, instanceAiRepository);
+const workspaceStructuredModel = createWorkspaceStructuredModelFromEnvironment(process.env, workspaceAiSettings, [new InstanceOpenAiModelGateway(instanceAiRepository, process.env)]);
 const prospectMemoryEvents = new PostgresProspectMemoryEventRepository(database.client);
 const prospectMemorySnapshots = new PostgresProspectMemorySnapshotRepository(database.client);
 const prospectMemoryPolicies = new PostgresProspectMemoryPolicyReader(database.client);

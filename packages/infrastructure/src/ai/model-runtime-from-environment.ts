@@ -1,3 +1,4 @@
+import type { ModelGateway } from "@outbound/application/ai/model-gateway";
 import { ModelRouter } from "@outbound/application/ai/model-router";
 import type { WorkspaceAiModelPolicyReader } from "@outbound/application/workspaces/workspace-ai-settings";
 import { CodexCliModelGateway } from "@outbound/infrastructure/ai/codex-cli-model-gateway";
@@ -7,6 +8,7 @@ import { WorkspaceStructuredModel } from "@outbound/infrastructure/ai/workspace-
 export function createWorkspaceStructuredModelFromEnvironment(
   environment: Readonly<Record<string, string | undefined>>,
   policies: WorkspaceAiModelPolicyReader,
+  additionalGateways: readonly ModelGateway[] = [],
 ): WorkspaceStructuredModel {
   const gateways = [];
   if (environment.KIMI_CODE_API_KEY) {
@@ -21,5 +23,5 @@ export function createWorkspaceStructuredModelFromEnvironment(
       ...(environment.CODEX_BINARY_PATH ? { binaryPath: environment.CODEX_BINARY_PATH } : {}),
     }));
   }
-  return new WorkspaceStructuredModel(new ModelRouter(gateways), policies);
+  return new WorkspaceStructuredModel(new ModelRouter([...gateways, ...additionalGateways]), policies);
 }
