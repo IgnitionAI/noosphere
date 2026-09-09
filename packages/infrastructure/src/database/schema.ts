@@ -4256,6 +4256,18 @@ export const meetingProposals = pgTable(
   ],
 );
 
+export const taskAiContexts = pgTable("task_ai_contexts", {
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  taskKey: text("task_key").notNull(),
+  policy: jsonb("policy").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [primaryKey({ columns: [table.workspaceId, table.taskKey] })]);
+
+export const instanceAiRuntimeDefaults = pgTable("instance_ai_runtime_defaults", {
+  id: boolean("id").primaryKey().default(true),
+  policy: jsonb("policy").notNull(),
+});
+
 export const jobs = pgTable(
   "jobs",
   {
@@ -4265,6 +4277,8 @@ export const jobs = pgTable(
       .references(() => workspaces.id),
     type: varchar("type", { length: 160 }).notNull(),
     payload: jsonb("payload").notNull(),
+    aiPolicy: jsonb("ai_policy"),
+    aiTaskKey: text("ai_task_key"),
     idempotencyKey: varchar("idempotency_key", { length: 500 }).notNull(),
     correlationId: varchar("correlation_id", { length: 200 }).notNull(),
     status: jobStatusEnum("status").notNull().default("pending"),
@@ -4282,6 +4296,7 @@ export const jobs = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
+    index("jobs_ai_task_key_idx").on(table.workspaceId, table.aiTaskKey).where(sql`${table.aiTaskKey} is not null`),
     unique("jobs_workspace_id_uq").on(table.workspaceId, table.id),
     uniqueIndex("jobs_workspace_type_idempotency_uq").on(
       table.workspaceId,

@@ -1,3 +1,6 @@
+import { TaskAiPolicyScope } from "@outbound/infrastructure/ai/task-ai-policy-scope";
+import { PostgresTaskAiPolicyReader } from "@outbound/infrastructure/ai/postgres-task-ai-policy-reader";
+import { ResearchWorker } from "../../apps/worker/src/research-worker";
 import { mkdtemp, writeFile, stat, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -112,7 +115,7 @@ const url = process.env.TEST_DATABASE_URL;
       const workspaceId = crypto.randomUUID();
       try {
         const workerRepository = new PostgresInstanceAiConnectionsRepository(workerDb.db, cipher);
-        const policies = new InstanceWorkspaceAiPolicyReader({ async find() { return null; } }, workerRepository);
+        const policies = new TaskAiPolicyScope(new InstanceWorkspaceAiPolicyReader({ async find() { return null; } }, workerRepository), new PostgresTaskAiPolicyReader(workerDb.client));
         const available = createInstanceWorkspaceAiAvailability({}, policies, workerRepository);
         expect(await available("workspace", "icp_research")).toBe(true);
         const routedModel = createWorkspaceStructuredModelFromEnvironment({}, policies, createInstanceApiKeyGateways(workerRepository, workerEnvironment, controlledFetch, codexRunner));
@@ -127,11 +130,13 @@ const url = process.env.TEST_DATABASE_URL;
         });
         await new StartProductResearchRun(research, ids, clock).execute({ workspaceId, runId: run.snapshot.id, correlationId: "persisted-instance-ai" });
         const orchestrator = new ResearchOrchestrator(research, queue, executor, ids, clock, new Sha256ContentHasher());
+        const futureConnection = await repository.save({ name: "Future default", provider: "openai-api", apiKey: "unused-future-key", models: [{ model: "must-not-replace-running-task", reasoningEffort: "low" }] });
+        const futureSelection = { connectionId: futureConnection.id, model: "must-not-replace-running-task" };
+        await repository.finishTest({ ...await repository.beginTest(futureSelection), errorCode: null });
+        await repository.setDefault(futureSelection);
+        const worker = new ResearchWorker(queue, orchestrator, clock, { workerId: "instance-ai-mission-test", leaseMs: 30_000, batchSize: 1, pollIntervalMs: 1, jobTypes: ["research.stage.execute"], executionContext: policies });
         for (let index = 0; index < 10; index++) {
-          const [job] = await queue.lease({ workerId: "instance-ai-mission-test", types: ["research.stage.execute"], limit: 1, leaseMs: 30_000, now: clock.now() });
-          expect(job).toBeDefined();
-          expect(job?.workspaceId).toBe(workspaceId);
-          expect((await orchestrator.process(job!)).outcome).toBe("completed");
+          expect(await worker.tick()).toBe(1);
         }
         const completed = await research.findById(workspaceId, run.snapshot.id);
         expect(completed?.snapshot.status).toBe("completed");

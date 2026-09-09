@@ -9,10 +9,16 @@ import {
 
 export async function saveWorkspaceAiSettings(
   workspaceSlug: string,
+  _previous: { message: string; error: boolean },
   formData: FormData,
-): Promise<void> {
-  await updateWorkspaceAiSettings(workspaceSlug, parseRouting(formData.get("modelRouting")));
+): Promise<{ message: string; error: boolean }> {
+  try {
+    await updateWorkspaceAiSettings(workspaceSlug, parseRouting(formData.get("modelRouting")));
+  } catch {
+    return { message: "Enregistrement impossible. Vérifiez vos droits et que les modèles sélectionnés sont toujours autorisés, puis réessayez.", error: true };
+  }
   revalidatePath(`/w/${workspaceSlug}/settings/ai`);
+  return { message: "Modèles du workspace enregistrés.", error: false };
 }
 
 function parseRouting(value: FormDataEntryValue | null): {

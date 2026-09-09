@@ -149,3 +149,23 @@ function request(method: string, body?: unknown): Request {
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
 }
+
+test("instance-backed workspace API accepts inherited and authorized routes without exposing secrets", async () => {
+  const selected = { connectionId: "00000000-0000-4000-8000-000000000003", provider: "openrouter" as const, model: "vendor/model", reasoningEffort: "low" as const };
+  const application = new WorkspaceAiSettingsApplication(new InMemoryWorkspaceAiSettingsRepository(), { researchModels: [], synthesisModels: [], defaultRoutes: [] }, () => new Date(), {
+    async getDefault() { return selected; },
+    async listAllowed() { return [{ ...selected, connectionName: "Shared connection" }]; },
+  });
+  const handle = createWorkspaceAiSettingsHttpHandler({ application, contextResolver: new FixedContextResolver({ workspaceId, userId, role: "owner" }) });
+  const saved = await handle(request("PUT", { defaultRoutes: [selected], capabilityRoutes: {} }));
+  expect(saved.status).toBe(200);
+  expect(await saved.json()).toMatchObject({ defaultRoutes: [selected], availableModels: [{ ...selected, connectionName: "Shared connection" }] });
+  const inherited = await handle(request("PUT", { defaultRoutes: [], capabilityRoutes: {} }));
+  expect(inherited.status).toBe(200);
+  expect(await inherited.json()).toMatchObject({ source: "instance", defaultRoutes: [], effectiveDefaultRoutes: [selected] });
+  const invalid = await handle(request("PUT", { defaultRoutes: [{ ...selected, model: "unauthorized" }], capabilityRoutes: {} }));
+  expect(invalid.status).toBe(409);
+  expect(await invalid.json()).toMatchObject({ code: "AI_MODEL_NOT_AUTHORIZED" });
+  const key = await handle(request("PUT", { defaultRoutes: [{ ...selected, apiKey: "do-not-accept" }], capabilityRoutes: {} }));
+  expect(key.status).toBe(400);
+});

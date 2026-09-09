@@ -4,7 +4,7 @@ import { KimiChatModelGateway } from "@outbound/infrastructure/ai/kimi-model-gat
 import { instanceAiProviders, type InstanceAiProvider } from "@outbound/application/ai/instance-ai-connections";
 import { createInstanceConnectionGateway } from "@outbound/infrastructure/ai/instance-connection-gateway";
 import type { WorkspaceAiAvailability } from "@outbound/application/ai/ai-availability";
-import { ModelGatewayError, type ModelGateway, type StructuredModelRequest, type StructuredModelResult } from "@outbound/application/ai/model-gateway";
+import { ModelGatewayError, type ModelGateway, type StructuredModelRequest, type StructuredModelResult, type ModelRoute, type AiCapability } from "@outbound/application/ai/model-gateway";
 import { routesForCapability, type WorkspaceAiModelPolicyReader } from "@outbound/application/workspaces/workspace-ai-settings";
 import type { DatabaseExecutor } from "@outbound/infrastructure/database/client";
 import { encryptSecret, decryptSecret } from "@outbound/infrastructure/security/secret-crypto";
@@ -18,12 +18,26 @@ export function createInstanceAiRepository(database: DatabaseExecutor, environme
   return new PostgresInstanceAiConnectionsRepository(database, { encrypt: (value) => encryptSecret(value, key()), decrypt: (value) => decryptSecret(value, key()) });
 }
 export class InstanceWorkspaceAiPolicyReader implements WorkspaceAiModelPolicyReader {
-  constructor(private readonly workspaces: WorkspaceAiModelPolicyReader, private readonly instance: PostgresInstanceAiConnectionsRepository) {}
+  constructor(private readonly workspaces: WorkspaceAiModelPolicyReader, private readonly instance: Pick<PostgresInstanceAiConnectionsRepository, "getConfiguredDefault" | "getReadyRoute">) {}
   async find(workspaceId: string) {
     const workspace = await this.workspaces.find(workspaceId);
-    if (workspace) return workspace;
-    const route = await this.instance.getConfiguredDefault();
-    return route ? { researchModels: [route.model], synthesisModels: [route.model], defaultRoutes: [route], capabilityRoutes: {} } : null;
+    const inherited = await this.instance.getConfiguredDefault();
+    if (!workspace && !inherited) return null;
+    const refresh = async (routes: readonly ModelRoute[]) => Promise.all(routes.map(async (route) => {
+      if (!route.connectionId) return route;
+      const ready = await this.instance.getReadyRoute({ connectionId: route.connectionId, model: route.model });
+      // Keep a withdrawn choice visible and blocked instead of selecting another model.
+      return ready && ready.provider === route.provider ? ready : route;
+    }));
+    const defaultRoutes = await refresh(workspace?.defaultRoutes?.length ? workspace.defaultRoutes : inherited ? [inherited] : []);
+    const capabilityRoutes: Partial<Record<AiCapability, readonly ModelRoute[]>> = Object.fromEntries(await Promise.all(Object.entries(workspace?.capabilityRoutes ?? {}).map(async ([capability, routes]) => [capability, await refresh(routes)])));
+    const researchRoutes = capabilityRoutes.icp_research?.length ? capabilityRoutes.icp_research : defaultRoutes;
+    return {
+      researchModels: researchRoutes.length ? researchRoutes.map((route) => route.model) : workspace?.researchModels ?? [],
+      synthesisModels: researchRoutes.length ? researchRoutes.map((route) => route.model) : workspace?.synthesisModels ?? [],
+      defaultRoutes,
+      capabilityRoutes,
+    };
   }
 }
 export function createInstanceWorkspaceAiAvailability(environment: Environment, policies: WorkspaceAiModelPolicyReader, instance: PostgresInstanceAiConnectionsRepository): WorkspaceAiAvailability {

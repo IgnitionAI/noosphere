@@ -82,3 +82,19 @@ Managed Codex model invocations ignore user config/rules and project documents a
 Migration 0110 is still unreleased. During development its session column was added after the earlier disposable database had been migrated, so subsequent validation uses the fresh dedicated 90 database. Production and the original checkout database were not changed.
 
 Tickets 91–93 remain: workspace selection/live inheritance with task pinning; explicit fallback and durable manual resume; existing-installation migration and complete release acceptance. No push, deployment or release tag performed.
+
+## #91 — workspace inheritance and durable task routing
+
+Instance-backed workspace application and HTTP API expose authorized ready models (connection/model/effort/name only), support empty routes for live inheritance, reject unauthorized selections, and retain withdrawn choices. Repository preserves connection IDs. Runtime merges per-capability overrides with inherited defaults and refreshes current validated connection versions. Workspace UI uses authorized selections, inheritance, optional ordered fallback, missing-model explanations and save status.
+
+Migration 0111 captures routing at every job insertion, including direct Drizzle writers. `task_ai_contexts` stores the selection independently of job retention; run-based stages and manual resumes share it. `jobs.ai_policy` carries each launch snapshot. API/worker publish model-only environment defaults before accepting work so existing environment-only configurations are captured too. `TaskAiPolicyScope` supplies the durable policy to all worker executor reads and isolates concurrent jobs. Secrets remain in connection storage. Revoked or changed credentials remain subject to current gateway authorization/version checks.
+
+Verification:
+- 13 PostgreSQL integration tests / 472 assertions pass on fresh `noosphere_instance_ai_91b_test_20260909` (current 0111). `/tmp/noosphere-91b-integration.log`.
+- Complete controlled missions for six instance providers and legacy environment Kimi after defaults change before first lease; stage continuity, reconnect and job-purge/resume retain the original model.
+- Desktop/mobile workspace UI: 2 pass, `/tmp/noosphere-91b-e2e.log`.
+- Unit/HTTP: 1027 pass, one unchanged baseline MCP governed-effect failure (previously reproduced at 18207a6); `/tmp/noosphere-91-unit-http.log`.
+- Type checks, architecture (597 files), backend and Next production builds pass; `/tmp/noosphere-91b-build.log`, `/tmp/noosphere-91b-web.log`.
+- Standards and Spec reviewers approved corrected behavior. Their findings drove environment capture, durable retention-independent contexts, research-only candidates, effort display consistency and inherited-default warnings.
+
+Remaining feature work: #92 explicit fallback/durable pause/manual resume; #93 existing-install migration and final full gates. In particular old jobs created before 0111 have null contexts and must be backfilled in #93 before this feature is deployed. 0111 was revised while uncommitted: older disposable 90/91 test DBs have earlier shapes; use fresh 91b or a new DB. No deployment, push, PR or issue closure performed.

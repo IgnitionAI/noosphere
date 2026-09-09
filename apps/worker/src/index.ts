@@ -1,3 +1,7 @@
+import { registerRuntimeAiDefaults } from "@outbound/infrastructure/ai/register-runtime-ai-defaults";
+import { resolveResearchModelPolicyFromEnvironment } from "@outbound/infrastructure/ai/langchain-research-agent-executor";
+import { TaskAiPolicyScope } from "@outbound/infrastructure/ai/task-ai-policy-scope";
+import { PostgresTaskAiPolicyReader } from "@outbound/infrastructure/ai/postgres-task-ai-policy-reader";
 import { createInstanceAiRepository, InstanceWorkspaceAiPolicyReader, createInstanceWorkspaceAiAvailability, createInstanceApiKeyGateways } from "@outbound/infrastructure/ai/instance-ai-runtime";
 import { ResearchOrchestrator } from "@outbound/application/gtm/research-orchestrator";
 import {
@@ -231,8 +235,9 @@ const workspaceExportProcessor = new WorkspaceDataExportProcessor(
 );
 const retentionPurgeProcessor = new WorkspaceRetentionPurgeProcessor(database.db, queue, clock);
 const toolRunRecorder = new PostgresResearchToolRunRecorder(database.db);
+await registerRuntimeAiDefaults(database.client, resolveResearchModelPolicyFromEnvironment(process.env));
 const instanceAiRepository = createInstanceAiRepository(database.db, process.env);
-const workspaceAiSettings = new InstanceWorkspaceAiPolicyReader(new PostgresWorkspaceAiSettingsRepository(database.db), instanceAiRepository);
+const workspaceAiSettings = new TaskAiPolicyScope(new InstanceWorkspaceAiPolicyReader(new PostgresWorkspaceAiSettingsRepository(database.db), instanceAiRepository), new PostgresTaskAiPolicyReader(database.client));
 const aiAvailable = createInstanceWorkspaceAiAvailability(process.env, workspaceAiSettings, instanceAiRepository);
 const workspaceStructuredModel = createWorkspaceStructuredModelFromEnvironment(process.env, workspaceAiSettings, createInstanceApiKeyGateways(instanceAiRepository, process.env));
 const prospectMemoryEvents = new PostgresProspectMemoryEventRepository(database.client);
@@ -715,6 +720,7 @@ const orchestrator = new ResearchOrchestrator(
   contentHasher,
 );
 const worker = new ResearchWorker(queue, orchestrator, clock, {
+  executionContext: workspaceAiSettings,
   workerId: process.env.WORKER_ID ?? `research-${crypto.randomUUID()}`,
   leaseMs: positiveIntegerEnvironment("JOB_LEASE_MS", 60_000),
   leaseHeartbeatMs: positiveIntegerEnvironment("JOB_HEARTBEAT_MS", 20_000),

@@ -1,3 +1,4 @@
+import { registerRuntimeAiDefaults } from "@outbound/infrastructure/ai/register-runtime-ai-defaults";
 import { InstanceCodexAuthenticationReader } from "@outbound/infrastructure/ai/instance-codex-home";
 import { createInstanceAiRepository, InstanceWorkspaceAiPolicyReader, createInstanceWorkspaceAiAvailability, createInstanceApiKeyGateways } from "@outbound/infrastructure/ai/instance-ai-runtime";
 import { InstanceAiConnectionsApplication } from "@outbound/application/ai/instance-ai-connections";
@@ -509,6 +510,8 @@ const workspaceAiSettings = createWorkspaceAiSettingsHttpHandler({
   application: new WorkspaceAiSettingsApplication(
     workspaceAiSettingsRepository,
     resolveResearchModelPolicyFromEnvironment(environment),
+    () => new Date(),
+    { getDefault: () => instanceAiRepository.getConfiguredDefault(), listAllowed: () => instanceAiRepository.listAllowed() },
   ),
   contextResolver: auth.contextResolver,
 });
@@ -896,7 +899,9 @@ const approvals = createApprovalHttpHandler({
   contextResolver: auth.contextResolver,
   governedEffects: mcpGovernedEffectCapabilities,
 });
+let runtimeDefaultsReady: Promise<void> | undefined;
 async function dispatch(request: Request): Promise<Response> {
+    await (runtimeDefaultsReady ??= registerRuntimeAiDefaults(database.client, resolveResearchModelPolicyFromEnvironment(environment)).catch((error) => { runtimeDefaultsReady = undefined; throw error; }));
     const pathname = new URL(request.url).pathname;
     if (pathname.startsWith("/oauth/") || pathname === "/.well-known/oauth-authorization-server" || pathname.startsWith("/.well-known/oauth-protected-resource")) return mcpOAuth(request);
     if (pathname.startsWith("/api/v1/instance/ai")) return instanceAiConnections(request);

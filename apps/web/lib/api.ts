@@ -972,7 +972,9 @@ export interface WorkspaceAiSettings {
   readonly synthesisModels: readonly string[];
   readonly defaultRoutes: readonly AiModelRoute[];
   readonly capabilityRoutes: Readonly<Partial<Record<AiCapability, readonly AiModelRoute[]>>>;
-  readonly source: "workspace" | "environment";
+  readonly source: "workspace" | "environment" | "instance";
+  readonly effectiveDefaultRoutes?: readonly AiModelRoute[];
+  readonly availableModels?: readonly (AiModelRoute & { readonly connectionName: string })[];
   readonly updatedAt: string | null;
 }
 
@@ -995,6 +997,7 @@ export type AiCapability =
 export type EvaluationAiCapability = Extract<AiCapability, "icp_research" | "message_generation" | "setter">;
 
 export interface AiModelRoute {
+  readonly connectionId?: string;
   readonly provider: AiProviderId;
   readonly model: string;
   readonly reasoningEffort: AiReasoningEffort;

@@ -1,3 +1,4 @@
+import type { JobExecutionContext } from "@outbound/application/jobs/job-execution-context";
 import type { JobQueue } from "@outbound/application/jobs/job-queue";
 import type { ResearchOrchestrator } from "@outbound/application/gtm/research-orchestrator";
 import type { Clock } from "@outbound/application/shared/ports";
@@ -6,6 +7,7 @@ import type { McpTrackedJobContext, McpTrackedJobLifecycle } from "@outbound/app
 import { classifySafeError } from "@outbound/application/shared/safe-error";
 
 export interface ResearchWorkerOptions {
+  readonly executionContext?: JobExecutionContext;
   readonly workerId: string;
   readonly leaseMs: number;
   readonly leaseHeartbeatMs?: number;
@@ -159,6 +161,7 @@ export class ResearchWorker {
         await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
         return;
       }
+      const dispatch = async () => {
       if (job.type === "research.document.process" && this.documentProcessor) {
         await this.documentProcessor.process(job);
       } else if (job.type === "prospect.discovery.execute" && this.discoveryProcessor) {
@@ -215,6 +218,9 @@ export class ResearchWorker {
       } else {
         await this.orchestrator.process(job);
       }
+      };
+      if (this.options.executionContext) await this.options.executionContext.run(job, dispatch);
+      else await dispatch();
       dispatchSucceeded = true;
       if (this.trackedJobLifecycle) await this.trackedJobLifecycle.afterSuccess(tracked);
     } catch (error) {

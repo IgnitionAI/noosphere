@@ -117,6 +117,7 @@ function readRoutes(value: unknown): readonly ModelRoute[] {
     if (typeof route.model !== "string" || route.model.trim().length === 0) return [];
     if (!aiReasoningEfforts.includes(route.reasoningEffort as (typeof aiReasoningEfforts)[number])) return [];
     return [{
+      ...(typeof route.connectionId === "string" ? { connectionId: route.connectionId } : {}),
       provider: route.provider as ModelRoute["provider"],
       model: route.model.trim(),
       reasoningEffort: route.reasoningEffort as ModelRoute["reasoningEffort"],

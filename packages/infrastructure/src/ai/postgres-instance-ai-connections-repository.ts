@@ -18,6 +18,12 @@ export class PostgresInstanceAiConnectionsRepository implements InstanceAiConnec
     const configuredModels = await this.database.select().from(models);
     return rows.map((row) => ({ ...row, provider: row.provider as InstanceAiProvider, models: configuredModels.filter((model) => model.connectionId === row.id).map(publicModel) }));
   }
+  async listAllowed() {
+    const rows = await this.database.select({ connectionId: connections.id, connectionName: connections.name, provider: connections.provider, model: models.model, reasoningEffort: models.reasoningEffort }).from(connections)
+      .innerJoin(models, and(eq(models.connectionId, connections.id), eq(models.connectionVersion, connections.version), eq(models.status, "ready")))
+      .where(isNull(connections.authenticationSessionId));
+    return rows.map((row) => ({ ...row, provider: row.provider as ModelRoute["provider"], reasoningEffort: row.reasoningEffort as AiReasoningEffort }));
+  }
   async save(input: SaveInstanceAiConnection): Promise<InstanceAiConnectionView> {
     const id = input.id ?? crypto.randomUUID();
     await this.database.transaction(async (tx) => {
