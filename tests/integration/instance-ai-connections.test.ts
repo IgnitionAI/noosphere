@@ -1,3 +1,8 @@
+import { mkdtemp, writeFile, stat, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { loginInstanceCodex } from "../../scripts/instance-codex-login";
+import type { CodexProcessRunner } from "@outbound/infrastructure/ai/codex-process-runner";
 import { CreateProductResearchRun, StartProductResearchRun } from "@outbound/application/gtm/product-research-use-cases";
 import { ResearchOrchestrator } from "@outbound/application/gtm/research-orchestrator";
 import { CryptoIdGenerator } from "@outbound/application/shared/ports";
@@ -61,7 +66,7 @@ const url = process.env.TEST_DATABASE_URL;
     } finally { provider.stop(true); }
   });
 
-  for (const providerId of ["openai-api", "anthropic", "openrouter", "openai-compatible"] as const) test(`${providerId}: a separately composed worker completes a research mission with the persisted default and no environment API key`, async () => {
+  for (const providerId of ["openai-api", "anthropic", "openrouter", "openai-compatible", "kimi-code", "codex-cli"] as const) test(`${providerId}: a separately composed worker completes a research mission with the persisted default and no environment API key`, async () => {
     let calls = 0;
     const provider = Bun.serve({ port: 0, async fetch(request) {
       calls++;
@@ -78,11 +83,28 @@ const url = process.env.TEST_DATABASE_URL;
         : { choices: [{ message: { tool_calls: [{ type: "function", function: { name, arguments: JSON.stringify(output) } }] } }] });
     } });
     try {
-      const saved = await repository.save({ name: "Worker provider", provider: providerId, apiKey: "persisted-worker-key", baseUrl: provider.url.toString().replace(/\/$/, ""), models: [{ model: "persisted-worker-model", reasoningEffort: "low" }] });
+      const saved = await repository.save({ name: "Worker provider", provider: providerId, ...(providerId === "codex-cli" ? {} : { apiKey: "persisted-worker-key", baseUrl: provider.url.toString().replace(/\/$/, "") }), models: [{ model: "persisted-worker-model", reasoningEffort: "low" }] });
       // Generic destinations are exercised through a controlled HTTP transport here;
       // the public-DNS/TLS boundary has its own rejection and pinning tests.
       const controlledFetch = (_url: string, options?: RequestInit) => fetch(provider.url, options);
-      const application = new InstanceAiConnectionsApplication({ async isAdministrator() { return true; } }, repository, new InstanceModelConnectionTester(repository, controlledFetch));
+      const workerEnvironment = { INSTANCE_CODEX_HOME: "/tmp/noosphere-instance-codex-controlled" };
+      const codexRunner: CodexProcessRunner = { async run(input) {
+        calls++;
+        expect(input.env.CODEX_HOME).toBe(`${workerEnvironment.INSTANCE_CODEX_HOME}/${saved.id}`);
+        expect(input.env.HOME).toBe(input.env.CODEX_HOME);
+        expect(input.env.OPENAI_API_KEY).toBeUndefined();
+        expect(input.command).toContain("--ignore-user-config");
+        expect(input.command).toContain("--ignore-rules");
+        expect(input.command).toContain("project_doc_max_bytes=0");
+        expect(input.command).toContain("features.shell_tool=false");
+        expect(input.command).toContain("features.plugins=false");
+        const schemaPath = input.command[input.command.indexOf("--output-schema") + 1]!;
+        const schema = await Bun.file(schemaPath).json();
+        const payload = JSON.parse(input.stdin.split("Input JSON:\n")[1]!);
+        const output = schema.properties?.ok ? { ok: true } : payload.availableTools ? { approach: "Controlled research evidence", calls: [] } : validOutputFor(payload.stage);
+        return { exitCode: 0, stdout: JSON.stringify(output), stderr: "" };
+      } };
+      const application = new InstanceAiConnectionsApplication({ async isAdministrator() { return true; } }, repository, new InstanceModelConnectionTester(repository, controlledFetch, { environment: workerEnvironment, codexRunner }));
       const selection = { connectionId: saved.id, model: "persisted-worker-model" };
       expect((await application.test("admin", selection)).status).toBe("ready");
       await application.setDefault("admin", selection);
@@ -93,7 +115,7 @@ const url = process.env.TEST_DATABASE_URL;
         const policies = new InstanceWorkspaceAiPolicyReader({ async find() { return null; } }, workerRepository);
         const available = createInstanceWorkspaceAiAvailability({}, policies, workerRepository);
         expect(await available("workspace", "icp_research")).toBe(true);
-        const routedModel = createWorkspaceStructuredModelFromEnvironment({}, policies, createInstanceApiKeyGateways(workerRepository, {}, controlledFetch));
+        const routedModel = createWorkspaceStructuredModelFromEnvironment({}, policies, createInstanceApiKeyGateways(workerRepository, workerEnvironment, controlledFetch, codexRunner));
         const executor = new LangChainResearchAgentExecutor({ ...resolveResearchModelConfigurationFromEnvironment({}), crawlerServiceUrl: "http://127.0.0.1:1", crawlerApiKey: "unused", modelPolicyReader: policies, routedModel });
         await workerDb.db.insert(workspaces).values({ id: workspaceId, slug: `instance-ai-${workspaceId}`, name: "Instance AI mission verification" });
         const research = new PostgresProductResearchRepository(workerDb.db);
@@ -121,6 +143,54 @@ const url = process.env.TEST_DATABASE_URL;
         await workerDb.close();
       }
     } finally { provider.stop(true); }
+  });
+
+  test("guided ChatGPT login uses the managed home and invalidates only the connection proofs", async () => {
+    const root = await mkdtemp(join(tmpdir(), "noosphere-codex-login-test-"));
+    const binary = join(root, "controlled-codex");
+    await writeFile(binary, `#!/usr/bin/env bun
+import { writeFileSync, realpathSync } from "node:fs";
+if (!process.argv.includes("--device-auth")) process.exit(2);
+if (process.env.OPENAI_API_KEY || process.env.DATABASE_URL || process.env.APP_ENCRYPTION_KEY) process.exit(3);
+if (process.env.HOME !== process.env.CODEX_HOME || realpathSync(process.cwd()) !== realpathSync(process.env.CODEX_HOME)) process.exit(4);
+writeFileSync(process.env.CODEX_HOME + "/auth.json", JSON.stringify({ auth_mode: "chatgpt", tokens: { access_token: "controlled-access", refresh_token: "controlled-refresh" } }), { mode: 0o600 });
+`, { mode: 0o700 });
+    const saved = await repository.save({ name: "Controlled ChatGPT login", provider: "codex-cli", models: [{ model: "codex-test", reasoningEffort: "low" }] });
+    expect(saved.secretConfigured).toBe(false);
+    const selection = { connectionId: saved.id, model: "codex-test" };
+    const lease = await repository.beginTest(selection);
+    await repository.finishTest({ ...lease, errorCode: null });
+    await repository.setDefault(selection);
+    await loginInstanceCodex(saved.id, { DATABASE_URL: url, APP_ENCRYPTION_KEY: masterKey, INSTANCE_CODEX_HOME: root, CODEX_BINARY_PATH: binary });
+    expect(await repository.getDefault()).toBeNull();
+    expect(await repository.finishTest({ ...lease, errorCode: null })).toBe(false);
+    const updated = (await repository.list()).find((item) => item.id === saved.id)!;
+    expect(updated.version).toBe(saved.version + 2);
+    expect(updated.models).toMatchObject([{ model: "codex-test", status: "untested" }]);
+    const authPath = join(root, saved.id, "auth.json");
+    expect((await stat(authPath)).mode & 0o777).toBe(0o600);
+    expect(JSON.parse(await readFile(authPath, "utf8")).auth_mode).toBe("chatgpt");
+    expect(JSON.stringify(updated)).not.toContain("controlled-access");
+  });
+
+  test("Codex authentication sessions block tests and fence superseded account publication", async () => {
+    const saved = await repository.save({ name: "Concurrent ChatGPT", provider: "codex-cli", models: [{ model: "codex-test", reasoningEffort: "low" }] });
+    const selection = { connectionId: saved.id, model: "codex-test" };
+    const oldProof = await repository.beginTest(selection);
+    const firstLogin = await repository.beginCodexAuthentication(saved.id);
+    await expect(repository.beginTest(selection)).rejects.toMatchObject({ code: "AI_CONNECTION_AUTHENTICATION_IN_PROGRESS" });
+    expect(await repository.finishTest({ ...oldProof, errorCode: null })).toBe(false);
+    expect(await repository.getCredential(saved.id)).toBeNull();
+    const resumedLogin = await repository.beginCodexAuthentication(saved.id);
+    let published = "";
+    expect(await repository.finishCodexAuthentication(saved.id, firstLogin, async () => { published = "old"; })).toBe(false);
+    expect(published).toBe("");
+    await expect(repository.beginTest(selection)).rejects.toMatchObject({ code: "AI_CONNECTION_AUTHENTICATION_IN_PROGRESS" });
+    expect(await repository.finishCodexAuthentication(saved.id, resumedLogin, async () => { published = "new"; })).toBe(true);
+    expect(published).toBe("new");
+    expect((await repository.list()).find((item) => item.id === saved.id)?.models[0]?.status).toBe("untested");
+    const newProof = await repository.beginTest(selection);
+    expect(await repository.finishTest({ ...newProof, errorCode: null })).toBe(true);
   });
 
   test("persists encrypted credentials and binds readiness to model and connection revision", async () => {

@@ -11,7 +11,8 @@ const connection = z.object({
   baseUrl: z.string().url().max(2048).optional(),
   models: z.array(z.object({ model, reasoningEffort: z.enum(aiReasoningEfforts) }).strict()).min(1).max(64),
 }).strict().refine((value) => {
-  const expected = value.provider === "openai-api" ? "https://api.openai.com/v1" : value.provider === "anthropic" ? "https://api.anthropic.com/v1" : value.provider === "openrouter" ? "https://openrouter.ai/api/v1" : null;
+  if (value.provider === "codex-cli") return !value.apiKey && !value.baseUrl;
+  const expected = value.provider === "openai-api" ? "https://api.openai.com/v1" : value.provider === "anthropic" ? "https://api.anthropic.com/v1" : value.provider === "openrouter" ? "https://openrouter.ai/api/v1" : value.provider === "kimi-code" ? "https://api.kimi.com/coding/v1" : null;
   if (expected) return !value.baseUrl || value.baseUrl.replace(/\/+$/, "") === expected;
   if (!value.baseUrl) return false;
   const url = new URL(value.baseUrl);

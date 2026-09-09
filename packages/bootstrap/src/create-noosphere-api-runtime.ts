@@ -1,3 +1,4 @@
+import { InstanceCodexAuthenticationReader } from "@outbound/infrastructure/ai/instance-codex-home";
 import { createInstanceAiRepository, InstanceWorkspaceAiPolicyReader, createInstanceWorkspaceAiAvailability, createInstanceApiKeyGateways } from "@outbound/infrastructure/ai/instance-ai-runtime";
 import { InstanceAiConnectionsApplication } from "@outbound/application/ai/instance-ai-connections";
 import { InstanceModelConnectionTester } from "@outbound/infrastructure/ai/instance-ai-connection-tester";
@@ -454,7 +455,7 @@ const instanceAiRepository = createInstanceAiRepository(database.db, environment
 const workspaceAiPolicies = new InstanceWorkspaceAiPolicyReader(workspaceAiSettingsRepository, instanceAiRepository);
 const aiAvailable = createInstanceWorkspaceAiAvailability(environment, workspaceAiPolicies, instanceAiRepository);
 const instanceAiConnections = createInstanceAiConnectionsHttpHandler({
-  application: new InstanceAiConnectionsApplication(new PostgresInstanceSetupRepository(database.db), instanceAiRepository, new InstanceModelConnectionTester(instanceAiRepository)),
+  application: new InstanceAiConnectionsApplication(new PostgresInstanceSetupRepository(database.db), instanceAiRepository, new InstanceModelConnectionTester(instanceAiRepository, undefined, { environment }), new InstanceCodexAuthenticationReader(environment)),
   sessions: auth.sessions,
 });
 const application = new ProductResearchApplication(

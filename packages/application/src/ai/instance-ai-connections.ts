@@ -2,8 +2,11 @@ import type { AiReasoningEffort, ModelGatewayErrorCode, ModelRoute } from "@outb
 import { ModelGatewayError } from "@outbound/application/ai/model-gateway";
 import type { InstanceSetupRepository } from "@outbound/application/ai/instance-setup";
 
-export const instanceAiProviders = ["openai-api", "anthropic", "openrouter", "openai-compatible"] as const;
+export const instanceAiProviders = ["openai-api", "anthropic", "openrouter", "openai-compatible", "kimi-code", "codex-cli"] as const;
 export type InstanceAiProvider = (typeof instanceAiProviders)[number];
+export interface InstanceAiAuthenticationReader {
+  status(connection: InstanceAiConnectionView): Promise<{ state: "unavailable" | "action_required" | "connected" | "expired" | "in_progress" } | null>;
+}
 export interface InstanceAiModel {
   readonly model: string;
   readonly reasoningEffort: AiReasoningEffort;
@@ -18,6 +21,7 @@ export interface InstanceAiConnectionView {
   readonly baseUrl: string;
   readonly version: number;
   readonly secretConfigured: boolean;
+  readonly authenticationInProgress?: boolean;
   readonly models: readonly InstanceAiModel[];
 }
 export interface SaveInstanceAiConnection {
@@ -52,6 +56,7 @@ export class InstanceAiConnectionsApplication {
     private readonly administrators: Pick<InstanceSetupRepository, "isAdministrator">,
     private readonly repository: InstanceAiConnectionsRepository,
     private readonly tester: InstanceAiConnectionTester,
+    private readonly authentication?: InstanceAiAuthenticationReader,
   ) {}
   private async requireAdministrator(userId: string): Promise<void> {
     if (!await this.administrators.isAdministrator(userId)) throw new InstanceAiError("INSTANCE_ADMIN_REQUIRED");
@@ -59,7 +64,7 @@ export class InstanceAiConnectionsApplication {
   async list(userId: string) {
     await this.requireAdministrator(userId);
     const [connections, defaultModel] = await Promise.all([this.repository.list(), this.repository.getDefault()]);
-    return { connections, defaultModel };
+    return { connections: await Promise.all(connections.map(async (connection) => ({ ...connection, authentication: await this.authentication?.status(connection) ?? null }))), defaultModel };
   }
   async save(userId: string, input: SaveInstanceAiConnection) {
     await this.requireAdministrator(userId);

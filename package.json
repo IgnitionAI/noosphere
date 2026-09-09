@@ -48,6 +48,7 @@
     "evaluate:prospect-memory-operator": "bun scripts/evaluate-prospect-memory-operator.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "bun packages/infrastructure/src/database/migrate.ts",
+    "instance:codex:login": "bun scripts/instance-codex-login.ts",
     "bootstrap:owner": "bun scripts/bootstrap-owner.ts",
     "api": "bun apps/api/src/index.ts",
     "worker": "bun apps/worker/src/index.ts",

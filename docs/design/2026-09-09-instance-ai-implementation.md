@@ -62,3 +62,23 @@ A real compatible-endpoint probe against OpenAI Chat Completions succeeded with 
 The initial `node:https` custom-lookup implementation worked under Node 22 but failed under the pinned Bun 1.3.4 runtime. The replacement connects directly to the validated public IP with the original Host/SNI and explicit certificate-name verification, no proxy, no reuse and no redirects. A real unauthenticated call returned HTTP 401 from api.openai.com under Bun; a wrong-host certificate was rejected with `ERR_TLS_CERT_ALTNAME_INVALID`. No credentials were sent in these transport probes.
 
 Tickets 90–93 remain. Existing installations and full release acceptance are not yet complete; no push, release or production migration performed.
+
+## Ticket 90: Kimi and isolated ChatGPT service connections
+
+Kimi follows the shared API-key lifecycle with its official endpoint and existing provider adapter. Codex connections store no API key; they derive a private UUID home from explicit `INSTANCE_CODEX_HOME`. The API and worker use the same connection-gateway factory. Setup provides the guided local/container device-login commands, account status and model validation/renewal. Compose mounts a separate persistent service volume into the API and all workers; the backend image bundles the login command and pins Codex 0.147.0.
+
+The login command stages each device flow separately and publishes credentials only under a database lock matching its authentication session ID. Tests and credential resolution are blocked during this session. Starting another login supersedes an abandoned attempt. Success and failure invalidate model proofs; an old attempt cannot publish or cancel the new account. Files are private (directories 0700, auth.json 0600), and ChatGPT tokens never enter database API-key fields or public responses.
+
+Managed Codex model invocations ignore user config/rules and project documents and disable shell, plugins/apps, browsing/computer, image generation, memory and delegation features. Environment-configured legacy Kimi/Codex connections remain intact. The live local CLI is 0.147.0, matching the image pin; its help/features were inspected to verify the flags used by the managed invocation.
+
+### Evidence
+
+- Ten PostgreSQL integration cases pass with 550 assertions on the dedicated `noosphere_instance_ai_90_test_20260909` database: complete research missions through all six providers (controlled HTTP/process outputs), guided login through a controlled executable, credential permissions, authentication fencing and proof invalidation.
+- Codex browser tests pass on desktop/mobile: create without API key, guided login, model test/default, expired connection and renewal. Kimi browser tests also pass on desktop/mobile. The fixture executable is explicitly enabled only for these controlled browser runs.
+- Seventeen focused gateway/home-status unit tests pass. The broad unit/HTTP suite has 1,021 passes and the same independently reproduced baseline MCP failure. Type, architecture, backend, login-script, Compose and Next production build checks pass.
+- A real Kimi probe (`kimi-for-coding`) succeeded on 2026-09-09T12:01:25.165Z in 2,430 ms, with a 1,024-token output limit. No live managed Codex connection was available; no personal Codex credentials were imported or invoked to manufacture that proof.
+- Two review axes caught the concurrent-renewal proof race; the session-fencing correction was reviewed again with no remaining defect identified.
+
+Migration 0110 is still unreleased. During development its session column was added after the earlier disposable database had been migrated, so subsequent validation uses the fresh dedicated 90 database. Production and the original checkout database were not changed.
+
+Tickets 91–93 remain: workspace selection/live inheritance with task pinning; explicit fallback and durable manual resume; existing-installation migration and complete release acceptance. No push, deployment or release tag performed.

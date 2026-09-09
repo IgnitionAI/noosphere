@@ -764,6 +764,13 @@
       "when": 1798034400000,
       "tag": "0109_instance_ai_connections",
       "breakpoints": true
+    },
+    {
+      "idx": 109,
+      "version": "7",
+      "when": 1798038000000,
+      "tag": "0110_instance_codex_connections",
+      "breakpoints": true
     }
   ]
 }

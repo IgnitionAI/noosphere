@@ -25,7 +25,14 @@ export default async function InstanceSetupPage({ searchParams }: { searchParams
       {ai ? <div className="mt-6 space-y-5">
         {ai.connections.map((connection) => <section key={connection.id} className="rounded-xl border border-line p-5">
           <h2 className="font-semibold">{connection.name}</h2>
-          <p className="mt-1 text-xs text-muted">{connection.provider} · Clé enregistrée et masquée</p>
+          <p className="mt-1 text-xs text-muted">{connectionProviderLabels[connection.provider]} · {connection.provider === "codex-cli" ? "Compte ChatGPT isolé" : "Clé enregistrée et masquée"}</p>
+          {connection.provider === "codex-cli" ? <div className="my-3 space-y-2 rounded-lg bg-canvas p-3 text-sm">
+            <p>{connection.authentication?.state === "in_progress" ? "Connexion ChatGPT en cours. Terminez la connexion sur la machine hôte ; les tests sont suspendus pendant cette étape." : connection.authentication?.state === "connected" ? "Compte connecté. Testez le modèle pour valider son utilisation." : connection.authentication?.state === "expired" ? "Connexion expirée. Renouvelez la connexion ChatGPT, puis retestez le modèle." : connection.authentication?.state === "unavailable" ? "Configurez INSTANCE_CODEX_HOME sur l’API et les workers pour activer la connexion de service." : "Action requise : connectez votre compte ChatGPT."}</p>
+            <p>Sur la machine qui héberge Noosphere, lancez la commande puis ouvrez le lien affiché par Codex :</p>
+            <p className="text-xs font-medium">Développement local</p><code className="block break-all text-xs">bun run instance:codex:login {connection.id}</code>
+            <p className="text-xs font-medium">Docker Compose, dans le conteneur API</p><code className="block break-all text-xs">bun dist/codex-login/instance-codex-login.js {connection.id}</code>
+            <p>La même commande permet de renouveler la connexion. Revenez ensuite sur cette page et testez le modèle. Les identifiants restent dans un volume de service privé partagé avec les workers.</p>
+          </div> : null}
           <ul className="mt-4 space-y-4">{connection.models.map((model) => <li key={model.model}>
             <div className="flex flex-wrap items-center gap-2"><span className="font-mono text-sm">{model.model}</span><span className="badge">{model.status === "ready" ? "Test réussi" : model.status === "testing" ? "Test en cours" : model.status === "failed" ? "Test échoué" : "À tester"}</span>{ai.defaultModel?.connectionId === connection.id && ai.defaultModel.model === model.model ? <span className="badge badge-signal">Par défaut</span> : null}</div>
             {model.errorCode ? <p className="mt-2 text-sm text-danger">{connectionError(model.errorCode)}</p> : null}
@@ -47,6 +54,7 @@ export default async function InstanceSetupPage({ searchParams }: { searchParams
 function connectionError(code: string) {
   const messages: Record<string, string> = {
     AI_PROVIDER_DESTINATION_FORBIDDEN: "Cette destination est interdite. Utilisez une URL HTTPS publique sur le port 443 ; les adresses privées, locales et les redirections sont refusées.",
+    AI_CONNECTION_AUTHENTICATION_IN_PROGRESS: "Une connexion ChatGPT est en cours. Terminez-la avant de tester le modèle.",
     AI_PROVIDER_AUTHENTICATION_FAILED: "La clé a été refusée. Vérifiez les identifiants et leurs droits.",
     AI_PROVIDER_QUOTA_EXHAUSTED: "Le quota ou la limite du fournisseur est atteint. Vérifiez votre compte avant de retester.",
     AI_PROVIDER_MODEL_UNAVAILABLE: "Ce modèle est introuvable ou inaccessible avec cette clé.",
@@ -59,3 +67,5 @@ function connectionError(code: string) {
   };
   return messages[code] ?? "La connexion n’est pas disponible. Vérifiez sa configuration et réessayez.";
 }
+
+const connectionProviderLabels = { "openai-api": "OpenAI", anthropic: "Anthropic", openrouter: "OpenRouter", "openai-compatible": "API compatible OpenAI", "kimi-code": "Kimi", "codex-cli": "Codex via ChatGPT" };

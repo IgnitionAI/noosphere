@@ -365,7 +365,8 @@ export const instanceAiConnections = pgTable("instance_ai_connections", {
   name: text("name").notNull(),
   provider: text("provider").notNull(),
   baseUrl: text("base_url").notNull(),
-  encryptedApiKey: text("encrypted_api_key").notNull(),
+  encryptedApiKey: text("encrypted_api_key"),
+  authenticationSessionId: uuid("authentication_session_id"),
   version: integer("version").notNull().default(1),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

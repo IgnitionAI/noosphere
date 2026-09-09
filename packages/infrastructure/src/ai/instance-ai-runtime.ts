@@ -1,5 +1,8 @@
+import type { CodexProcessRunner } from "@outbound/infrastructure/ai/codex-process-runner";
+import { CodexCliModelGateway } from "@outbound/infrastructure/ai/codex-cli-model-gateway";
+import { KimiChatModelGateway } from "@outbound/infrastructure/ai/kimi-model-gateway";
 import { instanceAiProviders, type InstanceAiProvider } from "@outbound/application/ai/instance-ai-connections";
-import { ApiKeyModelGateway } from "@outbound/infrastructure/ai/api-key-model-gateway";
+import { createInstanceConnectionGateway } from "@outbound/infrastructure/ai/instance-connection-gateway";
 import type { WorkspaceAiAvailability } from "@outbound/application/ai/ai-availability";
 import { ModelGatewayError, type ModelGateway, type StructuredModelRequest, type StructuredModelResult } from "@outbound/application/ai/model-gateway";
 import { routesForCapability, type WorkspaceAiModelPolicyReader } from "@outbound/application/workspaces/workspace-ai-settings";
@@ -39,26 +42,29 @@ export function createInstanceWorkspaceAiAvailability(environment: Environment, 
   };
 }
 export class InstanceApiKeyModelGateway implements ModelGateway {
-  readonly transport: "responses-api" | "anthropic-messages" | "chat-completions";
-  constructor(private readonly instance: PostgresInstanceAiConnectionsRepository, private readonly environment: Environment, readonly provider: InstanceAiProvider, private readonly fetcher?: (url: string, options?: RequestInit) => Promise<Response>) {
-    this.transport = provider === "openai-api" ? "responses-api" : provider === "anthropic" ? "anthropic-messages" : "chat-completions";
+  readonly transport: "responses-api" | "anthropic-messages" | "chat-completions" | "codex-process";
+  constructor(private readonly instance: PostgresInstanceAiConnectionsRepository, private readonly environment: Environment, readonly provider: InstanceAiProvider, private readonly fetcher?: (url: string, options?: RequestInit) => Promise<Response>, private readonly codexRunner?: CodexProcessRunner) {
+    this.transport = provider === "openai-api" ? "responses-api" : provider === "anthropic" ? "anthropic-messages" : provider === "codex-cli" ? "codex-process" : "chat-completions";
   }
   async invokeStructured<T>(request: StructuredModelRequest<T>): Promise<StructuredModelResult<T>> {
     if (!request.connectionId) {
-      const apiKey = this.provider === "openai-api" ? this.environment.OPENAI_API_KEY : undefined;
+      if (this.provider === "codex-cli") {
+        const home = this.environment.CODEX_SERVICE_HOME;
+        if (!home) throw unavailable(this.provider);
+        return new CodexCliModelGateway({ codexHome: home, ...(this.environment.CODEX_BINARY_PATH ? { binaryPath: this.environment.CODEX_BINARY_PATH } : {}) }).invokeStructured(request);
+      }
+      const apiKey = this.provider === "openai-api" ? this.environment.OPENAI_API_KEY : this.provider === "kimi-code" ? this.environment.KIMI_CODE_API_KEY : undefined;
       if (!apiKey) throw unavailable(this.provider);
-      return new OpenAiResponsesModelGateway({ apiKey }).invokeStructured(request);
+      return (this.provider === "kimi-code" ? new KimiChatModelGateway({ apiKey, ...(this.environment.KIMI_CODE_BASE_URL ? { baseUrl: this.environment.KIMI_CODE_BASE_URL } : {}) }) : new OpenAiResponsesModelGateway({ apiKey })).invokeStructured(request);
     }
     const route = await this.instance.getReadyRoute({ connectionId: request.connectionId, model: request.model });
     if (!route || route.provider !== this.provider || (request.connectionVersion && route.connectionVersion !== request.connectionVersion)) throw unavailable(this.provider);
     const credential = await this.instance.getCredential(request.connectionId, route.connectionVersion);
     if (!credential) throw unavailable(this.provider);
-    const options = { apiKey: credential.apiKey, baseUrl: credential.baseUrl, ...(this.fetcher ? { fetcher: this.fetcher } : {}) };
-    return (this.provider === "openai-api" ? new OpenAiResponsesModelGateway(options)
-      : new ApiKeyModelGateway({ ...options, provider: this.provider })).invokeStructured(request);
+    return createInstanceConnectionGateway(credential, { environment: this.environment, ...(this.codexRunner ? { codexRunner: this.codexRunner } : {}), ...(this.fetcher ? { fetcher: this.fetcher } : {}) }).invokeStructured(request);
   }
 }
-export function createInstanceApiKeyGateways(instance: PostgresInstanceAiConnectionsRepository, environment: Environment, fetcher?: (url: string, options?: RequestInit) => Promise<Response>): ModelGateway[] {
-  return instanceAiProviders.map((provider) => new InstanceApiKeyModelGateway(instance, environment, provider, fetcher));
+export function createInstanceApiKeyGateways(instance: PostgresInstanceAiConnectionsRepository, environment: Environment, fetcher?: (url: string, options?: RequestInit) => Promise<Response>, codexRunner?: CodexProcessRunner): ModelGateway[] {
+  return instanceAiProviders.map((provider) => new InstanceApiKeyModelGateway(instance, environment, provider, fetcher, codexRunner));
 }
 function unavailable(provider: InstanceAiProvider) { return new ModelGatewayError("AI_PROVIDER_UNAVAILABLE", provider, "AI_CONNECTION_NOT_VALIDATED", false, false); }

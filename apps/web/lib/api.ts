@@ -3971,7 +3971,8 @@ export async function skipInstanceAiSetup(): Promise<void> {
 }
 
 export interface InstanceAiConnectionSummary {
-  id: string; name: string; provider: "openai-api" | "anthropic" | "openrouter" | "openai-compatible"; baseUrl: string; version: number; secretConfigured: boolean;
+  id: string; name: string; provider: "openai-api" | "anthropic" | "openrouter" | "openai-compatible" | "kimi-code" | "codex-cli"; baseUrl: string; version: number; secretConfigured: boolean;
+  authentication?: { state: "unavailable" | "action_required" | "connected" | "expired" | "in_progress" } | null;
   models: { model: string; reasoningEffort: string; status: "untested" | "testing" | "ready" | "failed"; testedAt: string | null; errorCode: string | null }[];
 }
 export interface InstanceAiConnectionsSummary {
@@ -3983,7 +3984,7 @@ export async function getInstanceAiConnections(): Promise<InstanceAiConnectionsS
   if (!response.ok) await throwApiError(response);
   return response.json();
 }
-export async function saveInstanceAiConnection(input: { id?: string; name: string; provider: "openai-api" | "anthropic" | "openrouter" | "openai-compatible"; apiKey?: string; baseUrl?: string; models: { model: string; reasoningEffort: "low" }[] }): Promise<void> {
+export async function saveInstanceAiConnection(input: { id?: string; name: string; provider: "openai-api" | "anthropic" | "openrouter" | "openai-compatible" | "kimi-code" | "codex-cli"; apiKey?: string; baseUrl?: string; models: { model: string; reasoningEffort: "low" }[] }): Promise<void> {
   const response = await apiFetch("/api/v1/instance/ai/connections", { method: "POST", body: JSON.stringify(input) });
   if (!response.ok) await throwApiError(response);
 }

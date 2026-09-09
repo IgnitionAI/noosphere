@@ -34,6 +34,7 @@ export interface CodexCliModelGatewayOptions {
   readonly binaryPath?: string;
   readonly runner?: CodexProcessRunner;
   readonly maxOutputBytes?: number;
+  readonly isolatedService?: boolean;
   readonly now?: () => Date;
 }
 
@@ -44,6 +45,7 @@ export class CodexCliModelGateway implements ModelGateway {
   readonly #binaryPath: string;
   readonly #runner: CodexProcessRunner;
   readonly #maxOutputBytes: number;
+  readonly #isolatedService: boolean;
   readonly #now: () => Date;
 
   constructor(options: CodexCliModelGatewayOptions) {
@@ -51,6 +53,7 @@ export class CodexCliModelGateway implements ModelGateway {
     this.#binaryPath = required(options.binaryPath ?? "codex", "CODEX_BINARY_PATH");
     this.#runner = options.runner ?? new BunCodexProcessRunner();
     this.#maxOutputBytes = options.maxOutputBytes ?? DEFAULT_OUTPUT_LIMIT_BYTES;
+    this.#isolatedService = options.isolatedService ?? false;
     this.#now = options.now ?? (() => new Date());
   }
 
@@ -64,6 +67,7 @@ export class CodexCliModelGateway implements ModelGateway {
       const result = await this.#runner.run({
         command: buildCodexCommand({
           binaryPath: this.#binaryPath,
+          isolatedService: this.#isolatedService,
           model: request.model,
           reasoningEffort: request.reasoningEffort,
           schemaPath,
@@ -229,6 +233,7 @@ export class CodexAppServerModelDiscovery implements CodexModelDiscovery {
 }
 
 function buildCodexCommand(input: {
+  readonly isolatedService: boolean;
   readonly binaryPath: string;
   readonly model: string;
   readonly reasoningEffort: AiReasoningEffort;
@@ -242,6 +247,11 @@ function buildCodexCommand(input: {
     "--ephemeral",
     "--ignore-user-config",
     "--ignore-rules",
+    ...(input.isolatedService ? [
+      "--config", "project_doc_max_bytes=0",
+      "--config", 'web_search="disabled"',
+      ...["shell_tool", "unified_exec", "plugins", "remote_plugin", "apps", "hooks", "skill_search", "skill_mcp_dependency_install", "view_image", "browser_use", "browser_use_external", "computer_use", "multi_agent", "multi_agent_v2", "code_mode", "code_mode_host", "workspace_dependencies", "memories", "image_generation"].flatMap((feature) => ["--config", `features.${feature}=false`]),
+    ] : []),
     "--model", input.model,
     "--config", `model_reasoning_effort=${JSON.stringify(input.reasoningEffort)}`,
     "--sandbox", "read-only",

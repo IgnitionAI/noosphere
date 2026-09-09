@@ -35,9 +35,11 @@ services:
       S3_ENDPOINT: http://minio:9000
       CRAWLER_SERVICE_URL: http://crawler:8000
       CODEX_SERVICE_HOME: /var/lib/noosphere-codex
+      INSTANCE_CODEX_HOME: /var/lib/noosphere-instance-codex
       PORT: "3001"
     volumes:
       - codex-service-home:/var/lib/noosphere-codex
+      - instance-codex-home:/var/lib/noosphere-instance-codex
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -93,9 +95,11 @@ services:
       TEI_RERANKER_GRPC_ADDRESS: tei-reranker:80
       TEI_PROTO_PATH: /app/packages/infrastructure/src/embeddings/tei.proto
       CODEX_SERVICE_HOME: /var/lib/noosphere-codex
+      INSTANCE_CODEX_HOME: /var/lib/noosphere-instance-codex
       WORKER_EXCLUDED_JOB_TYPES: prospect.decision.execute,conversation.command.execute,prospect.memory.refresh,prospect.memory.backfill
     volumes:
       - codex-service-home:/var/lib/noosphere-codex
+      - instance-codex-home:/var/lib/noosphere-instance-codex
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -126,6 +130,7 @@ services:
       TEI_RERANKER_GRPC_ADDRESS: tei-reranker:80
       TEI_PROTO_PATH: /app/packages/infrastructure/src/embeddings/tei.proto
       CODEX_SERVICE_HOME: /var/lib/noosphere-codex
+      INSTANCE_CODEX_HOME: /var/lib/noosphere-instance-codex
       WORKER_ID: prospect-decision-worker
       WORKER_JOB_TYPES: prospect.decision.execute
       WORKER_DISABLE_MAINTENANCE: "true"
@@ -133,6 +138,7 @@ services:
       WORKER_DISABLE_OUTREACH_SCHEDULER: "true"
     volumes:
       - codex-service-home:/var/lib/noosphere-codex
+      - instance-codex-home:/var/lib/noosphere-instance-codex
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -163,6 +169,7 @@ services:
       TEI_RERANKER_GRPC_ADDRESS: tei-reranker:80
       TEI_PROTO_PATH: /app/packages/infrastructure/src/embeddings/tei.proto
       CODEX_SERVICE_HOME: /var/lib/noosphere-codex
+      INSTANCE_CODEX_HOME: /var/lib/noosphere-instance-codex
       WORKER_ID: setter-command-worker
       WORKER_JOB_TYPES: conversation.command.execute
       JOB_BATCH_SIZE: "2"
@@ -172,6 +179,7 @@ services:
       WORKER_DISABLE_OUTREACH_SCHEDULER: "true"
     volumes:
       - codex-service-home:/var/lib/noosphere-codex
+      - instance-codex-home:/var/lib/noosphere-instance-codex
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -202,6 +210,7 @@ services:
       TEI_RERANKER_GRPC_ADDRESS: tei-reranker:80
       TEI_PROTO_PATH: /app/packages/infrastructure/src/embeddings/tei.proto
       CODEX_SERVICE_HOME: /var/lib/noosphere-codex
+      INSTANCE_CODEX_HOME: /var/lib/noosphere-instance-codex
       WORKER_ID: prospect-memory-worker
       WORKER_JOB_TYPES: prospect.memory.refresh,prospect.memory.backfill
       JOB_BATCH_SIZE: "2"
@@ -213,6 +222,7 @@ services:
       WORKER_DISABLE_OUTREACH_SCHEDULER: "true"
     volumes:
       - codex-service-home:/var/lib/noosphere-codex
+      - instance-codex-home:/var/lib/noosphere-instance-codex
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -301,6 +311,7 @@ services:
     tty: true
     volumes:
       - codex-service-home:/var/lib/noosphere-codex
+      - instance-codex-home:/var/lib/noosphere-instance-codex
     networks: [outbound-private]
     logging: *default-logging
 
@@ -308,6 +319,7 @@ volumes:
   caddy-data:
   caddy-config:
   codex-service-home:
+  instance-codex-home:
 
 networks:
   outbound-private:

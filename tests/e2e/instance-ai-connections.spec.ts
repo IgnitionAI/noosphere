@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { createServer } from "node:http";
 import { createDatabase } from "@outbound/infrastructure/database/client";
 
-for (const providerId of ["openai-api", "anthropic", "openrouter"] as const) test(`${providerId}: administrator saves and tests a connection, chooses its default and starts a research mission`, async ({ page }) => {
+for (const providerId of ["openai-api", "anthropic", "openrouter", "kimi-code"] as const) test(`${providerId}: administrator saves and tests a connection, chooses its default and starts a research mission`, async ({ page }) => {
   let calls = 0;
   const provider = createServer(async (request, response) => {
     calls++;
