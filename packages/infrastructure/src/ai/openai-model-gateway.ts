@@ -1,3 +1,4 @@
+import { allowsExplicitProviderFallback } from "@outbound/application/ai/model-gateway";
 import { ModelGatewayError, type ModelGateway, type ModelGatewayErrorCode, type StructuredModelRequest, type StructuredModelResult } from "@outbound/application/ai/model-gateway";
 
 type Fetcher = (url: string, options?: RequestInit) => Promise<Response>;
@@ -70,6 +71,6 @@ export class OpenAiResponsesModelGateway implements ModelGateway {
     }
   }
 }
-function failure(code: ModelGatewayErrorCode) { return new ModelGatewayError(code, "openai-api", code, false, code === "AI_PROVIDER_UNAVAILABLE" || code === "AI_PROVIDER_TIMEOUT"); }
+function failure(code: ModelGatewayErrorCode) { return new ModelGatewayError(code, "openai-api", code, allowsExplicitProviderFallback(code), code === "AI_PROVIDER_UNAVAILABLE" || code === "AI_PROVIDER_TIMEOUT"); }
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
 function tokenCount(value: unknown): number | null { return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null; }

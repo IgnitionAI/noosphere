@@ -1,3 +1,4 @@
+import { AiTaskPauseError } from "@outbound/application/ai/ai-task-pause";
 import { ChatOpenAI, type ChatOpenAIFields } from "@langchain/openai";
 import { createAgent, toolStrategy } from "langchain";
 import { createDeepAgent, type SubAgent } from "deepagents";
@@ -548,6 +549,7 @@ export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
         },
       };
     } catch (error) {
+      if (error instanceof AiTaskPauseError) throw error;
       if (
         error instanceof RetryableAgentError ||
         error instanceof TerminalAgentError

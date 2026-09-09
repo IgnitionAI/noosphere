@@ -77,7 +77,7 @@ export default async function ResearchProgressPage({
     run.stages.find((stage) => stage.stage === run.activeStage) ??
     [...run.stages].reverse().find((stage) => stage.lastErrorCode);
   const quotaExhausted =
-    failedStage?.lastErrorCode === "MODEL_PROVIDER_QUOTA_EXHAUSTED";
+    ["MODEL_PROVIDER_QUOTA_EXHAUSTED", "AI_PROVIDER_QUOTA_EXHAUSTED"].includes(failedStage?.lastErrorCode ?? "");
   const failedStageLabel = failedStage
     ? stageLabels[failedStage.stage] ?? failedStage.stage
     : "la dernière étape";
@@ -220,7 +220,7 @@ export default async function ResearchProgressPage({
         </aside>
 
         <div className="space-y-4">
-          {resumableIncomplete ? (
+          {resumableIncomplete || (run.status === "paused" && failedStage?.lastErrorCode) ? (
             <section
               className={`rounded-xl border p-5 ${
                 quotaExhausted
@@ -232,11 +232,11 @@ export default async function ResearchProgressPage({
                 <AlertTriangle className="mt-0.5 flex-none" size={19} />
                 <div>
                   <h2 className="font-semibold">
-                    {quotaExhausted ? "Quota Kimi épuisé" : "La recherche doit reprendre"}
+                    {quotaExhausted ? "Quota du fournisseur IA épuisé" : "La recherche doit reprendre"}
                   </h2>
                   <p className="mt-1 text-xs leading-5">
                     {quotaExhausted
-                      ? `Les ${completed} checkpoints terminés sont conservés. Renouvelez le quota Kimi, puis reprenez directement depuis « ${failedStageLabel} ».`
+                      ? `Les ${completed} checkpoints terminés sont conservés. Rétablissez le quota du fournisseur, puis reprenez directement depuis « ${failedStageLabel} ».`
                       : `Les checkpoints terminés sont conservés. Vous pouvez relancer directement depuis « ${failedStageLabel} ».`}
                   </p>
                   {quotaExhausted ? (

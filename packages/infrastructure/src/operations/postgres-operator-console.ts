@@ -1,3 +1,7 @@
+import { z } from "zod";
+import { aiCapabilities } from "@outbound/application/ai/model-gateway";
+import { AiSetupRequiredError } from "@outbound/application/ai/ai-availability";
+import type { createTaskAiResumePreparation } from "@outbound/infrastructure/ai/postgres-task-ai-resume";
 import { and, desc, eq, gte, inArray, lte, ne, or, sql } from "drizzle-orm";
 import type { Clock, IdGenerator } from "@outbound/application/shared/ports";
 import { consoleJobRecoveryDisposition, sanitizeOperationalPayload } from "@outbound/domain/operations/operator-console";
@@ -15,7 +19,7 @@ import {
   prospectingPlans,
 } from "@outbound/infrastructure/database/schema";
 
-export type ConsoleJobStatus = "pending" | "running" | "retry" | "completed" | "dead_lettered";
+export type ConsoleJobStatus = "paused" | "pending" | "running" | "retry" | "completed" | "dead_lettered";
 
 export interface ConsoleJobView {
   readonly id: string;
@@ -41,6 +45,7 @@ export class PostgresOperatorConsole {
     private readonly database: Database,
     private readonly clock: Clock,
     private readonly ids: IdGenerator,
+    private readonly prepareAiResume?: ReturnType<typeof createTaskAiResumePreparation>,
   ) {}
 
   async listJobs(input: { workspaceId: string; statuses?: readonly ConsoleJobStatus[]; type?: string; from?: Date; to?: Date; limit: number }): Promise<readonly ConsoleJobView[]> {
@@ -100,6 +105,28 @@ export class PostgresOperatorConsole {
     return this.database.transaction(async (tx) => {
       const [existing] = await tx.select().from(jobs).where(and(eq(jobs.workspaceId, input.workspaceId), eq(jobs.id, input.jobId))).limit(1).for("update");
       if (!existing) throw new OperatorConsoleError("CONSOLE_JOB_NOT_FOUND", 404);
+      if (existing.status === "paused") {
+        const capability = z.enum(aiCapabilities).safeParse(existing.aiPauseCapability);
+        if (!capability.success || !existing.aiTaskKey || !this.prepareAiResume || existing.type.startsWith("research.") || existing.type.startsWith("mcp.")) {
+          throw new OperatorConsoleError("CONSOLE_JOB_MANUAL_RECOVERY_BLOCKED", 409);
+        }
+        let policy;
+        try { policy = await this.prepareAiResume(tx, { workspaceId: input.workspaceId, taskKey: existing.aiTaskKey, capability: capability.data }); }
+        catch (error) { if (error instanceof AiSetupRequiredError) throw new OperatorConsoleError("AI_SETUP_REQUIRED", 409); throw error; }
+        // Paused processors retain their checkpoint and pre-send domain state.
+        // Do not apply the dead-letter recovery resets or recreate external effects.
+        const [resumed] = await tx.update(jobs).set({ status: "pending", aiPolicy: policy, attempts: 0, availableAt: now, lockedAt: null, lockedUntil: null, lockedBy: null, completedAt: null, lastErrorCode: null, lastErrorMessage: null, updatedAt: now }).where(eq(jobs.id, existing.id)).returning();
+        if (!resumed) throw new OperatorConsoleError("CONSOLE_JOB_NOT_FOUND", 404);
+        const eventId = this.ids.generate();
+        const payload = { jobId: existing.id, jobType: existing.type, capability: capability.data, previousErrorCode: existing.lastErrorCode, correlationId: existing.correlationId };
+        await tx.insert(outboxEvents).values({ id: eventId, workspaceId: input.workspaceId, aggregateType: "job", aggregateId: existing.id, eventType: "JobAiResumed", payload, availableAt: now, createdAt: now });
+        await tx.insert(auditLogs).values({ id: this.ids.generate(), workspaceId: input.workspaceId, actorUserId: input.actorUserId, action: "JobAiResumed", subjectType: "job", subjectId: existing.id, changes: payload, correlationId: existing.correlationId, sourceEventId: eventId, createdAt: now });
+        return { ...jobView(resumed), requeued: true as const };
+      }
+      if (existing.aiPauseCapability && ["pending", "running", "completed"].includes(existing.status)) {
+        const [resume] = await tx.select({ id: outboxEvents.id }).from(outboxEvents).where(and(eq(outboxEvents.workspaceId, input.workspaceId), eq(outboxEvents.aggregateId, existing.id), eq(outboxEvents.eventType, "JobAiResumed"))).limit(1);
+        if (resume) return { ...jobView(existing), requeued: true as const };
+      }
       const recovery = consoleJobRecoveryDisposition(existing);
       if (recovery === "automatic") {
         throw new OperatorConsoleError("CONSOLE_JOB_RETRY_SCHEDULED", 409);

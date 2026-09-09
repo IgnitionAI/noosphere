@@ -8,8 +8,13 @@ export interface TaskAiPolicyReader {
 
 /** Each concurrent worker job reads its durable launch policy, including later executor reads. */
 export class TaskAiPolicyScope implements WorkspaceAiModelPolicyReader, JobExecutionContext {
-  private readonly storage = new AsyncLocalStorage<{ workspaceId: string; policy: WorkspaceAiModelPolicy | null }>();
+  private readonly storage = new AsyncLocalStorage<{ jobId: string; workspaceId: string; policy: WorkspaceAiModelPolicy | null }>();
   constructor(private readonly live: WorkspaceAiModelPolicyReader, private readonly snapshots: TaskAiPolicyReader) {}
+
+  currentJobId(workspaceId: string): string | undefined {
+    const active = this.storage.getStore();
+    return active?.workspaceId === workspaceId ? active.jobId : undefined;
+  }
 
   async find(workspaceId: string) {
     const active = this.storage.getStore();
@@ -19,6 +24,6 @@ export class TaskAiPolicyScope implements WorkspaceAiModelPolicyReader, JobExecu
 
   async run<T>(job: { readonly id: string; readonly workspaceId: string }, execute: () => Promise<T>): Promise<T> {
     const policy = await this.snapshots.find(job.id, job.workspaceId);
-    return this.storage.run({ workspaceId: job.workspaceId, policy }, execute);
+    return this.storage.run({ jobId: job.id, workspaceId: job.workspaceId, policy }, execute);
   }
 }

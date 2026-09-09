@@ -1,0 +1,86 @@
+import { expect, test } from "bun:test";
+import { migrate } from "drizzle-orm/postgres-js/migrator";
+import { createDatabase } from "@outbound/infrastructure/database/client";
+import { PostgresProductResearchRepository } from "@outbound/infrastructure/gtm/postgres-product-research-repository";
+import { PostgresJobQueue } from "@outbound/infrastructure/jobs/postgres-job-queue";
+import { CreateProductResearchRun, StartProductResearchRun, PauseProductResearchRun, ResumeProductResearchRun } from "@outbound/application/gtm/product-research-use-cases";
+import { ResearchOrchestrator } from "@outbound/application/gtm/research-orchestrator";
+import { RetryableAgentError, type ResearchAgentExecutor } from "@outbound/application/gtm/product-research-ports";
+import { AiTaskPauseError } from "@outbound/application/ai/ai-task-pause";
+import { ModelGatewayError } from "@outbound/application/ai/model-gateway";
+import { CryptoIdGenerator } from "@outbound/application/shared/ports";
+import { Sha256ContentHasher } from "@outbound/infrastructure/shared/sha256-content-hasher";
+import { validOutputFor } from "../fixtures/research-agent-fixtures";
+const url = process.env.TEST_DATABASE_URL;
+(url ? test : test.skip)("manual fanout resume preserves finished children and joins once", async () => {
+  const db = createDatabase(url!), workspaceId = crypto.randomUUID();
+  const repository = new PostgresProductResearchRepository(db.db), queue = new PostgresJobQueue(db.client);
+  const ids = new CryptoIdGenerator(), clock = { now: () => new Date() };
+  const calls: string[] = [];
+  let healthy = false;
+  let releaseSibling!: () => void;
+  let siblingStarted!: () => void;
+  const started = new Promise<void>((resolve) => { siblingStarted = resolve; });
+  const release = new Promise<void>((resolve) => { releaseSibling = resolve; });
+  const failure = new AiTaskPauseError(new ModelGatewayError("AI_PROVIDER_QUOTA_EXHAUSTED", "openai-api", "quota", false, false), "icp_research", "fanout", []);
+  const agents: ResearchAgentExecutor = { async execute(stage, input) {
+    const key = input.workItemKey ?? "main";
+    if (stage === "market_investigation") { calls.push(key); if (key === "hypothesis:H04" && !healthy) { siblingStarted(); await release; throw new RetryableAgentError("TEMPORARY_FAILURE", "Temporary failure"); } if (key === "hypothesis:H02" && !healthy) throw failure; }
+    const output = structuredClone(validOutputFor(stage)) as Record<string, any>;
+    if (stage === "organization_discovery") output.hypotheses = [1, 2, 3, 4].map((n) => ({ ...structuredClone(output.hypotheses[0]), hypothesisId: `H0${n}`, organizationType: `Organization ${n}` }));
+    if (stage === "market_investigation" && key !== "main") output.investigations[0].hypothesisId = key.replace("hypothesis:", "");
+    return { output: output as Awaited<ReturnType<ResearchAgentExecutor["execute"]>>["output"], metadata: { provider: "fixture", model: "controlled", promptVersion: "test", parameters: {}, cost: 0, latencyMs: 1 } };
+  } };
+  try {
+    await migrate(db.db, { migrationsFolder: `${import.meta.dir}/../../packages/infrastructure/migrations` });
+    await db.client`insert into workspaces(id, slug, name) values (${workspaceId}, ${workspaceId}, 'Fanout test')`;
+    const run = await new CreateProductResearchRun(repository, ids, clock).execute({ workspaceId, brief: { productUrl: "https://example.com", productName: "Fanout", description: "B2B", geography: "France", languages: ["fr"], salesMotion: "hybrid", knownCompetitors: [], internalDocumentIds: [], depth: "standard", researchVersion: 3 } });
+    const input = { workspaceId, runId: run.snapshot.id, correlationId: run.snapshot.id };
+    await new StartProductResearchRun(repository, ids, clock).execute(input);
+    const orchestrator = new ResearchOrchestrator(repository, queue, agents, ids, clock, new Sha256ContentHasher());
+    const lease = () => queue.lease({ workerId: "fanout-test", types: ["research.stage.execute"], limit: 1, leaseMs: 30000, now: clock.now() });
+    for (let i = 0; i < 3; i++) await orchestrator.process((await lease())[0]!);
+    const children = [...await queue.lease({ workerId: "fanout-test", types: ["research.stage.execute"], limit: 4, leaseMs: 30000, now: clock.now() })];
+    children.sort((a, b) => String((a.payload as any).workItemKey).localeCompare(String((b.payload as any).workItemKey)));
+    expect(children).toHaveLength(4);
+    await orchestrator.process(children[0]!);
+    const staleRun = await repository.findById(workspaceId, input.runId);
+    const inFlight = orchestrator.process(children[3]!);
+    await started;
+    await expect(orchestrator.process(children[1]!)).rejects.toBe(failure);
+    const [atomicPause] = await db.client`select status from jobs where id = ${children[1]!.id}`;
+    expect(atomicPause?.status).toBe("paused");
+    const [pausedItem] = await db.client`select status from research_work_items where run_id = ${input.runId} and work_item_key = 'hypothesis:H02'`;
+    expect(pausedItem?.status).toBe("paused");
+    const find = repository.findById.bind(repository);
+    repository.findById = async () => staleRun;
+    try { await expect(orchestrator.process(children[2]!)).rejects.toThrow("JOB_PAUSE_PERSISTED"); }
+    finally { repository.findById = find; }
+    expect(calls).toEqual(["hypothesis:H01", "hypothesis:H04", "hypothesis:H02"]);
+    const [lateJob] = await db.client`select status from jobs where id = ${children[2]!.id}`;
+    expect(lateJob?.status).toBe("paused");
+    releaseSibling();
+    expect(await inFlight).toMatchObject({ outcome: "retry_scheduled" });
+    expect((await repository.findById(workspaceId, input.runId))?.snapshot.status).toBe("paused");
+    healthy = true;
+    expect(await lease()).toEqual([]);
+    await Promise.all([1, 2].map(() => new ResumeProductResearchRun(repository, ids, clock).execute(input)));
+    const resumed = [...await queue.lease({ workerId: "fanout-test", types: ["research.stage.execute"], limit: 3, leaseMs: 30000, now: new Date(clock.now().getTime() + 6000) })];
+    resumed.sort((a, b) => String((a.payload as any).workItemKey).localeCompare(String((b.payload as any).workItemKey)));
+    expect(resumed.map((job) => (job.payload as any).workItemKey)).toEqual(["hypothesis:H02", "hypothesis:H03", "hypothesis:H04"]);
+    for (const job of resumed) await orchestrator.process(job);
+    const finalizer = (await lease())[0]!;
+    expect(finalizer.payload).toMatchObject({ finalizeFanout: true });
+    await new PauseProductResearchRun(repository, clock).execute(input);
+    expect(await orchestrator.process(finalizer)).toMatchObject({ outcome: "paused" });
+    expect(await lease()).toEqual([]);
+    await new ResumeProductResearchRun(repository, ids, clock).execute(input);
+    const resumedFinalizer = (await lease())[0]!;
+    expect(resumedFinalizer.id).toBe(finalizer.id);
+    await orchestrator.process(resumedFinalizer);
+    expect(calls).toEqual(["hypothesis:H01", "hypothesis:H04", "hypothesis:H02", "hypothesis:H02", "hypothesis:H03", "hypothesis:H04"]);
+    expect(await repository.findCompletedCheckpoint(workspaceId, input.runId, "market_investigation")).not.toBeNull();
+    const [joined] = await db.client`select count(*)::int as count from research_stage_runs where run_id = ${input.runId} and stage = 'market_investigation' and work_item_key = 'main' and status = 'completed'`;
+    expect(joined?.count).toBe(1);
+  } finally { await db.client`delete from jobs where workspace_id = ${workspaceId}`; await db.close(); }
+});

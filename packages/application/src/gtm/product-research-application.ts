@@ -87,7 +87,7 @@ export class ProductResearchApplication {
 
   async resume(input: { workspaceId: string; runId: string; correlationId: string }) {
     try {
-      await this.requireAi(input.workspaceId);
+      // The resume transaction validates the pinned task selection, not the current workspace default.
       const run = await this.#resume.execute(input);
       return run.snapshot;
     } catch (error) {

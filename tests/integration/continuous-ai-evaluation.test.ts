@@ -76,6 +76,26 @@ databaseDescribe("AI-140 continuous AI evaluation", () => {
     await database.close();
   });
 
+  test("provider pause preserves pending evaluation cases instead of recording terminal failure", async () => {
+    const { AiTaskPauseError } = await import("@outbound/application/ai/ai-task-pause");
+    const { ModelGatewayError } = await import("@outbound/application/ai/model-gateway");
+    const dataset = await service.createDataset({ workspaceId, actorUserId: ownerId, capability: "setter", name: "Paused evaluation", rubricVersion: "v1", cases: [1, 2].map((index) => ({ name: `case-${index}`, input: { message: "EXEMPLE" }, expected: { classification: "qualified" } })) });
+    const prompt = await service.createPromptVersion({ workspaceId, actorUserId: ownerId, capability: "setter", content: "Classify the example." });
+    const configuration = await service.createConfiguration({ workspaceId, actorUserId: ownerId, capability: "setter", provider: "kimi-code", model: "k3", promptVersionId: prompt.id });
+    const run = await service.requestRun({ workspaceId, actorUserId: ownerId, datasetId: dataset.id, configurationId: configuration.id, requestKey: "paused-evaluation" });
+    const failure = new AiTaskPauseError(new ModelGatewayError("AI_PROVIDER_QUOTA_EXHAUSTED", "kimi-code", "quota", true, false), "evaluation", run.id, []);
+    let calls = 0;
+    const paused = new EvaluationRunProcessor(database.db, queue, { async execute() {
+      if (++calls === 2) throw failure;
+      return { output: { classification: "qualified" }, cost: null, latencyMs: 1 };
+    } }, clock, ids);
+    const [job] = await queue.lease({ workerId: "pause-evaluation", types: ["ai.evaluation.execute"], limit: 1, leaseMs: 30_000, now: clock.now() });
+    await expect(paused.process(job!)).rejects.toBe(failure);
+    const results = await database.client`select status from evaluation_case_results where evaluation_run_id = ${run.id}`;
+    expect(results.map((row) => row.status).sort()).toEqual(["completed", "pending"]);
+    await queue.pause({ jobId: job!.id, workerId: job!.lockedBy, errorCode: failure.code, errorMessage: failure.code });
+  });
+
   test("unavailable explicit evaluation model creates no run or job", async () => {
     const dataset = await service.createDataset({ workspaceId, actorUserId: ownerId, capability: "setter", name: "No AI evaluation", rubricVersion: "v1", cases: [{ name: "synthetic", input: { message: "ENTREPRISE_EXEMPLE" }, expected: { classification: "qualified" } }] });
     const prompt = await service.createPromptVersion({ workspaceId, actorUserId: ownerId, capability: "setter", content: "Classify the example." });

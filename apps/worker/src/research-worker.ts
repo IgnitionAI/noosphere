@@ -1,3 +1,5 @@
+import { JobPausePersistedError } from "@outbound/application/jobs/job-queue";
+import { AiTaskPauseError } from "@outbound/application/ai/ai-task-pause";
 import type { JobExecutionContext } from "@outbound/application/jobs/job-execution-context";
 import type { JobQueue } from "@outbound/application/jobs/job-queue";
 import type { ResearchOrchestrator } from "@outbound/application/gtm/research-orchestrator";
@@ -233,6 +235,12 @@ export class ResearchWorker {
           jobId: job.id,
           errorCode: classifySafeError(error, "MCP_TRACKED_JOB_LIFECYCLE_ERROR"),
         }));
+        return;
+      }
+      if (error instanceof JobPausePersistedError && error.jobId === job.id) return;
+      if (error instanceof AiTaskPauseError && error.isPersistedFor(job.id)) return;
+      if (error instanceof AiTaskPauseError && this.queue.pause) {
+        await this.queue.pause({ jobId: job.id, workerId: job.lockedBy, errorCode: error.code, errorMessage: error.code, capability: error.capability });
         return;
       }
       if (job.type === "mcp.external-effect.execute" && isMcpGovernedEffectWorkerError(error)) {

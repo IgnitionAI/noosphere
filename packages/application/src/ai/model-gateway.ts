@@ -107,6 +107,11 @@ export type ModelGatewayErrorCode =
   | "AI_PROVIDER_TIMEOUT"
   | "AI_PROVIDER_UNAVAILABLE";
 
+export function allowsExplicitProviderFallback(code: ModelGatewayErrorCode): boolean {
+  return ["AI_PROVIDER_AUTHENTICATION_FAILED", "AI_PROVIDER_CATALOG_UNAVAILABLE", "AI_PROVIDER_INVOCATION_FAILED",
+    "AI_PROVIDER_MODEL_UNAVAILABLE", "AI_PROVIDER_QUOTA_EXHAUSTED", "AI_PROVIDER_TIMEOUT", "AI_PROVIDER_UNAVAILABLE"].includes(code);
+}
+
 export class ModelGatewayError extends Error {
   readonly name: string = "ModelGatewayError";
 

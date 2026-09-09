@@ -1,3 +1,4 @@
+import { allowsExplicitProviderFallback } from "@outbound/application/ai/model-gateway";
 import { ModelGatewayError, type ModelGateway, type ModelGatewayErrorCode, type StructuredModelRequest, type StructuredModelResult } from "@outbound/application/ai/model-gateway";
 import { fetchPublicProvider, ProviderDestinationForbiddenError } from "@outbound/infrastructure/ai/provider-destination";
 
@@ -17,7 +18,7 @@ export class ApiKeyModelGateway implements ModelGateway {
     this.transport = this.provider === "anthropic" ? "anthropic-messages" : "chat-completions";
   }
   async invokeStructured<T>(request: StructuredModelRequest<T>): Promise<StructuredModelResult<T>> {
-    const fail = (code: ModelGatewayErrorCode) => new ModelGatewayError(code, this.provider, code, false, code === "AI_PROVIDER_UNAVAILABLE" || code === "AI_PROVIDER_TIMEOUT");
+    const fail = (code: ModelGatewayErrorCode) => new ModelGatewayError(code, this.provider, code, allowsExplicitProviderFallback(code), code === "AI_PROVIDER_UNAVAILABLE" || code === "AI_PROVIDER_TIMEOUT");
     const started = performance.now();
     const remaining = request.deadlineAt.getTime() - Date.now();
     if (request.signal?.aborted) throw fail("AI_PROVIDER_ABORTED");

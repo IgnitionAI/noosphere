@@ -1,3 +1,5 @@
+import { PostgresModelFallbackRecorder } from "@outbound/infrastructure/ai/postgres-model-fallback-recorder";
+import { createTaskAiResumePreparation } from "@outbound/infrastructure/ai/postgres-task-ai-resume";
 import { registerRuntimeAiDefaults } from "@outbound/infrastructure/ai/register-runtime-ai-defaults";
 import { InstanceCodexAuthenticationReader } from "@outbound/infrastructure/ai/instance-codex-home";
 import { createInstanceAiRepository, InstanceWorkspaceAiPolicyReader, createInstanceWorkspaceAiAvailability, createInstanceApiKeyGateways } from "@outbound/infrastructure/ai/instance-ai-runtime";
@@ -439,7 +441,7 @@ const mcpOAuth = createMcpOAuthHandler(mcpOAuthService, {
     }
   },
 });
-const repository = new PostgresProductResearchRepository(database.db);
+const repository = new PostgresProductResearchRepository(database.db, createTaskAiResumePreparation(environment));
 const queue = new PostgresJobQueue(database.client);
 const clock = new SystemClock();
 const ids = new CryptoIdGenerator();
@@ -482,7 +484,7 @@ const workspace = createWorkspaceHttpHandler({
 });
 const workspaceDataLifecycle = new PostgresWorkspaceDataLifecycle(database.db, clock, ids);
 
-const workspaceStructuredModel = createWorkspaceStructuredModelFromEnvironment(environment, workspaceAiPolicies, createInstanceApiKeyGateways(instanceAiRepository, environment));
+const workspaceStructuredModel = createWorkspaceStructuredModelFromEnvironment(environment, workspaceAiPolicies, createInstanceApiKeyGateways(instanceAiRepository, environment), new PostgresModelFallbackRecorder(database.db));
 const workspaceArchiveStorage = new S3WorkspaceArchiveStorage(workspaceArchiveOptionsFromEnvironment());
 const workspaceData = createWorkspaceDataHttpHandler({
   contextResolver: auth.contextResolver,
@@ -500,7 +502,7 @@ const evaluation = createEvaluationHttpHandler({
 });
 const operatorConsole = createOperatorConsoleHttpHandler({
   contextResolver: auth.contextResolver,
-  service: new PostgresOperatorConsole(database.db, clock, ids),
+  service: new PostgresOperatorConsole(database.db, clock, ids, createTaskAiResumePreparation(environment)),
 });
 const workspaceOnboarding = createWorkspaceOnboardingHttpHandler({
   contextResolver: auth.contextResolver,

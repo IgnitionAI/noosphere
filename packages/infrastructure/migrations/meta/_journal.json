@@ -778,6 +778,20 @@
       "when": 1798041600000,
       "tag": "0111_task_ai_policy",
       "breakpoints": true
+    },
+    {
+      "idx": 111,
+      "version": "7",
+      "when": 1798045200000,
+      "tag": "0112_paused_ai_jobs",
+      "breakpoints": true
+    },
+    {
+      "idx": 112,
+      "version": "7",
+      "when": 1798048800000,
+      "tag": "0113_ai_pause_capability",
+      "breakpoints": true
     }
   ]
 }

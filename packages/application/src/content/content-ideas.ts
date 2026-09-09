@@ -1,3 +1,4 @@
+import { AiTaskPauseError } from "@outbound/application/ai/ai-task-pause";
 import { requireWorkspaceAi, type WorkspaceAiAvailability } from "@outbound/application/ai/ai-availability";
 import type { JobQueue, LeasedJob } from "@outbound/application/jobs/job-queue";
 import type { EditorialStrategySnapshot } from "@outbound/domain/content/editorial-strategy";
@@ -156,6 +157,7 @@ export class ContentIdeaDiscoveryJobProcessor {
       await this.repository.completeRun({ workspaceId: job.workspaceId, runId: payload.runId, partial, now: this.now() });
       await this.queue.acknowledge(job.id, job.lockedBy, this.now());
     } catch (error) {
+      if (error instanceof AiTaskPauseError) throw error;
       if (job.attempts >= job.maxAttempts) {
         await this.repository.failRun({ workspaceId: job.workspaceId, runId: payload.runId, code: "CONTENT_IDEA_DISCOVERY_FAILED", message: error instanceof Error ? error.message : String(error), now: this.now() });
       }

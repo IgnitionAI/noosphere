@@ -81,4 +81,4 @@ export class InstanceApiKeyModelGateway implements ModelGateway {
 export function createInstanceApiKeyGateways(instance: PostgresInstanceAiConnectionsRepository, environment: Environment, fetcher?: (url: string, options?: RequestInit) => Promise<Response>, codexRunner?: CodexProcessRunner): ModelGateway[] {
   return instanceAiProviders.map((provider) => new InstanceApiKeyModelGateway(instance, environment, provider, fetcher, codexRunner));
 }
-function unavailable(provider: InstanceAiProvider) { return new ModelGatewayError("AI_PROVIDER_UNAVAILABLE", provider, "AI_CONNECTION_NOT_VALIDATED", false, false); }
+function unavailable(provider: InstanceAiProvider) { return new ModelGatewayError("AI_PROVIDER_UNAVAILABLE", provider, "AI_CONNECTION_NOT_VALIDATED", true, false); }

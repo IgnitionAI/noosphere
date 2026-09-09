@@ -154,4 +154,20 @@ databaseDescribe("F-003 operator console", () => {
     expect(storedAssessment).toMatchObject({ status: "pending", errorCode: null, errorMessage: null, completedAt: null });
     expect(storedPlan).toMatchObject({ status: "assessing" });
   });
+  test("manually resumes an AI pause once using its pinned capability and model", async () => {
+    const { createTaskAiResumePreparation } = await import("@outbound/infrastructure/ai/postgres-task-ai-resume");
+    const id = crypto.randomUUID();
+    await database.db.insert(jobs).values({ id, workspaceId, type: "campaign.messages.compose", payload: {}, idempotencyKey: id, correlationId: id, status: "paused", maxAttempts: 5, availableAt: now, aiPauseCapability: "message_generation", lastErrorCode: "AI_PROVIDER_QUOTA_EXHAUSTED" });
+    const policy = { defaultRoutes: [{ provider: "kimi-code", model: "pinned", reasoningEffort: "low" }], capabilityRoutes: {}, researchModels: ["pinned"], synthesisModels: ["pinned"] };
+    await database.client`update task_ai_contexts set policy = ${JSON.stringify(policy)}::jsonb where workspace_id = ${workspaceId} and task_key = ${'job:' + id}`;
+    const resumable = new PostgresOperatorConsole(database.db, { now: () => now }, { generate: () => crypto.randomUUID() }, createTaskAiResumePreparation({ KIMI_CODE_API_KEY: "controlled" }));
+    await Promise.all([1, 2].map(() => resumable.requeue({ workspaceId, actorUserId: ownerId, jobId: id })));
+    const [row] = await database.client`select status, ai_policy from jobs where id = ${id}`;
+    expect(row?.status).toBe("pending");
+    expect(row?.ai_policy).toEqual(policy);
+    const [events] = await database.client`select count(*)::int as count from outbox_events where aggregate_id = ${id} and event_type = 'JobAiResumed'`;
+    expect(events?.count).toBe(1);
+  });
+
+
 });

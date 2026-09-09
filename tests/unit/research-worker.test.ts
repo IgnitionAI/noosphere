@@ -566,3 +566,30 @@ describe("ResearchWorker job leases", () => {
     expect(leasedTypes).toEqual(["prospect.decision.execute"]);
   });
 });
+
+test("provider exhaustion durably pauses the job instead of scheduling a retry", async () => {
+  const { AiTaskPauseError } = await import("@outbound/application/ai/ai-task-pause");
+  const { ModelGatewayError } = await import("@outbound/application/ai/model-gateway");
+  const now = new Date();
+  const job: LeasedJob = { id: crypto.randomUUID(), workspaceId: crypto.randomUUID(), type: "research.stage.execute", payload: {}, idempotencyKey: "pause", correlationId: "pause", maxAttempts: 5, attempts: 1, availableAt: now, lockedBy: "pause-worker", lockedUntil: new Date(now.getTime() + 30_000) };
+  let paused: unknown, retries = 0;
+  const queue: JobQueue = { async enqueue() { return { inserted: true }; }, async lease() { return [job]; }, async renewLease() { return true; }, async acknowledge() {}, async defer() {}, async retry() { retries++; return "scheduled"; }, async pause(input) { paused = input; } };
+  const error = new AiTaskPauseError(new ModelGatewayError("AI_PROVIDER_QUOTA_EXHAUSTED", "openai-api", "quota", true, false), "icp_research", "request", [{ provider: "openai-api", model: "chosen", reasoningEffort: "low" }]);
+  const worker = new ResearchWorker(queue, { async process() { throw error; } } as unknown as ResearchOrchestrator, { now: () => now }, { workerId: "pause-worker", leaseMs: 30_000, batchSize: 1, pollIntervalMs: 1 });
+  await worker.tick();
+  expect(paused).toMatchObject({ jobId: job.id, workerId: job.lockedBy, errorCode: "AI_PROVIDER_QUOTA_EXHAUSTED", capability: "icp_research" });
+  expect(retries).toBe(0);
+});
+
+test("an already committed pause is not applied again after an immediate resume", async () => {
+  const { AiTaskPauseError } = await import("@outbound/application/ai/ai-task-pause");
+  const { ModelGatewayError } = await import("@outbound/application/ai/model-gateway");
+  const now = new Date();
+  const job: LeasedJob = { id: crypto.randomUUID(), workspaceId: crypto.randomUUID(), type: "research.stage.execute", payload: {}, idempotencyKey: "atomic", correlationId: "atomic", maxAttempts: 5, attempts: 1, availableAt: now, lockedBy: "atomic", lockedUntil: new Date(now.getTime() + 30000) };
+  let writes = 0;
+  const queue: JobQueue = { async enqueue() { return { inserted: true }; }, async lease() { return [job]; }, async renewLease() { return true; }, async acknowledge() {}, async defer() {}, async retry() { writes++; return "scheduled"; }, async pause() { writes++; } };
+  const error = new AiTaskPauseError(new ModelGatewayError("AI_PROVIDER_QUOTA_EXHAUSTED", "openai-api", "quota", false, false), "icp_research", "atomic", []);
+  error.markPersisted(job.id);
+  await new ResearchWorker(queue, { async process() { throw error; } } as unknown as ResearchOrchestrator, { now: () => now }, { workerId: "atomic", leaseMs: 30000, batchSize: 1, pollIntervalMs: 1 }).tick();
+  expect(writes).toBe(0);
+});

@@ -14,6 +14,7 @@ export function consoleJobRecoveryDisposition(input: {
   readonly status: string;
   readonly lastErrorCode: string | null;
 }): ConsoleJobRecoveryDisposition {
+  if (input.status === "paused") return input.type.startsWith("research.") || input.type.startsWith("mcp.") ? "blocked" : "manual";
   if (input.status === "retry") return "automatic";
   if (input.status !== "dead_lettered") return "none";
   if (input.type !== "outreach.dispatch") return "manual";
@@ -49,5 +50,6 @@ function sanitize(value: unknown, visited: WeakSet<object>): unknown {
 }
 
 function redactScalar(value: string): string {
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) return value;
   return value.replace(email, "[EMAIL_REDACTED]").replace(phone, "[PHONE_REDACTED]");
 }

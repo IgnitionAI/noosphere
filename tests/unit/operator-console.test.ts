@@ -28,3 +28,13 @@ describe("F-003 operator console payload safety", () => {
     expect(consoleJobRecoveryDisposition({ type: "outreach.dispatch", status: "dead_lettered", lastErrorCode: "OUTSIDE_SENDING_WINDOW" })).toBe("automatic");
   });
 });
+
+test("AI pauses require manual action while research uses its checkpoint resume", () => {
+  expect(consoleJobRecoveryDisposition({ type: "campaign.messages.compose", status: "paused", lastErrorCode: "AI_PROVIDER_QUOTA_EXHAUSTED" })).toBe("manual");
+  expect(consoleJobRecoveryDisposition({ type: "research.stage.execute", status: "paused", lastErrorCode: "AI_PROVIDER_QUOTA_EXHAUSTED" })).toBe("blocked");
+});
+
+test("preserves canonical UUID references when their digits resemble a phone number", () => {
+  const runId = "7dc11a00-aaee-4b56-8e71-2d26195672d6";
+  expect(sanitizeOperationalPayload({ runId, apiKey: runId })).toEqual({ runId, apiKey: "[REDACTED]" });
+});

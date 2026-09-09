@@ -1,3 +1,4 @@
+import { PostgresModelFallbackRecorder } from "@outbound/infrastructure/ai/postgres-model-fallback-recorder";
 import { registerRuntimeAiDefaults } from "@outbound/infrastructure/ai/register-runtime-ai-defaults";
 import { resolveResearchModelPolicyFromEnvironment } from "@outbound/infrastructure/ai/langchain-research-agent-executor";
 import { TaskAiPolicyScope } from "@outbound/infrastructure/ai/task-ai-policy-scope";
@@ -239,7 +240,7 @@ await registerRuntimeAiDefaults(database.client, resolveResearchModelPolicyFromE
 const instanceAiRepository = createInstanceAiRepository(database.db, process.env);
 const workspaceAiSettings = new TaskAiPolicyScope(new InstanceWorkspaceAiPolicyReader(new PostgresWorkspaceAiSettingsRepository(database.db), instanceAiRepository), new PostgresTaskAiPolicyReader(database.client));
 const aiAvailable = createInstanceWorkspaceAiAvailability(process.env, workspaceAiSettings, instanceAiRepository);
-const workspaceStructuredModel = createWorkspaceStructuredModelFromEnvironment(process.env, workspaceAiSettings, createInstanceApiKeyGateways(instanceAiRepository, process.env));
+const workspaceStructuredModel = createWorkspaceStructuredModelFromEnvironment(process.env, workspaceAiSettings, createInstanceApiKeyGateways(instanceAiRepository, process.env), new PostgresModelFallbackRecorder(database.db, (workspaceId) => workspaceAiSettings.currentJobId(workspaceId)));
 const prospectMemoryEvents = new PostgresProspectMemoryEventRepository(database.client);
 const prospectMemorySnapshots = new PostgresProspectMemorySnapshotRepository(database.client);
 const prospectMemoryPolicies = new PostgresProspectMemoryPolicyReader(database.client);

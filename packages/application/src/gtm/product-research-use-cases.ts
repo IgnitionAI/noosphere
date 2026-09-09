@@ -90,23 +90,27 @@ export class ResumeProductResearchRun {
     runId: string;
     correlationId: string;
   }): Promise<ProductResearchRun> {
-    const run = await this.repository.findById(input.workspaceId, input.runId);
-    if (!run) throw new Error("PRODUCT_RESEARCH_RUN_NOT_FOUND");
-    run.resume(this.clock.now());
-    const stage = run.nextStage();
-    const job = stage
-      ? {
-        id: this.ids.generate(),
-        workspaceId: input.workspaceId,
-        type: "research.stage.execute",
+    const transition = (run: ProductResearchRun) => {
+      if (["queued", "running"].includes(run.snapshot.status)) return { job: null, events: [] };
+      run.resume(this.clock.now());
+      const stage = run.nextStage();
+      const job: NewJob | null = stage ? {
+        id: this.ids.generate(), workspaceId: input.workspaceId, type: "research.stage.execute",
         payload: { workspaceId: input.workspaceId, runId: input.runId, stage },
         idempotencyKey: `${input.runId}:${stage}:resume:${run.snapshot.version}`,
-        correlationId: input.correlationId,
-        maxAttempts: 5,
-        availableAt: this.clock.now(),
-      }
-      : null;
-    await this.repository.commitRunTransition(run, job, run.pullEvents());
+        correlationId: input.correlationId, maxAttempts: 5, availableAt: this.clock.now(),
+      } : null;
+      return { job, events: run.pullEvents() };
+    };
+    if (this.repository.transitionLocked) {
+      const run = await this.repository.transitionLocked(input, transition);
+      if (!run) throw new Error("PRODUCT_RESEARCH_RUN_NOT_FOUND");
+      return run;
+    }
+    const run = await this.repository.findById(input.workspaceId, input.runId);
+    if (!run) throw new Error("PRODUCT_RESEARCH_RUN_NOT_FOUND");
+    const { job, events } = transition(run);
+    if (job || events.length) await this.repository.commitRunTransition(run, job, events);
     return run;
   }
 }

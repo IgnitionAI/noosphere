@@ -73,6 +73,7 @@ export const researchCheckpointReviewEnum = pgEnum("research_checkpoint_review",
   "human_reviewed",
 ]);
 export const jobStatusEnum = pgEnum("job_status", [
+  "paused",
   "pending",
   "running",
   "retry",
@@ -4278,6 +4279,7 @@ export const jobs = pgTable(
     type: varchar("type", { length: 160 }).notNull(),
     payload: jsonb("payload").notNull(),
     aiPolicy: jsonb("ai_policy"),
+    aiPauseCapability: text("ai_pause_capability"),
     aiTaskKey: text("ai_task_key"),
     idempotencyKey: varchar("idempotency_key", { length: 500 }).notNull(),
     correlationId: varchar("correlation_id", { length: 200 }).notNull(),

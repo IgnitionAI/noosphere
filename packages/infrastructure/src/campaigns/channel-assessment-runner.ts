@@ -1,3 +1,4 @@
+import { AiTaskPauseError } from "@outbound/application/ai/ai-task-pause";
 import type {
   ChannelObservationSource,
   ChannelStrategyPlanner,
@@ -63,6 +64,7 @@ export class ChannelAssessmentJobProcessor {
       });
       await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
     } catch (error) {
+      if (error instanceof AiTaskPauseError) throw error;
       const failure = channelAssessmentFailure(error);
       const outcome = await this.queue.retry({
         jobId: job.id,

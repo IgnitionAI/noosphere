@@ -846,7 +846,7 @@ export interface WorkspaceAuditLog {
   readonly createdAt: string;
 }
 
-export type ConsoleJobStatus = "pending" | "running" | "retry" | "completed" | "dead_lettered";
+export type ConsoleJobStatus = "paused" | "pending" | "running" | "retry" | "completed" | "dead_lettered";
 export interface ConsoleJob {
   readonly id: string;
   readonly type: string;
