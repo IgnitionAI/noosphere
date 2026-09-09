@@ -1,4 +1,4 @@
-import { createInstanceAiRepository, InstanceWorkspaceAiPolicyReader, createInstanceWorkspaceAiAvailability, InstanceOpenAiModelGateway } from "@outbound/infrastructure/ai/instance-ai-runtime";
+import { createInstanceAiRepository, InstanceWorkspaceAiPolicyReader, createInstanceWorkspaceAiAvailability, createInstanceApiKeyGateways } from "@outbound/infrastructure/ai/instance-ai-runtime";
 import { InstanceAiConnectionsApplication } from "@outbound/application/ai/instance-ai-connections";
 import { InstanceModelConnectionTester } from "@outbound/infrastructure/ai/instance-ai-connection-tester";
 import { createInstanceAiConnectionsHttpHandler } from "@outbound/interface/http/instance-ai-connections-handler";
@@ -480,7 +480,7 @@ const workspace = createWorkspaceHttpHandler({
 });
 const workspaceDataLifecycle = new PostgresWorkspaceDataLifecycle(database.db, clock, ids);
 
-const workspaceStructuredModel = createWorkspaceStructuredModelFromEnvironment(environment, workspaceAiPolicies, [new InstanceOpenAiModelGateway(instanceAiRepository, environment)]);
+const workspaceStructuredModel = createWorkspaceStructuredModelFromEnvironment(environment, workspaceAiPolicies, createInstanceApiKeyGateways(instanceAiRepository, environment));
 const workspaceArchiveStorage = new S3WorkspaceArchiveStorage(workspaceArchiveOptionsFromEnvironment());
 const workspaceData = createWorkspaceDataHttpHandler({
   contextResolver: auth.contextResolver,

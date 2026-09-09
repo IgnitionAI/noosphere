@@ -23,10 +23,11 @@ export class PostgresInstanceAiConnectionsRepository implements InstanceAiConnec
     await this.database.transaction(async (tx) => {
       const [previous] = input.id ? await tx.select().from(connections).where(eq(connections.id, id)).for("update").limit(1) : [];
       if (input.id && !previous) throw new InstanceAiError("AI_CONNECTION_NOT_FOUND");
+      if (previous && previous.provider !== input.provider) throw new InstanceAiError("AI_CONNECTION_PROVIDER_IMMUTABLE");
       if (!input.apiKey && !previous) throw new InstanceAiError("AI_CONNECTION_KEY_REQUIRED");
       const encryptedApiKey = input.apiKey ? this.cipher.encrypt(input.apiKey) : previous!.encryptedApiKey;
       const version = (previous?.version ?? 0) + 1;
-      const values = { name: input.name, provider: input.provider, baseUrl: input.baseUrl ?? previous?.baseUrl ?? "https://api.openai.com/v1", encryptedApiKey, version, updatedAt: new Date() };
+      const values = { name: input.name, provider: input.provider, baseUrl: input.baseUrl ?? previous?.baseUrl ?? defaultBaseUrl(input.provider), encryptedApiKey, version, updatedAt: new Date() };
       if (previous) await tx.update(connections).set(values).where(eq(connections.id, id));
       else await tx.insert(connections).values({ id, ...values });
       await tx.delete(models).where(eq(models.connectionId, id));
@@ -85,4 +86,11 @@ export class PostgresInstanceAiConnectionsRepository implements InstanceAiConnec
 }
 function publicModel(row: typeof models.$inferSelect): InstanceAiModel {
   return { model: row.model, reasoningEffort: row.reasoningEffort as AiReasoningEffort, status: row.status as InstanceAiModel["status"], testedAt: row.testedAt, errorCode: row.errorCode as ModelGatewayErrorCode | null };
+}
+
+function defaultBaseUrl(provider: InstanceAiProvider): string {
+  if (provider === "openai-api") return "https://api.openai.com/v1";
+  if (provider === "anthropic") return "https://api.anthropic.com/v1";
+  if (provider === "openrouter") return "https://openrouter.ai/api/v1";
+  throw new InstanceAiError("AI_CONNECTION_URL_REQUIRED");
 }

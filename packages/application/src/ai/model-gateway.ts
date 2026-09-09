@@ -1,7 +1,7 @@
-export const aiProviderIds = ["kimi-code", "codex-cli", "openai-api"] as const;
+export const aiProviderIds = ["kimi-code", "codex-cli", "openai-api", "anthropic", "openrouter", "openai-compatible"] as const;
 export type AiProviderId = (typeof aiProviderIds)[number];
 
-export const aiTransports = ["chat-completions", "codex-process", "responses-api"] as const;
+export const aiTransports = ["chat-completions", "codex-process", "responses-api", "anthropic-messages"] as const;
 export type AiTransport = (typeof aiTransports)[number];
 
 export const aiReasoningEfforts = ["low", "medium", "high", "xhigh", "max", "ultra"] as const;
@@ -96,6 +96,7 @@ export interface ModelCatalog {
 }
 
 export type ModelGatewayErrorCode =
+  | "AI_PROVIDER_DESTINATION_FORBIDDEN"
   | "AI_PROVIDER_ABORTED"
   | "AI_PROVIDER_AUTHENTICATION_FAILED"
   | "AI_PROVIDER_CATALOG_UNAVAILABLE"

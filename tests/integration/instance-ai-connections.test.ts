@@ -6,7 +6,7 @@ import { PostgresJobQueue } from "@outbound/infrastructure/jobs/postgres-job-que
 import { Sha256ContentHasher } from "@outbound/infrastructure/shared/sha256-content-hasher";
 import { workspaces } from "@outbound/infrastructure/database/schema";
 import { v3ResearchStages, type ResearchStage } from "@outbound/domain/gtm/product-research";
-import { InstanceWorkspaceAiPolicyReader, InstanceOpenAiModelGateway, createInstanceWorkspaceAiAvailability } from "@outbound/infrastructure/ai/instance-ai-runtime";
+import { InstanceWorkspaceAiPolicyReader, createInstanceApiKeyGateways, createInstanceWorkspaceAiAvailability } from "@outbound/infrastructure/ai/instance-ai-runtime";
 import { createWorkspaceStructuredModelFromEnvironment } from "@outbound/infrastructure/ai/model-runtime-from-environment";
 import { LangChainResearchAgentExecutor, resolveResearchModelConfigurationFromEnvironment } from "@outbound/infrastructure/ai/langchain-research-agent-executor";
 import { validOutputFor } from "../fixtures/research-agent-fixtures";
@@ -61,23 +61,28 @@ const url = process.env.TEST_DATABASE_URL;
     } finally { provider.stop(true); }
   });
 
-  test("a separately composed worker completes a research mission with the persisted default and no environment API key", async () => {
+  for (const providerId of ["openai-api", "anthropic", "openrouter", "openai-compatible"] as const) test(`${providerId}: a separately composed worker completes a research mission with the persisted default and no environment API key`, async () => {
     let calls = 0;
     const provider = Bun.serve({ port: 0, async fetch(request) {
       calls++;
-      expect(request.headers.get("authorization")).toBe("Bearer persisted-worker-key");
-      const body = await request.json() as { model: string; tools: { name: string }[] };
+      expect(request.headers.get(providerId === "anthropic" ? "x-api-key" : "authorization")).toBe(providerId === "anthropic" ? "persisted-worker-key" : "Bearer persisted-worker-key");
+      const body = await request.json() as { model: string; tools: { name?: string; function?: { name: string } }[] };
       expect(body.model).toBe("persisted-worker-model");
-      const name = body.tools[0]!.name;
+      const name = body.tools[0]!.name ?? body.tools[0]!.function!.name;
       const stage = name.replace(/^submit_/, "") as ResearchStage;
       const output = name === "connection_probe" ? { ok: true }
         : name === "submit_research_tool_plan" ? { approach: "Use controlled fixture evidence", calls: [] }
         : validOutputFor(stage);
-      return Response.json({ output: [{ type: "function_call", name, arguments: JSON.stringify(output) }] });
+      return Response.json(providerId === "openai-api" ? { output: [{ type: "function_call", name, arguments: JSON.stringify(output) }] }
+        : providerId === "anthropic" ? { content: [{ type: "tool_use", name, input: output }] }
+        : { choices: [{ message: { tool_calls: [{ type: "function", function: { name, arguments: JSON.stringify(output) } }] } }] });
     } });
     try {
-      const saved = await repository.save({ name: "Worker provider", provider: "openai-api", apiKey: "persisted-worker-key", baseUrl: provider.url.toString().replace(/\/$/, ""), models: [{ model: "persisted-worker-model", reasoningEffort: "low" }] });
-      const application = new InstanceAiConnectionsApplication({ async isAdministrator() { return true; } }, repository, new InstanceModelConnectionTester(repository));
+      const saved = await repository.save({ name: "Worker provider", provider: providerId, apiKey: "persisted-worker-key", baseUrl: provider.url.toString().replace(/\/$/, ""), models: [{ model: "persisted-worker-model", reasoningEffort: "low" }] });
+      // Generic destinations are exercised through a controlled HTTP transport here;
+      // the public-DNS/TLS boundary has its own rejection and pinning tests.
+      const controlledFetch = (_url: string, options?: RequestInit) => fetch(provider.url, options);
+      const application = new InstanceAiConnectionsApplication({ async isAdministrator() { return true; } }, repository, new InstanceModelConnectionTester(repository, controlledFetch));
       const selection = { connectionId: saved.id, model: "persisted-worker-model" };
       expect((await application.test("admin", selection)).status).toBe("ready");
       await application.setDefault("admin", selection);
@@ -88,7 +93,7 @@ const url = process.env.TEST_DATABASE_URL;
         const policies = new InstanceWorkspaceAiPolicyReader({ async find() { return null; } }, workerRepository);
         const available = createInstanceWorkspaceAiAvailability({}, policies, workerRepository);
         expect(await available("workspace", "icp_research")).toBe(true);
-        const routedModel = createWorkspaceStructuredModelFromEnvironment({}, policies, [new InstanceOpenAiModelGateway(workerRepository, {})]);
+        const routedModel = createWorkspaceStructuredModelFromEnvironment({}, policies, createInstanceApiKeyGateways(workerRepository, {}, controlledFetch));
         const executor = new LangChainResearchAgentExecutor({ ...resolveResearchModelConfigurationFromEnvironment({}), crawlerServiceUrl: "http://127.0.0.1:1", crawlerApiKey: "unused", modelPolicyReader: policies, routedModel });
         await workerDb.db.insert(workspaces).values({ id: workspaceId, slug: `instance-ai-${workspaceId}`, name: "Instance AI mission verification" });
         const research = new PostgresProductResearchRepository(workerDb.db);

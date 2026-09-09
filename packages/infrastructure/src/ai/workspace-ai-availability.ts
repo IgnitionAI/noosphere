@@ -21,6 +21,9 @@ export function isEnvironmentModelRouteAvailable(environment: Readonly<Record<st
     case "kimi-code": return !!environment.KIMI_CODE_API_KEY?.trim();
     case "codex-cli": return !!environment.CODEX_SERVICE_HOME?.trim();
     // Legacy research invokes OpenAI directly; other capabilities use the structured router.
+    case "anthropic":
+    case "openrouter":
+    case "openai-compatible": return false; // Instance credentials are resolved by the shared policy reader.
     case "openai-api": return capability === "icp_research" && !!environment.OPENAI_API_KEY?.trim();
   }
 }

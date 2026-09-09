@@ -1,3 +1,5 @@
+import { instanceAiProviders, type InstanceAiProvider } from "@outbound/application/ai/instance-ai-connections";
+import { ApiKeyModelGateway } from "@outbound/infrastructure/ai/api-key-model-gateway";
 import type { WorkspaceAiAvailability } from "@outbound/application/ai/ai-availability";
 import { ModelGatewayError, type ModelGateway, type StructuredModelRequest, type StructuredModelResult } from "@outbound/application/ai/model-gateway";
 import { routesForCapability, type WorkspaceAiModelPolicyReader } from "@outbound/application/workspaces/workspace-ai-settings";
@@ -36,21 +38,27 @@ export function createInstanceWorkspaceAiAvailability(environment: Environment, 
     return false;
   };
 }
-export class InstanceOpenAiModelGateway implements ModelGateway {
-  readonly provider = "openai-api" as const;
-  readonly transport = "responses-api" as const;
-  constructor(private readonly instance: PostgresInstanceAiConnectionsRepository, private readonly environment: Environment) {}
+export class InstanceApiKeyModelGateway implements ModelGateway {
+  readonly transport: "responses-api" | "anthropic-messages" | "chat-completions";
+  constructor(private readonly instance: PostgresInstanceAiConnectionsRepository, private readonly environment: Environment, readonly provider: InstanceAiProvider, private readonly fetcher?: (url: string, options?: RequestInit) => Promise<Response>) {
+    this.transport = provider === "openai-api" ? "responses-api" : provider === "anthropic" ? "anthropic-messages" : "chat-completions";
+  }
   async invokeStructured<T>(request: StructuredModelRequest<T>): Promise<StructuredModelResult<T>> {
     if (!request.connectionId) {
-      const apiKey = this.environment.OPENAI_API_KEY;
-      if (!apiKey) throw unavailable();
+      const apiKey = this.provider === "openai-api" ? this.environment.OPENAI_API_KEY : undefined;
+      if (!apiKey) throw unavailable(this.provider);
       return new OpenAiResponsesModelGateway({ apiKey }).invokeStructured(request);
     }
     const route = await this.instance.getReadyRoute({ connectionId: request.connectionId, model: request.model });
-    if (!route || route.provider !== this.provider || (request.connectionVersion && route.connectionVersion !== request.connectionVersion)) throw unavailable();
+    if (!route || route.provider !== this.provider || (request.connectionVersion && route.connectionVersion !== request.connectionVersion)) throw unavailable(this.provider);
     const credential = await this.instance.getCredential(request.connectionId, route.connectionVersion);
-    if (!credential) throw unavailable();
-    return new OpenAiResponsesModelGateway({ apiKey: credential.apiKey, baseUrl: credential.baseUrl }).invokeStructured(request);
+    if (!credential) throw unavailable(this.provider);
+    const options = { apiKey: credential.apiKey, baseUrl: credential.baseUrl, ...(this.fetcher ? { fetcher: this.fetcher } : {}) };
+    return (this.provider === "openai-api" ? new OpenAiResponsesModelGateway(options)
+      : new ApiKeyModelGateway({ ...options, provider: this.provider })).invokeStructured(request);
   }
 }
-function unavailable() { return new ModelGatewayError("AI_PROVIDER_UNAVAILABLE", "openai-api", "AI_CONNECTION_NOT_VALIDATED", false, false); }
+export function createInstanceApiKeyGateways(instance: PostgresInstanceAiConnectionsRepository, environment: Environment, fetcher?: (url: string, options?: RequestInit) => Promise<Response>): ModelGateway[] {
+  return instanceAiProviders.map((provider) => new InstanceApiKeyModelGateway(instance, environment, provider, fetcher));
+}
+function unavailable(provider: InstanceAiProvider) { return new ModelGatewayError("AI_PROVIDER_UNAVAILABLE", provider, "AI_CONNECTION_NOT_VALIDATED", false, false); }

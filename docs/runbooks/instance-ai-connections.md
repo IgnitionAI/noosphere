@@ -23,3 +23,13 @@ Les tests de développement utilisent un fournisseur HTTP contrôlé. Ils ne con
 Référence du contrat HTTP : [OpenAI Responses](https://platform.openai.com/docs/api-reference/responses).
 
 L’adaptateur OpenAI utilise Responses avec `store: false`. Le test et les missions envoient le même contrat de fonction et l’effort de raisonnement sélectionné ; certains modèles récents refusent cette combinaison sur Chat Completions.
+
+## Other API-key providers
+
+The setup also accepts Anthropic and OpenRouter keys and an OpenAI-compatible endpoint. Each model requires a successful structured invocation before selection; changing a connection invalidates its model proofs. A connection's provider cannot be changed in place: create a separate connection to avoid sending a retained key to a different provider.
+
+Anthropic uses Messages with `output_config.effort` and an actual `tool_use` result; OpenRouter and compatible endpoints use Chat Completions function calls. OpenRouter requires the requested parameters and disables provider routing fallback. A successful models listing or plain-text answer does not mark a model ready. Protocol support varies by model; a rejected effort or function contract fails the test explicitly.
+
+Compatible destinations must use public HTTPS on port 443, without URL credentials, query parameters or fragments. Every invocation resolves the hostname, rejects any private/special-purpose address (including mixed public/private DNS), then pins the validated address to a fresh TLS connection while retaining hostname certificate verification. Redirects are not followed. Private Docker services, local inference endpoints and metadata addresses are intentionally not admitted by this public-endpoint connection type. An untested URL can be saved; network admission is enforced before sending its key and again for every mission call. The response body is limited to 16 MiB.
+
+Protocol references: [Anthropic effort](https://platform.claude.com/docs/en/build-with-claude/effort), [Anthropic tools](https://platform.claude.com/docs/en/agents-and-tools/tool-use/define-tools), [OpenRouter tool calling](https://openrouter.ai/docs/guides/features/tool-calling).

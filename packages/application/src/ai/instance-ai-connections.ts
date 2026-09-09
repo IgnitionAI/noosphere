@@ -2,7 +2,8 @@ import type { AiReasoningEffort, ModelGatewayErrorCode, ModelRoute } from "@outb
 import { ModelGatewayError } from "@outbound/application/ai/model-gateway";
 import type { InstanceSetupRepository } from "@outbound/application/ai/instance-setup";
 
-export type InstanceAiProvider = "openai-api";
+export const instanceAiProviders = ["openai-api", "anthropic", "openrouter", "openai-compatible"] as const;
+export type InstanceAiProvider = (typeof instanceAiProviders)[number];
 export interface InstanceAiModel {
   readonly model: string;
   readonly reasoningEffort: AiReasoningEffort;

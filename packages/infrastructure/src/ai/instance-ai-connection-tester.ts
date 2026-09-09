@@ -1,3 +1,4 @@
+import { ApiKeyModelGateway } from "@outbound/infrastructure/ai/api-key-model-gateway";
 import type { InstanceAiConnectionTester, InstanceAiTestLease } from "@outbound/application/ai/instance-ai-connections";
 import { ModelGatewayError } from "@outbound/application/ai/model-gateway";
 import type { InstanceAiCredentialReader } from "@outbound/infrastructure/ai/postgres-instance-ai-connections-repository";
@@ -8,7 +9,9 @@ export class InstanceModelConnectionTester implements InstanceAiConnectionTester
   async test(input: InstanceAiTestLease): Promise<void> {
     const credential = await this.credentials.getCredential(input.connectionId, input.version);
     if (!credential) throw new ModelGatewayError("AI_PROVIDER_UNAVAILABLE", "openai-api", "AI_CONNECTION_CHANGED", false, false);
-    const gateway = new OpenAiResponsesModelGateway({ apiKey: credential.apiKey, baseUrl: credential.baseUrl, maxOutputTokens: 1024, ...(this.fetcher ? { fetcher: this.fetcher } : {}) });
+    const options = { apiKey: credential.apiKey, baseUrl: credential.baseUrl, maxOutputTokens: 1024, ...(this.fetcher ? { fetcher: this.fetcher } : {}) };
+    const gateway = credential.provider === "openai-api" ? new OpenAiResponsesModelGateway(options)
+      : new ApiKeyModelGateway({ ...options, provider: credential.provider });
     await gateway.invokeStructured({
       workspaceId: "instance-setup", capability: "icp_research", requestKey: input.testId,
       model: input.model, reasoningEffort: input.reasoningEffort,

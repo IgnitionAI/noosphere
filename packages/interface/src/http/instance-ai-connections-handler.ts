@@ -1,16 +1,22 @@
 import { z } from "zod";
-import { InstanceAiError, type InstanceAiConnectionsApplication } from "@outbound/application/ai/instance-ai-connections";
+import { InstanceAiError, instanceAiProviders, type InstanceAiConnectionsApplication } from "@outbound/application/ai/instance-ai-connections";
 import { aiReasoningEfforts } from "@outbound/application/ai/model-gateway";
 import type { AuthenticatedSessionReader } from "@outbound/interface/http/authenticated-workspace-context";
 
 const model = z.string().trim().min(1).max(200).regex(/^[a-zA-Z0-9._:/-]+$/);
 const selection = z.object({ connectionId: z.string().uuid(), model }).strict();
 const connection = z.object({
-  id: z.string().uuid().optional(), name: z.string().trim().min(1).max(120), provider: z.literal("openai-api"),
+  id: z.string().uuid().optional(), name: z.string().trim().min(1).max(120), provider: z.enum(instanceAiProviders),
   apiKey: z.string().trim().min(1).max(4096).optional(),
-  baseUrl: z.literal("https://api.openai.com/v1").optional(),
+  baseUrl: z.string().url().max(2048).optional(),
   models: z.array(z.object({ model, reasoningEffort: z.enum(aiReasoningEfforts) }).strict()).min(1).max(64),
-}).strict().refine((value) => new Set(value.models.map((item) => item.model)).size === value.models.length);
+}).strict().refine((value) => {
+  const expected = value.provider === "openai-api" ? "https://api.openai.com/v1" : value.provider === "anthropic" ? "https://api.anthropic.com/v1" : value.provider === "openrouter" ? "https://openrouter.ai/api/v1" : null;
+  if (expected) return !value.baseUrl || value.baseUrl.replace(/\/+$/, "") === expected;
+  if (!value.baseUrl) return false;
+  const url = new URL(value.baseUrl);
+  return url.protocol === "https:" && !url.username && !url.password && !url.port && !url.search && !url.hash;
+}).refine((value) => new Set(value.models.map((item) => item.model)).size === value.models.length);
 
 export function createInstanceAiConnectionsHttpHandler(input: { application: InstanceAiConnectionsApplication; sessions: AuthenticatedSessionReader }) {
   return async (request: Request): Promise<Response> => {

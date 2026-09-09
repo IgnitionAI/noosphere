@@ -2,18 +2,20 @@ import { expect, test } from "@playwright/test";
 import { createServer } from "node:http";
 import { createDatabase } from "@outbound/infrastructure/database/client";
 
-test("administrator saves and tests a connection, chooses its default and starts a research mission", async ({ page }) => {
+for (const providerId of ["openai-api", "anthropic", "openrouter"] as const) test(`${providerId}: administrator saves and tests a connection, chooses its default and starts a research mission`, async ({ page }) => {
   let calls = 0;
   const provider = createServer(async (request, response) => {
     calls++;
     let raw = "";
     for await (const chunk of request) raw += chunk.toString();
     const body = JSON.parse(raw);
-    expect(request.headers.authorization).toBe("Bearer e2e-controlled-key");
+    expect(providerId === "anthropic" ? request.headers["x-api-key"] : request.headers.authorization).toBe(providerId === "anthropic" ? "e2e-controlled-key" : "Bearer e2e-controlled-key");
     expect(body.model).toBe("e2e-controlled-model");
-    const name = body.tools[0].name;
+    const name = body.tools[0].name ?? body.tools[0].function.name;
     response.setHeader("content-type", "application/json");
-    response.end(JSON.stringify({ output: [{ type: "function_call", name, arguments: '{"ok":true}' }] }));
+    response.end(JSON.stringify(providerId === "openai-api" ? { output: [{ type: "function_call", name, arguments: '{"ok":true}' }] }
+      : providerId === "anthropic" ? { content: [{ type: "tool_use", name, input: { ok: true } }] }
+      : { choices: [{ message: { tool_calls: [{ type: "function", function: { name, arguments: '{"ok":true}' } }] } }] }));
   });
   await new Promise<void>((resolve) => provider.listen(0, "127.0.0.1", resolve));
   const address = provider.address();
@@ -26,10 +28,11 @@ test("administrator saves and tests a connection, chooses its default and starts
     await page.getByRole("button", { name: "Accéder au workspace" }).click();
     await page.waitForURL(/\/w\//);
     await page.goto("/setup");
-    const name = `OpenAI E2E ${crypto.randomUUID()}`;
-    const form = page.getByRole("heading", { name: "Ajouter une connexion OpenAI" }).locator("..");
+    const name = `${providerId} E2E ${crypto.randomUUID()}`;
+    const form = page.getByRole("heading", { name: "Ajouter une connexion IA" }).locator("..");
+    await form.getByLabel("Fournisseur").selectOption(providerId);
     await form.getByLabel("Nom de la connexion").fill(name);
-    await form.getByLabel("Clé API OpenAI").fill("e2e-controlled-key");
+    await form.getByLabel("Clé API").fill("e2e-controlled-key");
     await form.getByLabel("Modèles autorisés").fill("e2e-controlled-model");
     await form.getByRole("button", { name: "Enregistrer la connexion" }).click();
     const section = page.getByRole("heading", { name, exact: true }).locator("..");
@@ -62,4 +65,28 @@ test("administrator saves and tests a connection, chooses its default and starts
     await database.close();
     await new Promise<void>((resolve, reject) => provider.close((error) => error ? reject(error) : resolve()));
   }
+});
+
+test("compatible API setup accepts a URL but a private destination never becomes ready", async ({ page }) => {
+  await page.goto("/login");
+  await page.getByLabel("Email professionnel").fill(process.env.BOOTSTRAP_OWNER_EMAIL ?? "owner@ignition.local");
+  await page.getByLabel("Mot de passe").fill(process.env.BOOTSTRAP_OWNER_PASSWORD ?? "change-me-in-env");
+  await page.getByRole("button", { name: "Accéder au workspace" }).click();
+  await page.waitForURL(/\/w\//);
+  await page.goto("/setup");
+  const form = page.getByRole("heading", { name: "Ajouter une connexion IA" }).locator("..");
+  await form.getByLabel("Fournisseur").selectOption("openai-compatible");
+  const name = `Compatible E2E ${crypto.randomUUID()}`;
+  await form.getByLabel("Nom de la connexion").fill(name);
+  await form.getByLabel("URL de l’API").fill("https://127.0.0.1/v1");
+  await form.getByLabel("Clé API").fill("compatible-private-key-must-not-leave");
+  await form.getByLabel("Modèles autorisés").fill("custom-model");
+  await form.getByRole("button", { name: "Enregistrer la connexion" }).click();
+  const section = page.getByRole("heading", { name, exact: true }).locator("..");
+  await expect(section.getByText("À tester", { exact: true })).toBeVisible();
+  await section.getByRole("button", { name: "Tester custom-model" }).click();
+  await expect(section.getByText("Test échoué", { exact: true })).toBeVisible();
+  await expect(page.getByRole("alert").filter({ hasText: "Cette destination est interdite" })).toBeVisible();
+  await expect(section.getByRole("button", { name: "Utiliser par défaut" })).toHaveCount(0);
+  expect(await page.content()).not.toContain("compatible-private-key-must-not-leave");
 });

@@ -13,8 +13,10 @@ export async function saveConnectionAction(form: FormData) {
   try {
     const id = String(form.get("connectionId") ?? "").trim();
     const apiKey = String(form.get("apiKey") ?? "").trim();
+    const provider = String(form.get("provider") ?? "openai-api") as import("@/lib/api").InstanceAiConnectionSummary["provider"];
+    const baseUrl = String(form.get("baseUrl") ?? "").trim();
     const models = [...new Set(String(form.get("models") ?? "").split(/[\n,]+/).map((value) => value.trim()).filter(Boolean))];
-    await saveInstanceAiConnection({ ...(id ? { id } : {}), name: String(form.get("name") ?? "").trim(), provider: "openai-api", ...(apiKey ? { apiKey } : {}), models: models.map((model) => ({ model, reasoningEffort: "low" })) });
+    await saveInstanceAiConnection({ ...(id ? { id } : {}), name: String(form.get("name") ?? "").trim(), provider, ...(baseUrl ? { baseUrl } : {}), ...(apiKey ? { apiKey } : {}), models: models.map((model) => ({ model, reasoningEffort: "low" })) });
   } catch (cause) { error = cause instanceof OutboundApiError ? cause.code : "AI_CONNECTION_STORAGE_UNAVAILABLE"; }
   redirect(error ? `/setup?error=${encodeURIComponent(error)}` : "/setup?notice=saved");
 }

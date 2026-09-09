@@ -31,6 +31,9 @@ const providerLabels: Record<AiProviderId, string> = {
   "kimi-code": "Kimi",
   "codex-cli": "Codex",
   "openai-api": "OpenAI API",
+  anthropic: "Anthropic",
+  openrouter: "OpenRouter",
+  "openai-compatible": "API compatible OpenAI",
 };
 
 const effortLabels: Record<AiReasoningEffort, string> = {

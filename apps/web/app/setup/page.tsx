@@ -25,7 +25,7 @@ export default async function InstanceSetupPage({ searchParams }: { searchParams
       {ai ? <div className="mt-6 space-y-5">
         {ai.connections.map((connection) => <section key={connection.id} className="rounded-xl border border-line p-5">
           <h2 className="font-semibold">{connection.name}</h2>
-          <p className="mt-1 text-xs text-muted">OpenAI · Clé enregistrée et masquée</p>
+          <p className="mt-1 text-xs text-muted">{connection.provider} · Clé enregistrée et masquée</p>
           <ul className="mt-4 space-y-4">{connection.models.map((model) => <li key={model.model}>
             <div className="flex flex-wrap items-center gap-2"><span className="font-mono text-sm">{model.model}</span><span className="badge">{model.status === "ready" ? "Test réussi" : model.status === "testing" ? "Test en cours" : model.status === "failed" ? "Test échoué" : "À tester"}</span>{ai.defaultModel?.connectionId === connection.id && ai.defaultModel.model === model.model ? <span className="badge badge-signal">Par défaut</span> : null}</div>
             {model.errorCode ? <p className="mt-2 text-sm text-danger">{connectionError(model.errorCode)}</p> : null}
@@ -33,7 +33,7 @@ export default async function InstanceSetupPage({ searchParams }: { searchParams
           </li>)}</ul>
           <details className="mt-5"><summary className="cursor-pointer text-sm font-medium">Modifier la connexion</summary><ConnectionForm connection={connection} /></details>
         </section>)}
-        <section className="rounded-xl border border-line p-5"><h2 className="font-semibold">Ajouter une connexion OpenAI</h2><ConnectionForm /></section>
+        <section className="rounded-xl border border-line p-5"><h2 className="font-semibold">Ajouter une connexion IA</h2><ConnectionForm /></section>
         <p className="text-xs text-muted">Tester un modèle effectue un appel court facturé selon votre fournisseur.</p>
       </div> : null}
       <div className="mt-7 flex flex-wrap gap-3">
@@ -46,6 +46,7 @@ export default async function InstanceSetupPage({ searchParams }: { searchParams
 
 function connectionError(code: string) {
   const messages: Record<string, string> = {
+    AI_PROVIDER_DESTINATION_FORBIDDEN: "Cette destination est interdite. Utilisez une URL HTTPS publique sur le port 443 ; les adresses privées, locales et les redirections sont refusées.",
     AI_PROVIDER_AUTHENTICATION_FAILED: "La clé a été refusée. Vérifiez les identifiants et leurs droits.",
     AI_PROVIDER_QUOTA_EXHAUSTED: "Le quota ou la limite du fournisseur est atteint. Vérifiez votre compte avant de retester.",
     AI_PROVIDER_MODEL_UNAVAILABLE: "Ce modèle est introuvable ou inaccessible avec cette clé.",

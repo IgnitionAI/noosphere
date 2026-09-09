@@ -48,3 +48,17 @@ The initial Chat Completions probe was rejected because GPT-5.4 mini does not su
 ### Migration correction
 
 The journal timestamps added for 0108/0109 now follow the pre-existing journal timestamps (which are later than the calendar date). 0108 table creation is idempotent so a test installation that already applied the earlier commit can upgrade without replay failure. Upgrade was exercised both from the pre-setup 0106 database and from the dedicated database created by the 56f057b setup tests; no production database was modified.
+
+## Ticket 89: Anthropic, OpenRouter and OpenAI-compatible endpoints
+
+Implemented API-key connections end to end: setup provider selection and custom URL, fixed official endpoints, immutable provider identity, shared encrypted persistence and proof invalidation, provider-specific function-output adapters, API/worker gateway composition. OpenRouter disallows its implicit provider fallback and requires the requested parameters. The generic transport accepts only public HTTPS destinations and exposes an actionable forbidden-destination error.
+
+Six PostgreSQL integration cases pass, including complete missions with all four API-key providers through the real research executor/orchestrator using controlled HTTP responses. Fourteen setup browser cases pass on desktop/mobile: three providers saved/tested/selected and missions queued, compatible URL blocked before sending a key to loopback, plus provider-free exploration. The subsequent targeted desktop/mobile check also verifies the explicit forbidden-destination message (2 passed). Provider contract and catalog checks (11 passed), destination rejection, type, architecture, backend and web checks passed separately. The broad suite found the known baseline MCP failure and an expected catalog test update for newly enumerated providers; the catalog contract was updated and passes its focused suite.
+
+### Live evidence and transport correction
+
+A real compatible-endpoint probe against OpenAI Chat Completions succeeded with `gpt-5-mini` at 2026-09-09T11:42:14.889Z in 2,158 ms. The existing OpenAI key was read only for this bounded synthetic probe and was not saved into another connection. `max_completion_tokens` is used for that protocol; the first call with legacy `max_tokens` failed validation. No Anthropic/OpenRouter keys were available in the local environment, so no live success is claimed for them.
+
+The initial `node:https` custom-lookup implementation worked under Node 22 but failed under the pinned Bun 1.3.4 runtime. The replacement connects directly to the validated public IP with the original Host/SNI and explicit certificate-name verification, no proxy, no reuse and no redirects. A real unauthenticated call returned HTTP 401 from api.openai.com under Bun; a wrong-host certificate was rejected with `ERR_TLS_CERT_ALTNAME_INVALID`. No credentials were sent in these transport probes.
+
+Tickets 90–93 remain. Existing installations and full release acceptance are not yet complete; no push, release or production migration performed.
