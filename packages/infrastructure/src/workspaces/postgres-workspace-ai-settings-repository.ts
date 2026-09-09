@@ -36,6 +36,7 @@ export class PostgresWorkspaceAiSettingsRepository
     synthesisModels: readonly string[];
     defaultRoutes: readonly ModelRoute[];
     capabilityRoutes: Readonly<Partial<Record<AiCapability, readonly ModelRoute[]>>>;
+    researchTierRoutes?: NonNullable<WorkspaceAiModelPolicy["researchTierRoutes"]>;
     now: Date;
   }): Promise<WorkspaceAiModelPolicy & { updatedAt: Date }> {
     const [row] = await this.database
@@ -44,7 +45,7 @@ export class PostgresWorkspaceAiSettingsRepository
         workspaceId: input.workspaceId,
         researchModels: [...input.researchModels],
         synthesisModels: [...input.synthesisModels],
-        modelRouting: serializeRouting(input.defaultRoutes, input.capabilityRoutes),
+        modelRouting: serializeRouting(input.defaultRoutes, input.capabilityRoutes, input.researchTierRoutes),
         updatedBy: input.userId,
         createdAt: input.now,
         updatedAt: input.now,
@@ -54,7 +55,7 @@ export class PostgresWorkspaceAiSettingsRepository
         set: {
           researchModels: [...input.researchModels],
           synthesisModels: [...input.synthesisModels],
-          modelRouting: serializeRouting(input.defaultRoutes, input.capabilityRoutes),
+          modelRouting: serializeRouting(input.defaultRoutes, input.capabilityRoutes, input.researchTierRoutes),
           updatedBy: input.userId,
           updatedAt: input.now,
         },
@@ -71,6 +72,7 @@ function mapRow(row: typeof workspaceAiSettings.$inferSelect) {
     researchModels: readModels(row.researchModels),
     synthesisModels: readModels(row.synthesisModels),
     ...routing,
+    ...(isRecord(row.modelRouting) && isRecord(row.modelRouting.researchTierRoutes) ? { researchTierRoutes: { principal: readRoutes(row.modelRouting.researchTierRoutes.principal), executor: readRoutes(row.modelRouting.researchTierRoutes.executor) } } : {}),
     updatedAt: row.updatedAt,
   };
 }
@@ -85,10 +87,12 @@ function readModels(value: unknown): readonly string[] {
 function serializeRouting(
   defaultRoutes: readonly ModelRoute[],
   capabilityRoutes: Readonly<Partial<Record<AiCapability, readonly ModelRoute[]>>>,
+  researchTierRoutes?: WorkspaceAiModelPolicy["researchTierRoutes"],
 ) {
   return {
     defaultRoutes,
     capabilityRoutes,
+    ...(researchTierRoutes ? { researchTierRoutes } : {}),
   };
 }
 

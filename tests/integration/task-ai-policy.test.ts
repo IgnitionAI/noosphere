@@ -45,11 +45,11 @@ const url = process.env.TEST_DATABASE_URL;
       expect(afterRetention?.ai_policy.defaultRoutes).toEqual([a]);
     } finally { await reopened.close(); await database.client`delete from jobs where workspace_id = ${workspaceId}`; }
   });
-  test("an environment-only installation captures a complete new mission before defaults change", async () => {
+  test.each([false, true])("an environment installation preserves a complete mission (legacy tiers: %s)", async (legacyTiers) => {
     const { registerRuntimeAiDefaults } = await import("@outbound/infrastructure/ai/register-runtime-ai-defaults");
     const { TaskAiPolicyScope } = await import("@outbound/infrastructure/ai/task-ai-policy-scope");
     const { PostgresTaskAiPolicyReader } = await import("@outbound/infrastructure/ai/postgres-task-ai-policy-reader");
-    const { resolveResearchModelPolicyFromEnvironment, resolveResearchModelConfigurationFromEnvironment, LangChainResearchAgentExecutor } = await import("@outbound/infrastructure/ai/langchain-research-agent-executor");
+    const { resolveResearchModelPolicyFromEnvironment, resolveResearchModelConfigurationFromEnvironment, LangChainResearchAgentExecutor, modelTierForStage } = await import("@outbound/infrastructure/ai/langchain-research-agent-executor");
     const { createWorkspaceStructuredModelFromEnvironment } = await import("@outbound/infrastructure/ai/model-runtime-from-environment");
     const { createInstanceApiKeyGateways } = await import("@outbound/infrastructure/ai/instance-ai-runtime");
     const { PostgresProductResearchRepository } = await import("@outbound/infrastructure/gtm/postgres-product-research-repository");
@@ -60,11 +60,17 @@ const url = process.env.TEST_DATABASE_URL;
     const { Sha256ContentHasher } = await import("@outbound/infrastructure/shared/sha256-content-hasher");
     const { validOutputFor } = await import("../fixtures/research-agent-fixtures");
     let calls = 0;
+    const models = new Set<string>();
     const provider = Bun.serve({ port: 0, async fetch(request) {
       calls++;
       const body = await request.json() as { model: string; tools: { function: { name: string } }[] };
-      expect(body.model).toBe("legacy-model");
+      models.add(body.model);
+      expect(legacyTiers ? ["legacy-model", "legacy-executor"] : ["legacy-model"]).toContain(body.model);
       const name = body.tools[0]!.function.name;
+      if (legacyTiers && name !== "submit_research_tool_plan") {
+        const stage = name.replace(/^submit_/, "") as Parameters<typeof validOutputFor>[0];
+        expect(body.model).toBe(modelTierForStage(stage, 3) === "principal" ? "legacy-model" : "legacy-executor");
+      }
       const output = name === "submit_research_tool_plan" ? { approach: "Controlled evidence", calls: [] } : validOutputFor(name.replace(/^submit_/, "") as Parameters<typeof validOutputFor>[0]);
       return Response.json({ choices: [{ message: { tool_calls: [{ type: "function", function: { name, arguments: JSON.stringify(output) } }] } }] });
     } });
@@ -74,6 +80,11 @@ const url = process.env.TEST_DATABASE_URL;
       await database.db.insert(workspaces).values({ id: workspaceId, slug: `legacy-${workspaceId}`, name: "Legacy mission" });
       const environment = { KIMI_CODE_API_KEY: "controlled", KIMI_CODE_BASE_URL: provider.url.toString(), KIMI_RESEARCH_MODEL: "legacy-model", KIMI_SYNTHESIS_MODEL: "legacy-model" };
       const initial = resolveResearchModelPolicyFromEnvironment(environment);
+      if (legacyTiers) {
+        const userId = crypto.randomUUID();
+        await database.client`insert into auth_users (id, name, email) values (${userId}, 'Legacy owner', ${`${userId}@example.com`})`;
+        await database.client`insert into workspace_ai_settings (workspace_id, research_models, synthesis_models, updated_by) values (${workspaceId}, '["legacy-model"]', '["legacy-executor"]', ${userId})`;
+      }
       await registerRuntimeAiDefaults(database.client, initial);
       const instance = new PostgresInstanceAiConnectionsRepository(database.db, { encrypt: (value) => value, decrypt: (value) => value });
       const policies = new TaskAiPolicyScope({ async find() { return initial; } }, new PostgresTaskAiPolicyReader(database.client));
@@ -89,6 +100,11 @@ const url = process.env.TEST_DATABASE_URL;
       for (let i = 0; i < 10; i++) expect(await worker.tick()).toBe(1);
       expect((await research.findById(workspaceId, run.snapshot.id))?.snapshot.status).toBe("completed");
       expect(calls).toBeGreaterThanOrEqual(8);
+      expect([...models].sort()).toEqual(legacyTiers ? ["legacy-executor", "legacy-model"] : ["legacy-model"]);
+      if (legacyTiers) {
+        const [settings] = await database.client`select research_models, synthesis_models from workspace_ai_settings where workspace_id = ${workspaceId}`;
+        expect(settings).toMatchObject({ research_models: ["legacy-model"], synthesis_models: ["legacy-executor"] });
+      }
     } finally { provider.stop(true); await database.client`delete from jobs where workspace_id = ${workspaceId}`; }
   });
 

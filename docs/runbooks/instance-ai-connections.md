@@ -47,3 +47,28 @@ Each connection uses a UUID subdirectory (0700). A login attempt writes credenti
 The setup reports required action, a missing service-root configuration, a connection in progress, a connected account and an authentication failure requiring renewal. A connected account is distinct from a validated model. Use the same login command to renew, then retest. Treat the service volume as sensitive credential storage: do not commit or expose it, and use encrypted backups if retaining it off-host. A restored database without this volume requires ChatGPT login again.
 
 Managed Codex executions have an isolated HOME/CODEX_HOME, an empty temporary working directory, ignored user config/rules, disabled project-document loading, and disabled shell, plugin, app, browser, computer, image-generation, memory and multi-agent features. Legacy explicitly configured Codex service routes retain their existing behavior. ChatGPT tokens are never returned by the application API.
+
+## Mise à jour d’une installation existante
+
+Conservez le fichier d’environnement, `APP_ENCRYPTION_KEY`, la base et les volumes d’authentification. Appliquez les migrations dans le sens montant, puis démarrez l’API et les workers avec le même environnement de fournisseur qu’avant la mise à jour. Le démarrage publie uniquement le routage des modèles et complète les contextes IA manquants avant d’accepter du travail. Il ne copie pas les clés de l’environnement dans les connexions d’instance.
+
+Les tâches qui avaient déjà un contexte le conservent. Pour les versions qui ne mémorisaient pas le choix IA, la migration capture les réglages disponibles au premier démarrage après mise à jour : elle ne peut pas reconstruire un ancien choix absent de la base. Les statuts, tentatives, checkpoints et contenus restent inchangés. Une recherche conservée après purge de ses jobs reçoit également un contexte ; un brouillon attend son lancement pour choisir ses modèles.
+
+Les anciens réglages séparés de recherche et de synthèse sont liés au fournisseur de l’environnement existant. Ils restent visibles dans « Modèles de recherche conservés » et continuent à s’appliquer, même après une modification d’un autre usage. Pour les remplacer, cochez explicitement « Remplacer ces choix par le modèle de recherche défini ci-dessous » puis enregistrez. Les missions déjà lancées gardent leur choix ; ce changement concerne les prochaines missions.
+
+Pour passer aux connexions d’instance :
+
+1. Avec le compte initial désigné, ajoutez la connexion et autorisez les modèles voulus dans `/settings/instance/ai`.
+2. Testez chaque modèle, puis sélectionnez explicitement le défaut de l’instance.
+3. Dans chaque workspace personnalisé, sélectionnez les modèles autorisés ou le retour à l’héritage. Remplacez explicitement les anciens choix de recherche si nécessaire.
+4. Conservez les identifiants d’environnement tant que des tâches les utilisent encore. Retirer leur clé ne transfère pas automatiquement une tâche vers une autre connexion.
+
+Une panne sans secours sélectionné met la tâche en pause. Réparez ou renouvelez sa connexion, retestez le modèle puis utilisez « Reprendre ». Une recherche reprend depuis sa page ; les autres tâches prises en charge reprennent depuis la console. Un redémarrage seul ne relance pas une tâche en pause.
+
+### Archive des identifiants et exercice de restauration
+
+Le profil de sauvegarde Compose archive maintenant le fichier d’environnement et les volumes `codex-service-home` et `instance-codex-home` dans `BACKUP_DIR/credentials`. Les sources sont montées en lecture seule, sans accès réseau pour ce conteneur. Les archives ont le mode `0600`, dans un répertoire privé ; elles sont incluses dans la sauvegarde Restic chiffrée. En mode quickstart local, elles restent sensibles sur le disque du VPS et ne protègent pas contre sa perte. Un secret injecté hors du fichier d’environnement doit être conservé séparément.
+
+Restaurez ensemble le dump de base, le fichier d’environnement correspondant et les volumes d’authentification. Conservez les anciennes clés de chiffrement pour les sauvegardes prises avant une rotation. Évitez de renouveler les connexions ou de modifier la clé de chiffrement pendant une sauvegarde. Après restauration, contrôlez les permissions (`0700` pour les répertoires d’authentification, `0600` pour leurs fichiers), puis retestez explicitement les modèles avant de reprendre les tâches.
+
+`deploy/verify-backup-restore.sh` vérifie la présence et la lisibilité des archives. Il ne prouve pas à lui seul que l’application restaurée fonctionne. L’exercice `bun scripts/verify-instance-ai-backup.ts`, avec un environnement de développement chargé et Docker disponible, crée deux bases jetables et des identifiants factices. Il utilise la commande d’archivage du profil Compose, effectue un vrai `pg_dump`/`pg_restore`, vérifie le déchiffrement avec la clé restaurée, le rejet d’une autre clé et les permissions des fichiers Codex restaurés. Il ne lit ni les données applicatives ni les volumes d’authentification existants et n’appelle aucun fournisseur. Les bases créées sont supprimées ; les fichiers factices restent dans le répertoire temporaire privé annoncé par le résultat.

@@ -80,3 +80,15 @@ test("records the actual explicit fallback and sanitized reason without prompts 
   await model.invoke({ workspaceId: "workspace", capability: "content_writer", requestKey: "request", fallbackRoutes: [{ provider: "openai-api", model: "primary", reasoningEffort: "low" }, { provider: "kimi-code", model: "secondary", reasoningEffort: "low" }], systemPrompt: "private prompt", payload: { private: true }, outputName: "submit", outputDescription: "Submit", schema: z.object({ body: z.string() }) });
   expect(observations).toEqual([{ workspaceId: "workspace", capability: "content_writer", requestKey: "request", primary: { provider: "openai-api", model: "primary" }, selected: { provider: "kimi-code", model: "secondary" }, reason: "AI_PROVIDER_QUOTA_EXHAUSTED" }]);
 });
+
+test("preserves the migrated principal and executor routes independently", async () => {
+  const seen: string[] = [];
+  const gateway: ModelGateway = { provider: "kimi-code", transport: "chat-completions", async invokeStructured(request) {
+    seen.push(request.model);
+    return { output: request.parse({ body: "ok" }), metadata: { provider: "kimi-code", transport: "chat-completions", model: request.model, reasoningEffort: request.reasoningEffort, latencyMs: 1, usage: { inputTokens: 1, cachedInputTokens: 0, outputTokens: 1, source: "reported" } } };
+  } };
+  const route = (model: string) => ({ provider: "kimi-code" as const, model, reasoningEffort: "low" as const });
+  const runtime = new WorkspaceStructuredModel(new ModelRouter([gateway]), { async find() { return { researchModels: ["principal"], synthesisModels: ["executor"], defaultRoutes: [route("future-default")], researchTierRoutes: { principal: [route("principal")], executor: [route("executor")] } }; } });
+  for (const researchTier of ["principal", "executor"] as const) await runtime.invoke({ workspaceId: "one", capability: "icp_research", researchTier, requestKey: researchTier, fallbackRoutes: [], systemPrompt: "Research", payload: {}, outputName: "submit", outputDescription: "Submit", schema: z.object({ body: z.string() }) });
+  expect(seen).toEqual(["principal", "executor"]);
+});

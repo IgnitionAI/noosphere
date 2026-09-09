@@ -968,6 +968,7 @@ export interface EvaluationRunDetail extends EvaluationRun {
 }
 
 export interface WorkspaceAiSettings {
+  readonly researchTierRoutes?: Readonly<Record<"principal" | "executor", readonly AiModelRoute[]>>;
   readonly researchModels: readonly string[];
   readonly synthesisModels: readonly string[];
   readonly defaultRoutes: readonly AiModelRoute[];
@@ -1421,7 +1422,7 @@ export async function getWorkspaceAiSettings(
 
 export async function updateWorkspaceAiSettings(
   workspaceSlug: string,
-  settings: Pick<WorkspaceAiSettings, "defaultRoutes" | "capabilityRoutes">,
+  settings: Pick<WorkspaceAiSettings, "defaultRoutes" | "capabilityRoutes"> & { replaceLegacyResearch?: boolean },
 ): Promise<WorkspaceAiSettings> {
   const response = await apiFetch("/api/v1/workspace-ai-settings", {
     method: "PUT",

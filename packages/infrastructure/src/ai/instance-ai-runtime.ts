@@ -10,7 +10,7 @@ import type { DatabaseExecutor } from "@outbound/infrastructure/database/client"
 import { encryptSecret, decryptSecret } from "@outbound/infrastructure/security/secret-crypto";
 import { PostgresInstanceAiConnectionsRepository } from "@outbound/infrastructure/ai/postgres-instance-ai-connections-repository";
 import { OpenAiResponsesModelGateway } from "@outbound/infrastructure/ai/openai-model-gateway";
-import { createWorkspaceAiAvailabilityFromEnvironment } from "@outbound/infrastructure/ai/workspace-ai-availability";
+import { createWorkspaceAiAvailabilityFromEnvironment, isEnvironmentModelRouteAvailable } from "@outbound/infrastructure/ai/workspace-ai-availability";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 export function createInstanceAiRepository(database: DatabaseExecutor, environment: Environment) {
@@ -33,8 +33,9 @@ export class InstanceWorkspaceAiPolicyReader implements WorkspaceAiModelPolicyRe
     const capabilityRoutes: Partial<Record<AiCapability, readonly ModelRoute[]>> = Object.fromEntries(await Promise.all(Object.entries(workspace?.capabilityRoutes ?? {}).map(async ([capability, routes]) => [capability, await refresh(routes)])));
     const researchRoutes = capabilityRoutes.icp_research?.length ? capabilityRoutes.icp_research : defaultRoutes;
     return {
-      researchModels: researchRoutes.length ? researchRoutes.map((route) => route.model) : workspace?.researchModels ?? [],
-      synthesisModels: researchRoutes.length ? researchRoutes.map((route) => route.model) : workspace?.synthesisModels ?? [],
+      ...(workspace?.researchTierRoutes ? { researchTierRoutes: workspace.researchTierRoutes } : {}),
+      researchModels: workspace?.researchTierRoutes ? workspace.researchModels : researchRoutes.length ? researchRoutes.map((route) => route.model) : workspace?.researchModels ?? [],
+      synthesisModels: workspace?.researchTierRoutes ? workspace.synthesisModels : researchRoutes.length ? researchRoutes.map((route) => route.model) : workspace?.synthesisModels ?? [],
       defaultRoutes,
       capabilityRoutes,
     };
@@ -44,6 +45,15 @@ export function createInstanceWorkspaceAiAvailability(environment: Environment, 
   const legacy = createWorkspaceAiAvailabilityFromEnvironment(environment, policies);
   return async (workspaceId, capability) => {
     const policy = await policies.find(workspaceId);
+    if (capability === "icp_research" && policy?.researchTierRoutes) {
+      const tiers = await Promise.all(Object.values(policy.researchTierRoutes).map(async (routes) => {
+        const available = await Promise.all(routes.map(async (route) => route.connectionId
+          ? !!await instance.getReadyRoute({ connectionId: route.connectionId, model: route.model })
+          : isEnvironmentModelRouteAvailable(environment, route, capability)));
+        return available.some(Boolean);
+      }));
+      return tiers.every(Boolean);
+    }
     const routes = routesForCapability(policy, capability, []);
     if (!routes.some((route) => route.connectionId)) return legacy(workspaceId, capability);
     for (const route of routes) {

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 ROOT_DIR="${APP_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env}"
@@ -30,9 +31,11 @@ if [[ "$BACKUP_MODE" == "restic" ]]; then
 fi
 
 compose=(docker compose --env-file "$ENV_FILE" -f compose.infrastructure.yml -f compose.production.yml)
-mkdir -p "$BACKUP_DIR/postgres" "$BACKUP_DIR/minio"
+mkdir -p "$BACKUP_DIR/postgres" "$BACKUP_DIR/minio" "$BACKUP_DIR/credentials"
+chmod 0700 "$BACKUP_DIR" "$BACKUP_DIR/credentials"
 "${compose[@]}" --profile backup run --rm backup-postgres
 "${compose[@]}" --profile backup run --rm backup-minio
+"${compose[@]}" --profile backup run --rm backup-ai-credentials
 
 if [[ "$BACKUP_MODE" == "restic" ]]; then
   restic snapshots --no-lock >/dev/null

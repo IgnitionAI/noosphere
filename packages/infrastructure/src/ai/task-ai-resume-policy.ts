@@ -24,7 +24,12 @@ export async function refreshTaskAiPolicyForResume(
   }));
   const defaultRoutes = await refresh(policy.defaultRoutes ?? []);
   const capabilityRoutes = Object.fromEntries(await Promise.all(Object.entries(policy.capabilityRoutes ?? {}).map(async ([key, routes]) => [key, await refresh(routes)])));
-  const refreshed = { ...policy, defaultRoutes, capabilityRoutes };
+  const researchTierRoutes = policy.researchTierRoutes ? { principal: await refresh(policy.researchTierRoutes.principal), executor: await refresh(policy.researchTierRoutes.executor) } : undefined;
+  const refreshed = { ...policy, defaultRoutes, capabilityRoutes, ...(researchTierRoutes ? { researchTierRoutes } : {}) };
+  if (capability === "icp_research" && researchTierRoutes) {
+    if (!Object.values(researchTierRoutes).every((routes) => routes.some((route) => available.has(route)))) throw new AiSetupRequiredError();
+    return refreshed;
+  }
   if (!routesForCapability(refreshed, capability, []).some((route) => available.has(route))) throw new AiSetupRequiredError();
   return refreshed;
 }

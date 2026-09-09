@@ -22,6 +22,7 @@ export async function saveWorkspaceAiSettings(
 }
 
 function parseRouting(value: FormDataEntryValue | null): {
+  replaceLegacyResearch: boolean;
   defaultRoutes: readonly AiModelRoute[];
   capabilityRoutes: Readonly<Partial<Record<AiCapability, readonly AiModelRoute[]>>>;
 } {
@@ -31,6 +32,7 @@ function parseRouting(value: FormDataEntryValue | null): {
     throw new Error("AI_MODEL_ROUTING_INVALID");
   }
   return {
+    replaceLegacyResearch: parsed.replaceLegacyResearch === true,
     defaultRoutes: parsed.defaultRoutes as readonly AiModelRoute[],
     capabilityRoutes: parsed.capabilityRoutes as Partial<Record<AiCapability, readonly AiModelRoute[]>>,
   };

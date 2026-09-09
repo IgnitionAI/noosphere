@@ -22,6 +22,7 @@ const modelRoute = z.object({
 const routeList = z.array(modelRoute).max(3).transform(deduplicateRoutes);
 const settingsInput = z
   .object({
+    replaceLegacyResearch: z.boolean().default(false),
     defaultRoutes: routeList,
     capabilityRoutes: z.partialRecord(z.enum(aiCapabilities), routeList).default({}),
   })
@@ -87,6 +88,7 @@ function requireAdmin(role: string): void {
 
 function serialize(settings: Awaited<ReturnType<WorkspaceAiSettingsApplication["get"]>>) {
   return {
+    ...(settings.researchTierRoutes ? { researchTierRoutes: settings.researchTierRoutes } : {}),
     researchModels: settings.researchModels,
     synthesisModels: settings.synthesisModels,
     defaultRoutes: settings.defaultRoutes,

@@ -290,6 +290,7 @@ export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
           const repaired = await this.options.routedModel.invoke({
             workspaceId: input.workspaceId,
             capability: "icp_research",
+            researchTier: modelTierForStage(stage, input.brief.researchVersion),
             requestKey: `${input.runId}:${stage}:evidence-repair`,
             fallbackRoutes: legacyRoutes,
             systemPrompt: `You repair one structured ICP research output. Remove unknown evidence identifiers or mark the affected claim as a hypothesis. Never create a source, URL or identifier. Preserve the exact output contract.`,
@@ -629,6 +630,7 @@ export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
       const plan = await this.options.routedModel.invoke({
         workspaceId: input.workspaceId,
         capability: "icp_research",
+        researchTier: modelTierForStage(stage, input.brief.researchVersion),
         requestKey: `${input.runId}:${stage}:${input.researchStageRunId}:tool-plan:${round}`,
         fallbackRoutes: fallbackRoutes.map((route) => ({
           ...route,
@@ -711,6 +713,7 @@ export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
     const synthesisRequest = {
       workspaceId: input.workspaceId,
       capability: "icp_research" as const,
+      researchTier: modelTierForStage(stage, input.brief.researchVersion),
       fallbackRoutes,
       systemPrompt: [
         systemPrompt,

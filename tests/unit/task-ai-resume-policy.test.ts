@@ -31,3 +31,11 @@ test("a healthy unrelated capability cannot authorize the paused capability", as
     async getReadyRoute(input) { return input.model === "other" ? other : null; },
   }, {})).rejects.toThrow("AI_SETUP_REQUIRED");
 });
+test("legacy research resume validates both retained tiers instead of the new default", async () => {
+  const legacy = { provider: "kimi-code" as const, model: "legacy", reasoningEffort: "max" as const };
+  const tiers = { ...policy, researchTierRoutes: { principal: [legacy], executor: [{ ...legacy, model: "executor" }] } };
+  const connections = { async getReadyRoute() { return primary; } };
+  await expect(refreshTaskAiPolicyForResume(tiers, "icp_research", connections, {})).rejects.toThrow("AI_SETUP_REQUIRED");
+  const resumed = await refreshTaskAiPolicyForResume(tiers, "icp_research", connections, { KIMI_CODE_API_KEY: "controlled" });
+  expect(resumed.researchTierRoutes).toEqual(tiers.researchTierRoutes);
+});

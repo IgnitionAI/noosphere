@@ -25,6 +25,7 @@ export class WorkspaceStructuredModel {
     readonly workspaceId: string;
     readonly capability: AiCapability;
     readonly requestKey: string;
+    readonly researchTier?: "principal" | "executor";
     readonly fallbackRoutes: readonly ModelRoute[];
     readonly explicitRoutes?: readonly ModelRoute[];
     /**
@@ -45,7 +46,8 @@ export class WorkspaceStructuredModel {
     const policy = input.explicitRoutes?.length ? null : await this.policies.find(input.workspaceId);
     const configuredRoutes = input.explicitRoutes?.length
       ? input.explicitRoutes
-      : routesForCapability(policy, input.capability, input.fallbackRoutes);
+      : (input.capability === "icp_research" && input.researchTier ? policy?.researchTierRoutes?.[input.researchTier] : undefined)
+        ?? routesForCapability(policy, input.capability, input.fallbackRoutes);
     const allowedProviders = input.allowedProviders ? new Set(input.allowedProviders) : null;
     const routes = allowedProviders
       ? configuredRoutes.filter((route) => allowedProviders.has(route.provider))

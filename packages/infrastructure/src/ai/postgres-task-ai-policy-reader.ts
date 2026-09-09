@@ -10,8 +10,9 @@ const route = z.object({
 }).transform(({ connectionId, connectionVersion, ...rest }) => ({ ...rest, ...(connectionId ? { connectionId } : {}), ...(connectionVersion ? { connectionVersion } : {}) }));
 export const taskAiPolicySchema = z.object({
   researchModels: z.array(z.string()), synthesisModels: z.array(z.string()),
+  researchTierRoutes: z.object({ principal: z.array(route), executor: z.array(route) }).optional(),
   defaultRoutes: z.array(route), capabilityRoutes: z.partialRecord(z.enum(aiCapabilities), z.array(route)),
-});
+}).transform(({ researchTierRoutes, ...rest }) => ({ ...rest, ...(researchTierRoutes ? { researchTierRoutes } : {}) }));
 
 export class PostgresTaskAiPolicyReader implements TaskAiPolicyReader {
   constructor(private readonly sql: SqlClient) {}

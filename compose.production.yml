@@ -297,6 +297,24 @@ services:
     networks: [outbound-private]
     logging: *default-logging
 
+  backup-ai-credentials:
+    image: paradedb/paradedb:v0.23.5
+    profiles: [backup]
+    network_mode: none
+    read_only: true
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        umask 077
+        mkdir -p /backups/credentials
+        tar -czf /backups/credentials/ai_$$(date -u +%Y%m%dT%H%M%SZ).tar.gz -C /source .
+    volumes:
+      - ${BACKUP_DIR:?BACKUP_DIR is required}:/backups
+      - ${APP_ENV_FILE:-.env}:/source/environment.env:ro
+      - codex-service-home:/source/codex-service-home:ro
+      - instance-codex-home:/source/instance-codex-home:ro
+    logging: *default-logging
+
   codex-auth:
     image: ${BACKEND_IMAGE:-${IMAGE_REGISTRY:-ghcr.io}/${IMAGE_NAMESPACE:-ignitionai}/${IMAGE_PREFIX:-noosphere}-backend:${APP_VERSION:-dev}}
     build:

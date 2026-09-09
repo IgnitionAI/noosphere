@@ -23,6 +23,19 @@ try {
   const instance = createInstanceAiRepository(database.db, process.env);
   const research = new PostgresProductResearchRepository(database.db);
   const queue = new PostgresJobQueue(database.client);
+  // Browser scenarios share a DB; isolate this fixture's leases from research
+  // intentionally left queued by setup scenarios. Restore real types before processing.
+  const lease = queue.lease.bind(queue);
+  queue.lease = async (request) => {
+    const fixtureType = `research.stage.fixture.${workspaceId}`;
+    await database.client`update jobs set type = ${fixtureType} where workspace_id = ${workspaceId} and type = 'research.stage.execute'`;
+    try {
+      const leased = await lease({ ...request, types: [fixtureType] });
+      return leased.map((job) => ({ ...job, type: "research.stage.execute" }));
+    } finally {
+      await database.client`update jobs set type = 'research.stage.execute' where workspace_id = ${workspaceId} and type = ${fixtureType}`;
+    }
+  };
   const ids = new CryptoIdGenerator(), clock = { now: () => new Date() };
   let runId = suppliedRunId;
   if (mode === "pause") {

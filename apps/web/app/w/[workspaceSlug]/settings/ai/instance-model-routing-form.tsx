@@ -14,10 +14,11 @@ export function InstanceModelRoutingForm({ settings, save }: {
   const [state, action, pending] = useActionState(save, { message: "", error: false });
   const [defaults, setDefaults] = useState(settings.defaultRoutes);
   const [overrides, setOverrides] = useState(settings.capabilityRoutes);
+  const [replaceLegacyResearch, setReplaceLegacyResearch] = useState(false);
   const models = settings.availableModels ?? [];
   const effective = defaults.length ? defaults : settings.effectiveDefaultRoutes ?? [];
   return <form action={action} className="mt-6 space-y-6">
-    <input type="hidden" name="modelRouting" value={JSON.stringify({ defaultRoutes: defaults, capabilityRoutes: overrides })} />
+    <input type="hidden" name="modelRouting" value={JSON.stringify({ defaultRoutes: defaults, capabilityRoutes: overrides, replaceLegacyResearch })} />
     <section className="rounded-xl border border-line bg-white p-5 space-y-4">
       <h2 className="font-semibold">Modèle du workspace</h2>
       <RouteChoice label="Modèle du workspace" inherit="Hérité de l’instance" routes={defaults} models={models} onChange={setDefaults} />
@@ -27,6 +28,12 @@ export function InstanceModelRoutingForm({ settings, save }: {
     </section>
     <section className="rounded-xl border border-line bg-white p-5 space-y-5">
       <h2 className="font-semibold">Personnaliser par usage</h2>
+      {settings.researchTierRoutes && <div className="rounded-lg border border-line p-4 space-y-2">
+        <h3 className="font-medium">Modèles de recherche conservés</h3>
+        <p className="text-sm">Recherche : {settings.researchTierRoutes.principal.map((route) => route.model).join(" → ")}. Synthèse : {settings.researchTierRoutes.executor.map((route) => route.model).join(" → ")}.</p>
+        <p className="text-sm text-muted">Ces choix restent utilisés pour la recherche, même si vous changez les autres usages.</p>
+        <label className="flex gap-2 text-sm"><input type="checkbox" checked={replaceLegacyResearch} onChange={(event) => setReplaceLegacyResearch(event.target.checked)} />Remplacer ces choix par le modèle de recherche défini ci-dessous</label>
+      </div>}
       {capabilities.map(({ id, label, detail }) => <div key={id} className="space-y-2">
         <RouteChoice label={label} inherit="Utiliser le modèle du workspace" routes={overrides[id] ?? []} models={models} onChange={(routes) => setOverrides((current) => {
           const next: Partial<Record<AiCapability, readonly AiModelRoute[]>> = { ...current };

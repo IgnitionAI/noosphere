@@ -7,6 +7,8 @@ export interface WorkspaceAiModelPolicy {
   readonly researchModels: readonly string[];
   readonly synthesisModels: readonly string[];
   readonly defaultRoutes?: readonly ModelRoute[];
+  /** Preserved pre-routing research settings; removed only when explicitly replacing the research selection. */
+  readonly researchTierRoutes?: Readonly<Record<"principal" | "executor", readonly ModelRoute[]>>;
   readonly capabilityRoutes?: Readonly<Partial<Record<AiCapability, readonly ModelRoute[]>>>;
 }
 
@@ -28,6 +30,7 @@ export interface WorkspaceAiSettingsRepository {
     synthesisModels: readonly string[];
     defaultRoutes: readonly ModelRoute[];
     capabilityRoutes: Readonly<Partial<Record<AiCapability, readonly ModelRoute[]>>>;
+    researchTierRoutes?: NonNullable<WorkspaceAiModelPolicy["researchTierRoutes"]>;
     now: Date;
   }): Promise<WorkspaceAiModelPolicy & { updatedAt: Date }>;
 }
@@ -75,6 +78,7 @@ export class WorkspaceAiSettingsApplication {
         researchModels: settings?.researchModels ?? this.defaults.researchModels,
         synthesisModels: settings?.synthesisModels ?? this.defaults.synthesisModels,
         defaultRoutes,
+        ...(settings?.researchTierRoutes ? { researchTierRoutes: settings.researchTierRoutes } : {}),
         capabilityRoutes: Object.fromEntries(Object.entries(settings?.capabilityRoutes ?? {}).map(([capability, routes]) => [capability, resolve(routes)])),
         effectiveDefaultRoutes: defaultRoutes.length ? defaultRoutes : route ? [route] : this.defaults.defaultRoutes ?? [],
         availableModels,
@@ -88,6 +92,7 @@ export class WorkspaceAiSettingsApplication {
   async update(input: {
     workspaceId: string;
     userId: string;
+    replaceLegacyResearch?: boolean;
     defaultRoutes: readonly ModelRoute[];
     capabilityRoutes: Readonly<Partial<Record<AiCapability, readonly ModelRoute[]>>>;
   }): Promise<WorkspaceAiSettingsView> {
@@ -104,6 +109,7 @@ export class WorkspaceAiSettingsApplication {
     const current = await this.get(input.workspaceId);
     const settings = await this.repository.upsert({
       ...input,
+      ...(!input.replaceLegacyResearch && current.researchTierRoutes ? { researchTierRoutes: current.researchTierRoutes } : {}),
       researchModels: current.researchModels,
       synthesisModels: current.synthesisModels,
       now: this.now(),
@@ -129,6 +135,7 @@ function normalizePolicy(
   updatedAt: Date | null,
 ): WorkspaceAiSettingsView {
   return {
+    ...(policy.researchTierRoutes ? { researchTierRoutes: policy.researchTierRoutes } : {}),
     researchModels: policy.researchModels,
     synthesisModels: policy.synthesisModels,
     defaultRoutes: policy.defaultRoutes?.length

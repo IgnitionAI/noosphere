@@ -22,3 +22,20 @@ test("no credentials blocks generation and legacy OpenAI research remains usable
   expect(await createWorkspaceAiAvailabilityFromEnvironment({}, policies)("workspace", "icp_research")).toBe(false);
   expect(await createWorkspaceAiAvailabilityFromEnvironment({ AI_PROVIDER: "openai", OPENAI_API_KEY: "test-key", OPENAI_RESEARCH_MODEL: "gpt-test", OPENAI_SYNTHESIS_MODEL: "gpt-test" }, policies)("workspace", "icp_research")).toBe(true);
 });
+
+test("an empty service volume is unavailable; only explicit service credentials enable legacy Codex", async () => {
+  const { mkdtempSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const home = mkdtempSync(join(tmpdir(), "noosphere-codex-availability-"));
+  const policies = { async find() { return { researchModels: [], synthesisModels: [], defaultRoutes: [codex] }; } };
+  const available = createWorkspaceAiAvailabilityFromEnvironment({ CODEX_SERVICE_HOME: home }, policies);
+  expect(await available("workspace", "content_writer")).toBe(false);
+  writeFileSync(join(home, "auth.json"), "{}", { mode: 0o600 });
+  expect(await available("workspace", "content_writer")).toBe(false);
+  writeFileSync(join(home, "auth.json"), JSON.stringify({ auth_mode: "chatgpt", tokens: { access_token: "fixture-token" } }));
+  expect(await available("workspace", "content_writer")).toBe(true);
+  expect(await createWorkspaceAiAvailabilityFromEnvironment({ CODEX_HOME: home }, policies)("workspace", "content_writer")).toBe(false);
+  writeFileSync(join(home, "auth.json"), JSON.stringify({ auth_mode: "apikey", OPENAI_API_KEY: "fixture-key" }));
+  expect(await available("workspace", "content_writer")).toBe(true);
+});
