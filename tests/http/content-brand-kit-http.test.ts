@@ -7,6 +7,18 @@ const workspaceId = crypto.randomUUID();
 const userId = crypto.randomUUID();
 
 describe("content brand kit HTTP", () => {
+  test("missing AI blocks direction generation but preserves manual brand editing", async () => {
+    const application = new ContentBrandKitApplication({
+      async find() { return null; }, async findRequest() { return null; },
+      async save(input) { return { workspaceId, version: 1, snapshot: input.snapshot, updatedAt: input.now }; },
+    }, undefined, undefined, undefined, undefined, async () => false);
+    const handler = createContentBrandKitHttpHandler({ application, contextResolver: context("owner") });
+    const response = await handler(request("POST", { requestKey: "no-ai-direction", description: "A clear modern identity", useLogo: false }, "/api/v1/content/brand-kit/generate-direction"));
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: "AI_SETUP_REQUIRED" });
+    expect((await handler(request("PUT", { requestKey: "manual-brand-kit", brandKit: DEFAULT_CONTENT_BRAND_KIT }))).status).toBe(200);
+  });
+
   test("uses the session workspace and validates the complete format mix", async () => {
     const writes: unknown[] = [];
     const application = new ContentBrandKitApplication({

@@ -1,12 +1,35 @@
 import { describe, expect, test } from "bun:test";
 import { createContentGenerationHttpHandler, isContentGenerationRoute } from "@outbound/interface/http/content-generation-handler";
 
+import { ContentGenerationApplication } from "@outbound/application/content/content-generation";
+
 const workspaceId = "31000000-0000-4000-8000-000000000001";
 const userId = "31000000-0000-4000-8000-000000000002";
 const ideaId = "31000000-0000-4000-8000-000000000003";
 const assetId = "31000000-0000-4000-8000-000000000004";
 
 describe("Noosphere content generation HTTP", () => {
+  test("refuses new generations without AI while keeping content readable", async () => {
+    let queued = 0;
+    const repository = {
+      async findRequest() { return null; },
+      async createGeneration() { queued++; return run(); },
+      async findIdea() { return { id: ideaId }; },
+      async findAssetByIdea() { return null; },
+    };
+    const handler = createContentGenerationHttpHandler({
+      contextResolver: context("owner"),
+      application: new ContentGenerationApplication(repository as never, async () => false),
+    });
+    for (const path of [`/api/v1/content/ideas/${ideaId}/brief`, `/api/v1/content/assets/${assetId}/improve`]) {
+      const response = await handler(request(path, "POST", { requestKey: "no-ai-request" }));
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({ code: "AI_SETUP_REQUIRED", setupUrl: "/settings/instance/ai" });
+    }
+    expect(queued).toBe(0);
+    expect((await handler(request(`/api/v1/content/ideas/${ideaId}`))).status).toBe(200);
+  });
+
   test("never captures the reserved idea discovery route as an idea identifier", () => {
     expect(isContentGenerationRoute("/api/v1/content/ideas/discover")).toBe(false);
     expect(isContentGenerationRoute(`/api/v1/content/ideas/${ideaId}`)).toBe(true);

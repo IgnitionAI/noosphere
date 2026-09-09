@@ -10,13 +10,13 @@ import {
   type AiCapability,
   type ModelRoute,
 } from "@outbound/application/ai/model-gateway";
-import type { Database } from "@outbound/infrastructure/database/client";
+import type { DatabaseExecutor } from "@outbound/infrastructure/database/client";
 import { workspaceAiSettings } from "@outbound/infrastructure/database/schema";
 
 export class PostgresWorkspaceAiSettingsRepository
   implements WorkspaceAiSettingsRepository
 {
-  constructor(private readonly database: Database) {}
+  constructor(private readonly database: DatabaseExecutor) {}
 
   async find(
     workspaceId: string,

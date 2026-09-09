@@ -4,6 +4,7 @@ import { createBetterAuthRuntime } from "@outbound/infrastructure/auth/better-au
 import { createDatabase, type Database } from "@outbound/infrastructure/database/client";
 import {
   authUsers,
+  instanceAdministrators,
   workspaces,
   workspaceMembers,
 } from "@outbound/infrastructure/database/schema";
@@ -25,7 +26,7 @@ const bootstrapOwnerSchema = z.object({
 
 export type BootstrapOwnerInput = z.input<typeof bootstrapOwnerSchema>;
 
-export async function bootstrapOwner(db: Database, input: BootstrapOwnerInput) {
+export async function bootstrapInstanceAdministrator(db: Database, input: BootstrapOwnerInput) {
   const values = bootstrapOwnerSchema.parse(input);
   let [user] = await db
     .select({ id: authUsers.id })
@@ -64,6 +65,15 @@ export async function bootstrapOwner(db: Database, input: BootstrapOwnerInput) {
       .limit(1);
   }
   if (!user) throw new Error("OWNER_BOOTSTRAP_USER_NOT_FOUND");
+
+  await db.insert(instanceAdministrators).values({ userId: user.id }).onConflictDoNothing();
+  return { userId: user.id };
+}
+
+export async function bootstrapOwner(db: Database, input: BootstrapOwnerInput) {
+  const values = bootstrapOwnerSchema.parse(input);
+  const { userId } = await bootstrapInstanceAdministrator(db, input);
+  const user = { id: userId };
 
   await db
     .insert(workspaces)
@@ -104,7 +114,8 @@ export async function bootstrapOwner(db: Database, input: BootstrapOwnerInput) {
 if (import.meta.main) {
   const database = createDatabase(requiredEnvironment("DATABASE_URL"));
   try {
-    const result = await bootstrapOwner(database.db, {
+    const bootstrap = process.env.BOOTSTRAP_CREATE_WORKSPACE === "true" ? bootstrapOwner : bootstrapInstanceAdministrator;
+    const result = await bootstrap(database.db, {
       baseUrl: requiredEnvironment("BETTER_AUTH_URL"),
       secret: requiredEnvironment("BETTER_AUTH_SECRET"),
       email: requiredEnvironment("BOOTSTRAP_OWNER_EMAIL"),

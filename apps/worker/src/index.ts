@@ -1,3 +1,4 @@
+import { createWorkspaceAiAvailabilityFromEnvironment } from "@outbound/infrastructure/ai/workspace-ai-availability";
 import { ResearchOrchestrator } from "@outbound/application/gtm/research-orchestrator";
 import {
   CryptoIdGenerator,
@@ -231,6 +232,7 @@ const workspaceExportProcessor = new WorkspaceDataExportProcessor(
 const retentionPurgeProcessor = new WorkspaceRetentionPurgeProcessor(database.db, queue, clock);
 const toolRunRecorder = new PostgresResearchToolRunRecorder(database.db);
 const workspaceAiSettings = new PostgresWorkspaceAiSettingsRepository(database.db);
+const aiAvailable = createWorkspaceAiAvailabilityFromEnvironment(process.env, workspaceAiSettings);
 const workspaceStructuredModel = createWorkspaceStructuredModelFromEnvironment(process.env, workspaceAiSettings);
 const prospectMemoryEvents = new PostgresProspectMemoryEventRepository(database.client);
 const prospectMemorySnapshots = new PostgresProspectMemorySnapshotRepository(database.client);
@@ -410,7 +412,7 @@ const contentIdeaDiscoveryProcessor = new ContentIdeaDiscoveryJobProcessor(
 const dailyContentIdeaScheduler = new DailyContentIdeaScheduler(database.db, contentIdeaRepository, clock, {
   localTime: process.env.DAILY_CONTENT_IDEA_TIME ?? "06:00",
   timezone: process.env.DAILY_CONTENT_IDEA_TIMEZONE ?? "Europe/Paris",
-});
+}, aiAvailable);
 const contentGenerationRepository = new PostgresContentGenerationRepository(database.db);
 const contentMediaStorage = new S3ContentMediaStorage({
   endpoint: requiredEnvironment("S3_ENDPOINT"),
@@ -487,6 +489,7 @@ const contentAutopilotReconciler = new ContentAutopilotReconciler(
   contentGenerationRepository,
   contentPublicationApplication,
   clock,
+  aiAvailable,
 );
 const jobOutcomeReconciler = new PostgresJobOutcomeReconciler(database.db, clock);
 const prospectAssessmentReconciler = new ProspectAssessmentReconciler(database.db, clock);

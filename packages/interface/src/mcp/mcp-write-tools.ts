@@ -2,7 +2,7 @@ import { McpServer, type StandardSchemaWithJSON } from "@modelcontextprotocol/se
 import type { McpExecutionContext, McpWriteCapabilities, McpWriteResult } from "@outbound/application/mcp/mcp-write-capabilities";
 import { canonicalMcpWriteHash, isMcpWriteRoleAllowed, mcpWriteToolArgumentsSchema, parseMcpWriteArguments, type McpWriteArguments, type McpWriteToolName } from "@outbound/interface/mcp/mcp-write-contracts";
 
-const STABLE_WRITE_ERRORS = new Set(["MCP_WRITE_IDEMPOTENCY_CONFLICT", "MCP_WRITE_VERSION_CONFLICT", "MCP_WRITE_IN_PROGRESS", "MCP_WRITE_RECOVERY_REQUIRED", "WRITE_NOT_FOUND", "WRITE_FORBIDDEN", "WRITE_SCOPE_REQUIRED", "WRITE_RATE_LIMITED"]);
+const STABLE_WRITE_ERRORS = new Set(["AI_SETUP_REQUIRED", "MCP_WRITE_IDEMPOTENCY_CONFLICT", "MCP_WRITE_VERSION_CONFLICT", "MCP_WRITE_IN_PROGRESS", "MCP_WRITE_RECOVERY_REQUIRED", "WRITE_NOT_FOUND", "WRITE_FORBIDDEN", "WRITE_SCOPE_REQUIRED", "WRITE_RATE_LIMITED"]);
 
 export function registerMcpWriteTools(server: McpServer, capabilities: McpWriteCapabilities, context: McpExecutionContext): void {
   for (const name of Object.keys(mcpWriteToolArgumentsSchema) as McpWriteToolName[]) {
@@ -49,5 +49,6 @@ function toolResult(value: McpWriteResult) {
 }
 
 function toolError(code: string) {
-  return { isError: true as const, content: [{ type: "text" as const, text: JSON.stringify({ error: code }) }], structuredContent: { error: code } };
+  const problem = { error: code, ...(code === "AI_SETUP_REQUIRED" ? { setupUrl: "/settings/instance/ai", detail: "Configurez une connexion IA avant de lancer une génération." } : {}) };
+  return { isError: true as const, content: [{ type: "text" as const, text: JSON.stringify(problem) }], structuredContent: problem };
 }

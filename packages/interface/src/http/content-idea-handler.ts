@@ -1,3 +1,4 @@
+import { aiSetupProblem } from "@outbound/interface/http/ai-setup-problem";
 import { ZodError, z } from "zod";
 import type { ContentIdeaApplication } from "@outbound/application/content/content-ideas";
 import { contentIdeaStatuses } from "@outbound/domain/content/content-idea";
@@ -45,6 +46,8 @@ export function createContentIdeaHttpHandler(input: { application: ContentIdeaAp
       }
       return problem(405, "METHOD_NOT_ALLOWED", "The HTTP method is not allowed");
     } catch (error) {
+      const setupProblem = aiSetupProblem(error);
+      if (setupProblem) return setupProblem;
       if (error instanceof ZodError || error instanceof SyntaxError) return problem(422, "VALIDATION_FAILED", "The request is invalid");
       if (error instanceof RequestAuthenticationError) return problem(401, "AUTHENTICATION_REQUIRED", error.message);
       if (error instanceof WorkspaceContextRequiredError) return problem(400, "WORKSPACE_CONTEXT_REQUIRED", error.message);

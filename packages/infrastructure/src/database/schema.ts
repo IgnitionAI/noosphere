@@ -360,6 +360,16 @@ export const workspaceInvitations = pgTable(
   ],
 );
 
+export const instanceAdministrators = pgTable("instance_administrators", {
+  userId: uuid("user_id").primaryKey().references(() => authUsers.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const instanceSetup = pgTable("instance_setup", {
+  id: boolean("id").primaryKey().default(true),
+  skipped: boolean("skipped").notNull().default(false),
+});
+
 export const workspaceAiSettings = pgTable("workspace_ai_settings", {
   workspaceId: uuid("workspace_id")
     .primaryKey()

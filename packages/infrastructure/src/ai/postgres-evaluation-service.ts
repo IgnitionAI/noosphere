@@ -1,7 +1,8 @@
+import { AiSetupRequiredError } from "@outbound/application/ai/ai-availability";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Clock, IdGenerator } from "@outbound/application/shared/ports";
 import type { WorkspaceAiModelPolicyReader } from "@outbound/application/workspaces/workspace-ai-settings";
-import { aiProviderIds } from "@outbound/application/ai/model-gateway";
+import { aiProviderIds, type ModelRoute } from "@outbound/application/ai/model-gateway";
 import { assertSyntheticEvaluationCase } from "@outbound/domain/ai/evaluation";
 import type { Database } from "@outbound/infrastructure/database/client";
 import {
@@ -38,7 +39,15 @@ export class PostgresEvaluationService {
     private readonly clock: Clock,
     private readonly ids: IdGenerator,
     private readonly modelPolicyReader?: WorkspaceAiModelPolicyReader,
+    private readonly routeAvailable?: (route: ModelRoute) => Promise<boolean>,
   ) {}
+
+  private async requireModel(configuration: { provider: string; model: string }): Promise<void> {
+    if (!this.routeAvailable) return;
+    if (!aiProviderIds.includes(configuration.provider as ModelRoute["provider"]) || !await this.routeAvailable({ provider: configuration.provider as ModelRoute["provider"], model: configuration.model, reasoningEffort: "high" })) {
+      throw new AiSetupRequiredError();
+    }
+  }
 
   async createDataset(input: {
     workspaceId: string;
@@ -145,6 +154,7 @@ export class PostgresEvaluationService {
       const [dataset] = await tx.select().from(evaluationDatasets).where(and(eq(evaluationDatasets.workspaceId, input.workspaceId), eq(evaluationDatasets.id, input.datasetId))).limit(1);
       const [configuration] = await tx.select().from(aiConfigurations).where(and(eq(aiConfigurations.workspaceId, input.workspaceId), eq(aiConfigurations.id, input.configurationId))).limit(1);
       if (!dataset || !configuration || dataset.capability !== configuration.capability) throw new EvaluationServiceError("EVALUATION_CONFIGURATION_MISMATCH", 422);
+      await this.requireModel(configuration);
       const cases = await tx.select({ id: evaluationCases.id }).from(evaluationCases).where(and(eq(evaluationCases.workspaceId, input.workspaceId), eq(evaluationCases.datasetId, input.datasetId))).orderBy(asc(evaluationCases.createdAt), asc(evaluationCases.id));
       if (!cases.length) throw new EvaluationServiceError("EVALUATION_DATASET_EMPTY", 422);
       const runId = this.ids.generate();
@@ -169,6 +179,9 @@ export class PostgresEvaluationService {
       const [existingRetry] = await tx.select({ id: jobs.id }).from(jobs).where(and(eq(jobs.workspaceId, input.workspaceId), eq(jobs.type, "ai.evaluation.execute"), eq(jobs.idempotencyKey, retryKey))).limit(1);
       if (existingRetry) return run;
       if (run.status !== "partial" && run.status !== "failed") throw new EvaluationServiceError("EVALUATION_RUN_NOT_RETRYABLE", 409);
+      const [configuration] = await tx.select().from(aiConfigurations).where(and(eq(aiConfigurations.workspaceId, input.workspaceId), eq(aiConfigurations.id, run.configurationId))).limit(1);
+      if (!configuration) throw new EvaluationServiceError("EVALUATION_CONFIGURATION_MISMATCH", 422);
+      await this.requireModel(configuration);
       const failed = await tx.update(evaluationCaseResults).set({ status: "pending", errorCode: null, updatedAt: this.clock.now() }).where(and(eq(evaluationCaseResults.workspaceId, input.workspaceId), eq(evaluationCaseResults.evaluationRunId, run.id), eq(evaluationCaseResults.status, "failed"))).returning({ id: evaluationCaseResults.id });
       if (!failed.length) throw new EvaluationServiceError("EVALUATION_RUN_NOT_RETRYABLE", 409);
       await tx.update(evaluationRuns).set({ status: "queued", failedCases: 0, completedAt: null, updatedAt: this.clock.now() }).where(and(eq(evaluationRuns.workspaceId, input.workspaceId), eq(evaluationRuns.id, run.id)));

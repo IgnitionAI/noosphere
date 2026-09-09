@@ -1,3 +1,4 @@
+import { requireWorkspaceAi, type WorkspaceAiAvailability } from "@outbound/application/ai/ai-availability";
 import type { JobQueue, LeasedJob } from "@outbound/application/jobs/job-queue";
 import type { EditorialStrategySnapshot } from "@outbound/domain/content/editorial-strategy";
 import type { ContentBrandKitSnapshot, LinkedinContentFormat } from "@outbound/domain/content/content-brand-kit";
@@ -104,7 +105,7 @@ export interface ContentPipelineAgent {
 }
 
 export class ContentGenerationApplication {
-  constructor(private readonly repository: ContentGenerationRepository) {}
+  constructor(private readonly repository: ContentGenerationRepository, private readonly aiAvailable?: WorkspaceAiAvailability) {}
 
   findRun(input: Parameters<ContentGenerationRepository["findRun"]>[0]) { return this.repository.findRun(input); }
   findIdea(input: Parameters<ContentGenerationRepository["findIdea"]>[0]) { return this.repository.findIdea(input); }
@@ -113,12 +114,18 @@ export class ContentGenerationApplication {
   async generate(input: { workspaceId: string; userId: string; ideaId: string; requestKey: string; instruction?: string; expectedRevision?: number; correlationId?: string; now?: Date }) {
     const replay = await this.repository.findRequest({ workspaceId: input.workspaceId, operation: "asset.generate", requestKey: input.requestKey });
     if (replay) return replay;
+    for (const capability of ["content_brief", "content_writer", "content_audit", "content_critic"] as const) {
+      await requireWorkspaceAi(this.aiAvailable, input.workspaceId, capability);
+    }
     return this.repository.createGeneration({ ...input, operation: "asset.generate", now: input.now ?? new Date() });
   }
 
   async improve(input: { workspaceId: string; userId: string; assetId: string; requestKey: string; instruction?: string; correlationId?: string; now?: Date }) {
     const replay = await this.repository.findRequest({ workspaceId: input.workspaceId, operation: "asset.improve", requestKey: input.requestKey });
     if (replay) return replay;
+    for (const capability of ["content_brief", "content_writer", "content_audit", "content_critic"] as const) {
+      await requireWorkspaceAi(this.aiAvailable, input.workspaceId, capability);
+    }
     return this.repository.createGeneration({ ...input, operation: "asset.improve", now: input.now ?? new Date() });
   }
 }

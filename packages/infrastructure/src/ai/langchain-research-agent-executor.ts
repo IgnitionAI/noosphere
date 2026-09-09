@@ -1261,6 +1261,10 @@ export function modelRoutesForCandidates(
 export function resolveResearchModelConfigurationFromEnvironment(
   environment: Readonly<Record<string, string | undefined>>,
 ): ResearchModelConfiguration {
+  if (isUnconfiguredInstallation(environment)) return {
+    provider: "kimi-code", apiKey: "unused-provider-neutral-runtime",
+    researchModels: [], synthesisModels: [], defaultRoutes: [],
+  };
   const requestedProvider = environment.AI_PROVIDER?.trim()
     || (!environment.KIMI_CODE_API_KEY && environment.CODEX_SERVICE_HOME ? "codex-cli" : "kimi-code");
   if (requestedProvider === "codex-cli") {
@@ -1309,6 +1313,9 @@ export function resolveResearchModelConfigurationFromEnvironment(
 export function resolveResearchModelPolicyFromEnvironment(
   environment: Readonly<Record<string, string | undefined>>,
 ): WorkspaceAiModelPolicy {
+  if (isUnconfiguredInstallation(environment)) return {
+    researchModels: [], synthesisModels: [], defaultRoutes: [], capabilityRoutes: {},
+  };
   const provider = environment.AI_PROVIDER?.trim()
     || (!environment.KIMI_CODE_API_KEY && environment.CODEX_SERVICE_HOME ? "codex-cli" : "kimi-code");
   if (provider === "kimi-code") {
@@ -1843,4 +1850,12 @@ function requiredEnvironmentFrom(
   const value = environment[name]?.trim();
   if (!value) throw new Error(`${name} is required`);
   return value;
+}
+
+function isUnconfiguredInstallation(environment: Readonly<Record<string, string | undefined>>): boolean {
+  const provider = environment.AI_PROVIDER?.trim();
+  return (!provider || ["kimi-code", "codex-cli", "openai"].includes(provider))
+    && !environment.KIMI_CODE_API_KEY?.trim()
+    && !environment.CODEX_SERVICE_HOME?.trim()
+    && !environment.OPENAI_API_KEY?.trim();
 }

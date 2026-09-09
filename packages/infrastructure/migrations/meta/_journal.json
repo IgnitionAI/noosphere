@@ -750,6 +750,13 @@
       "when": 1798023600000,
       "tag": "0106_mcp_reconciliation_matched_invariant",
       "breakpoints": true
+    },
+    {
+      "idx": 107,
+      "version": "7",
+      "when": 1788950000000,
+      "tag": "0108_instance_ai_setup",
+      "breakpoints": true
     }
   ]
 }

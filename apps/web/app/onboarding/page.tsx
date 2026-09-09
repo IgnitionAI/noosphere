@@ -1,7 +1,7 @@
 import { ArrowRight, Check, CircleAlert, Clock3, ExternalLink, LockKeyhole, RotateCcw } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { getSession, getWorkspaceOnboarding, listWorkspaces } from "@/lib/api";
+import { getInstanceSetup, getSession, getWorkspaceOnboarding, listWorkspaces } from "@/lib/api";
 import { createWorkspaceAction } from "../workspaces/actions";
 import { WorkspaceForm } from "../workspaces/workspace-form";
 import { completeOnboardingStepAction, skipOnboardingStepAction } from "./actions";
@@ -45,6 +45,8 @@ export default async function OnboardingPage({ searchParams }: { searchParams: P
       </main>
     );
   }
+  const setup = await getInstanceSetup();
+  if (setup.isAdministrator && !setup.skipped) redirect("/setup");
   const create = createWorkspaceAction.bind(null, "/onboarding");
   return (
     <main className="grid min-h-screen place-items-center bg-canvas p-5">

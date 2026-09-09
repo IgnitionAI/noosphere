@@ -50,10 +50,13 @@ export const dynamic = "force-dynamic";
 
 export default async function ResearchProgressPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ workspaceSlug: string; runId: string }>;
+  searchParams: Promise<{ error?: string }>;
 }) {
   const { workspaceSlug, runId } = await params;
+  const query = await searchParams;
   let run;
   try {
     run = await getResearchRun(workspaceSlug, runId);
@@ -85,6 +88,10 @@ export default async function ResearchProgressPage({
   return (
     <>
       <ProgressRefresh active={isActive} />
+      {query.error === "AI_SETUP_REQUIRED" ? <div role="alert" className="mb-5 rounded-xl border border-line p-4">
+        <p>Configurez une connexion IA avant de lancer cette étude. Votre brouillon est conservé.</p>
+        <Link className="button mt-3" href="/settings/instance/ai">Configurer l’IA de l’instance</Link>
+      </div> : null}
       <header className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <div className="mb-2 flex items-center gap-2">

@@ -32,6 +32,18 @@ describe("MCP safe-write tools", () => {
     await client.close();
   });
 
+  test("explains missing instance AI to MCP clients", async () => {
+    const instance = createMcpTransport({ capabilities: { ...baseCapabilities(), mcpWrite: { execute: async () => { throw new Error("AI_SETUP_REQUIRED"); } } }, allowedHosts: ["example.test"], authorize: async () => context });
+    const client = new Client({ name: "mcp-ai-setup", version: "1.0.0" });
+    const transport = new StreamableHTTPClientTransport(new URL("https://example.test/mcp"), { fetch: async (input, init) => instance.handle(input instanceof Request ? input : new Request(input, init)) });
+    await client.connect(transport);
+    try {
+      const result = await client.callTool({ name: "content_draft_create", arguments: { requestKey: crypto.randomUUID(), ideaId: crypto.randomUUID(), body: "Prepare an evidence-backed draft" } });
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toMatchObject({ error: "AI_SETUP_REQUIRED", setupUrl: "/settings/instance/ai" });
+    } finally { await client.close(); }
+  });
+
   test("denies viewer writes", async () => {
     const instance = createMcpTransport({ capabilities: { ...baseCapabilities(), mcpWrite: { execute: async () => { throw new Error("must not run"); } } }, allowedHosts: ["example.test"], authorize: async () => ({ ...context, role: "viewer" as const }) });
     const client = new Client({ name: "mcp-write-viewer", version: "1.0.0" });

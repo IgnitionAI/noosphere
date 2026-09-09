@@ -4,7 +4,7 @@ import {
   researchStageSchema,
 } from "@outbound/contracts/product-research";
 import type { ProductResearchApplication } from "@outbound/application/gtm/product-research-application";
-import { ProductResearchNotFoundError } from "@outbound/application/gtm/product-research-application";
+import { AiSetupRequiredError, ProductResearchNotFoundError } from "@outbound/application/gtm/product-research-application";
 import type { RequestContextResolver } from "@outbound/interface/http/request-context";
 import {
   RequestAuthenticationError,
@@ -381,6 +381,7 @@ export function createProductResearchHttpHandler(dependencies: ProductResearchHt
       if (allowed) return methodNotAllowed(allowed);
       return problem(404, "ROUTE_NOT_FOUND", "Route not found");
     } catch (error) {
+      if (error instanceof AiSetupRequiredError) return problem(409, "AI_SETUP_REQUIRED", "Connectez et testez un modèle dans les paramètres IA de l’instance avant de lancer cette recherche.", { setupUrl: "/settings/instance/ai" });
       if (error instanceof ZodError || error instanceof SyntaxError) {
         return problem(400, "INVALID_REQUEST", "The request is invalid", {
           errors: error instanceof ZodError ? error.issues : undefined,

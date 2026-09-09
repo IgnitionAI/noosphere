@@ -1,3 +1,4 @@
+import { aiSetupProblem } from "@outbound/interface/http/ai-setup-problem";
 import { ZodError } from "zod";
 import type { ContentAutopilotApplication } from "@outbound/application/content/content-autopilot";
 import { contentAutopilotConfigureRequestSchema } from "@outbound/contracts/content";
@@ -35,6 +36,8 @@ export function createContentAutopilotHttpHandler(input: {
       }
       return problem(405, "METHOD_NOT_ALLOWED", "The HTTP method is not allowed");
     } catch (error) {
+      const setupProblem = aiSetupProblem(error);
+      if (setupProblem) return setupProblem;
       if (error instanceof ZodError || error instanceof SyntaxError) return problem(422, "VALIDATION_FAILED", "The request is invalid");
       if (error instanceof RequestAuthenticationError) return problem(401, "AUTHENTICATION_REQUIRED", error.message);
       if (error instanceof WorkspaceContextRequiredError) return problem(400, "WORKSPACE_CONTEXT_REQUIRED", error.message);

@@ -76,6 +76,20 @@ databaseDescribe("AI-140 continuous AI evaluation", () => {
     await database.close();
   });
 
+  test("unavailable explicit evaluation model creates no run or job", async () => {
+    const dataset = await service.createDataset({ workspaceId, actorUserId: ownerId, capability: "setter", name: "No AI evaluation", rubricVersion: "v1", cases: [{ name: "synthetic", input: { message: "ENTREPRISE_EXEMPLE" }, expected: { classification: "qualified" } }] });
+    const prompt = await service.createPromptVersion({ workspaceId, actorUserId: ownerId, capability: "setter", content: "Classify the example." });
+    const configuration = await service.createConfiguration({ workspaceId, actorUserId: ownerId, capability: "setter", provider: "kimi-code", model: "k3", promptVersionId: prompt.id });
+    const unavailable = new PostgresEvaluationService(database.db, clock, ids, undefined, async (route) => {
+      expect(route.provider).toBe("kimi-code");
+      expect(route.model).toBe("k3");
+      return false;
+    });
+    await expect(unavailable.requestRun({ workspaceId, actorUserId: ownerId, datasetId: dataset.id, configurationId: configuration.id, requestKey: "no-ai-evaluation" })).rejects.toThrow("AI_SETUP_REQUIRED");
+    const rows = await database.db.select().from(evaluationRuns).where(and(eq(evaluationRuns.workspaceId, workspaceId), eq(evaluationRuns.requestKey, "no-ai-evaluation")));
+    expect(rows).toHaveLength(0);
+  });
+
   test("runs the same dataset idempotently in shadow, compares configurations and promotes only after evaluation", async () => {
     const dataset = await service.createDataset({
       workspaceId,

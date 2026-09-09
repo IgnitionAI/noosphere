@@ -1,3 +1,4 @@
+import { aiSetupProblem } from "@outbound/interface/http/ai-setup-problem";
 import { ZodError } from "zod";
 import type { ContentBrandKitApplication } from "@outbound/application/content/content-brand-kit";
 import { RetryableAgentError, TerminalAgentError } from "@outbound/application/gtm/product-research-ports";
@@ -55,6 +56,8 @@ export function createContentBrandKitHttpHandler(input: {
       }
       return problem(405, "METHOD_NOT_ALLOWED", "The HTTP method is not allowed");
     } catch (error) {
+      const setupProblem = aiSetupProblem(error);
+      if (setupProblem) return setupProblem;
       if (error instanceof ZodError || error instanceof SyntaxError) return problem(422, "VALIDATION_FAILED", "The request is invalid");
       if (error instanceof Error && ["CONTENT_BRAND_DIRECTION_UNAVAILABLE", "CONTENT_BRAND_LANDING_PAGE_UNAVAILABLE"].includes(error.message)) {
         return problem(503, error.message, "L’analyse intelligente de la marque est temporairement indisponible");

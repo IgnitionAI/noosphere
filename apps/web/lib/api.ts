@@ -3954,3 +3954,17 @@ async function throwApiError(response: Response): Promise<never> {
     body ? { errors: body.errors, field: body.field, blockedClaimIds: body.blockedClaimIds, blockers: body.blockers, warnings: body.warnings, campaignId: body.campaignId, campaignName: body.campaignName, reason: body.reason, channel: body.channel, suppressionId: body.suppressionId, contactId: body.contactId } : null,
   );
 }
+
+export interface InstanceSetupState {
+  readonly isAdministrator: boolean;
+  readonly skipped: boolean;
+}
+export async function getInstanceSetup(): Promise<InstanceSetupState> {
+  const response = await apiFetch("/api/v1/instance/setup");
+  if (!response.ok) return throwApiError(response);
+  return response.json();
+}
+export async function skipInstanceAiSetup(): Promise<void> {
+  const response = await apiFetch("/api/v1/instance/setup/skip", { method: "POST" });
+  if (!response.ok) await throwApiError(response);
+}

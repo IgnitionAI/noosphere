@@ -511,6 +511,13 @@ describe("research agent model provider", () => {
     expect(output.metadata.parameters.engine).toBe("bounded-tool-plan");
   });
 
+  test("an installation without AI credentials can boot with no research routes", () => {
+    const configuration = resolveResearchModelConfigurationFromEnvironment({});
+    expect(configuration.researchModels).toEqual([]);
+    expect(configuration.synthesisModels).toEqual([]);
+    expect(configuration.defaultRoutes).toEqual([]);
+  });
+
   test("defaults to Kimi Code with its OpenAI-compatible endpoint and models", () => {
     const configuration = resolveResearchModelConfigurationFromEnvironment({
       KIMI_CODE_API_KEY: "test-kimi-key",
