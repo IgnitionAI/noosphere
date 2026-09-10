@@ -72,3 +72,9 @@ La reprise d’une évaluation de canal est maintenant accessible via `acquisiti
 - Avec `MCP_LOCAL_FIXTURES_INTEGRATION=1 MCP_LOCAL_GOVERNED_EFFECTS_INTEGRATION=1`, la suite complète passe : 339 tests, 0 échec, 4 exclusions, 2 901 assertions (code de sortie 0). Journal `/tmp/noosphere-integration-optin-2921477.log`. Les exclusions restantes sont le lancement Docker opt-in, deux sondes fonctionnelles sur stack configurée et la sonde HTTPS Caddy ; elles ne sont pas couvertes par ce résultat.
 
 L’Outbound réel reste en attente du compte LinkedIn à sélectionner dans l’espace de test. Le VPS, le client MCP distant et la boucle avec un destinataire autorisé restent des preuves distinctes à fournir. Aucune campagne existante ni installation Hermes modifiée.
+
+### Correction révélée par la CI hébergée
+
+Check 34525784273 sur 1ea46ca échoue avant les audits : le test unitaire du journal attendait une liste se terminant à 0116. La migration 0117 était correctement présente, mais l’attente exacte du test n’avait pas été mise à jour. Reproduction locale : 1 test réussi / 1 échec ; après ajout explicite de 0117 à la liste attendue : 2 réussis, 119 assertions. Les vérifications de monotonie et d’indices contigus restent intactes. Les anciens résultats unitaires ne prouvaient donc pas le dernier ajout de migration.
+
+La CI conserve le même job bloquant et les mêmes audits, désormais après les parcours fonctionnels. Les deux audits utilisent `!cancelled()` pour rester exécutés même après un échec précédent ; aucune suppression ni `continue-on-error`. Les suites MCP locales et le Codex de test contrôlé sont activés explicitement. Revue Standards et Spec : aucun problème identifié. L’avis officiel NLTK GHSA-8mgp-746c-j5xp indique toujours aucune version corrigée ; `uv tree --invert --package nltk` confirme la dépendance via Crawl4AI 0.9.2.

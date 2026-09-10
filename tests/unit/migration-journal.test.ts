@@ -19,6 +19,7 @@ test("combined MCP and instance AI upgrades retain every migration in order", ()
     "0114_legacy_research_tiers",
     "0115_instance_ai_fallback",
     "0116_offer_draft_revision",
+    "0117_assessment_activation_mode",
   ]);
   expect(journal.entries.map(entry => entry.idx)).toEqual(journal.entries.map((_, index) => index));
 });
