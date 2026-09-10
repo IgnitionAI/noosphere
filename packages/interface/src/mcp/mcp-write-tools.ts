@@ -8,6 +8,7 @@ const DEFERRED_EXTERNAL_TOOLS = new Set<McpWriteToolName>(["content_strategy_pre
 const AUTOMATION_CONFIGURATION_TOOLS = new Set<McpWriteToolName>(["conversation_set_automation", "content_autopilot_configure"]);
 const STABLE_DOMAIN_ERROR = /^(?:OFFER|PRODUCT_RESEARCH|CAMPAIGN|CONVERSATION|KNOWLEDGE|CONTENT_AUTOPILOT|CONTENT_BRAND_KIT|EDITORIAL_STRATEGY)_[A-Z0-9_]+$/;
 const TOOL_DESCRIPTIONS: Readonly<Record<McpWriteToolName, string>> = {
+  campaign_pause: "Suspend an active campaign. Admin or owner only. Read campaign_list for campaignId and expectedUpdatedAt first. Does not resume or activate a campaign; retain requestKey for retries.",
   content_strategy_update: "Save a reviewed editorial draft. Pass strategyId and expectedUpdatedAt from content_strategy_get. Preserves its original offer and ICP sources.",
   content_strategy_publish: "Activate the reviewed editorial version. Admin or owner only. Does not schedule or publish a social post. Pass strategyId and expectedUpdatedAt from content_strategy_get.",
   content_strategy_prepare: "Queue editorial strategy generation using existing offer and ICP versions. Read content_strategy_get first to reuse a prepared strategy. Poll operation_get for completion; this does not publish posts or enable autopilot.",

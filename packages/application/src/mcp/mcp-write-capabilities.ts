@@ -2,6 +2,7 @@ import type { McpExecutionContext } from "./mcp-read-capabilities";
 export type { McpExecutionContext } from "./mcp-read-capabilities";
 
 export type McpWriteToolName =
+  | "campaign_pause"
   | "content_strategy_update" | "content_strategy_publish"
   | "content_strategy_prepare" | "brand_update"
   | "company_upsert" | "contact_upsert" | "opportunity_update" | "opportunity_change_stage"

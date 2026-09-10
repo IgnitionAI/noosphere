@@ -1,5 +1,5 @@
 import { AiTaskPauseError } from "@outbound/application/ai/ai-task-pause";
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import type {
   CampaignChannelReadiness,
   CampaignContentGenerator,
@@ -59,7 +59,7 @@ export class CampaignCompositionJobProcessor {
   async process(job: LeasedJob): Promise<void> {
     const payload = campaignPayload(job.payload);
     const campaign = await this.#campaign(payload);
-    if (!campaign || (!payload.incremental && ["scheduled", "running", "completed"].includes(campaign.automationStage))) {
+    if (!campaign || ["paused", "archived", "completed"].includes(campaign.status) || (!payload.incremental && ["scheduled", "running", "completed"].includes(campaign.automationStage))) {
       await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
       return;
     }
@@ -303,7 +303,14 @@ export class CampaignCompositionJobProcessor {
   }) {
     const now = this.clock.now();
     await this.database.transaction(async (tx) => {
-      let sequenceVersionId = input.campaign.sequenceVersionId;
+      // Serialize with interactive transitions and recheck after slow generation.
+      // A pause accepted while the model ran must never be undone by this job.
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${input.campaignId}, 0))`);
+      const [current] = await tx.select({ status: campaigns.status, sequenceVersionId: campaigns.sequenceVersionId, automationStage: campaigns.automationStage }).from(campaigns)
+        .where(and(eq(campaigns.workspaceId, input.workspaceId), eq(campaigns.id, input.campaignId))).for("update").limit(1);
+      if (!current || ["paused", "archived", "completed"].includes(current.status)) return;
+      if (!input.incremental && ["scheduled", "running", "completed"].includes(current.automationStage)) return;
+      let sequenceVersionId = current.sequenceVersionId;
       if (!sequenceVersionId) {
         const [latest] = await tx
           .select({ version: sequenceVersions.version })

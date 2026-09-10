@@ -493,6 +493,16 @@ export function createMcpWriteCapabilities(database: Database, clock: Clock, aiA
       const started = await research.start({ workspaceId: context.workspaceId, runId: created.id, correlationId });
       return { id: started.id, version: started.version, state: started.status, status: started.status, operation: command.operation, correlationId };
     }
+    if (command.operation === "campaign_pause") {
+      if (context.role !== "admin" && context.role !== "owner") throw new Error("WRITE_FORBIDDEN");
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${String(args.campaignId)}, 0))`);
+      const [current] = await tx.select({ updatedAt: campaigns.updatedAt }).from(campaigns)
+        .where(and(eq(campaigns.workspaceId, context.workspaceId), eq(campaigns.id, String(args.campaignId)))).for("update").limit(1);
+      if (!current) throw new Error("CAMPAIGN_NOT_FOUND");
+      if (current.updatedAt.toISOString() !== args.expectedUpdatedAt) throw new Error("MCP_WRITE_VERSION_CONFLICT");
+      const row = await mcpCampaignRepository.transition({ workspaceId: context.workspaceId, campaignId: String(args.campaignId), transition: "pause", userId: context.userId, at: new Date(Math.max(now.getTime(), current.updatedAt.getTime() + 1)) });
+      return { id: row.id, version: 1, state: row.status, operation: command.operation, correlationId };
+    }
     if (command.operation === "campaign_update") {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${String(args.campaignId)}, 0))`);
       const [current] = await tx.select({ updatedAt: campaigns.updatedAt }).from(campaigns)

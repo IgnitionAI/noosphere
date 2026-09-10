@@ -5,6 +5,7 @@ import type { Database } from "@outbound/infrastructure/database/client";
 import { workspaceCampaignPolicy } from "@outbound/infrastructure/workspaces/workspace-campaign-policy";
 import {
   campaigns,
+  jobs,
   aiPolicyVersions,
   auditLogs,
   campaignProspects,
@@ -166,6 +167,16 @@ export class PostgresCampaignRepository {
         changes: { status: result.status, snapshot: snapshotOf(updated!) },
         sourceEventId: event.id,
       });
+      if (event && input.transition === "resume" && current.channel && current.sequenceId) {
+        const [unfinished] = await tx.select({ id: campaignProspects.id }).from(campaignProspects)
+          .where(and(eq(campaignProspects.workspaceId, input.workspaceId), eq(campaignProspects.campaignId, input.campaignId), eq(campaignProspects.eligible, true), eq(campaignProspects.state, "imported"))).limit(1);
+        if (unfinished) await tx.insert(jobs).values({
+          id: crypto.randomUUID(), workspaceId: input.workspaceId, type: "campaign.messages.compose",
+          payload: { workspaceId: input.workspaceId, campaignId: input.campaignId, incremental: current.automationStage !== "composing" },
+          idempotencyKey: `campaign:${input.campaignId}:resume:${event.id}`, correlationId: `campaign:${input.campaignId}`,
+          maxAttempts: 3, availableAt: input.at, createdAt: input.at, updatedAt: input.at,
+        });
+      }
       return updated!;
     });
   }

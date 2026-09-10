@@ -1,3 +1,7 @@
+import { PostgresCampaignRepository } from "@outbound/infrastructure/campaigns/postgres-campaign-repository";
+import { and, eq } from "drizzle-orm";
+import { defaultCampaignSequenceSteps } from "@outbound/domain/campaigns/campaign-sequence";
+import { CampaignCompositionJobProcessor } from "@outbound/infrastructure/campaigns/campaign-composition-runner";
 import { ResearchInboundPreparationProcessor } from "@outbound/infrastructure/content/research-inbound-preparation-runner";
 import { PostgresJobQueue } from "@outbound/infrastructure/jobs/postgres-job-queue";
 import { PostgresMcpOperationStore } from "@outbound/infrastructure/auth/postgres-mcp-operation-store";
@@ -11,7 +15,7 @@ import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/cli
 import { createNoosphereApiRuntime, createMcpWriteCapabilities } from "@outbound/bootstrap/create-noosphere-api-runtime";
 import { createMcpTransport } from "@outbound/interface/mcp/mcp-transport";
 import { createDatabase } from "@outbound/infrastructure/database/client";
-import { authUsers, mcpOauthClients, workspaceMembers, workspaces, offers, offerVersions, icps, icpVersions, campaigns, sequences } from "@outbound/infrastructure/database/schema";
+import { authUsers, mcpOauthClients, workspaceMembers, workspaces, offers, offerVersions, icps, icpVersions, campaigns, sequences, jobs, sequenceSteps, contacts, prospectDiscoveryRuns, prospectDiscoveryCandidates, campaignProspects, outreachActions, outboxEvents, auditLogs, sequenceVersions } from "@outbound/infrastructure/database/schema";
 import type { McpExecutionContext } from "@outbound/application/mcp/mcp-read-capabilities";
 
 const url = process.env.TEST_DATABASE_URL;
@@ -90,6 +94,102 @@ const url = process.env.TEST_DATABASE_URL;
   expect(denied.structuredContent).toMatchObject({error:"EDITORIAL_STRATEGY_OFFER_REQUIRED"});
   const calendar=await client.callTool({name:"content_get_calendar",arguments:{}});
   expect(calendar.structuredContent).toMatchObject({data:[]});
+ });
+
+ test("agent suspends an active campaign once and rejects a stale command",async()=>{
+  const icpId=crypto.randomUUID(), icpVersionId=crypto.randomUUID(), campaignId=crypto.randomUUID();
+  await db.db.insert(icps).values({id:icpId,workspaceId,name:"Pause test"});
+  await db.db.insert(icpVersions).values({id:icpVersionId,workspaceId,icpId,version:1,name:"Pause test",confidence:"0.9000",criteria:{},buyingCommittee:[],problems:[],signals:[],exclusions:[],unknowns:[],unresolvedContradictions:[],blockedFindings:[],publishedAt:new Date()});
+  const sequenceId=crypto.randomUUID();
+  await db.db.insert(sequences).values({id:sequenceId,workspaceId,name:"Pause sequence"});
+  await db.db.insert(campaigns).values({id:campaignId,workspaceId,sequenceId,name:"Pause test",icpVersionId,channel:"linkedin",status:"active",automationStage:"composing"});
+  const listed=(await client.callTool({name:"campaign_list",arguments:{}})).structuredContent as any;
+  const current=listed.data.find((row:any)=>row.id===campaignId);
+  const args={requestKey:crypto.randomUUID(),campaignId,expectedUpdatedAt:current.updatedAt};
+  const paused=await client.callTool({name:"campaign_pause",arguments:args});
+  expect(paused.isError).not.toBe(true);
+  expect(paused.structuredContent).toMatchObject({id:campaignId,state:"paused"});
+  expect((await client.callTool({name:"campaign_pause",arguments:args})).structuredContent).toEqual(paused.structuredContent);
+  const after=(await client.callTool({name:"campaign_list",arguments:{}})).structuredContent as any;
+  expect(after.data.find((row:any)=>row.id===campaignId).status).toBe("paused");
+  expect(await db.db.select().from(outboxEvents).where(and(eq(outboxEvents.workspaceId,workspaceId),eq(outboxEvents.aggregateId,campaignId),eq(outboxEvents.eventType,"CampaignPaused")))).toHaveLength(1);
+  expect(await db.db.select().from(auditLogs).where(and(eq(auditLogs.workspaceId,workspaceId),eq(auditLogs.subjectId,campaignId),eq(auditLogs.action,"CampaignPaused")))).toHaveLength(1);
+
+  const stale=await client.callTool({name:"campaign_pause",arguments:{...args,requestKey:crypto.randomUUID()}});
+  expect(stale.structuredContent).toMatchObject({error:"MCP_WRITE_VERSION_CONFLICT"});
+  const jobId=crypto.randomUUID();
+  await db.db.insert(jobs).values({id:jobId,workspaceId,type:"campaign.messages.compose",payload:{workspaceId,campaignId},idempotencyKey:jobId,correlationId:jobId,maxAttempts:3,priority:0,availableAt:new Date()});
+  const queue=new PostgresJobQueue(db.client);
+  const leased=(await queue.lease({workerId:"paused-worker",types:["campaign.messages.compose"],limit:100,leaseMs:60000,now:new Date()})).find(job=>job.id===jobId)!;
+  let providerChecks=0;
+  await new CampaignCompositionJobProcessor(db.db,queue,{generate:async()=>{throw new Error("MUST_NOT_GENERATE");}}, {resolveHealthyAccount:async()=>{providerChecks++;throw new Error("MUST_NOT_CHECK_PROVIDER");}}, {now:()=>new Date()}).process(leased);
+  expect(providerChecks).toBe(0);
+
+ });
+
+ test("a suspension accepted during generation prevents activation and scheduling",async()=>{
+  const icpId=crypto.randomUUID(), icpVersionId=crypto.randomUUID(), campaignId=crypto.randomUUID(), sequenceId=crypto.randomUUID(), contactId=crypto.randomUUID(), runId=crypto.randomUUID(), candidateId=crypto.randomUUID();
+  await db.db.insert(icps).values({id:icpId,workspaceId,name:"Concurrent pause"});
+  await db.db.insert(icpVersions).values({id:icpVersionId,workspaceId,icpId,version:1,name:"Concurrent pause",confidence:"0.9000",criteria:{},buyingCommittee:[],problems:[],signals:[],exclusions:[],unknowns:[],unresolvedContradictions:[],blockedFindings:[],publishedAt:new Date()});
+  await db.db.insert(sequences).values({id:sequenceId,workspaceId,name:"Concurrent pause"});
+  await db.db.insert(sequenceSteps).values(defaultCampaignSequenceSteps("linkedin").map(step=>({id:crypto.randomUUID(),workspaceId,sequenceId,...step})));
+  const sequenceVersionId=crypto.randomUUID();
+  await db.db.insert(sequenceVersions).values({id:sequenceVersionId,workspaceId,sequenceId,version:1,steps:defaultCampaignSequenceSteps("linkedin"),publishedAt:new Date()});
+  await db.db.insert(campaigns).values({id:campaignId,workspaceId,sequenceId,sequenceVersionId,icpVersionId,channel:"linkedin",name:"Concurrent pause",status:"active",automationStage:"composing"});
+  await db.db.insert(contacts).values({id:contactId,workspaceId,firstName:"Camille",lastName:"Test"});
+  await db.db.insert(prospectDiscoveryRuns).values({id:runId,workspaceId,icpVersionId,filters:{},status:"completed"});
+  await db.db.insert(prospectDiscoveryCandidates).values({id:candidateId,workspaceId,runId,fullName:"Camille Test",channels:{linkedin:{value:"https://linkedin.com/in/camille-test",normalizedValue:"linkedin.com/in/camille-test",status:"verified",confidence:"high",source:"fixture"},email:{value:null,normalizedValue:null,status:"unavailable",confidence:"none",source:null},whatsapp:{value:null,normalizedValue:null,status:"unavailable",confidence:"none",source:null}},providerData:{providerId:"fixture-camille"}});
+  await db.db.insert(campaignProspects).values({workspaceId,campaignId,candidateId,contactId,eligible:true,state:"imported",score:90});
+  const jobId=crypto.randomUUID();
+  await db.db.insert(jobs).values({id:jobId,workspaceId,type:"campaign.messages.compose",payload:{workspaceId,campaignId},idempotencyKey:jobId,correlationId:jobId,maxAttempts:3,priority:0,availableAt:new Date()});
+  const queue=new PostgresJobQueue(db.client);
+  const leased=(await queue.lease({workerId:"concurrent-pause",types:["campaign.messages.compose"],limit:100,leaseMs:60000,now:new Date()})).find(job=>job.id===jobId)!;
+  let generated=0;
+  await new CampaignCompositionJobProcessor(db.db,queue,{generate:async(input)=>{
+    generated++;
+    const listed=(await client.callTool({name:"campaign_list",arguments:{}})).structuredContent as any;
+    const current=listed.data.find((row:any)=>row.id===campaignId);
+    const paused=await client.callTool({name:"campaign_pause",arguments:{requestKey:crypto.randomUUID(),campaignId,expectedUpdatedAt:current.updatedAt}});
+    expect(paused.isError).not.toBe(true);
+    return {steps:input.templateSteps.map(step=>({position:step.position,subject:null,body:"Bonjour Camille, échangeons sur votre projet."})),metadata:{provider:"fixture",model:"fixture",promptVersion:"fixture"}};
+  }},{resolveHealthyAccount:async()=>({provider:"unipile",accountId:"fixture-account"})},{now:()=>new Date()}).process(leased);
+  expect(generated).toBe(1);
+  const after=(await client.callTool({name:"campaign_list",arguments:{}})).structuredContent as any;
+  expect(after.data.find((row:any)=>row.id===campaignId).status).toBe("paused");
+  expect(await db.db.select().from(outreachActions).where(eq(outreachActions.campaignId,campaignId))).toHaveLength(0);
+  const [job]=await db.db.select().from(jobs).where(eq(jobs.id,jobId));
+  expect(job!.status).toBe("completed");
+  await new PostgresCampaignRepository(db.db).transition({workspaceId,campaignId,userId,transition:"resume",at:new Date()});
+  await new PostgresCampaignRepository(db.db).transition({workspaceId,campaignId,userId,transition:"resume",at:new Date()});
+  const resumedJobs=await db.db.select().from(jobs).where(and(eq(jobs.workspaceId,workspaceId),eq(jobs.type,"campaign.messages.compose"),eq(jobs.status,"pending")));
+  expect(resumedJobs.filter(job=>(job.payload as {campaignId?:string}).campaignId===campaignId)).toHaveLength(1);
+
+ });
+
+ test("campaign suspension requires an administrator and refuses workspace overrides or unknown campaigns",async()=>{
+  const server=createMcpTransport({capabilities:runtime.capabilities,allowedHosts:["mcp.example.test"],authorize:async()=>({...context,role:"operator"})});
+  const operator=new Client({name:"operator",version:"1"});
+  await operator.connect(new StreamableHTTPClientTransport(new URL(context.audience),{fetch:async(input,init)=>server.handle(input instanceof Request?input:new Request(input,init))}));
+  const args={requestKey:crypto.randomUUID(),campaignId:crypto.randomUUID(),expectedUpdatedAt:new Date().toISOString()};
+  try {
+   expect((await operator.callTool({name:"campaign_pause",arguments:args})).structuredContent).toMatchObject({error:"WRITE_FORBIDDEN"});
+   expect((await client.callTool({name:"campaign_pause",arguments:args})).structuredContent).toMatchObject({error:"CAMPAIGN_NOT_FOUND"});
+   expect((await client.callTool({name:"campaign_pause",arguments:{...args,workspaceId:crypto.randomUUID()}})).isError).toBe(true);
+  }finally{await operator.close();await server.close();}
+ });
+
+ test("an existing campaign in another workspace cannot be suspended",async()=>{
+  const foreignWorkspace=crypto.randomUUID(),icpId=crypto.randomUUID(),icpVersionId=crypto.randomUUID(),sequenceId=crypto.randomUUID(),campaignId=crypto.randomUUID();
+  await db.db.insert(workspaces).values({id:foreignWorkspace,slug:foreignWorkspace,name:"Other workspace"});
+  await db.db.insert(icps).values({id:icpId,workspaceId:foreignWorkspace,name:"Other ICP"});
+  await db.db.insert(icpVersions).values({id:icpVersionId,workspaceId:foreignWorkspace,icpId,version:1,name:"Other ICP",confidence:"0.9000",criteria:{},buyingCommittee:[],problems:[],signals:[],exclusions:[],unknowns:[],unresolvedContradictions:[],blockedFindings:[],publishedAt:new Date()});
+  await db.db.insert(sequences).values({id:sequenceId,workspaceId:foreignWorkspace,name:"Other sequence"});
+  await db.db.insert(campaigns).values({id:campaignId,workspaceId:foreignWorkspace,icpVersionId,sequenceId,name:"Foreign active campaign",channel:"linkedin",status:"active"});
+  const [before]=await db.db.select().from(campaigns).where(eq(campaigns.id,campaignId));
+  const denied=await client.callTool({name:"campaign_pause",arguments:{requestKey:crypto.randomUUID(),campaignId,expectedUpdatedAt:before!.updatedAt.toISOString()}});
+  expect(denied.structuredContent).toMatchObject({error:"CAMPAIGN_NOT_FOUND"});
+  const [after]=await db.db.select().from(campaigns).where(eq(campaigns.id,campaignId));
+  expect(after).toEqual(before);
  });
 
  test("read-only scopes cannot mutate brand and workspace selection cannot be supplied by an agent",async()=>{
