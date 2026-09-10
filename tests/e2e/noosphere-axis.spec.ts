@@ -60,15 +60,20 @@ test("browser back restores the previous product destination", async ({ page }) 
 });
 
 test("Inbound exposes its grounded editorial strategy without a provider mutation", async ({ page }) => {
+  const mutations: string[] = [];
+  page.on("request", request => {
+    if (["POST", "PUT", "PATCH", "DELETE"].includes(request.method())) mutations.push(`${request.method()} ${request.url()}`);
+  });
   await page.goto(`/w/${workspaceSlug}/content/strategy`);
   await expect(page).toHaveURL(new RegExp(`/w/${workspaceSlug}/content/strategy`));
   await expect(page.getByRole("heading", { name: "Stratégie LinkedIn" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: /Aucune stratégie dérivée|Piliers éditoriaux/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Stratégie Inbound à préparer|Piliers éditoriaux/ })).toBeVisible();
   if (await page.getByRole("button", { name: "2 / jour" }).count()) {
     await expect(page.getByRole("button", { name: "2 / jour" })).toHaveAttribute("aria-pressed", "true");
     await expect(page.getByLabel("Créneau 1")).toHaveValue("09:00");
     await expect(page.getByLabel("Créneau 2")).toHaveValue("17:00");
   }
+  expect(mutations).toEqual([]);
 });
 
 test("workspace surfaces keep one clear heading and never overflow the viewport", async ({ page }) => {

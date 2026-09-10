@@ -39,3 +39,22 @@ Contrôles : 13 tests MCP/PostgreSQL, 84 assertions ; 1 083 tests unitaires/HTTP
 L’essai Luna de préparation a retrouvé les sources et le plan réels. Son appel `content_strategy_prepare` a été annulé par le client (`user cancelled MCP tool call`) : cet essai ne prouve aucune nouvelle préparation. Le plan existant n’a qu’un canal exploitable, déjà associé à une campagne active ; Luna l’a laissée intacte. Le scénario complet Inbound + nouveau brouillon Outbound reste à prouver. Un nouvel essai avec revue automatique d’approbation est en cours, toujours sans activation ni envoi autorisés.
 
 L’essai avec revue automatique a abouti à l’opération Inbound `18665c6e-4bda-4ff1-9b03-6949312f5b75`, job `55ae0c8f-c4fd-4f62-9293-5ca7f4d00494`, terminé en une tentative entre 19:43:06 et 19:43:27 UTC. Luna a suivi `operation_get` puis relu `content_strategy_get`. L’appel Outbound explicite a retourné `CAMPAIGN_OFFER_VERSION_CONFLICT` face à la campagne active historique sans liaison d’offre ; aucune nouvelle campagne n’est prouvée. Le résumé de Luna a altéré l’identifiant de l’étude et interprété à tort ce refus comme une offre non publiée. Les réponses outils restent la preuve ; les consignes MCP précisent désormais ces distinctions. Journaux : `/tmp/noosphere-agent-luna-preparation-reviewed-events.jsonl` et `/tmp/noosphere-agent-luna-preparation-reviewed-proof.log`. Les jetons de cet essai ont été révoqués par le script.
+
+## Contrôles complets du commit 9bd55d1
+
+- Suite d’intégration complète : 78 fichiers, 326 tests réussis, 2 803 assertions ; base dédiée `noosphere_agent_full_20260910_test`. Log `/tmp/noosphere-full-integration-check.log`.
+- Architecture (620 fichiers TypeScript), quatre variantes Compose, prototype et compilation API/worker/extracteur : réussis.
+- Crawler : 43 tests réussis.
+- Compilation web production : réussie dans le checkout isolé `/tmp/noosphere-agent-validation-20260910`, après installation verrouillée des dépendances. Le premier essai avec un lien symbolique de dépendances a été refusé par Turbopack ; aucune modification de configuration produit pour le contourner.
+- Tests navigateur : lancés dans ce checkout, ports 3390/3391 et base `noosphere_agent_full_20260910_e2e`. Résultat à confirmer.
+- Essai Luna complet : étude `b72f87e9-3271-4723-ac0a-ef5bdacdef40` dans l’espace `mcp-agent-5a57de29`, lancée via MCP et brief manuel persisté. Étude encore en cours lors de cette entrée ; ne pas considérer les deux préparations comme acquises.
+
+### Étude réelle et reprise Luna
+
+L’étude `b72f87e9-3271-4723-ac0a-ef5bdacdef40` est terminée : 19:50:07 à 19:55:36 UTC, soit 5 min 29 s, sans reprise d’étape. Luna l’a relue via MCP et a retrouvé l’offre `26d249de-448b-5fcb-af14-cb3054d17c2e` et le brouillon Inbound `d53a5ac9-44ee-4a9d-94f9-2974b084d34c`. Le navigateur authentifié confirme le brouillon et l’autopilote en pause (`/tmp/noosphere-agent-full-inbound-proof.png`).
+
+Le plan `c9af4577-54d0-4c67-a3fe-17be2b6401e4` est prêt, mais aucun canal recommandé : email/WhatsApp sans identité exploitable ; LinkedIn échoue faute de compte sélectionné dans cet espace. Aucune campagne créée. Choix du compte demandé à l’utilisateur ; ne pas copier une connexion d’un autre espace implicitement.
+
+### Régression navigateur
+
+Première suite : 47 réussis, 4 ignorés, 3 échecs. Deux échecs attendaient l’ancien libellé Inbound. Le troisième rechargeait la page après l’annonce de navigation, avant la fin de l’enregistrement de marque (trace : recharge à +33 ms, sauvegarde à +62 ms). Les alertes sont maintenant limitées au formulaire. Les pannes de génération/import sont injectées sur leurs requêtes navigateur, après sauvegarde via la vraie API ; ceci prouve la persistance face à ces pannes réseau, pas les erreurs internes d’un provider. Les deux scénarios de marque corrigés passent. La suite complète est relancée avec environnement provider isolé et fixture Codex contrôlée pour lever les quatre exclusions. Résultat final en attente (`/tmp/noosphere-full-e2e-final.log`).
