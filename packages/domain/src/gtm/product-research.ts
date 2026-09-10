@@ -65,6 +65,7 @@ export interface ProductResearchBrief {
     | "strategic_market"
     | undefined;
   readonly researchVersion?: 1 | 2 | 3;
+  readonly campaignActivationMode?: "manual" | undefined;
 }
 
 export function researchStagesForBrief(

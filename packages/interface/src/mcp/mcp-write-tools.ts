@@ -25,7 +25,7 @@ const TOOL_DESCRIPTIONS: Readonly<Record<McpWriteToolName, string>> = {
   offer_create: "Create a product or service offer draft.",
   offer_update: "Update an offer draft, its positioning, claims or objections.",
   offer_publish: "Publish an immutable offer version for campaign and agent context.",
-  research_launch: "Launch a durable ICP research run that continues after this chat turn.",
+  research_launch: "Launch a durable ICP research run that continues after this chat turn. Resulting campaigns remain in preparation until explicitly activated through approval.",
   campaign_update: "Update a campaign draft or link reviewed immutable offer/configuration versions using IDs from Noosphere. Provide expectedUpdatedAt from campaign_list. Does not activate or send messages.",
   campaign_create: "Create a draft outbound campaign from immutable configuration versions.",
   conversation_set_automation: "Set a campaign conversation to Setter IA, human or disabled mode.",

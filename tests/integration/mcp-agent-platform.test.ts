@@ -1,3 +1,7 @@
+import { canonicalMcpWriteHash } from "@outbound/interface/mcp/mcp-write-contracts";
+import { PostgresProspectingPlanRepository } from "@outbound/infrastructure/campaigns/postgres-prospecting-plan-repository";
+import { researchOfferId } from "@outbound/infrastructure/gtm/research-acquisition-preparation";
+import { productResearchRuns } from "@outbound/infrastructure/database/schema";
 import { PostgresMcpGovernedEffectWorker } from "@outbound/infrastructure/mcp/postgres-mcp-governed-effect-worker";
 import { PostgresMcpGovernedEffectExecutor } from "@outbound/infrastructure/mcp/postgres-mcp-governed-effect-executor";
 import { PostgresMcpExternalEffectAttemptRepository } from "@outbound/infrastructure/mcp/postgres-mcp-effect-attempt-repository";
@@ -131,6 +135,28 @@ const url = process.env.TEST_DATABASE_URL;
   const [unchanged]=await db.db.select().from(campaigns).where(eq(campaigns.id,result.id));
   expect(unchanged).toEqual(active);
 
+ });
+
+ test("MCP research preserves preparation-only intent when an assessment creates its campaign",async()=>{
+  const args={requestKey:crypto.randomUUID(),brief:{productUrl:"",productName:"Preparation intent",description:"Conseil IA",geography:"France",languages:["fr"],salesMotion:"service",knownCompetitors:[],internalDocumentIds:[],depth:"quick",researchVersion:3}};
+  const writes=createMcpWriteCapabilities(db.db,{now:()=>new Date()},()=>async()=>true);
+  const launched=await writes.execute(context,{operation:"research_launch",requestKey:args.requestKey,inputHash:canonicalMcpWriteHash(args),arguments:args});
+  const runId=launched.id;
+  const [run]=await db.db.select().from(productResearchRuns).where(eq(productResearchRuns.id,runId));
+  expect(run!.brief).toMatchObject({campaignActivationMode:"manual"});
+  const icpId=crypto.randomUUID(),icpVersionId=crypto.randomUUID(),planId=crypto.randomUUID(),assessmentId=crypto.randomUUID();
+  await db.db.insert(icps).values({id:icpId,workspaceId,name:"Intent ICP"});
+  await db.db.insert(icpVersions).values({id:icpVersionId,workspaceId,icpId,runId,version:1,name:"Intent ICP",confidence:"0.9000",criteria:{},buyingCommittee:[],problems:[],signals:[],exclusions:[],unknowns:[],unresolvedContradictions:[],blockedFindings:[],publishedAt:new Date()});
+  const offerId=researchOfferId(workspaceId,runId);
+  await db.db.insert(offers).values({id:offerId,workspaceId,name:"Intent offer"});
+  await db.db.insert(offerVersions).values({id:offerId,offerId,workspaceId,version:1,name:"Intent offer",category:"service",valueProposition:"Conseil IA",targetAudience:"PME",publishedAt:new Date()});
+  await db.db.insert(prospectingPlans).values({id:planId,workspaceId,icpVersionId,name:"Intent plan",status:"assessing"});
+  await db.db.insert(channelAssessments).values({id:assessmentId,workspaceId,planId,channel:"linkedin",status:"running"});
+  const completed=await new PostgresProspectingPlanRepository(db.db).completeAssessment({workspaceId,assessmentId,strategy:{query:"PME France",sourceKinds:[],rationale:"Controlled fixture",sampleSize:3},metrics:{sampleSize:3,accountsFound:3,peopleFound:3,eligibleIdentities:3,verifiedIdentities:3},evidence:[],decision:{recommendation:"recommended",score:100,rationale:"Controlled fixture"},completedAt:new Date()});
+  expect(completed.campaignId).not.toBeNull();
+  const [campaign]=await db.db.select().from(campaigns).where(eq(campaigns.id,completed.campaignId!));
+  expect(campaign).toMatchObject({status:"draft",offerVersionId:offerId,autopilotPolicy:{activationMode:"manual"}});
+  expect(await db.db.select().from(outreachActions).where(eq(outreachActions.campaignId,campaign!.id))).toHaveLength(0);
  });
 
  test("agent suspends an active campaign once and rejects a stale command",async()=>{

@@ -29,3 +29,13 @@ Espace de démonstration local : /w/mcp-agent-5a57de29/settings/brand.
 Le scénario produit → étude → préparations Inbound ET Outbound entièrement exécuté par un agent reste à valider. Les essais réels ci-dessus couvrent lecture, marque et offre ; la génération Inbound et le lien campagne/offre sont testés avec PostgreSQL et un générateur contrôlé.
 
 La préparation Outbound sans identifiants de configuration manuels, l’activation gouvernée et la suspension des campagnes restent dans les tickets 03 et 04. L’ancienne campagne active sans offerVersionId n’a pas été modifiée : campaign_update respecte le verrou métier des campagnes actives. Aucun déploiement ni validation d’un client hébergé distant ne découle de cette preuve locale.
+
+## Activation gouvernée et essai réel de préparation
+
+Commit local `3e3074e` : préparation native, activation approuvée, reçu transactionnel et programmation. Le reçu rejoué après suspension ne réactive pas la campagne. Une modification de stratégie après validation du worker est refusée par l’adaptateur sous verrou. La revue a fait corriger l’ordre des verrous évaluation/campagne.
+
+Contrôles : 13 tests MCP/PostgreSQL, 84 assertions ; 1 083 tests unitaires/HTTP, 3 684 assertions ; TypeScript et architecture passent. Le runtime local a été redémarré après vérification de zéro job en cours et sert cette version. Aucun déploiement VPS découle de cette tranche.
+
+L’essai Luna de préparation a retrouvé les sources et le plan réels. Son appel `content_strategy_prepare` a été annulé par le client (`user cancelled MCP tool call`) : cet essai ne prouve aucune nouvelle préparation. Le plan existant n’a qu’un canal exploitable, déjà associé à une campagne active ; Luna l’a laissée intacte. Le scénario complet Inbound + nouveau brouillon Outbound reste à prouver. Un nouvel essai avec revue automatique d’approbation est en cours, toujours sans activation ni envoi autorisés.
+
+L’essai avec revue automatique a abouti à l’opération Inbound `18665c6e-4bda-4ff1-9b03-6949312f5b75`, job `55ae0c8f-c4fd-4f62-9293-5ca7f4d00494`, terminé en une tentative entre 19:43:06 et 19:43:27 UTC. Luna a suivi `operation_get` puis relu `content_strategy_get`. L’appel Outbound explicite a retourné `CAMPAIGN_OFFER_VERSION_CONFLICT` face à la campagne active historique sans liaison d’offre ; aucune nouvelle campagne n’est prouvée. Le résumé de Luna a altéré l’identifiant de l’étude et interprété à tort ce refus comme une offre non publiée. Les réponses outils restent la preuve ; les consignes MCP précisent désormais ces distinctions. Journaux : `/tmp/noosphere-agent-luna-preparation-reviewed-events.jsonl` et `/tmp/noosphere-agent-luna-preparation-reviewed-proof.log`. Les jetons de cet essai ont été révoqués par le script.

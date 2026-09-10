@@ -22,6 +22,7 @@ import {
   jobs,
   prospectDiscoveryRuns,
   prospectingPlans,
+  productResearchRuns,
   sequences,
   sequenceSteps,
 } from "@outbound/infrastructure/database/schema";
@@ -438,18 +439,22 @@ async function ensureChannelCampaign(
     )
     .limit(1);
   if (!version) throw new Error("ICP_VERSION_NOT_FOUND");
+  const [researchRun] = version.runId ? await tx.select({ brief: productResearchRuns.brief }).from(productResearchRuns)
+    .where(and(eq(productResearchRuns.workspaceId, input.workspaceId), eq(productResearchRuns.id, version.runId))).limit(1) : [];
+  const inheritedMode = (researchRun?.brief as { campaignActivationMode?: string } | undefined)?.campaignActivationMode;
+  const activationMode = input.activationMode ?? (inheritedMode === "manual" ? "manual" : undefined);
   const campaignId = crypto.randomUUID();
   const sequenceId = crypto.randomUUID();
   const discoveryRunId = crypto.randomUUID();
   const sourcingFilters = buildAutonomousSourcingFilters(input.channel, input.strategy);
   const channelLabel = label(input.channel);
   // Channel campaigns are created by the autonomous prospecting plan. They
-  // must be ready to run without an approval queue; safety stops are enforced
+  // inherit a preparation-only research intent when present; safety stops are enforced
   // by the dispatcher (suppression, invalid identity, account and quota).
   const autopilotPolicy = {
     ...(await workspaceCampaignPolicy(tx, input.workspaceId, input.channel)),
     executionMode: "live" as const,
-    ...(input.activationMode ? { activationMode: input.activationMode } : {}),
+    ...(activationMode ? { activationMode } : {}),
   };
   await tx.insert(sequences).values({
     id: sequenceId,
@@ -482,7 +487,7 @@ async function ensureChannelCampaign(
   });
   const [researchOffer] = version.runId ? await tx.select({ id: offerVersions.id }).from(offerVersions).where(and(eq(offerVersions.workspaceId, input.workspaceId), eq(offerVersions.offerId, researchOfferId(input.workspaceId, version.runId)))).limit(1) : [];
   const offerVersionId = input.offerVersionId ?? researchOffer?.id ?? null;
-  if (input.activationMode === "manual") {
+  if (activationMode === "manual") {
     const [offer] = offerVersionId ? await tx.select({ id: offerVersions.id }).from(offerVersions)
       .where(and(eq(offerVersions.workspaceId, input.workspaceId), eq(offerVersions.id, offerVersionId))).limit(1) : [];
     if (!offer) throw new Error("CAMPAIGN_OFFER_VERSION_REQUIRED");

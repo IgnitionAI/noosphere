@@ -489,7 +489,7 @@ export function createMcpWriteCapabilities(database: Database, clock: Clock, aiA
     if (command.operation === "research_launch") {
       const researchRepository = new PostgresProductResearchRepository(transactionalDatabase);
       const research = new ProductResearchApplication(researchRepository, researchRepository, new CryptoIdGenerator(), clock, aiAvailabilityForTransaction?.(tx));
-      const created = await research.create({ workspaceId: context.workspaceId, brief: args.brief as Parameters<ProductResearchApplication["create"]>[0]["brief"] });
+      const created = await research.create({ workspaceId: context.workspaceId, brief: { ...(args.brief as Parameters<ProductResearchApplication["create"]>[0]["brief"]), campaignActivationMode: "manual" } });
       const started = await research.start({ workspaceId: context.workspaceId, runId: created.id, correlationId });
       return { id: started.id, version: started.version, state: started.status, status: started.status, operation: command.operation, correlationId };
     }
