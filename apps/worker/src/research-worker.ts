@@ -65,6 +65,7 @@ export class ResearchWorker {
     private readonly prospectMemoryBackfillProcessor?: { process(job: LeasedJob): Promise<void> },
     private readonly trackedJobLifecycle?: Pick<McpTrackedJobLifecycle, "beforeDispatch" | "afterSuccess" | "afterRetry">,
     private readonly mcpGovernedEffectProcessor?: { process(job: LeasedJob): Promise<unknown> },
+    private readonly researchInboundProcessor?: { process(job: LeasedJob): Promise<void> },
   ) {}
 
   stop(): void {
@@ -107,6 +108,7 @@ export class ResearchWorker {
         ...(this.contentPublicationProcessor ? ["content.publication.publish"] : []),
         ...(this.prospectMemoryRefreshProcessor ? ["prospect.memory.refresh"] : []),
         ...(this.prospectMemoryBackfillProcessor ? ["prospect.memory.backfill"] : []),
+        ...(this.researchInboundProcessor ? ["content.strategy.prepare"] : []),
         ...(this.mcpGovernedEffectProcessor ? ["mcp.external-effect.execute"] : []),
     ];
     const allowed = this.options.jobTypes ? new Set(this.options.jobTypes) : null;
@@ -164,7 +166,9 @@ export class ResearchWorker {
         return;
       }
       const dispatch = async () => {
-      if (job.type === "research.document.process" && this.documentProcessor) {
+      if (job.type === "content.strategy.prepare" && this.researchInboundProcessor) {
+        await this.researchInboundProcessor.process(job);
+      } else if (job.type === "research.document.process" && this.documentProcessor) {
         await this.documentProcessor.process(job);
       } else if (job.type === "prospect.discovery.execute" && this.discoveryProcessor) {
         await this.discoveryProcessor.process(job);

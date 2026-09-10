@@ -4015,3 +4015,7 @@ export async function instanceChatGptLogin(connectionId: string, begin: boolean)
   if (!response.ok) await throwApiError(response);
   return response.json();
 }
+
+export async function getEditorialPreparation(workspaceSlug: string): Promise<{ status: string; attempts: number; errorCode: string | null } | null> {
+  return crmFetch(workspaceSlug, "/api/v1/content/strategy/preparation");
+}

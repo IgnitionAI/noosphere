@@ -1,3 +1,5 @@
+import { offerVersions } from "@outbound/infrastructure/database/schema";
+import { researchOfferId } from "@outbound/infrastructure/gtm/research-acquisition-preparation";
 import { and, asc, eq } from "drizzle-orm";
 import type { ChannelStrategy } from "@outbound/application/campaigns/channel-assessment";
 import {
@@ -404,7 +406,7 @@ async function ensureChannelCampaign(
     .limit(1);
   if (!plan) throw new Error("PROSPECTING_PLAN_NOT_FOUND");
   const [version] = await tx
-    .select({ name: icpVersions.name })
+    .select({ name: icpVersions.name, runId: icpVersions.runId })
     .from(icpVersions)
     .where(
       and(
@@ -455,8 +457,10 @@ async function ensureChannelCampaign(
     createdBy: null,
     createdAt: input.now,
   });
+  const [researchOffer] = version.runId ? await tx.select({ id: offerVersions.id }).from(offerVersions).where(and(eq(offerVersions.workspaceId, input.workspaceId), eq(offerVersions.offerId, researchOfferId(input.workspaceId, version.runId)))).limit(1) : [];
   await tx.insert(campaigns).values({
     id: campaignId,
+    offerVersionId: researchOffer?.id ?? null,
     workspaceId: input.workspaceId,
     icpVersionId: plan.icpVersionId,
     planId: input.planId,

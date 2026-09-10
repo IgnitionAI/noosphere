@@ -14,6 +14,7 @@ const updateSchema = requestSchema.extend({ snapshot: editorialStrategySnapshotS
 
 export function isContentStrategyRoute(pathname: string): boolean {
   return pathname === "/api/v1/content/strategy"
+    || pathname === "/api/v1/content/strategy/preparation"
     || pathname === "/api/v1/content/strategy/derive"
     || pathname === "/api/v1/content/strategy/publish";
 }
@@ -26,6 +27,10 @@ export function createContentStrategyHttpHandler(input: {
     try {
       const context = await input.contextResolver.resolve(request);
       const pathname = new URL(request.url).pathname;
+      if (pathname === "/api/v1/content/strategy/preparation" && request.method === "GET") {
+        requireViewer(context.role);
+        return json(await input.application.preparation(context.workspaceId));
+      }
       if (pathname === "/api/v1/content/strategy" && request.method === "GET") {
         requireViewer(context.role);
         const strategy = await input.application.find(context.workspaceId);

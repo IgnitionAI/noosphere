@@ -70,13 +70,20 @@ export interface EditorialStrategyVersionView {
   readonly publishedAt: Date;
 }
 
+export interface EditorialPreparationState {
+  readonly status: string;
+  readonly attempts: number;
+  readonly errorCode: string | null;
+}
+
 export interface EditorialStrategyRepository {
-  grounding(workspaceId: string): Promise<EditorialStrategyGrounding>;
+  preparation?(workspaceId: string): Promise<EditorialPreparationState | null>;
+  grounding(workspaceId: string, sources?: { offerVersionId: string; icpVersionId: string }): Promise<EditorialStrategyGrounding>;
   find(workspaceId: string): Promise<EditorialStrategyView | null>;
   findRequest(input: { workspaceId: string; operation: string; requestKey: string }): Promise<EditorialStrategyView | EditorialStrategyVersionView | null>;
   saveDerived(input: {
     workspaceId: string;
-    userId: string;
+    userId: string | null;
     requestKey: string;
     grounding: EditorialStrategyGrounding;
     snapshot: EditorialStrategySnapshot;
@@ -105,15 +112,19 @@ export class EditorialStrategyApplication {
     private readonly aiAvailable?: WorkspaceAiAvailability,
   ) {}
 
+  preparation(workspaceId: string): Promise<EditorialPreparationState | null> {
+    return this.repository.preparation?.(workspaceId) ?? Promise.resolve(null);
+  }
+
   find(workspaceId: string): Promise<EditorialStrategyView | null> {
     return this.repository.find(workspaceId);
   }
 
-  async derive(input: { workspaceId: string; userId: string; requestKey: string }): Promise<EditorialStrategyView> {
+  async derive(input: { workspaceId: string; userId: string | null; requestKey: string; sources?: { offerVersionId: string; icpVersionId: string } }): Promise<EditorialStrategyView> {
     const replay = await this.repository.findRequest({ ...input, operation: "strategy.derive" });
     if (replay) return replay as EditorialStrategyView;
     await requireWorkspaceAi(this.aiAvailable, input.workspaceId, "content_strategy");
-    const grounding = await this.repository.grounding(input.workspaceId);
+    const grounding = await this.repository.grounding(input.workspaceId, input.sources);
     const generated = await this.generator.generate({ workspaceId: input.workspaceId, grounding });
     const snapshot = editorialStrategySnapshotSchema.parse(generated.snapshot);
     assertStrategyClaimsAreAuthorized(snapshot, grounding.offer.claims

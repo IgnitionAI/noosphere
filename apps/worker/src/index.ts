@@ -1,3 +1,7 @@
+import { EditorialStrategyApplication } from "@outbound/application/content/editorial-strategy";
+import { PostgresEditorialStrategyRepository } from "@outbound/infrastructure/content/postgres-editorial-strategy-repository";
+import { LangChainEditorialStrategyGenerator } from "@outbound/infrastructure/content/langchain-editorial-strategy-generator";
+import { ResearchInboundPreparationProcessor } from "@outbound/infrastructure/content/research-inbound-preparation-runner";
 import { PostgresModelFallbackRecorder } from "@outbound/infrastructure/ai/postgres-model-fallback-recorder";
 import { registerRuntimeAiDefaults } from "@outbound/infrastructure/ai/register-runtime-ai-defaults";
 import { resolveResearchModelPolicyFromEnvironment } from "@outbound/infrastructure/ai/langchain-research-agent-executor";
@@ -327,6 +331,9 @@ const channelAssessmentProcessor = new ChannelAssessmentJobProcessor(
   new LangChainChannelStrategyPlanner(process.env, workspaceStructuredModel),
   new RoutedChannelObservationSource(discoveryCrawler, createProspectSource),
   clock,
+);
+const researchInboundProcessor = new ResearchInboundPreparationProcessor(
+  new EditorialStrategyApplication(new PostgresEditorialStrategyRepository(database.db), new LangChainEditorialStrategyGenerator(process.env, workspaceAiSettings, aiRunRecorder, undefined, workspaceStructuredModel), aiAvailable), queue, clock,
 );
 const campaignAutomationProcessor = new CampaignAutomationJobProcessor(database.db, queue, clock);
 const contentBrandKitRepository = new PostgresContentBrandKitRepository(database.db);
@@ -729,7 +736,7 @@ const worker = new ResearchWorker(queue, orchestrator, clock, {
   pollIntervalMs: positiveIntegerEnvironment("JOB_POLL_INTERVAL_MS", 1_000),
   ...optionalJobTypes("WORKER_JOB_TYPES"),
   ...optionalExcludedJobTypes("WORKER_EXCLUDED_JOB_TYPES"),
-}, documentService, discoveryProcessor, channelAssessmentProcessor, campaignAutomationProcessor, campaignCompositionProcessor, outreachDispatchProcessor, inboundReplyProcessor, automatedReplySendProcessor, conversationCommandProcessor, process.env.WORKER_DISABLE_MAINTENANCE === "true" ? undefined : maintenance, process.env.WORKER_DISABLE_OUTBOX === "true" ? undefined : outboxDispatcher, importService, process.env.WORKER_DISABLE_OUTREACH_SCHEDULER === "true" ? undefined : outreachScheduler, enrichmentProcessor, signalProcessor, workspaceExportProcessor, retentionPurgeProcessor, knowledgeExpirationProcessor, evaluationRunProcessor, prospectDecisionProcessor, contentIdeaDiscoveryProcessor, contentGenerationProcessor, contentPublicationProcessor, prospectMemoryRefreshProcessor, prospectMemoryBackfillProcessor, mcpTrackedJobLifecycle, mcpGovernedEffectProcessor);
+}, documentService, discoveryProcessor, channelAssessmentProcessor, campaignAutomationProcessor, campaignCompositionProcessor, outreachDispatchProcessor, inboundReplyProcessor, automatedReplySendProcessor, conversationCommandProcessor, process.env.WORKER_DISABLE_MAINTENANCE === "true" ? undefined : maintenance, process.env.WORKER_DISABLE_OUTBOX === "true" ? undefined : outboxDispatcher, importService, process.env.WORKER_DISABLE_OUTREACH_SCHEDULER === "true" ? undefined : outreachScheduler, enrichmentProcessor, signalProcessor, workspaceExportProcessor, retentionPurgeProcessor, knowledgeExpirationProcessor, evaluationRunProcessor, prospectDecisionProcessor, contentIdeaDiscoveryProcessor, contentGenerationProcessor, contentPublicationProcessor, prospectMemoryRefreshProcessor, prospectMemoryBackfillProcessor, mcpTrackedJobLifecycle, mcpGovernedEffectProcessor, researchInboundProcessor);
 
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
   process.once(signal, () => {

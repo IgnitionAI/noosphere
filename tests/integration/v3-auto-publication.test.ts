@@ -1,3 +1,7 @@
+import { EditorialStrategyApplication } from "@outbound/application/content/editorial-strategy";
+import { PostgresEditorialStrategyRepository } from "@outbound/infrastructure/content/postgres-editorial-strategy-repository";
+import { ResearchInboundPreparationProcessor } from "@outbound/infrastructure/content/research-inbound-preparation-runner";
+import { prepareResearchAcquisition } from "@outbound/infrastructure/gtm/research-acquisition-preparation";
 import { AiTaskPauseError } from "@outbound/application/ai/ai-task-pause";
 import { ModelGatewayError } from "@outbound/application/ai/model-gateway";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -69,6 +73,7 @@ import { PostgresProspectViewRepository } from "@outbound/infrastructure/crm/pos
 import { PostgresChannelCapabilityReassessment } from "@outbound/infrastructure/campaigns/channel-capability-reassessment";
 import { ProspectDecisionJobProcessor } from "@outbound/infrastructure/campaigns/prospect-decision-runner";
 import { DailyProspectingScheduler } from "@outbound/infrastructure/campaigns/daily-prospecting-scheduler";
+import { PostgresOfferRepository } from "@outbound/infrastructure/offers/postgres-offer-repository";
 import { AUTONOMOUS_SOURCING_VERSION } from "@outbound/application/campaigns/autonomous-prospecting";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
@@ -199,6 +204,48 @@ databaseDescribe("V3 automatic ICP publication", () => {
         ),
       );
 
+    const preparedOffers = await new PostgresOfferRepository(database.db).listOffers(workspaceId);
+    expect(preparedOffers).toHaveLength(1);
+    expect(preparedOffers[0]!.name).toBe("V3 publication");
+    expect(preparedOffers[0]!.valueProposition).toBe("A governed assistant for controlled operational documents.");
+    const [preparationJob] = await queue.lease({ workerId: "inbound-preparation-test", types: ["content.strategy.prepare"], limit: 1, leaseMs: 30_000, now: clock.now() });
+    expect(preparationJob).toBeDefined();
+    expect(preparationJob!.payload).toMatchObject({ workspaceId, runId: run.snapshot.id });
+    const sources = preparationJob!.payload as { offerVersionId: string; icpVersionId: string };
+    const inbound = new EditorialStrategyApplication(new PostgresEditorialStrategyRepository(database.db), {
+      async generate({ grounding }) {
+        expect(grounding.offer.versionId).toBe(sources.offerVersionId);
+        expect(grounding.icp.versionId).toBe(sources.icpVersionId);
+        expect(grounding.offer.claims.every((claim) => claim.validationStatus === "hypothesis")).toBe(true);
+        return {
+          snapshot: {
+            audience: { name: grounding.icp.name, summary: "Gouvernance documentaire des équipes métiers", awareness: "problem_aware" as const },
+            pillars: [
+              { name: "Permissions", promise: "Expliquer les modèles d’accès", proofTypes: ["documentation"] },
+              { name: "Traçabilité", promise: "Décrire les contrôles disponibles", proofTypes: ["journal d’audit"] },
+              { name: "Déploiement", promise: "Comparer les étapes de déploiement", proofTypes: ["retour terrain"] },
+            ],
+            voice: { traits: ["précis", "pédagogique"], avoid: ["promesses sans preuve"] },
+            formats: ["linkedin_text" as const], cadence: { postsPerWeek: 3, preferredDays: [2, 3, 5], timezone: "Europe/Paris" },
+            callsToAction: ["Partager une difficulté documentaire"], allowedClaimIds: [], forbiddenTopics: ["Tarifs inconnus"],
+          },
+          metadata: { provider: "fixture", model: "fixture", promptVersion: "test", aiRunId: null },
+        };
+      },
+    });
+    const inboundProcessor = new ResearchInboundPreparationProcessor(inbound, queue, clock);
+    await inboundProcessor.process(preparationJob!);
+    const preparedInbound = await inbound.find(workspaceId);
+    expect(preparedInbound?.icpVersionId).toBe(sources.icpVersionId);
+    expect(preparedInbound?.offerVersionId).toBe(sources.offerVersionId);
+    expect(preparedInbound?.currentVersion).toBe(0);
+    await inbound.derive({ workspaceId, userId: null, requestKey: `research-inbound:${run.snapshot.id}`, sources });
+    expect((await inbound.find(workspaceId))?.id).toBe(preparedInbound!.id);
+    await database.db.transaction((tx) => prepareResearchAcquisition(tx, { workspaceId, runId: run.snapshot.id, icpVersionId: sources.icpVersionId, now: clock.now() }));
+    expect(await new PostgresOfferRepository(database.db).listOffers(workspaceId)).toHaveLength(1);
+    expect(await queue.lease({ workerId: "inbound-replay-test", types: ["content.strategy.prepare"], limit: 1, leaseMs: 30_000, now: clock.now() })).toHaveLength(0);
+
+
     expect(proposals).toHaveLength(5);
     expect(proposals.map((proposal) => proposal.rank).sort()).toEqual([1, 2, 3, 4, 5]);
     expect(versions).toHaveLength(5);
@@ -306,6 +353,7 @@ databaseDescribe("V3 automatic ICP publication", () => {
     expect(completedAssessments.filter((item) => item.recommendation === "optional")).toHaveLength(5);
     expect(completedAssessments.filter((item) => item.recommendation === "unsuitable")).toHaveLength(5);
     expect(campaignRows).toHaveLength(5);
+    expect(campaignRows.every((campaign) => campaign.offerVersionId === sources.offerVersionId)).toBe(true);
     expect(campaignRows.every((campaign) => campaign.channel === "linkedin")).toBe(true);
     expect(campaignRows.every((campaign) => campaign.status === "draft")).toBe(true);
     expect(campaignRows.every((campaign) => campaign.discoveryRunId !== null)).toBe(true);

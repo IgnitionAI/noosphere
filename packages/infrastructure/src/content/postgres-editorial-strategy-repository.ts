@@ -9,6 +9,7 @@ import { editorialStrategySnapshotSchema } from "@outbound/contracts/content";
 import type { Database } from "@outbound/infrastructure/database/client";
 import {
   auditLogs,
+  jobs,
   contentOperationRequests,
   editorialStrategies,
   editorialStrategyVersions,
@@ -21,13 +22,18 @@ import {
 export class PostgresEditorialStrategyRepository implements EditorialStrategyRepository {
   constructor(private readonly database: Database) {}
 
-  async grounding(workspaceId: string): Promise<EditorialStrategyGrounding> {
+  async preparation(workspaceId: string) {
+    const [job] = await this.database.select({ status: jobs.status, attempts: jobs.attempts, errorCode: jobs.lastErrorCode }).from(jobs).where(and(eq(jobs.workspaceId, workspaceId), eq(jobs.type, "content.strategy.prepare"))).orderBy(desc(jobs.createdAt)).limit(1);
+    return job ?? null;
+  }
+
+  async grounding(workspaceId: string, sources?: { offerVersionId: string; icpVersionId: string }): Promise<EditorialStrategyGrounding> {
     const [offers, icps] = await Promise.all([
       this.database.select().from(offerVersions)
-        .where(eq(offerVersions.workspaceId, workspaceId))
+        .where(and(eq(offerVersions.workspaceId, workspaceId), ...(sources ? [eq(offerVersions.id, sources.offerVersionId)] : [])))
         .orderBy(desc(offerVersions.publishedAt)).limit(1),
       this.database.select().from(icpVersions)
-        .where(eq(icpVersions.workspaceId, workspaceId))
+        .where(and(eq(icpVersions.workspaceId, workspaceId), ...(sources ? [eq(icpVersions.id, sources.icpVersionId)] : [])))
         .orderBy(desc(icpVersions.publishedAt)).limit(1),
     ]);
     const offer = offers[0];
@@ -277,7 +283,7 @@ function toVersion(row: typeof editorialStrategyVersions.$inferSelect): Editoria
   };
 }
 
-async function appendEvent(tx: any, input: { workspaceId: string; userId: string; strategyId: string; eventType: string; changes: unknown }) {
+async function appendEvent(tx: any, input: { workspaceId: string; userId: string | null; strategyId: string; eventType: string; changes: unknown }) {
   const events = await tx.insert(outboxEvents).values({
     workspaceId: input.workspaceId,
     aggregateType: "EditorialStrategy",

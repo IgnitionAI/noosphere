@@ -1,6 +1,7 @@
+import { CampaignAutoRefresh } from "../../campaigns/campaign-auto-refresh";
 import { AlertTriangle, ArrowLeft, Bot, BrainCircuit, CheckCircle2, PauseCircle, ShieldCheck, Sparkles } from "lucide-react";
 import Link from "next/link";
-import { getContentAutopilot, getContentBrandKit, getContentPerformance, getEditorialLearning, getEditorialStrategy, type LinkedinContentFormat } from "@/lib/api";
+import { getContentAutopilot, getContentBrandKit, getContentPerformance, getEditorialLearning, getEditorialStrategy, getEditorialPreparation, type LinkedinContentFormat } from "@/lib/api";
 import { StrategyActions } from "./strategy-actions";
 import { AutopilotControls } from "./autopilot-controls";
 import { FormatControls } from "./format-controls";
@@ -10,23 +11,25 @@ export const dynamic = "force-dynamic";
 
 export default async function EditorialStrategyPage({ params }: { params: Promise<{ workspaceSlug: string }> }) {
   const { workspaceSlug } = await params;
-  const [strategy, autopilot, learning, brandKit, performance] = await Promise.all([getEditorialStrategy(workspaceSlug), getContentAutopilot(workspaceSlug), getEditorialLearning(workspaceSlug), getContentBrandKit(workspaceSlug), getContentPerformance(workspaceSlug)]);
+  const [strategy, autopilot, learning, brandKit, performance, preparation] = await Promise.all([getEditorialStrategy(workspaceSlug), getContentAutopilot(workspaceSlug), getEditorialLearning(workspaceSlug), getContentBrandKit(workspaceSlug), getContentPerformance(workspaceSlug), getEditorialPreparation(workspaceSlug)]);
+  const preparing = preparation?.status === "pending" || preparation?.status === "running";
   return (
     <>
+      <CampaignAutoRefresh enabled={preparing} />
       <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <Link className="inline-flex items-center gap-1 text-xs font-semibold text-muted hover:text-ink" href={`/w/${workspaceSlug}/activity?lens=inbound`}><ArrowLeft size={13} /> Activité Inbound</Link>
           <div className="badge badge-signal mt-3 w-fit"><Sparkles size={13} /> Stratégie éditoriale ancrée</div>
           <h1 className="page-title mt-3">Stratégie LinkedIn</h1>
-          <p className="mt-2 max-w-2xl text-sm text-muted">Noosphere relie l’offre publiée, l’ICP actif et les claims autorisés avant de produire une seule idée.</p>
+          <p className="mt-2 max-w-2xl text-sm text-muted">Votre produit et votre étude ICP servent à préparer les sujets, le ton et la cadence de vos publications LinkedIn.</p>
         </div>
         <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
           {strategy?.currentVersion ? <Link className="button button-primary w-full sm:w-auto" href={`/w/${workspaceSlug}/content/ideas`}>Ouvrir le radar d’idées</Link> : null}
-          <StrategyActions currentVersion={strategy?.currentVersion ?? 0} hasStrategy={Boolean(strategy)} workspaceSlug={workspaceSlug} />
+          <StrategyActions preparing={preparing} currentVersion={strategy?.currentVersion ?? 0} hasStrategy={Boolean(strategy)} workspaceSlug={workspaceSlug} />
         </div>
       </header>
 
-      {!strategy ? <section className="panel mt-5 py-16 text-center"><AlertTriangle className="mx-auto text-warning" size={30} /><h2 className="mt-4 font-semibold">Aucune stratégie dérivée</h2><p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-muted">Publiez d’abord une offre et un ICP. La dérivation K3 conservera exactement les versions utilisées.</p><div className="mt-5 flex justify-center gap-2"><Link className="button" href={`/w/${workspaceSlug}/settings`}>Vérifier les prérequis</Link></div></section> : (
+      {!strategy ? <section className="panel mt-5 py-16 text-center"><AlertTriangle className="mx-auto text-warning" size={30} /><h2 className="mt-4 font-semibold">{preparing ? "Préparation de votre stratégie Inbound" : preparation ? "La préparation Inbound s’est interrompue" : "Stratégie Inbound à préparer"}</h2><p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-muted">{preparing ? "Noosphere reprend votre produit et l’ICP de l’étude pour préparer les sujets, le ton et la cadence. Vous n’avez rien à ressaisir. Cette page s’actualise automatiquement." : preparation ? "Votre produit et votre ICP sont conservés. Vous pouvez relancer la préparation depuis cette page." : "La préparation démarre automatiquement à la fin de l’étude ICP. Vous pouvez aussi la lancer depuis l’offre et l’ICP déjà enregistrés."}</p></section> : (
         <>
           <section className="mt-5 grid gap-3 sm:grid-cols-3">
             <Metric label="Audience" value={strategy.draft.audience.name} />

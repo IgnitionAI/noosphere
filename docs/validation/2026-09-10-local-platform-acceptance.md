@@ -82,3 +82,17 @@ The plan `30d24c0e-9205-4a5b-8e2c-779dc33fc4d9` initially contained no channel c
 The page now distinguishes assessment pending, assessment failed, and no activated channel, and exposes the channel failure/rationale. Three focused state tests pass; TypeScript and architecture checks validate this local UI change. This is not a new claim of full platform acceptance.
 
 During verification, the live plan had meanwhile progressed: its LinkedIn assessment completed at 16:34:36 UTC and a channel campaign existed. The authenticated browser and API showed 40 discovered profiles, 19 retained at observation time, composing in progress, and zero contacted. The read-only diagnostic executed the current query compiler against the workspace's connected LinkedIn account and received results. It did not retry the assessment, create a campaign or send messages. Discovered profiles and in-progress personalization do not prove ICP relevance or delivery success.
+
+## Product/service to both acquisition preparations
+
+V3 research completion now stores a reusable offer snapshot from the submitted brief (or the completed product-truth summary when the brief description is empty). The source study is retained. Unknown commercial terms remain empty/explicitly missing and imported assertions remain hypotheses, not verified claims. Existing manually created offers are preserved.
+
+The same completion transaction enqueues one idempotent `content.strategy.prepare` job for the highest-ranked ICP. Its offer and ICP version IDs are explicit: the worker cannot accidentally combine unrelated latest snapshots. New Outbound channel campaigns reference that offer version too. The Inbound worker creates a strategy draft; it does not activate publishing or dispatch messages. The strategy screen reports pending/interrupted preparation and refreshes while work runs.
+
+Validation:
+- Reproduced missing offer after study completion (expected one, received zero), then passed the research-to-offer-to-strategy/campaign integration scenario, including replay and matching source versions: 192 assertions.
+- Editorial integration: three tests, 13 assertions, including explicit source isolation and immutable published versions.
+- Unit/HTTP suite: 1081 passing tests; typecheck and architecture checks passed.
+- Actual local recovery of study `77f149ee-cedb-4081-9e8f-719221d4640a`: offer version `11e9d9b9-5095-5613-a886-771216255dd9`, strategy `577d585f-e4e1-44eb-b43a-8433ad22a244`, exact ICP version `f691ee31-e0d4-40b9-8db7-3ef99aeecfe9`. One successful preparation attempt, model `gpt-5.6-luna`, four French editorial pillars. Authenticated browser observed pending preparation followed automatically by the actual draft. Autopilot stayed paused.
+
+This is local preparation proof, not proof of LinkedIn publication, lead relevance or revenue. No VPS rollout or external communication was performed for this change. Existing completed studies are not mass-reprocessed automatically; the named local study was recovered explicitly using the same preparation operation.

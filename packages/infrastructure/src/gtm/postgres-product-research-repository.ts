@@ -1,3 +1,4 @@
+import { prepareResearchAcquisition } from "./research-acquisition-preparation";
 import { ProductResearchAlreadyActiveError } from "@outbound/application/gtm/product-research-ports";
 import type { PauseJobRequest, LeasedJob } from "@outbound/application/jobs/job-queue";
 import type { createTaskAiResumePreparation } from "@outbound/infrastructure/ai/postgres-task-ai-resume";
@@ -1241,6 +1242,9 @@ async function autoCreateV3ProspectingPlans(
       nextVersion += 1;
     }
     if (!versionRow) continue;
+    if (proposal.id === proposals[0]!.id) {
+      await prepareResearchAcquisition(executor, { workspaceId: input.workspaceId, runId: input.runId, icpVersionId: versionRow.id, now: input.publishedAt });
+    }
 
     const [existingPlan] = await executor
       .select({ id: prospectingPlans.id })
