@@ -265,7 +265,7 @@ export function createMcpWriteCapabilities(database: Database, clock: Clock, aiA
             employeeCountMax: typeof args.employeeCountMax === "number" ? args.employeeCountMax : null,
             linkedinUrl: null, source: "manual",
           });
-      return { id: row.id, version: row.revision, state: existing ? "updated" : "created", operation: command.operation, correlationId: crypto.randomUUID() };
+      return { id: row.id, version: row.revision, state: existing ? "updated" : "created", operation: command.operation, correlationId };
     }
     if (command.operation === "contact_upsert") {
       const id = typeof args.id === "string" ? args.id : crypto.randomUUID();
@@ -285,7 +285,7 @@ export function createMcpWriteCapabilities(database: Database, clock: Clock, aiA
         title: employmentTitle,
         ...(typeof args.expectedVersion === "number" ? { expectedRevision: args.expectedVersion } : {}),
       });
-      return { id: upserted.row.id, version: upserted.row.revision, state: upserted.created ? "created" : "updated", operation: command.operation, correlationId: crypto.randomUUID() };
+      return { id: upserted.row.id, version: upserted.row.revision, state: upserted.created ? "created" : "updated", operation: command.operation, correlationId };
     }
     if (command.operation === "opportunity_update") {
       const row = await mcpOpportunityRepository.update({
@@ -300,7 +300,7 @@ export function createMcpWriteCapabilities(database: Database, clock: Clock, aiA
         ...(typeof args.nextAction === "string" || args.nextAction === null ? { nextAction: args.nextAction as string | null } : {}),
         now,
       });
-      return { id: row.id, version: row.revision, state: "updated", operation: command.operation, correlationId: crypto.randomUUID() };
+      return { id: row.id, version: row.revision, state: "updated", operation: command.operation, correlationId };
     }
     if (command.operation === "opportunity_change_stage") {
       const row = await mcpOpportunityRepository.changeStage({
@@ -313,23 +313,22 @@ export function createMcpWriteCapabilities(database: Database, clock: Clock, aiA
         ...(typeof args.expectedVersion === "number" ? { expectedRevision: args.expectedVersion } : {}),
         now,
       });
-      return { id: row.id, version: row.revision, state: "updated", operation: command.operation, correlationId: crypto.randomUUID() };
+      return { id: row.id, version: row.revision, state: "updated", operation: command.operation, correlationId };
     }
     if (command.operation === "prospect_add_note") {
       const contactId = String(args.contactId);
       const contact = await mcpCrmRepository.getContact({ workspaceId: context.workspaceId, contactId });
       if (!contact) throw new Error("WRITE_NOT_FOUND");
-      const noteCorrelationId = crypto.randomUUID();
       const note = await mcpCrmRepository.addMcpNote({
         workspaceId: context.workspaceId,
         contactId,
         note: String(args.note),
         actorUserId: context.userId,
         expectedRevision: typeof args.expectedVersion === "number" ? args.expectedVersion : contact.revision,
-        correlationId: noteCorrelationId,
+        correlationId,
         now,
       });
-      return { id: note.eventId ?? contactId, version: note.revision, state: note.eventId ? "created" : "replayed", operation: command.operation, correlationId: noteCorrelationId };
+      return { id: note.eventId ?? contactId, version: note.revision, state: note.eventId ? "created" : "replayed", operation: command.operation, correlationId };
     }
     if (command.operation === "content_idea_create") {
       const row = await mcpContentIdeaRepository.createManual({
@@ -340,7 +339,7 @@ export function createMcpWriteCapabilities(database: Database, clock: Clock, aiA
         strategyId: typeof args.strategyId === "string" ? args.strategyId : null,
         now,
       });
-      return { id: row.id, version: row.revision ?? 1, state: "created", operation: command.operation, correlationId: crypto.randomUUID() };
+      return { id: row.id, version: row.revision ?? 1, state: "created", operation: command.operation, correlationId };
     }
     if (command.operation === "content_draft_create") {
       const ideaId = String(args.ideaId);
@@ -399,7 +398,6 @@ export function createMcpWriteCapabilities(database: Database, clock: Clock, aiA
       if (campaignId && !prospect.icpMatches.some((match) => match.campaignId === campaignId)) throw new Error("WRITE_NOT_FOUND");
       const dueAt = typeof args.scheduledFor === "string" ? new Date(args.scheduledFor) : now;
       if (Number.isNaN(dueAt.getTime())) throw new Error("WRITE_FAILED");
-      const correlationId = crypto.randomUUID();
       const scheduled = await mcpProspectDecisionScheduler.schedule({
         id: crypto.randomUUID(), workspaceId: context.workspaceId, contactId,
         ...(campaignId ? { campaignId } : {}), kind: "mcp_dry_run", reason: "MCP dry-run requested",

@@ -67,7 +67,7 @@ transactional repositories, `AI_SETUP_REQUIRED`, and shared instance AI availabi
 
 - Combined `bun run check`: 1,072 unit/HTTP tests, 43 crawler tests, typecheck,
   architecture/self-hosting checks and production build passed.
-- Combined integration suite: 313 passed, 4 skipped; includes migration from the
+- Final combined integration suite: 316 passed, 4 skipped; includes migration from the
   pre-Setup schema and the offer-publication concurrency guard.
 - Follow-up composition regression: 3 PostgreSQL tests / 19 assertions passed after
   reproducing missing AI checks in MCP research/autopilot constructors. Research
@@ -79,7 +79,13 @@ transactional repositories, `AI_SETUP_REQUIRED`, and shared instance AI availabi
   HTTPS and both official SDK paths passed isolation, redaction, revocation and rate
   limiting. HTTPS dynamic registration returned 201 with no client secret; database
   inspection confirmed the client has no user/workspace binding before consent.
-- Authenticated desktop/mobile browser verification is recorded below when complete.
+- Authenticated desktop/mobile browser verification: 44 passed, zero skips. The
+  first run had 2 conditional no-AI skips because a synthetic Kimi key was present;
+  rerunning with all environment API keys absent exercised all 44 journeys.
+- Combined database dump/restore to a fresh `template0` database passed: one
+  synthetic company, one write ledger entry and its accepted audit survived. The
+  dump was 669,694 bytes and stored with mode 0600. This remains local PostgreSQL
+  evidence, not an off-site backup or object-storage restore.
 
 ## Local HTTPS, restart and database restoration
 
@@ -119,3 +125,64 @@ Hosted CI is blocked by the unsuppressed NLTK dependency advisory documented in 
 baseline report. VPS address/access, public DNS/HTTPS and an explicitly authorized
 provider recipient are still missing. No deployed commit or live-delivery success
 is claimed. Canary promotion and risky migration/permission approval remain open.
+
+## Restart audit correlation correction
+
+The combined HTTPS replay preserved the entity and ledger but exposed an existing
+bootstrap defect: seven internal-write paths generated a different correlation UUID
+from the accepted OAuth audit. The response still had a valid `auditId`, but tracing
+by `correlationId` could not join the records. All seven paths now retain the atomic
+write correlation; note events and dry-run jobs receive it too. Historical ledger
+results remain immutable.
+
+Six concrete commands reproduced the mismatch (6 red tests). After correction,
+6 PostgreSQL tests / 39 assertions and TypeScript passed. A new synthetic HTTPS
+write was then replayed after another graceful API process restart: the exact
+result survived, the catalog contained 49 tools, and the entity, ledger and accepted
+audit each matched once, including the same correlation UUID. This is API restart
+evidence, not interruption of an external-send worker.
+
+Hosted [Check run 34471406649](https://github.com/IgnitionAI/noosphere/actions/runs/34471406649)
+passed migrations, repository checks and Bun audit on combined commit `675f6a4`.
+It failed the crawler audit on `nltk 3.10.3 / PYSEC-2026-3740`; subsequent hosted
+integration/browser steps did not run. The final correlation-only patch has local
+regression/type evidence; the hosted run above predates it. No audit suppression
+or weakening was introduced.
+
+## Reproduction and remaining acceptance
+
+From this branch, with dedicated disposable database URLs supplied privately:
+
+```sh
+bun run check
+MCP_LOCAL_FIXTURES_INTEGRATION=1 MCP_LOCAL_GOVERNED_EFFECTS_INTEGRATION=1 bun run test:integration
+E2E_CONTROLLED_CODEX=true bun run test:e2e
+```
+
+The browser run additionally requires the isolated fixture executable
+`tests/fixtures/codex-service-fixture.ts` as `CODEX_BINARY_PATH`, a private temporary
+`INSTANCE_CODEX_HOME`, and absent environment API keys to cover no-AI journeys.
+The integration runner only resets the explicitly dedicated test database.
+
+Related draft PRs: [baseline #94](https://github.com/IgnitionAI/noosphere/pull/94),
+[Setup IA #95](https://github.com/IgnitionAI/noosphere/pull/95),
+[MCP #96](https://github.com/IgnitionAI/noosphere/pull/96). The stacked PR requires
+explicit workflow dispatch because Check triggers automatically only for PRs into
+main/dev: `gh workflow run check.yml --ref fix/canary-mcp-contracts`.
+
+Before the external-recipient scenario, obtain the dedicated Noosphere SSH target,
+verify its identity/DNS/backups, and receive an explicitly authorized test account
+and recipient. No existing account should be inferred as that authorization.
+Resume the governed reply with this exact MCP shape only after selecting and
+verifying that authorized conversation and the approved message:
+
+```json
+{"name":"conversation_prepare_reply","arguments":{"requestKey":"<fresh UUID>","conversationId":"<authorized test conversation UUID>","body":"<approved test message>","executeWhenAllowed":true}}
+```
+
+For a role requiring approval, use the returned approval item through
+`approval_decide`; read the returned durable operation through `operation_get`.
+Neither a queued response nor an accepted proposal is delivery proof. Record the
+provider confirmation, ingested reply, CRM/inbox reconciliation and controlled
+worker interruption before declaring the live loop complete. This command is a
+resume contract, not evidence that the missing external scenario ran.
