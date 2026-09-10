@@ -29,6 +29,7 @@ for (const providerId of ["openai-api", "anthropic", "openrouter", "kimi-code"] 
     await page.waitForURL(/\/w\//);
     await page.goto("/setup");
     const name = `${providerId} E2E ${crypto.randomUUID()}`;
+    if (await page.getByText("Ajouter une autre connexion IA", { exact: true }).isVisible()) await page.getByText("Ajouter une autre connexion IA", { exact: true }).click();
     const form = page.getByRole("heading", { name: "Ajouter une connexion IA" }).locator("..");
     await form.getByLabel("Fournisseur").selectOption(providerId);
     await form.getByLabel("Nom de la connexion").fill(name);
@@ -75,6 +76,7 @@ test("compatible API setup accepts a URL but a private destination never becomes
   await page.getByRole("button", { name: "Accéder au workspace" }).click();
   await page.waitForURL(/\/w\//);
   await page.goto("/setup");
+  if (await page.getByText("Ajouter une autre connexion IA", { exact: true }).isVisible()) await page.getByText("Ajouter une autre connexion IA", { exact: true }).click();
   const form = page.getByRole("heading", { name: "Ajouter une connexion IA" }).locator("..");
   await form.getByLabel("Fournisseur").selectOption("openai-compatible");
   const name = `Compatible E2E ${crypto.randomUUID()}`;

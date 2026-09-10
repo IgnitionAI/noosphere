@@ -11,6 +11,7 @@ test("guided ChatGPT connection can be validated, expire and be renewed without 
   await page.getByRole("button", { name: "Accéder au workspace" }).click();
   await page.waitForURL(/\/w\//);
   await page.goto("/setup");
+  if (await page.getByText("Ajouter une autre connexion IA", { exact: true }).isVisible()) await page.getByText("Ajouter une autre connexion IA", { exact: true }).click();
   const form = page.getByRole("heading", { name: "Ajouter une connexion IA" }).locator("..");
   await form.getByLabel("Fournisseur").selectOption("codex-cli");
   await expect(form.getByLabel("Clé API")).toHaveCount(0);

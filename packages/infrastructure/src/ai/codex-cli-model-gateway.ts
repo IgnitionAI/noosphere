@@ -292,6 +292,9 @@ function classifyCodexFailure(stderr: string, stdout: string): ModelGatewayError
   ) {
     return new ModelGatewayError("AI_PROVIDER_QUOTA_EXHAUSTED", "codex-cli", "Codex usage limit is exhausted", true, false);
   }
+  if (/requires a newer version of codex|please upgrade to the latest app or cli/.test(detail)) {
+    return new ModelGatewayError("AI_PROVIDER_CLIENT_OUTDATED", "codex-cli", "The Codex service must be upgraded", true, false);
+  }
   if (/not logged in|authentication|unauthorized|login required|missing auth/.test(detail)) {
     return new ModelGatewayError("AI_PROVIDER_AUTHENTICATION_FAILED", "codex-cli", "Codex service authentication is unavailable", true, false);
   }

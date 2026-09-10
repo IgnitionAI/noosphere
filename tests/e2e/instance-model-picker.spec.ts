@@ -7,6 +7,7 @@ test("administrator selects named models without knowing identifiers and preserv
   await page.getByRole("button", { name: "Accéder au workspace" }).click();
   await page.waitForURL(/\/w\//);
   await page.goto("/setup");
+  if (await page.getByText("Ajouter une autre connexion IA", { exact: true }).isVisible()) await page.getByText("Ajouter une autre connexion IA", { exact: true }).click();
   const form = page.getByRole("heading", { name: "Ajouter une connexion IA" }).locator("..");
   await expect(form.getByRole("checkbox", { name: "GPT-6 Astra", exact: true })).toBeVisible();
   await form.getByRole("checkbox", { name: "GPT-6 Astra", exact: true }).check();
@@ -20,6 +21,10 @@ test("administrator selects named models without knowing identifiers and preserv
   const section = page.getByRole("heading", { name, exact: true }).locator("..");
   await expect(section.getByRole("button", { name: "Tester k3", exact: true })).toBeVisible();
   await expect(section.getByRole("button", { name: "Tester gpt-6-astra", exact: true })).toHaveCount(0);
+  await expect(section.getByText("Connexion enregistrée", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Enregistrer la connexion", exact: true })).not.toBeVisible();
+  await page.getByText("Ajouter une autre connexion IA", { exact: true }).click();
+  await expect(form.getByRole("button", { name: "Enregistrer la connexion", exact: true })).toBeVisible();
   await section.getByText("Modifier la connexion", { exact: true }).click();
   await expect(section.getByRole("checkbox", { name: "Kimi K3", exact: true })).toBeChecked();
   await section.getByText("Ajouter un modèle par son identifiant", { exact: true }).click();

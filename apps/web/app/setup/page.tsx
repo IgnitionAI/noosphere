@@ -18,7 +18,7 @@ export default async function InstanceSetupPage({ searchParams }: { searchParams
       <p className="mt-3 text-sm leading-6 text-muted">Les connexions IA sont partagées par vos workspaces. Vous pouvez explorer Noosphere et préparer vos données avant de connecter un modèle.</p>
       {query.error ? <p role="alert" className="mt-5 text-sm text-danger">{connectionError(query.error)}</p> : null}
       {query.notice ? <p role="status" className="mt-5 text-sm text-success">{query.notice === "chatgpt" ? "Compte ChatGPT connecté. Vous pouvez maintenant tester votre modèle." : query.notice === "tested" ? "Le modèle a répondu au test. Vous pouvez le choisir comme modèle par défaut." : query.notice === "default" ? "Le modèle par défaut est prêt pour vos workspaces." : "Connexion enregistrée. Testez les modèles avant de les utiliser."}</p> : null}
-      {state.skipped ? <p className="mt-5 text-sm text-muted">Vous avez choisi de configurer l’IA plus tard.</p> : null}
+      {state.skipped && !ai?.defaultModel ? <p className="mt-5 text-sm text-muted">Vous avez choisi de configurer l’IA plus tard.</p> : null}
       <div className="mt-6 rounded-xl border border-line bg-canvas p-5">
         <h2 className="font-semibold">Connexion IA</h2>
         <p className="mt-2 text-sm text-muted">Un modèle doit être connecté et testé avant de lancer une recherche ou une génération.</p>
@@ -27,6 +27,7 @@ export default async function InstanceSetupPage({ searchParams }: { searchParams
       {ai ? <div className="mt-6 space-y-5">
         {ai.connections.map((connection) => <section key={connection.id} className="rounded-xl border border-line p-5">
           <h2 className="font-semibold">{connection.name}</h2>
+          <p className="mt-2 text-sm text-success">Connexion enregistrée</p>
           <p className="mt-1 text-xs text-muted">{connectionProviderLabels[connection.provider]} · {connection.provider === "codex-cli" ? "Compte ChatGPT isolé" : "Clé enregistrée et masquée"}</p>
           {connection.provider === "codex-cli" ? <ChatGptConnect connectionId={connection.id} connected={connection.authentication?.state === "connected"} /> : null}
           <ul className="mt-4 space-y-4">{connection.models.map((model) => <li key={model.model}>
@@ -50,7 +51,7 @@ export default async function InstanceSetupPage({ searchParams }: { searchParams
             <button className="button" type="submit">Enregistrer le secours</button>
           </form>
         </section> : null}
-        <section className="rounded-xl border border-line p-5"><h2 className="font-semibold">Ajouter une connexion IA</h2><ConnectionForm /></section>
+        <details key={ai.connections.length} open={!ai.connections.length} className="rounded-xl border border-line p-5"><summary className="cursor-pointer font-semibold">{ai.connections.length ? "Ajouter une autre connexion IA" : "Ajouter une connexion IA"}</summary><section className="mt-4"><h2 className="font-semibold">Ajouter une connexion IA</h2><ConnectionForm /></section></details>
         <p className="text-xs text-muted">Tester un modèle effectue un appel court facturé selon votre fournisseur.</p>
       </div> : null}
       <div className="mt-7 flex flex-wrap gap-3">
@@ -65,9 +66,10 @@ function connectionError(code: string) {
   const messages: Record<string, string> = {
     AI_PROVIDER_DESTINATION_FORBIDDEN: "Cette destination est interdite. Utilisez une URL HTTPS publique sur le port 443 ; les adresses privées, locales et les redirections sont refusées.",
     AI_CONNECTION_AUTHENTICATION_IN_PROGRESS: "Une connexion ChatGPT est en cours. Terminez-la avant de tester le modèle.",
-    AI_PROVIDER_AUTHENTICATION_FAILED: "La clé a été refusée. Vérifiez les identifiants et leurs droits.",
+    AI_PROVIDER_AUTHENTICATION_FAILED: "La connexion a été refusée. Vérifiez les identifiants et leurs droits.",
     AI_PROVIDER_QUOTA_EXHAUSTED: "Le quota ou la limite du fournisseur est atteint. Vérifiez votre compte avant de retester.",
-    AI_PROVIDER_MODEL_UNAVAILABLE: "Ce modèle est introuvable ou inaccessible avec cette clé.",
+    AI_PROVIDER_CLIENT_OUTDATED: "Le service ChatGPT doit être mis à jour pour utiliser ce modèle. Votre connexion est bien enregistrée.",
+    AI_PROVIDER_MODEL_UNAVAILABLE: "Ce modèle est introuvable ou inaccessible avec cette connexion.",
     AI_PROVIDER_OUTPUT_INVALID: "Ce modèle n’a pas produit le format nécessaire aux recherches. Choisissez un modèle compatible avec les appels de fonctions.",
     AI_PROVIDER_TIMEOUT: "Le modèle n’a pas répondu à temps. Vous pouvez relancer le test.",
     AI_CONNECTION_CHANGED: "La connexion a changé pendant le test. Testez sa version actuelle.",

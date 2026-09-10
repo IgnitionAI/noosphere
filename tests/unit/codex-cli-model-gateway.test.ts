@@ -209,3 +209,8 @@ describe("CodexModelCatalog", () => {
     expect(snapshot.models.map((model) => model.id)).toEqual(["gpt-5.6-luna"]);
   });
 });
+
+test("an outdated Codex client is not classified as an inaccessible model", async () => {
+ const gateway = new CodexCliModelGateway({ codexHome: "/tmp/codex-test", runner: { async run() { return {exitCode: 1, stdout: "", stderr: "warning: Model metadata for gpt-6-astra not found.\nERROR: The model requires a newer version of Codex. Please upgrade to the latest app or CLI and try again."}; } } });
+ await expect(gateway.invokeStructured(request)).rejects.toMatchObject({code: "AI_PROVIDER_CLIENT_OUTDATED"});
+});
