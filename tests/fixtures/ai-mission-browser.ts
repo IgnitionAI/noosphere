@@ -49,11 +49,18 @@ try {
     await new StartProductResearchRun(research, ids, clock).execute({ workspaceId, runId, correlationId: runId });
   }
   assert(runId);
+  if (mode === "change-model") {
+    const connection = await instance.save({ name: "Controlled replacement model", provider: "openrouter", apiKey: "controlled-not-live", models: [{ model: "controlled/new", reasoningEffort: "low" }] });
+    const selection = { connectionId: connection.id, model: "controlled/new" };
+    const lease = await instance.beginTest(selection);
+    assert(await instance.finishTest({ ...lease, errorCode: null }));
+    assert(await instance.setDefault(selection));
+  }
   let firstStageCalls = 0;
   const policies = new TaskAiPolicyScope({ async find() { return null; } }, new PostgresTaskAiPolicyReader(database.client));
   const fetcher = async (_url: string, options?: RequestInit) => {
     const body = JSON.parse(String(options?.body));
-    assert.equal(body.model, "controlled/original");
+    assert.equal(body.model, mode === "finish-new-model" ? "controlled/new" : "controlled/original");
     const name = body.tools[0].function.name as string;
     if (name === "submit_product_truth") firstStageCalls++;
     if (mode === "pause" && name === "submit_problem_mapping") return Response.json({ error: { code: "insufficient_quota", message: "controlled quota" } }, { status: 429 });
@@ -69,7 +76,7 @@ try {
     assert.equal((await research.findById(workspaceId, runId))?.snapshot.status, "paused");
     assert.equal(await worker.tick(), 0);
     assert.equal(firstStageCalls, 1);
-  } else if (mode === "verify-paused") {
+  } else if (mode === "verify-paused" || mode === "change-model") {
     assert.equal(await worker.tick(), 0);
     assert.equal((await research.findById(workspaceId, runId))?.snapshot.status, "paused");
   } else {

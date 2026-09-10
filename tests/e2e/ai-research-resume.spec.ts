@@ -2,7 +2,8 @@ import { expect, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { createDatabase } from "@outbound/infrastructure/database/client";
 
-test("an interrupted mission resumes from its checkpoint through the browser", async ({ page }) => {
+for (const changeModel of [false, true]) {
+test(`an interrupted mission resumes from its checkpoint; change model: ${changeModel}`, async ({ page }) => {
   const database = createDatabase(process.env.TEST_DATABASE_URL!);
   try {
     await page.goto("/login");
@@ -26,15 +27,18 @@ test("an interrupted mission resumes from its checkpoint through the browser", a
     await expect(page).toHaveURL(new RegExp(`/research/${runId}$`));
     await expect(page.getByRole("heading", { name: "Quota du fournisseur IA épuisé" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Reprendre", exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "Reprendre", exact: true }).click();
+    fixture("change-model", runId);
+    await page.getByRole("button", { name: changeModel ? "Reprendre avec le modèle configuré" : "Reprendre", exact: true }).click();
     await expect.poll(async () => {
       const [run] = await database.client`select status from product_research_runs where id = ${runId}`;
       return run?.status;
     }).toBe("running");
-    fixture("finish", runId);
+    fixture(changeModel ? "finish-new-model" : "finish", runId);
     await page.reload();
     await expect(page.getByRole("button", { name: "Reprendre", exact: true })).toHaveCount(0);
     const [completed] = await database.client`select count(*)::int as count from research_stage_runs where run_id = ${runId} and stage = 'product_truth' and status = 'completed'`;
     expect(completed?.count).toBe(1);
   } finally { await database.close(); }
 });
+
+}

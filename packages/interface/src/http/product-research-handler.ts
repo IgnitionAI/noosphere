@@ -1,3 +1,4 @@
+import { ProductResearchAlreadyActiveError } from "@outbound/application/gtm/product-research-ports";
 import { ZodError, z } from "zod";
 import {
   productResearchBriefSchema,
@@ -128,7 +129,7 @@ export function createProductResearchHttpHandler(dependencies: ProductResearchHt
       if (
         request.method === "POST" &&
         actionMatch &&
-        ["start", "pause", "resume"].includes(actionMatch[2] ?? "")
+        ["start", "pause", "resume", "resume-current-models"].includes(actionMatch[2] ?? "")
       ) {
         const context = await resolveContext(dependencies.contextResolver, request);
         requireOperator(context.role);
@@ -148,6 +149,7 @@ export function createProductResearchHttpHandler(dependencies: ProductResearchHt
                 })
               : await dependencies.application.resume({
                   workspaceId: context.workspaceId,
+                  ...(action === "resume-current-models" ? { useCurrentModels: true } : {}),
                   runId,
                   correlationId: correlationId(request),
                 });
@@ -402,6 +404,7 @@ export function createProductResearchHttpHandler(dependencies: ProductResearchHt
       if (error instanceof ProductResearchNotFoundError) {
         return problem(404, "PRODUCT_RESEARCH_RUN_NOT_FOUND", error.message);
       }
+      if (error instanceof ProductResearchAlreadyActiveError) return problem(409, "PRODUCT_RESEARCH_ALREADY_ACTIVE", error.message);
       if (error instanceof ProductResearchInvariantError) {
         return problem(409, "PRODUCT_RESEARCH_INVALID_STATE", error.message);
       }
@@ -414,6 +417,9 @@ export function createProductResearchHttpHandler(dependencies: ProductResearchHt
       }
       if (message === "RESEARCH_FINDING_NOT_FOUND") {
         return problem(404, message, "Research finding not found in this workspace run");
+      }
+      if (message === "RESEARCH_MODEL_CHANGE_BUSY") {
+        return problem(409, message, "The previous model call is still finishing; retry when it has stopped");
       }
       if (message === "ICP_PROPOSAL_NOT_APPROVED") {
         return problem(409, message, "Only an approved ICP proposal can be published");

@@ -1,3 +1,4 @@
+import { ProductResearchAlreadyActiveError } from "@outbound/application/gtm/product-research-ports";
 import type { PauseJobRequest, LeasedJob } from "@outbound/application/jobs/job-queue";
 import type { createTaskAiResumePreparation } from "@outbound/infrastructure/ai/postgres-task-ai-resume";
 import { and, asc, desc, eq, gt, inArray, ne, notInArray, or, sql } from "drizzle-orm";
@@ -197,7 +198,7 @@ export class PostgresProductResearchRepository
   }
 
   async transitionLocked(
-    input: { workspaceId: string; runId: string },
+    input: { workspaceId: string; runId: string; useCurrentModels?: boolean },
     transition: (run: ProductResearchRun) => { job: NewJob | null; events: readonly ProductResearchEvent[] },
   ): Promise<ProductResearchRun | null> {
     return this.db.transaction(async (tx) => {
@@ -206,6 +207,14 @@ export class PostgresProductResearchRepository
       )).limit(1).for("update");
       if (!row) return null;
       const run = ProductResearchRun.restore(toRunSnapshot(row));
+      if (input.useCurrentModels && !["queued", "running"].includes(run.snapshot.status)) {
+        const [busy] = await tx.select({ id: jobs.id }).from(jobs).where(and(
+          eq(jobs.workspaceId, input.workspaceId), eq(jobs.status, "running"),
+          sql`${jobs.payload}->>'runId' = ${input.runId}`,
+          gt(jobs.lockedUntil, new Date()),
+        )).limit(1);
+        if (busy) throw new Error("RESEARCH_MODEL_CHANGE_BUSY");
+      }
       const { job, events } = transition(run);
       if (job || events.length) {
         // Terminal children acquire this lock before inserting their next job (task lock).
@@ -214,7 +223,7 @@ export class PostgresProductResearchRepository
           const fanoutLockKey = `research:fanout:${input.workspaceId}:${input.runId}:market_investigation`;
           await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${fanoutLockKey}, 0))`);
         }
-        const refreshedPolicy = job && this.prepareAiResume ? await this.prepareAiResume(tx, { workspaceId: input.workspaceId, taskKey: `research:run:${input.runId}`, capability: "icp_research" }) : undefined;
+        const refreshedPolicy = job && this.prepareAiResume ? await this.prepareAiResume(tx, { workspaceId: input.workspaceId, taskKey: `research:run:${input.runId}`, capability: "icp_research", useCurrentModels: input.useCurrentModels ?? false }) : undefined;
         await updateRun(tx, run);
         const fanoutJobs = job && run.nextStage() === "market_investigation" ? await tx.select().from(jobs).where(and(
           eq(jobs.workspaceId, input.workspaceId), eq(jobs.type, "research.stage.execute"),
@@ -244,11 +253,22 @@ export class PostgresProductResearchRepository
     job: NewJob | null,
     events: readonly ProductResearchEvent[],
   ): Promise<void> {
-    await this.db.transaction(async (tx) => {
-      await updateRun(tx, run);
-      if (job) await insertJob(tx, job);
-      await insertEvents(tx, events);
-    });
+    try {
+      await this.db.transaction(async (tx) => {
+        await updateRun(tx, run);
+        if (job) await insertJob(tx, job);
+        await insertEvents(tx, events);
+      });
+    } catch (error) {
+      let cause: unknown = error;
+      while (cause && typeof cause === "object") {
+        const detail = cause as { code?: string; constraint_name?: string; cause?: unknown };
+        if (detail.code === "23505" && detail.constraint_name === "product_research_runs_one_active_workspace_uq") throw new ProductResearchAlreadyActiveError();
+        if (detail.cause === cause) break;
+        cause = detail.cause;
+      }
+      throw error;
+    }
   }
 
   async commitStageStarted(

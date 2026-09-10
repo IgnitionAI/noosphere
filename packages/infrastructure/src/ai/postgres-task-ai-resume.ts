@@ -9,10 +9,15 @@ import { taskAiPolicySchema } from "./postgres-task-ai-policy-reader";
 import { refreshTaskAiPolicyForResume } from "./task-ai-resume-policy";
 
 export function createTaskAiResumePreparation(environment: Readonly<Record<string, string | undefined>>) {
-  return async (tx: DatabaseTransaction, input: { workspaceId: string; taskKey: string; capability: AiCapability }) => {
+  return async (tx: DatabaseTransaction, input: { workspaceId: string; taskKey: string; capability: AiCapability; useCurrentModels?: boolean }) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${input.workspaceId} || ':' || ${input.taskKey}, 0))`);
     const [context] = await tx.select().from(taskAiContexts).where(and(eq(taskAiContexts.workspaceId, input.workspaceId), eq(taskAiContexts.taskKey, input.taskKey))).for("update");
-    const parsed = taskAiPolicySchema.safeParse(context?.policy);
+    let selection = context?.policy;
+    if (input.useCurrentModels) {
+      const [captured] = await tx.execute(sql`select noosphere_capture_ai_policy(${input.workspaceId}::uuid) as policy`);
+      selection = captured?.policy;
+    }
+    const parsed = taskAiPolicySchema.safeParse(selection);
     if (!parsed.success) throw new AiSetupRequiredError();
     let pinned = parsed.data;
     if (input.capability === "evaluation") {

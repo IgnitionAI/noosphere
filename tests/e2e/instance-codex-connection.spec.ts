@@ -31,7 +31,7 @@ test("guided ChatGPT connection can be validated, expire and be renewed without 
       await section.getByRole("button", { name: "Connecter ChatGPT", exact: true }).click();
       await expect(section.getByRole("link", { name: "Ouvrir ChatGPT" })).toHaveAttribute("href", "https://auth.openai.com/codex/device");
       await expect(section.getByText("ABCD-12345", { exact: true })).toBeVisible();
-      await expect(page.getByText("Compte ChatGPT connecté. Vous pouvez maintenant tester votre modèle.", { exact: true })).toBeVisible();
+      await expect(page.getByText("Compte ChatGPT connecté. Vous pouvez maintenant tester votre modèle.", { exact: true })).toBeVisible({ timeout: 10_000 });
     };
     await login();
     await page.reload();

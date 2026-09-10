@@ -85,9 +85,9 @@ export class ProductResearchApplication {
     }
   }
 
-  async resume(input: { workspaceId: string; runId: string; correlationId: string }) {
+  async resume(input: { workspaceId: string; runId: string; correlationId: string; useCurrentModels?: boolean }) {
     try {
-      // The resume transaction validates the pinned task selection, not the current workspace default.
+      // Preserve the pinned selection unless the operator explicitly chooses current models.
       const run = await this.#resume.execute(input);
       return run.snapshot;
     } catch (error) {

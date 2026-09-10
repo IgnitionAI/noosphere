@@ -4,6 +4,7 @@ const port = positiveIntegerEnvironment("PORT", 3000);
 const runtime = createNoosphereApiRuntime(process.env);
 const server = Bun.serve({
   port,
+  ...(process.env.API_HOST ? { hostname: process.env.API_HOST } : {}),
   // F-022 CSV uploads are accepted up to 10 MiB; leave headroom for JSON/multipart overhead.
   maxRequestBodySize: 12 * 1024 * 1024,
   fetch(request) {

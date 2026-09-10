@@ -55,8 +55,19 @@ export const developmentProcessSpecs: readonly DevelopmentProcessSpec[] = [
   { name: "web", command: ["bun", "run", "web"] },
 ] as const;
 
-export async function startDevelopment(): Promise<void> {
-  const processes = developmentProcessSpecs.map(({ name, command, ...spec }) => ({
+export function configuredDevelopmentProcessSpecs(environment: Readonly<Record<string, string | undefined>>): readonly DevelopmentProcessSpec[] {
+  if (!environment.WEB_PORT && !environment.WEB_HOST) return developmentProcessSpecs;
+  const port = environment.WEB_PORT ?? "3000";
+  if (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535) throw new Error("WEB_PORT must be a valid TCP port");
+  return developmentProcessSpecs.map(spec => spec.name === "web" ? {
+    ...spec, command: ["bunx", "next", "dev", "apps/web", "--hostname", environment.WEB_HOST ?? "127.0.0.1", "--port", port],
+  } : spec);
+}
+
+export async function startDevelopment(
+  specs: readonly DevelopmentProcessSpec[] = configuredDevelopmentProcessSpecs(process.env),
+): Promise<void> {
+  const processes = specs.map(({ name, command, ...spec }) => ({
     name,
     process: Bun.spawn([...command], {
       cwd: import.meta.dir + "/..",
@@ -66,11 +77,18 @@ export async function startDevelopment(): Promise<void> {
     }),
   }));
 
-  for (const signal of ["SIGINT", "SIGTERM"] as const) {
-    process.once(signal, () => {
-      for (const child of processes) child.process.kill(signal);
-    });
-  }
+  let stopping = false;
+  const stop = (signal: "SIGINT" | "SIGTERM") => {
+    if (stopping) return;
+    stopping = true;
+    for (const child of processes) {
+      if (child.process.exitCode === null) child.process.kill(signal);
+    }
+  };
+  const onInterrupt = () => stop("SIGINT");
+  const onTerminate = () => stop("SIGTERM");
+  process.on("SIGINT", onInterrupt);
+  process.on("SIGTERM", onTerminate);
 
   const completed = await Promise.race(
     processes.map(async (child) => ({
@@ -78,10 +96,10 @@ export async function startDevelopment(): Promise<void> {
       exitCode: await child.process.exited,
     })),
   );
-  for (const child of processes) {
-    if (child.name !== completed.name) child.process.kill("SIGTERM");
-  }
+  stop("SIGTERM");
   await Promise.all(processes.map((child) => child.process.exited));
+  process.off("SIGINT", onInterrupt);
+  process.off("SIGTERM", onTerminate);
   if (completed.exitCode !== 0) {
     console.error(`${completed.name} exited with code ${completed.exitCode}`);
     process.exitCode = completed.exitCode;

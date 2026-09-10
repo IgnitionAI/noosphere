@@ -9,7 +9,7 @@ import type { NewJob, PauseJobRequest, LeasedJob } from "@outbound/application/j
 
 export interface ProductResearchRepository {
   transitionLocked?(
-    input: { workspaceId: string; runId: string },
+    input: { workspaceId: string; runId: string; useCurrentModels?: boolean },
     transition: (run: ProductResearchRun) => { job: NewJob | null; events: readonly ProductResearchEvent[] },
   ): Promise<ProductResearchRun | null>;
   insert(run: ProductResearchRun): Promise<void>;
@@ -282,5 +282,12 @@ export class TerminalAgentError extends Error {
   ) {
     super(message);
     this.name = "TerminalAgentError";
+  }
+}
+
+export class ProductResearchAlreadyActiveError extends Error {
+  constructor() {
+    super("Another research run is already active or paused in this workspace");
+    this.name = "ProductResearchAlreadyActiveError";
   }
 }

@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { createDatabase } from "@outbound/infrastructure/database/client";
 import { execFileSync } from "node:child_process";
 
 test("a different bootstrap account cannot see instance AI or access its pages and APIs", async ({ page }) => {
@@ -36,6 +37,14 @@ test("a different bootstrap account cannot see instance AI or access its pages a
   ] as const) expect((await page.request.post(`${api}${path}`, { data })).status(), path).toBe(403);
 });
 
+
+test.beforeEach(async ({}, testInfo) => {
+  if (!testInfo.title.startsWith("administrator can skip") && !testInfo.title.startsWith("study start without AI")) return;
+  // These scenarios require an unconfigured instance, regardless of preceding suites.
+  const database = createDatabase(process.env.TEST_DATABASE_URL!);
+  try { await database.client`delete from instance_ai_defaults`; }
+  finally { await database.close(); }
+});
 
 test("administrator can skip instance setup and return from workspace settings", async ({ page }) => {
   await page.goto("/login");

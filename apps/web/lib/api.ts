@@ -1760,7 +1760,7 @@ export async function listResearchRuns(
 export async function researchAction(
   workspaceSlug: string,
   runId: string,
-  action: "start" | "pause" | "resume",
+  action: "start" | "pause" | "resume" | "resume-current-models",
 ): Promise<void> {
   const response = await apiFetch(
     `/api/v1/product-research-runs/${runId}/actions/${action}`,

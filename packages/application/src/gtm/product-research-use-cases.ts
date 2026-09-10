@@ -89,6 +89,7 @@ export class ResumeProductResearchRun {
     workspaceId: string;
     runId: string;
     correlationId: string;
+    useCurrentModels?: boolean;
   }): Promise<ProductResearchRun> {
     const transition = (run: ProductResearchRun) => {
       if (["queued", "running"].includes(run.snapshot.status)) return { job: null, events: [] };
