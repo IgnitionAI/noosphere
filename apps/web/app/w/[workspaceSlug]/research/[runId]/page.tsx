@@ -289,7 +289,7 @@ export default async function ResearchProgressPage({
 
           <div className="flex flex-col gap-3 rounded-xl border border-signal bg-[#f6ffdf] p-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <strong>Le livrable ICP apparaîtra ici</strong>
+              <strong className="text-signal-ink">Le livrable ICP apparaîtra ici</strong>
               <p className="mt-1 text-xs text-signal-ink/80">
                 Le rapport est vérifié automatiquement. Si le résultat ne vous convient pas,
                 vous pourrez relancer une nouvelle étude.
