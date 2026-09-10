@@ -33,7 +33,8 @@ for (const providerId of ["openai-api", "anthropic", "openrouter", "kimi-code"] 
     await form.getByLabel("Fournisseur").selectOption(providerId);
     await form.getByLabel("Nom de la connexion").fill(name);
     await form.getByLabel("Clé API").fill("e2e-controlled-key");
-    await form.getByLabel("Modèles autorisés").fill("e2e-controlled-model");
+    await form.getByText("Ajouter un modèle par son identifiant", { exact: true }).click();
+    await form.getByLabel("Identifiants de modèles (avancé)").fill("e2e-controlled-model");
     await form.getByRole("button", { name: "Enregistrer la connexion" }).click();
     const section = page.getByRole("heading", { name, exact: true }).locator("..");
     await expect(section.getByText("À tester", { exact: true })).toBeVisible();
@@ -80,7 +81,7 @@ test("compatible API setup accepts a URL but a private destination never becomes
   await form.getByLabel("Nom de la connexion").fill(name);
   await form.getByLabel("URL de l’API").fill("https://127.0.0.1/v1");
   await form.getByLabel("Clé API").fill("compatible-private-key-must-not-leave");
-  await form.getByLabel("Modèles autorisés").fill("custom-model");
+  await form.getByLabel("Identifiants de modèles (avancé)").fill("custom-model");
   await form.getByRole("button", { name: "Enregistrer la connexion" }).click();
   const section = page.getByRole("heading", { name, exact: true }).locator("..");
   await expect(section.getByText("À tester", { exact: true })).toBeVisible();

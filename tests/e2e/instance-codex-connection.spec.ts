@@ -19,7 +19,8 @@ test("guided ChatGPT connection can be validated, expire and be renewed without 
   await expect(form.getByLabel("Clé API")).toHaveCount(0);
   const name = `ChatGPT E2E ${crypto.randomUUID()}`;
   await form.getByLabel("Nom de la connexion").fill(name);
-  await form.getByLabel("Modèles autorisés").fill("controlled-codex-model");
+  await form.getByText("Ajouter un modèle par son identifiant", { exact: true }).click();
+    await form.getByLabel("Identifiants de modèles (avancé)").fill("controlled-codex-model");
   await form.getByRole("button", { name: "Enregistrer la connexion" }).click();
   const section = page.getByRole("heading", { name, exact: true }).locator("..");
   await expect(section.getByText("Action requise : connectez votre compte ChatGPT.")).toBeVisible();
