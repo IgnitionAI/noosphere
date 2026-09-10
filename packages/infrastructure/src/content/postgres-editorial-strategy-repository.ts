@@ -84,6 +84,14 @@ export class PostgresEditorialStrategyRepository implements EditorialStrategyRep
     return rows[0] ? toStrategy(rows[0]) : null;
   }
 
+  async findForSources(workspaceId: string, offerId: string, icpId: string): Promise<EditorialStrategyView | null> {
+    const [row] = await this.database.select().from(editorialStrategies).where(and(
+      eq(editorialStrategies.workspaceId, workspaceId), eq(editorialStrategies.offerId, offerId),
+      eq(editorialStrategies.icpId, icpId), isNull(editorialStrategies.deletedAt),
+    )).limit(1);
+    return row ? toStrategy(row) : null;
+  }
+
   async findRequest(input: { workspaceId: string; operation: string; requestKey: string }): Promise<EditorialStrategyView | EditorialStrategyVersionView | null> {
     const rows = await this.database.select().from(contentOperationRequests).where(and(
       eq(contentOperationRequests.workspaceId, input.workspaceId),
@@ -127,7 +135,8 @@ export class PostgresEditorialStrategyRepository implements EditorialStrategyRep
         eq(editorialStrategies.icpId, input.grounding.icp.id),
         isNull(editorialStrategies.deletedAt),
       )).limit(1);
-      const now = new Date();
+      if (input.expectedUpdatedAt !== undefined && (existing[0]?.updatedAt.toISOString() ?? null) !== input.expectedUpdatedAt) throw new Error("EDITORIAL_STRATEGY_VERSION_CONFLICT");
+      const now = new Date(Math.max(Date.now(), (existing[0]?.updatedAt.getTime() ?? 0) + 1));
       const values = {
         workspaceId: input.workspaceId,
         name: `${input.grounding.offer.name} · ${input.grounding.icp.name}`,
@@ -185,7 +194,9 @@ export class PostgresEditorialStrategyRepository implements EditorialStrategyRep
         )).limit(1);
         if (retained[0]) return toStrategy(retained[0]);
       }
-      const saved = (await tx.update(editorialStrategies).set({ draft: input.snapshot, updatedAt: new Date() })
+      if (input.expectedStrategyId !== undefined && input.expectedStrategyId !== current[0].id
+        || input.expectedUpdatedAt !== undefined && input.expectedUpdatedAt !== current[0].updatedAt.toISOString()) throw new Error("EDITORIAL_STRATEGY_VERSION_CONFLICT");
+      const saved = (await tx.update(editorialStrategies).set({ draft: input.snapshot, updatedAt: new Date(Math.max(Date.now(), current[0].updatedAt.getTime() + 1)) })
         .where(and(eq(editorialStrategies.workspaceId, input.workspaceId), eq(editorialStrategies.id, current[0].id))).returning())[0]!;
       await tx.insert(contentOperationRequests).values({ workspaceId: input.workspaceId, operation: "strategy.update", requestKey: input.requestKey, resourceType: "EditorialStrategy", resourceId: saved.id, response: { strategyId: saved.id } });
       await appendEvent(tx, { workspaceId: input.workspaceId, userId: input.userId, strategyId: saved.id, eventType: "EditorialStrategyDraftUpdated", changes: {} });

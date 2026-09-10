@@ -62,6 +62,7 @@ export function createContentStrategyHttpHandler(input: {
       const code = error instanceof Error ? error.message : "";
       if (code === "EDITORIAL_STRATEGY_OFFER_REQUIRED") return problem(409, code, "Publish an offer before deriving the strategy");
       if (code === "EDITORIAL_STRATEGY_ICP_REQUIRED") return problem(409, code, "Publish an ICP before deriving the strategy");
+      if (code === "EDITORIAL_STRATEGY_VERSION_CONFLICT") return problem(409, code, "The strategy changed; reload it before retrying");
       if (code === "EDITORIAL_STRATEGY_NOT_FOUND") return problem(404, code, "No editorial strategy exists for this workspace");
       if (code === "EDITORIAL_STRATEGY_UNAUTHORIZED_CLAIM") return problem(422, code, "The strategy references an unauthorized offer claim");
       if (code === "EDITORIAL_STRATEGY_OUTPUT_INVALID") return problem(502, code, "The AI returned an invalid editorial strategy after a bounded retry. Retry without changing your product brief");

@@ -267,10 +267,11 @@ export function createMcpWriteCapabilities(database: Database, clock: Clock, aiA
       const repository = new PostgresEditorialStrategyRepository(transactionalDatabase);
       const grounding = await repository.grounding(context.workspaceId, args.sources as { offerVersionId: string; icpVersionId: string } | undefined);
       await requireWorkspaceAi(aiAvailabilityForTransaction?.(tx), context.workspaceId, "content_strategy");
+      const current = await repository.findForSources(context.workspaceId, grounding.offer.id, grounding.icp.id);
       const jobId = crypto.randomUUID();
       const requestKey = `mcp:${context.clientId}:${command.requestKey}`;
       await tx.insert(jobs).values({ id: jobId, workspaceId: context.workspaceId, type: "content.strategy.prepare",
-        payload: { workspaceId: context.workspaceId, runId: command.requestKey, requestKey,
+        payload: { workspaceId: context.workspaceId, runId: command.requestKey, requestKey, expectedUpdatedAt: current?.updatedAt.toISOString() ?? null,
           offerVersionId: grounding.offer.versionId, icpVersionId: grounding.icp.versionId },
         idempotencyKey: requestKey, correlationId, maxAttempts: 3, availableAt: now,
       });

@@ -80,16 +80,20 @@ export interface EditorialStrategyRepository {
   preparation?(workspaceId: string): Promise<EditorialPreparationState | null>;
   grounding(workspaceId: string, sources?: { offerVersionId: string; icpVersionId: string }): Promise<EditorialStrategyGrounding>;
   find(workspaceId: string): Promise<EditorialStrategyView | null>;
+  findForSources?(workspaceId: string, offerId: string, icpId: string): Promise<EditorialStrategyView | null>;
   findRequest(input: { workspaceId: string; operation: string; requestKey: string }): Promise<EditorialStrategyView | EditorialStrategyVersionView | null>;
   saveDerived(input: {
     workspaceId: string;
     userId: string | null;
     requestKey: string;
     grounding: EditorialStrategyGrounding;
+    expectedUpdatedAt?: string | null;
     snapshot: EditorialStrategySnapshot;
     derivation: EditorialStrategyView["derivation"];
   }): Promise<EditorialStrategyView>;
   updateDraft(input: {
+    expectedStrategyId?: string;
+    expectedUpdatedAt?: string;
     workspaceId: string;
     userId: string;
     requestKey: string;
@@ -120,17 +124,21 @@ export class EditorialStrategyApplication {
     return this.repository.find(workspaceId);
   }
 
-  async derive(input: { workspaceId: string; userId: string | null; requestKey: string; sources?: { offerVersionId: string; icpVersionId: string } }): Promise<EditorialStrategyView> {
+  async derive(input: { workspaceId: string; userId: string | null; requestKey: string; sources?: { offerVersionId: string; icpVersionId: string }; expectedUpdatedAt?: string | null }): Promise<EditorialStrategyView> {
     const replay = await this.repository.findRequest({ ...input, operation: "strategy.derive" });
     if (replay) return replay as EditorialStrategyView;
     await requireWorkspaceAi(this.aiAvailable, input.workspaceId, "content_strategy");
     const grounding = await this.repository.grounding(input.workspaceId, input.sources);
+    const existing = this.repository.findForSources
+      ? await this.repository.findForSources(input.workspaceId, grounding.offer.id, grounding.icp.id)
+      : await this.repository.find(input.workspaceId);
+    const expectedUpdatedAt = input.expectedUpdatedAt !== undefined ? input.expectedUpdatedAt : existing?.updatedAt.toISOString() ?? null;
     const generated = await this.generator.generate({ workspaceId: input.workspaceId, grounding });
     const snapshot = editorialStrategySnapshotSchema.parse(generated.snapshot);
     assertStrategyClaimsAreAuthorized(snapshot, grounding.offer.claims
       .filter((claim) => claim.validationStatus === "sourced" || claim.validationStatus === "validated")
       .map((claim) => claim.id));
-    return this.repository.saveDerived({ ...input, grounding, snapshot, derivation: generated.metadata });
+    return this.repository.saveDerived({ ...input, expectedUpdatedAt, grounding, snapshot, derivation: generated.metadata });
   }
 
   async updateDraft(input: { workspaceId: string; userId: string; requestKey: string; snapshot: EditorialStrategySnapshot }): Promise<EditorialStrategyView> {
@@ -143,7 +151,7 @@ export class EditorialStrategyApplication {
     assertStrategyClaimsAreAuthorized(snapshot, grounding.offer.claims
       .filter((claim) => claim.validationStatus === "sourced" || claim.validationStatus === "validated")
       .map((claim) => claim.id));
-    return this.repository.updateDraft({ ...input, snapshot });
+    return this.repository.updateDraft({ ...input, snapshot, expectedStrategyId: current.id, expectedUpdatedAt: current.updatedAt.toISOString() });
   }
 
   async publish(input: { workspaceId: string; userId: string; requestKey: string }): Promise<EditorialStrategyVersionView> {

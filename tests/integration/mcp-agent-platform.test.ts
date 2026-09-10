@@ -134,6 +134,32 @@ const url = process.env.TEST_DATABASE_URL;
   }finally{await writer.close();await server.close();}
  });
 
+ test("a delayed generation never replaces an intervening manual draft edit",async()=>{
+  const repository=new PostgresEditorialStrategyRepository(db.db);
+  let started!:()=>void, release!:()=>void;
+  const ready=new Promise<void>(resolve=>{started=resolve;});
+  const hold=new Promise<void>(resolve=>{release=resolve;});
+  const app=new EditorialStrategyApplication(repository,{generate:async()=>{started();await hold;return {snapshot:snapshot(),metadata:{provider:"test",model:"fixture",promptVersion:"test",aiRunId:null}};}});
+  const generation=app.derive({workspaceId,userId,requestKey:crypto.randomUUID()});
+  await ready;
+  const before=await app.find(workspaceId);
+  await app.updateDraft({workspaceId,userId,requestKey:crypto.randomUUID(),snapshot:{...before!.draft,callsToAction:["Modification humaine à conserver"]}});
+  release();
+  await expect(generation).rejects.toThrow("EDITORIAL_STRATEGY_VERSION_CONFLICT");
+  expect((await app.find(workspaceId))?.draft.callsToAction).toEqual(["Modification humaine à conserver"]);
+ });
+
+ test("simultaneous shared-application retries return the same draft",async()=>{
+  const repository=new PostgresEditorialStrategyRepository(db.db);
+  const app=new EditorialStrategyApplication(repository,{generate:async()=>{throw Error("not requested");}});
+  const current=await app.find(workspaceId);
+  const input={workspaceId,userId,requestKey:crypto.randomUUID(),snapshot:{...current!.draft,callsToAction:["Commande unique"]}};
+  const [first,second]=await Promise.all([app.updateDraft(input),app.updateDraft(input)]);
+  expect(first.id).toBe(second.id);
+  expect(first.updatedAt).toEqual(second.updatedAt);
+  expect(first.draft.callsToAction).toEqual(["Commande unique"]);
+ });
+
 });
 
 function snapshot(): EditorialStrategySnapshot {

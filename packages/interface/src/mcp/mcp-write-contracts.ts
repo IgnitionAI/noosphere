@@ -33,7 +33,7 @@ export const MCP_WRITE_TOOL_NAMES = [
 export type McpWriteToolName = (typeof MCP_WRITE_TOOL_NAMES)[number];
 export type McpWriteRole = "viewer" | "operator" | "reviewer" | "admin" | "owner";
 
-const uuid = z.string().uuid();
+const uuid = z.string().uuid().describe("A canonical UUID. For requestKey, generate a fresh UUID once per intended change and retain it for retries.");
 const requestKey = z.object({ requestKey: uuid, expectedVersion: z.coerce.number().int().min(0).optional() }).strict();
 const shortText = z.string().trim().min(1).max(2_000);
 const entityId = z.object({ id: uuid }).strict();
