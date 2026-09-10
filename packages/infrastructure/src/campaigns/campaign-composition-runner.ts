@@ -625,7 +625,7 @@ export class CampaignCompositionJobProcessor {
         .set(!activatesCampaign
           ? {
               sequenceVersionId,
-              ...(input.campaign.automationStage === "attention"
+              ...(["attention", "preflight"].includes(input.campaign.automationStage)
                 ? { automationStage: "scheduled" as const }
                 : {}),
               automationErrorCode: null,

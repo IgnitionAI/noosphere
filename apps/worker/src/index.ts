@@ -1,3 +1,4 @@
+import { PostgresGovernedCampaignActivation } from "@outbound/infrastructure/mcp/postgres-governed-campaign-activation";
 import { EditorialStrategyApplication } from "@outbound/application/content/editorial-strategy";
 import { PostgresEditorialStrategyRepository } from "@outbound/infrastructure/content/postgres-editorial-strategy-repository";
 import { LangChainEditorialStrategyGenerator } from "@outbound/infrastructure/content/langchain-editorial-strategy-generator";
@@ -539,12 +540,12 @@ const localMcpFakes = mcpLocalFakeMode
       counters: { conversationReply: 0, contentPublication: 0, meetingProposal: 0, campaignActivation: 0 },
     } satisfies LocalFakeOptions)
   : null;
-const mcpGovernedEffectAdapters = localMcpFakes?.adapters ?? {
+const mcpGovernedEffectAdapters = { ...(localMcpFakes?.adapters ?? {
   outbound: createOutboundGateway(),
   publisher: socialPublisher,
   ...(socialContentReader ? { socialContentReader } : {}),
   calendar: calendarIntegration,
-};
+}), campaign: new PostgresGovernedCampaignActivation(database.db, () => clock.now()) };
 const mcpGovernedEffectExecutor = new PostgresMcpGovernedEffectExecutor(database.db, mcpGovernedEffectAdapters);
 // Keep the attempt boundary shared by the queue processor and maintenance.
 // Recovery is deliberately bounded and tenant-filtered by the repository's
