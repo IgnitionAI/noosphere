@@ -42,7 +42,7 @@ L’essai avec revue automatique a abouti à l’opération Inbound `18665c6e-4b
 
 ## Contrôles complets du commit 9bd55d1
 
-- Suite d’intégration complète : 78 fichiers, 326 tests réussis, 2 803 assertions ; base dédiée `noosphere_agent_full_20260910_test`. Log `/tmp/noosphere-full-integration-check.log`.
+- Suite d’intégration complète : 78 fichiers, 326 tests réussis, 19 exclusions optionnelles, 2 803 assertions ; base dédiée `noosphere_agent_full_20260910_test`. Log `/tmp/noosphere-full-integration-check.log`.
 - Architecture (620 fichiers TypeScript), quatre variantes Compose, prototype et compilation API/worker/extracteur : réussis.
 - Crawler : 43 tests réussis.
 - Compilation web production : réussie dans le checkout isolé `/tmp/noosphere-agent-validation-20260910`, après installation verrouillée des dépendances. Le premier essai avec un lien symbolique de dépendances a été refusé par Turbopack ; aucune modification de configuration produit pour le contourner.
@@ -62,3 +62,13 @@ Première suite : 47 réussis, 4 ignorés, 3 échecs. Deux échecs attendaient l
 La relance complète des tests navigateur avec la fixture Codex contrôlée est terminée : **54 réussis, aucun ignoré**, desktop et mobile (`/tmp/noosphere-full-e2e-final.log`).
 
 La reprise d’une évaluation de canal est maintenant accessible via `acquisition_plan_retry_assessment` (en validation locale). Le service partagé enregistre le passage à pending et le job dans une transaction ; l’HTTP utilise le même service. Le MCP conserve le mode manuel jusque dans le worker, y compris pour une ancienne étude. Test ciblé : répétition de commande sans second job, refus d’évaluation inconnue, nouvelle campagne manuelle créée par le worker après reprise. 14 tests MCP/PostgreSQL, 95 assertions ; TypeScript passe. Aucun retry réel effectué avant le choix du compte LinkedIn.
+
+## Revalidation du dernier correctif — 2921477
+
+- Suite complète PostgreSQL : 326 tests réussis, 0 échec, 19 exclusions optionnelles, 2 810 assertions sur 78 fichiers. Journal `/tmp/noosphere-integration-2921477.log`, code de sortie 0.
+- Suite navigateur sur un checkout isolé au même commit : 54 tests réussis, aucun ignoré, desktop et mobile, 2 min 30 s. Journal `/tmp/noosphere-e2e-2921477.log`, code de sortie 0. La connexion Codex est une fixture contrôlée, pas une preuve provider.
+- Audit crawler réexécuté : échec `nltk 3.10.3 / PYSEC-2026-3740`, aucune version corrigée indiquée par pip-audit. Journal `/tmp/noosphere-crawler-2921477-audit.log`. Aucun contournement.
+- La dernière CI distante inspectée, 34472058689, porte sur 583417d et échoue à cet audit avant intégration et navigateur. Elle ne valide pas les nouveaux commits.
+- Avec `MCP_LOCAL_FIXTURES_INTEGRATION=1 MCP_LOCAL_GOVERNED_EFFECTS_INTEGRATION=1`, la suite complète passe : 339 tests, 0 échec, 4 exclusions, 2 901 assertions (code de sortie 0). Journal `/tmp/noosphere-integration-optin-2921477.log`. Les exclusions restantes sont le lancement Docker opt-in, deux sondes fonctionnelles sur stack configurée et la sonde HTTPS Caddy ; elles ne sont pas couvertes par ce résultat.
+
+L’Outbound réel reste en attente du compte LinkedIn à sélectionner dans l’espace de test. Le VPS, le client MCP distant et la boucle avec un destinataire autorisé restent des preuves distinctes à fournir. Aucune campagne existante ni installation Hermes modifiée.
