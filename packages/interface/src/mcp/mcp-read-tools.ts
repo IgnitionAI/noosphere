@@ -15,6 +15,9 @@ export function registerMcpReadTools(
   capabilities: McpReadCapabilities,
   context: McpExecutionContext,
 ): void {
+  if (capabilities.workspace.getReadiness) register(server, "workspace_get_readiness", "Read setup prerequisites before preparing acquisition. Reuse existing product, offer and ICP; ask only for missing information.", mcpToolArgumentsSchema.workspace_get_readiness, context, async () => capabilities.workspace.getReadiness!(context));
+  if (capabilities.content.getBrand) register(server, "brand_get", "Read the current brand and version before changing it with brand_update.", mcpToolArgumentsSchema.brand_get, context, async () => capabilities.content.getBrand!(context));
+  if (capabilities.content.getStrategy) register(server, "content_strategy_get", "Read the editorial strategy draft, source versions and preparation status. No strategy is represented by strategy: null, not an error.", mcpToolArgumentsSchema.content_strategy_get, context, async () => capabilities.content.getStrategy!(context));
   register(server, "workspace_get_summary", "Read the current workspace operational summary.", mcpToolArgumentsSchema.workspace_get_summary, context, async (args) => capabilities.workspace.getSummary(context, args));
   register(server, "crm_search", "Search companies and contacts in the current workspace.", mcpToolArgumentsSchema.crm_search, context, async (args) => capabilities.crm.search(context, args));
   register(server, "company_get_brief", "Read a redacted company brief.", mcpToolArgumentsSchema.company_get_brief, context, async (args) => capabilities.crm.getCompany(context, args));
@@ -23,6 +26,8 @@ export function registerMcpReadTools(
   register(server, "opportunity_get", "Read one pipeline opportunity.", mcpToolArgumentsSchema.opportunity_get, context, async (args) => capabilities.opportunity.get(context, args));
   register(server, "conversation_list", "List bounded workspace conversations.", mcpToolArgumentsSchema.conversation_list, context, async (args) => capabilities.conversation.list(context, args));
   register(server, "conversation_get", "Read one complete conversation with messages, decisions and latest command.", mcpToolArgumentsSchema.conversation_get, context, async (args) => capabilities.conversation.get(context, args));
+  if (capabilities.campaign.listPlans) register(server, "acquisition_plan_list", "List acquisition plans produced from ICP research. Use existing plans instead of creating duplicate campaigns.", mcpToolArgumentsSchema.acquisition_plan_list, context, args => capabilities.campaign.listPlans!(context, args));
+  if (capabilities.campaign.getPlan) register(server, "acquisition_plan_get", "Read channel assessments, preparation errors and campaigns for an acquisition plan.", mcpToolArgumentsSchema.acquisition_plan_get, context, args => capabilities.campaign.getPlan!(context, args));
   register(server, "campaign_list", "List campaigns in the current workspace.", mcpToolArgumentsSchema.campaign_list, context, async (args) => capabilities.campaign.list(context, args));
   register(server, "campaign_get_status", "Read campaign automation status.", mcpToolArgumentsSchema.campaign_get_status, context, async (args) => capabilities.campaign.getStatus(context, args));
   register(server, "offer_list", "List product offers and their current state.", mcpToolArgumentsSchema.offer_list, context, async (args) => capabilities.offer.list(context, args));

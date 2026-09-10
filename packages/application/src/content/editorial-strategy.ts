@@ -136,7 +136,9 @@ export class EditorialStrategyApplication {
   async updateDraft(input: { workspaceId: string; userId: string; requestKey: string; snapshot: EditorialStrategySnapshot }): Promise<EditorialStrategyView> {
     const replay = await this.repository.findRequest({ ...input, operation: "strategy.update" });
     if (replay) return replay as EditorialStrategyView;
-    const grounding = await this.repository.grounding(input.workspaceId);
+    const current = await this.repository.find(input.workspaceId);
+    if (!current) throw new Error("EDITORIAL_STRATEGY_NOT_FOUND");
+    const grounding = await this.repository.grounding(input.workspaceId, { offerVersionId: current.offerVersionId, icpVersionId: current.icpVersionId });
     const snapshot = editorialStrategySnapshotSchema.parse(input.snapshot);
     assertStrategyClaimsAreAuthorized(snapshot, grounding.offer.claims
       .filter((claim) => claim.validationStatus === "sourced" || claim.validationStatus === "validated")

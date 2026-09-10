@@ -14,6 +14,9 @@ export const MCP_READ_RESOURCE_URIS = [
 
 export const MCP_READ_TOOL_NAMES = [
   "workspace_get_summary",
+  "workspace_get_readiness",
+  "brand_get",
+  "content_strategy_get",
   "crm_search",
   "company_get_brief",
   "prospect_get_360",
@@ -21,6 +24,8 @@ export const MCP_READ_TOOL_NAMES = [
   "opportunity_get",
   "conversation_list",
   "conversation_get",
+  "acquisition_plan_list",
+  "acquisition_plan_get",
   "campaign_list",
   "campaign_get_status",
   "offer_list",
@@ -47,6 +52,9 @@ const pagination = z.object({
 
 export const mcpToolArgumentsSchema = {
   workspace_get_summary: pagination,
+  workspace_get_readiness: z.object({}).strict(),
+  brand_get: z.object({}).strict(),
+  content_strategy_get: z.object({}).strict(),
   crm_search: pagination.extend({
     query: z.string().trim().min(1).max(200).optional(),
     entity: z.enum(["company", "contact"]).optional(),
@@ -61,6 +69,8 @@ export const mcpToolArgumentsSchema = {
     page: z.coerce.number().int().min(1).max(100).optional(),
   }),
   conversation_get: z.object({ conversationId: uuid }).strict(),
+  acquisition_plan_list: pagination,
+  acquisition_plan_get: z.object({ planId: uuid }).strict(),
   campaign_list: pagination,
   campaign_get_status: z.object({ campaignId: uuid }).strict(),
   offer_list: pagination,

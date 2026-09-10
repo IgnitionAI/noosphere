@@ -1,8 +1,13 @@
+import { editorialStrategySnapshotSchema } from "@outbound/contracts/content";
 import { createHash } from "node:crypto";
 import { z } from "zod/v4";
 import { productResearchBriefSchema } from "@outbound/contracts/product-research";
 
 export const MCP_WRITE_TOOL_NAMES = [
+  "content_strategy_update",
+  "content_strategy_publish",
+  "content_strategy_prepare",
+  "brand_update",
   "company_upsert",
   "contact_upsert",
   "opportunity_update",
@@ -16,6 +21,7 @@ export const MCP_WRITE_TOOL_NAMES = [
   "offer_publish",
   "research_launch",
   "campaign_create",
+  "campaign_update",
   "conversation_set_automation",
   "content_autopilot_configure",
   "knowledge_source_create",
@@ -38,6 +44,18 @@ const offerClaim = z.object({
 }).strict();
 
 export const mcpWriteToolArgumentsSchema = {
+  content_strategy_update: z.object({ requestKey: uuid, strategyId: uuid, expectedUpdatedAt: z.string().datetime({ offset: true }), snapshot: editorialStrategySnapshotSchema }).strict(),
+  content_strategy_publish: z.object({ requestKey: uuid, strategyId: uuid, expectedUpdatedAt: z.string().datetime({ offset: true }) }).strict(),
+  content_strategy_prepare: z.object({ requestKey: uuid, sources: z.object({ offerVersionId: uuid, icpVersionId: uuid }).strict().optional() }).strict(),
+  brand_update: z.object({ requestKey: uuid, expectedVersion: z.number().int().min(0), patch: z.object({
+    brandName: z.string().trim().min(2).max(120).optional(),
+    tagline: z.string().trim().min(2).max(180).nullable().optional(),
+    websiteUrl: z.string().trim().url().max(500).nullable().optional(),
+    brandDescription: z.string().trim().min(1).max(2000).nullable().optional(),
+    typography: z.enum(["inter", "space_grotesk", "system"]).optional(),
+    imageStyle: z.enum(["editorial", "technical", "bold", "minimal"]).optional(),
+    voice: z.object({ traits: z.array(z.string().trim().min(1).max(120)).max(8), avoid: z.array(z.string().trim().min(1).max(240)).max(12), preferredVocabulary: z.array(z.string().trim().min(1).max(120)).max(20) }).strict().optional(),
+  }).strict().refine(value => Object.keys(value).length > 0, "Provide at least one brand field") }).strict(),
   company_upsert: requestKey.extend({
     id: uuid.optional(), name: shortText, domain: z.string().trim().max(600).nullish(), sector: z.string().trim().max(200).nullish(),
     location: z.string().trim().max(300).nullish(), employeeCountMin: z.coerce.number().int().min(0).max(1_000_000).nullish(), employeeCountMax: z.coerce.number().int().min(0).max(1_000_000).nullish(),
@@ -61,6 +79,10 @@ export const mcpWriteToolArgumentsSchema = {
   }).strict().refine((value) => ["name", "category", "valueProposition", "targetAudience", "pricing", "commercialRules", "constraints", "claims", "objections"].some((key) => key in value), { message: "at least one offer field is required" }),
   offer_publish: requestKey.extend({ offerId: uuid }).strict(),
   research_launch: requestKey.extend({ brief: productResearchBriefSchema }).strict(),
+  campaign_update: z.object({ requestKey: uuid, campaignId: uuid, expectedUpdatedAt: z.string().datetime({ offset: true }),
+    name: z.string().trim().min(1).max(300).optional(), objective: z.string().max(10000).optional(),
+    offerVersionId: uuid.optional(), icpVersionId: uuid.optional(), messagingStrategyVersionId: uuid.optional(), aiPolicyVersionId: uuid.optional(), sequenceVersionId: uuid.optional(),
+  }).strict().refine(value => ["name", "objective", "offerVersionId", "icpVersionId", "messagingStrategyVersionId", "aiPolicyVersionId", "sequenceVersionId"].some(key => key in value), "Provide a campaign field"),
   campaign_create: requestKey.extend({
     name: z.string().trim().min(1).max(300), objective: z.string().max(10_000).default(""), offerVersionId: uuid, icpVersionId: uuid,
     messagingStrategyVersionId: uuid, aiPolicyVersionId: uuid, sequenceVersionId: uuid,

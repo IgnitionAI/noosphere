@@ -32,6 +32,7 @@ export interface McpReadPagination {
 
 export interface McpReadCapabilities {
   readonly workspace: {
+    readonly getReadiness?: (context: McpExecutionContext) => Promise<McpReadValue>;
     readonly getSummary: (context: McpExecutionContext, input: McpReadPagination) => Promise<McpReadValue>;
   };
   readonly crm: {
@@ -58,6 +59,8 @@ export interface McpReadCapabilities {
     readonly get: (context: McpExecutionContext, input: { readonly conversationId: string }) => Promise<McpReadValue | null>;
   };
   readonly campaign: {
+    readonly listPlans?: (context: McpExecutionContext, input: McpReadPagination) => Promise<McpReadPage>;
+    readonly getPlan?: (context: McpExecutionContext, input: { readonly planId: string }) => Promise<McpReadValue | null>;
     readonly list: (context: McpExecutionContext, input: McpReadPagination) => Promise<McpReadPage>;
     readonly getStatus: (context: McpExecutionContext, input: { readonly campaignId: string }) => Promise<McpReadValue | null>;
   };
@@ -77,6 +80,8 @@ export interface McpReadCapabilities {
     readonly listClaims: (context: McpExecutionContext, input: McpReadPagination) => Promise<McpReadPage>;
   };
   readonly content: {
+    readonly getBrand?: (context: McpExecutionContext) => Promise<McpReadValue>;
+    readonly getStrategy?: (context: McpExecutionContext) => Promise<McpReadValue>;
     readonly getCalendar: (
       context: McpExecutionContext,
       input: McpReadPagination & { readonly from?: string | undefined; readonly to?: string | undefined },

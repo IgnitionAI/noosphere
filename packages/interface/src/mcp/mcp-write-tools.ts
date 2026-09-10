@@ -4,10 +4,14 @@ import { canonicalMcpWriteHash, isMcpWriteRoleAllowed, mcpWriteToolArgumentsSche
 
 const STABLE_WRITE_ERRORS = new Set(["AI_SETUP_REQUIRED", "MCP_WRITE_IDEMPOTENCY_CONFLICT", "MCP_WRITE_VERSION_CONFLICT", "MCP_WRITE_IN_PROGRESS", "MCP_WRITE_RECOVERY_REQUIRED", "WRITE_NOT_FOUND", "WRITE_FORBIDDEN", "WRITE_SCOPE_REQUIRED", "WRITE_RATE_LIMITED"]);
 // Queued provider work is still an external effect of the initiating tool.
-const DEFERRED_EXTERNAL_TOOLS = new Set<McpWriteToolName>(["research_launch", "content_draft_create", "conversation_set_automation", "content_autopilot_configure"]);
+const DEFERRED_EXTERNAL_TOOLS = new Set<McpWriteToolName>(["content_strategy_prepare", "research_launch", "content_draft_create", "conversation_set_automation", "content_autopilot_configure"]);
 const AUTOMATION_CONFIGURATION_TOOLS = new Set<McpWriteToolName>(["conversation_set_automation", "content_autopilot_configure"]);
-const STABLE_DOMAIN_ERROR = /^(?:OFFER|PRODUCT_RESEARCH|CAMPAIGN|CONVERSATION|KNOWLEDGE|CONTENT_AUTOPILOT)_[A-Z0-9_]+$/;
+const STABLE_DOMAIN_ERROR = /^(?:OFFER|PRODUCT_RESEARCH|CAMPAIGN|CONVERSATION|KNOWLEDGE|CONTENT_AUTOPILOT|CONTENT_BRAND_KIT|EDITORIAL_STRATEGY)_[A-Z0-9_]+$/;
 const TOOL_DESCRIPTIONS: Readonly<Record<McpWriteToolName, string>> = {
+  content_strategy_update: "Save a reviewed editorial draft. Pass strategyId and expectedUpdatedAt from content_strategy_get. Preserves its original offer and ICP sources.",
+  content_strategy_publish: "Activate the reviewed editorial version. Admin or owner only. Does not schedule or publish a social post. Pass strategyId and expectedUpdatedAt from content_strategy_get.",
+  content_strategy_prepare: "Queue editorial strategy generation using existing offer and ICP versions. Read content_strategy_get first to reuse a prepared strategy. Poll operation_get for completion; this does not publish posts or enable autopilot.",
+  brand_update: "Update selected brand fields after brand_get. Provide its expectedVersion; omitted fields including logo are preserved. Reuse requestKey for retries.",
   company_upsert: "Create or update a company in the current workspace.",
   contact_upsert: "Create or update a contact in the current workspace.",
   opportunity_update: "Update the value, probability or next action of an opportunity.",
@@ -20,6 +24,7 @@ const TOOL_DESCRIPTIONS: Readonly<Record<McpWriteToolName, string>> = {
   offer_update: "Update an offer draft, its positioning, claims or objections.",
   offer_publish: "Publish an immutable offer version for campaign and agent context.",
   research_launch: "Launch a durable ICP research run that continues after this chat turn.",
+  campaign_update: "Update a campaign draft or link reviewed immutable offer/configuration versions using IDs from Noosphere. Provide expectedUpdatedAt from campaign_list. Does not activate or send messages.",
   campaign_create: "Create a draft outbound campaign from immutable configuration versions.",
   conversation_set_automation: "Set a campaign conversation to Setter IA, human or disabled mode.",
   content_autopilot_configure: "Configure the durable LinkedIn content autopilot schedule.",

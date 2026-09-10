@@ -1,3 +1,4 @@
+import { NOOSPHERE_AGENT_INSTRUCTIONS } from "./mcp-agent-instructions";
 import {
   createMcpHandler,
   McpServer,
@@ -241,7 +242,7 @@ export function createMcpTransport(options: McpTransportOptions): McpTransport {
 }
 
 function createServer(capabilities: RuntimeCapabilities, authExtra?: Record<string, unknown>): McpServer {
-  const server = new McpServer({ name: "noosphere", version: "0.0.0" });
+  const server = new McpServer({ name: "noosphere", version: "0.0.0" }, { instructions: NOOSPHERE_AGENT_INSTRUCTIONS });
   const traceInput = z.object({
     traceId: z.string().max(128).optional(),
     message: z.string().max(4_096).optional(),

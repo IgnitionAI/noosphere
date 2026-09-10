@@ -1,3 +1,4 @@
+import { PostgresProspectingPlanRepository } from "@outbound/infrastructure/campaigns/postgres-prospecting-plan-repository";
 import { PostgresModelFallbackRecorder } from "@outbound/infrastructure/ai/postgres-model-fallback-recorder";
 import { createTaskAiResumePreparation } from "@outbound/infrastructure/ai/postgres-task-ai-resume";
 import { registerRuntimeAiDefaults } from "@outbound/infrastructure/ai/register-runtime-ai-defaults";
@@ -143,7 +144,7 @@ import { createMcpOAuthHandler, createMcpOAuthService } from "@outbound/interfac
 import { PostgresMcpOAuthStore } from "@outbound/infrastructure/auth/postgres-mcp-oauth-store";
 import { createPostgresAtomicMcpWriteCapabilities, type PostgresMcpWriteTransaction } from "@outbound/infrastructure/auth/postgres-mcp-write-ledger";
 import { PostgresMcpOperationStore } from "@outbound/infrastructure/auth/postgres-mcp-operation-store";
-import { jobs } from "@outbound/infrastructure/database/schema";
+import { campaigns, jobs } from "@outbound/infrastructure/database/schema";
 import { assertMcpExpectedRevision, type McpWriteCapabilities } from "@outbound/application/mcp/mcp-write-capabilities";
 import { PostgresCrmRepository } from "@outbound/infrastructure/crm/postgres-crm-repository";
 import { PostgresProspectViewRepository } from "@outbound/infrastructure/crm/postgres-prospect-view-repository";
@@ -246,6 +247,50 @@ export function createMcpWriteCapabilities(database: Database, clock: Clock, aiA
     const args = command.arguments as Readonly<Record<string, unknown>>;
     const now = clock.now();
     const actorRole = context.role;
+    if (command.operation === "content_strategy_update" || command.operation === "content_strategy_publish") {
+      if (command.operation === "content_strategy_publish" && context.role !== "admin" && context.role !== "owner") throw new Error("WRITE_FORBIDDEN");
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`${context.workspaceId}:editorial-strategy`}, 0))`);
+      const repository = new PostgresEditorialStrategyRepository(transactionalDatabase);
+      const current = await repository.find(context.workspaceId);
+      if (!current || current.id !== args.strategyId) throw new Error("EDITORIAL_STRATEGY_NOT_FOUND");
+      if (current.updatedAt.toISOString() !== args.expectedUpdatedAt) throw new Error("MCP_WRITE_VERSION_CONFLICT");
+      const application = new EditorialStrategyApplication(repository, { generate: async () => { throw new Error("EDITORIAL_STRATEGY_GENERATION_NOT_REQUESTED"); } });
+      const input = { workspaceId: context.workspaceId, userId: context.userId, requestKey: `mcp:${context.clientId}:${command.requestKey}` };
+      if (command.operation === "content_strategy_update") {
+        const updated = await application.updateDraft({ ...input, snapshot: args.snapshot as Parameters<EditorialStrategyApplication["updateDraft"]>[0]["snapshot"] });
+        return { id: updated.id, version: updated.currentVersion, state: "updated", operation: command.operation, correlationId };
+      }
+      const published = await application.publish(input);
+      return { id: published.id, version: published.version, state: "published", operation: command.operation, correlationId };
+    }
+    if (command.operation === "content_strategy_prepare") {
+      const repository = new PostgresEditorialStrategyRepository(transactionalDatabase);
+      const grounding = await repository.grounding(context.workspaceId, args.sources as { offerVersionId: string; icpVersionId: string } | undefined);
+      await requireWorkspaceAi(aiAvailabilityForTransaction?.(tx), context.workspaceId, "content_strategy");
+      const jobId = crypto.randomUUID();
+      const requestKey = `mcp:${context.clientId}:${command.requestKey}`;
+      await tx.insert(jobs).values({ id: jobId, workspaceId: context.workspaceId, type: "content.strategy.prepare",
+        payload: { workspaceId: context.workspaceId, runId: command.requestKey, requestKey,
+          offerVersionId: grounding.offer.versionId, icpVersionId: grounding.icp.versionId },
+        idempotencyKey: requestKey, correlationId, maxAttempts: 3, availableAt: now,
+      });
+      const operation = await new PostgresMcpOperationStore(tx).createQueued({ context, command, operationId: crypto.randomUUID(), jobId,
+        correlationId, resultRefs: [{ type: "OfferVersion", id: grounding.offer.versionId }, { type: "ICPVersion", id: grounding.icp.versionId }], now });
+      return { id: jobId, version: 1, state: "queued", status: "queued", operation: command.operation, correlationId,
+        operationId: operation.record.operationId, jobId, operationUri: operation.record.operationUri };
+    }
+    if (command.operation === "brand_update") {
+      // Use the same workspace lock as browser brand saves, including first creation.
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`${context.workspaceId}:content-brand-kit`}, 0))`);
+      const brand = new ContentBrandKitApplication(new PostgresContentBrandKitRepository(transactionalDatabase));
+      const current = await brand.get(context.workspaceId);
+      if (args.expectedVersion !== current.version) throw new Error("MCP_WRITE_VERSION_CONFLICT");
+      const updated = await brand.update({ workspaceId: context.workspaceId, userId: context.userId,
+        requestKey: `mcp:${context.clientId}:${command.requestKey}`, now,
+        snapshot: { ...current.snapshot, ...(args.patch as Partial<typeof current.snapshot>) },
+      });
+      return { id: context.workspaceId, version: updated.version, state: "updated", operation: command.operation, correlationId };
+    }
     if (command.operation === "company_upsert") {
       const id = typeof args.id === "string" ? args.id : crypto.randomUUID();
       const existing = await mcpCrmRepository.getCompany({ workspaceId: context.workspaceId, companyId: id });
@@ -446,6 +491,16 @@ export function createMcpWriteCapabilities(database: Database, clock: Clock, aiA
       const created = await research.create({ workspaceId: context.workspaceId, brief: args.brief as Parameters<ProductResearchApplication["create"]>[0]["brief"] });
       const started = await research.start({ workspaceId: context.workspaceId, runId: created.id, correlationId });
       return { id: started.id, version: started.version, state: started.status, status: started.status, operation: command.operation, correlationId };
+    }
+    if (command.operation === "campaign_update") {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${String(args.campaignId)}, 0))`);
+      const [current] = await tx.select({ updatedAt: campaigns.updatedAt }).from(campaigns)
+        .where(and(eq(campaigns.workspaceId, context.workspaceId), eq(campaigns.id, String(args.campaignId)))).for("update").limit(1);
+      if (!current) throw new Error("CAMPAIGN_NOT_FOUND");
+      if (current.updatedAt.toISOString() !== args.expectedUpdatedAt) throw new Error("MCP_WRITE_VERSION_CONFLICT");
+      const fields = Object.fromEntries(["name", "objective", "offerVersionId", "icpVersionId", "messagingStrategyVersionId", "aiPolicyVersionId", "sequenceVersionId"].flatMap(key => typeof args[key] === "string" ? [[key, args[key]]] : []));
+      const updated = await mcpCampaignRepository.updateCampaign({ workspaceId: context.workspaceId, campaignId: String(args.campaignId), ...fields });
+      return { id: updated.id, version: 1, state: updated.status, operation: command.operation, correlationId };
     }
     if (command.operation === "campaign_create") {
       const row = await mcpCampaignRepository.createCampaign({
@@ -913,6 +968,7 @@ const attribution = createAttributionHttpHandler({
 });
 const mcpReadCapabilities: McpReadCapabilities = createMcpReadCapabilities({
   workspace: {
+    getReadiness: async (context) => toMcpReadValue(await mcpOperationalViews.getSetupReadiness(context.workspaceId)),
     getSummary: async (context, input) => toMcpReadValue(await mcpOperationalViews.getSummary(context.workspaceId, { attentionLimit: input.limit })),
   },
   crm: {
@@ -964,6 +1020,8 @@ const mcpReadCapabilities: McpReadCapabilities = createMcpReadCapabilities({
     get: async (context, input) => toMcpReadValue(await mcpOperationalViews.getConversation(context.workspaceId, input.conversationId)),
   },
   campaign: {
+    listPlans: async (context, input) => paginateMcpRows("acquisition_plans", context.workspaceId, input, await new PostgresProspectingPlanRepository(database.db).listPlans(context.workspaceId)),
+    getPlan: async (context, input) => toMcpReadValue(await new PostgresProspectingPlanRepository(database.db).getPlan({ workspaceId: context.workspaceId, planId: input.planId })),
     list: async (context, input) => paginateMcpQuery("campaign", context.workspaceId, input,
       (limit, offset) => mcpCampaignRepository.listCampaigns(context.workspaceId, { limit, offset })),
     getStatus: async (context, input) => toMcpReadValue(await mcpOperationalViews.getCampaignView(context.workspaceId, input.campaignId)),
@@ -1013,6 +1071,8 @@ const mcpReadCapabilities: McpReadCapabilities = createMcpReadCapabilities({
       limit: input.limit,
     })),
     getAutopilot: async (context) => toMcpReadValue(await contentAutopilotApplication.get(context.workspaceId)),
+    getBrand: async (context) => toMcpReadValue(await contentBrandKitApplication.get(context.workspaceId)),
+    getStrategy: async (context) => toMcpReadValue({ strategy: await contentStrategyApplication.find(context.workspaceId), preparation: await contentStrategyApplication.preparation(context.workspaceId) }),
   },
   operations: {
     getHealth: async () => {

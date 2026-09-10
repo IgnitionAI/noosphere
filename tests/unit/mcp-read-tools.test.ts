@@ -16,7 +16,7 @@ const context: McpExecutionContext = {
 function readCapabilities(): McpReadCapabilities {
   const page = (id: string) => ({ data: [{ id, amount: 10, currency: "EUR", providerPostId: "provider-id" }], nextCursor: null });
   return {
-    workspace: { getSummary: async (input) => ({ id: input.workspaceId, state: "ready" }) },
+    workspace: { getSummary: async (input) => ({ id: input.workspaceId, state: "ready" }), getReadiness: async () => ({ ready: false, missing: ["offer"] }) },
     crm: {
       search: async (_context, input) => page(input.query ?? "all"),
       getCompany: async (_context, input) => ({ id: input.companyId, name: "Acme", amount: 10, providerPostId: "provider-id" }),
@@ -25,12 +25,12 @@ function readCapabilities(): McpReadCapabilities {
     pipeline: { list: async () => page("pipeline-1") },
     opportunity: { get: async (_context, input) => ({ id: input.opportunityId, amount: 10, currency: "EUR" }) },
     conversation: { list: async () => page("conversation-1"), get: async (_context, input) => ({ id: input.conversationId, messages: [] }) },
-    campaign: { list: async () => page("campaign-1"), getStatus: async (_context, input) => ({ id: input.campaignId, status: "healthy" }) },
+    campaign: { listPlans: async () => page("plan-1"), getPlan: async (_context, input) => ({ id: input.planId, assessments: [], campaigns: [] }), list: async () => page("campaign-1"), getStatus: async (_context, input) => ({ id: input.campaignId, status: "healthy" }) },
     offer: { list: async () => page("offer-1"), get: async (_context, input) => ({ id: input.offerId }) },
     research: { list: async () => page("research-1"), get: async (_context, input) => ({ id: input.runId }) },
     calls: { list: async () => page("call-1") },
     knowledge: { listSources: async () => page("source-1"), listClaims: async () => page("claim-1") },
-    content: { getCalendar: async () => page("calendar-1"), getAutopilot: async () => ({ enabled: false }) },
+    content: { getCalendar: async () => page("calendar-1"), getAutopilot: async () => ({ enabled: false }), getBrand: async () => ({ version: 3, snapshot: { brandName: "IgnitionAI" } }), getStrategy: async () => ({ strategy: { name: "Acquisition IgnitionAI" }, preparation: null }) },
     operations: {
       getHealth: async () => ({ status: "ready" }),
       get: async (_context, input) => ({ operationId: input.operationId, jobId: crypto.randomUUID(), correlationId: crypto.randomUUID(), status: "queued", resultRefs: [], errorCode: null, createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(), operationUri: `noosphere://operations/${input.operationId}`, inputHash: "leak", args: { secret: "leak" } } as never),
@@ -69,6 +69,22 @@ function createClient() {
 }
 
 describe("MCP read tools and resources", () => {
+  test("an agent can read brand, editorial strategy and prerequisites through MCP", async () => {
+    const { client, sdkTransport } = createClient();
+    await client.connect(sdkTransport);
+    try {
+      const brand = await client.callTool({ name: "brand_get", arguments: {} });
+      expect(brand.isError).not.toBe(true);
+      expect(brand.structuredContent).toMatchObject({ version: 3, snapshot: { brandName: "IgnitionAI" } });
+      const strategy = await client.callTool({ name: "content_strategy_get", arguments: {} });
+      expect(strategy.structuredContent).toMatchObject({ strategy: { name: "Acquisition IgnitionAI" } });
+      const plans = await client.callTool({ name: "acquisition_plan_list", arguments: {} });
+      expect(plans.structuredContent).toMatchObject({ data: [{ id: "plan-1" }] });
+      const readiness = await client.callTool({ name: "workspace_get_readiness", arguments: {} });
+      expect(readiness.structuredContent).toMatchObject({ ready: false, missing: ["offer"] });
+    } finally { await client.close(); }
+  });
+
   test("discovers and calls the complete workspace read surface with structured bounded output", async () => {
     const { client, sdkTransport } = createClient();
     await client.connect(sdkTransport);

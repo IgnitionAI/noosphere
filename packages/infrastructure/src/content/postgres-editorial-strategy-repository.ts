@@ -166,6 +166,7 @@ export class PostgresEditorialStrategyRepository implements EditorialStrategyRep
 
   async updateDraft(input: Parameters<EditorialStrategyRepository["updateDraft"]>[0]): Promise<EditorialStrategyView> {
     return this.database.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`${input.workspaceId}:editorial-strategy`}, 0))`);
       const current = await tx.select().from(editorialStrategies).where(and(
         eq(editorialStrategies.workspaceId, input.workspaceId),
         isNull(editorialStrategies.deletedAt),
@@ -194,6 +195,7 @@ export class PostgresEditorialStrategyRepository implements EditorialStrategyRep
 
   async publish(input: Parameters<EditorialStrategyRepository["publish"]>[0]): Promise<EditorialStrategyVersionView> {
     return this.database.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`${input.workspaceId}:editorial-strategy`}, 0))`);
       const strategies = await tx.select().from(editorialStrategies).where(and(
         eq(editorialStrategies.workspaceId, input.workspaceId),
         isNull(editorialStrategies.deletedAt),
