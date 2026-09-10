@@ -78,3 +78,15 @@ L’Outbound réel reste en attente du compte LinkedIn à sélectionner dans l�
 Check 34525784273 sur 1ea46ca échoue avant les audits : le test unitaire du journal attendait une liste se terminant à 0116. La migration 0117 était correctement présente, mais l’attente exacte du test n’avait pas été mise à jour. Reproduction locale : 1 test réussi / 1 échec ; après ajout explicite de 0117 à la liste attendue : 2 réussis, 119 assertions. Les vérifications de monotonie et d’indices contigus restent intactes. Les anciens résultats unitaires ne prouvaient donc pas le dernier ajout de migration.
 
 La CI conserve le même job bloquant et les mêmes audits, désormais après les parcours fonctionnels. Les deux audits utilisent `!cancelled()` pour rester exécutés même après un échec précédent ; aucune suppression ni `continue-on-error`. Les suites MCP locales et le Codex de test contrôlé sont activés explicitement. Revue Standards et Spec : aucun problème identifié. L’avis officiel NLTK GHSA-8mgp-746c-j5xp indique toujours aucune version corrigée ; `uv tree --invert --package nltk` confirme la dépendance via Crawl4AI 0.9.2.
+
+## Résultat CI hébergée sur da7e8fe
+
+[Check 34526128798](https://github.com/IgnitionAI/noosphere/actions/runs/34526128798) est terminé. Résultat global **failure**, uniquement à l’étape Audit crawler production dependencies (`nltk 3.10.3 / PYSEC-2026-3740`). Aucun audit n’est supprimé ou ignoré.
+
+- Migrations, contrôles du dépôt, compilation et audit Bun : réussis.
+- Unitaires/HTTP : 1 082 réussis, 1 ignoré (rendu vidéo H.264 lorsque FFmpeg est absent), 0 échec, 3 681 assertions. En local avec FFmpeg : 1 083 réussis, 3 685 assertions (`/tmp/noosphere-final-unit-0117.log`).
+- Crawler : 43 réussis.
+- PostgreSQL avec suites MCP locales activées : 339 réussis, 4 exclusions d’environnement, 0 échec.
+- Navigateur authentifié desktop/mobile : 54 réussis, aucun ignoré, 5 min 12 s, avec providers contrôlés.
+
+Journal téléchargé : `/tmp/noosphere-ci-34526128798.log`. Les commits ultérieurs à da7e8fe à cette date ne changent que la documentation. Ceci établit une validation fonctionnelle hébergée ; la CI complète reste rouge et les gates VPS/provider demeurent ouvertes.
