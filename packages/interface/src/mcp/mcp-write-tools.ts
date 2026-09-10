@@ -2,9 +2,9 @@ import { McpServer, type StandardSchemaWithJSON } from "@modelcontextprotocol/se
 import type { McpExecutionContext, McpWriteCapabilities, McpWriteResult } from "@outbound/application/mcp/mcp-write-capabilities";
 import { canonicalMcpWriteHash, isMcpWriteRoleAllowed, mcpWriteToolArgumentsSchema, parseMcpWriteArguments, type McpWriteArguments, type McpWriteToolName } from "@outbound/interface/mcp/mcp-write-contracts";
 
-const STABLE_WRITE_ERRORS = new Set(["AI_SETUP_REQUIRED", "MCP_WRITE_IDEMPOTENCY_CONFLICT", "MCP_WRITE_VERSION_CONFLICT", "MCP_WRITE_IN_PROGRESS", "MCP_WRITE_RECOVERY_REQUIRED", "WRITE_NOT_FOUND", "WRITE_FORBIDDEN", "WRITE_SCOPE_REQUIRED", "WRITE_RATE_LIMITED"]);
+const STABLE_WRITE_ERRORS = new Set(["FAILED_CHANNEL_ASSESSMENT_NOT_FOUND", "AI_SETUP_REQUIRED", "MCP_WRITE_IDEMPOTENCY_CONFLICT", "MCP_WRITE_VERSION_CONFLICT", "MCP_WRITE_IN_PROGRESS", "MCP_WRITE_RECOVERY_REQUIRED", "WRITE_NOT_FOUND", "WRITE_FORBIDDEN", "WRITE_SCOPE_REQUIRED", "WRITE_RATE_LIMITED"]);
 // Queued provider work is still an external effect of the initiating tool.
-const DEFERRED_EXTERNAL_TOOLS = new Set<McpWriteToolName>(["campaign_prepare", "content_strategy_prepare", "research_launch", "content_draft_create", "conversation_set_automation", "content_autopilot_configure"]);
+const DEFERRED_EXTERNAL_TOOLS = new Set<McpWriteToolName>(["acquisition_plan_retry_assessment", "campaign_prepare", "content_strategy_prepare", "research_launch", "content_draft_create", "conversation_set_automation", "content_autopilot_configure"]);
 const AUTOMATION_CONFIGURATION_TOOLS = new Set<McpWriteToolName>(["conversation_set_automation", "content_autopilot_configure"]);
 const STABLE_DOMAIN_ERROR = /^(?:OFFER|PRODUCT_RESEARCH|PROSPECTING_PLAN|CHANNEL_ASSESSMENT|CAMPAIGN|CONVERSATION|KNOWLEDGE|CONTENT_AUTOPILOT|CONTENT_BRAND_KIT|EDITORIAL_STRATEGY)_[A-Z0-9_]+$/;
 const TOOL_DESCRIPTIONS: Readonly<Record<McpWriteToolName, string>> = {
@@ -25,6 +25,7 @@ const TOOL_DESCRIPTIONS: Readonly<Record<McpWriteToolName, string>> = {
   offer_create: "Create a product or service offer draft.",
   offer_update: "Update an offer draft, its positioning, claims or objections.",
   offer_publish: "Publish an immutable offer version for campaign and agent context.",
+  acquisition_plan_retry_assessment: "Retry a failed channel assessment after resolving its prerequisite. Read acquisition_plan_get for the assessment ID and follow it for progress. Does not launch a new ICP study or activate a campaign.",
   research_launch: "Launch a durable ICP research run that continues after this chat turn. Resulting campaigns remain in preparation until explicitly activated through approval.",
   campaign_update: "Update a campaign draft or link reviewed immutable offer/configuration versions using IDs from Noosphere. Provide expectedUpdatedAt from campaign_list. Does not activate or send messages.",
   campaign_create: "Create a draft outbound campaign from immutable configuration versions.",

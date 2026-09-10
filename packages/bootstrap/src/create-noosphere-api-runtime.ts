@@ -493,6 +493,11 @@ export function createMcpWriteCapabilities(database: Database, clock: Clock, aiA
       const started = await research.start({ workspaceId: context.workspaceId, runId: created.id, correlationId });
       return { id: started.id, version: started.version, state: started.status, status: started.status, operation: command.operation, correlationId };
     }
+    if (command.operation === "acquisition_plan_retry_assessment") {
+      await requireWorkspaceAi(aiAvailabilityForTransaction?.(tx), context.workspaceId, "channel_strategy");
+      const assessment = await new PostgresProspectingPlanRepository(transactionalDatabase).restartAssessment({ workspaceId: context.workspaceId, assessmentId: String(args.assessmentId), now, activationMode: "manual" });
+      return { id: assessment.id, jobId: assessment.jobId, version: 1, state: "queued", status: "pending", operation: command.operation, correlationId };
+    }
     if (command.operation === "campaign_prepare") {
       const row = await new PostgresProspectingPlanRepository(transactionalDatabase).prepareChannel({
         workspaceId: context.workspaceId, planId: String(args.planId), channel: args.channel as "linkedin" | "email" | "whatsapp",

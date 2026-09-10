@@ -114,6 +114,7 @@ export class PostgresProspectingPlanRepository {
     evidence: readonly unknown[];
     decision: ChannelAssessmentDecision;
     completedAt: Date;
+    activationMode?: "manual";
   }) {
     return this.db.transaction(async (tx) => {
       const [assessment] = await tx
@@ -150,6 +151,7 @@ export class PostgresProspectingPlanRepository {
           channel: assessment.channel,
           strategy: input.strategy,
           now: input.completedAt,
+          ...((input.activationMode ?? assessment.activationMode) === "manual" ? { activationMode: "manual" as const } : {}),
         });
       }
       await finalizePlan(tx, input.workspaceId, assessment.planId, input.completedAt);
@@ -253,12 +255,13 @@ export class PostgresProspectingPlanRepository {
     return row;
   }
 
-  async restartAssessment(input: { workspaceId: string; assessmentId: string; now: Date }) {
+  async restartAssessment(input: { workspaceId: string; assessmentId: string; now: Date; activationMode?: "manual" }) {
     return this.db.transaction(async (tx) => {
       const [assessment] = await tx
         .update(channelAssessments)
         .set({
           status: "pending",
+          ...(input.activationMode ? { activationMode: input.activationMode } : {}),
           recommendation: null,
           score: null,
           strategy: {},
@@ -290,7 +293,14 @@ export class PostgresProspectingPlanRepository {
             eq(prospectingPlans.id, assessment.planId),
           ),
         );
-      return assessment;
+      const jobId = crypto.randomUUID();
+      await tx.insert(jobs).values({
+        id: jobId, workspaceId: input.workspaceId, type: "prospecting.channel.assess",
+        payload: { workspaceId: input.workspaceId, assessmentId: assessment.id, ...(assessment.activationMode ? { activationMode: assessment.activationMode } : {}) },
+        idempotencyKey: `${assessment.id}:retry:${jobId}`, correlationId: `prospecting-plan:${assessment.planId}`,
+        maxAttempts: 3, availableAt: input.now,
+      });
+      return { ...assessment, jobId };
     });
   }
 

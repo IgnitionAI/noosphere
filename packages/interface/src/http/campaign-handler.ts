@@ -235,16 +235,6 @@ export function createCampaignHttpHandler(dependencies: {
           assessmentId: postgresUuidSchema.parse(retryAssessmentMatch[1]),
           now: new Date(),
         });
-        await dependencies.jobQueue.enqueue({
-          id: crypto.randomUUID(),
-          workspaceId: context.workspaceId,
-          type: "prospecting.channel.assess",
-          payload: { workspaceId: context.workspaceId, assessmentId: assessment.id },
-          idempotencyKey: `${assessment.id}:retry:${Date.now()}`,
-          correlationId: `prospecting-plan:${assessment.planId}`,
-          maxAttempts: 3,
-          availableAt: new Date(),
-        });
         return json(assessment, 202);
       }
 

@@ -1,3 +1,4 @@
+import { ChannelAssessmentJobProcessor } from "@outbound/infrastructure/campaigns/channel-assessment-runner";
 import { canonicalMcpWriteHash } from "@outbound/interface/mcp/mcp-write-contracts";
 import { PostgresProspectingPlanRepository } from "@outbound/infrastructure/campaigns/postgres-prospecting-plan-repository";
 import { researchOfferId } from "@outbound/infrastructure/gtm/research-acquisition-preparation";
@@ -157,6 +158,40 @@ const url = process.env.TEST_DATABASE_URL;
   const [campaign]=await db.db.select().from(campaigns).where(eq(campaigns.id,completed.campaignId!));
   expect(campaign).toMatchObject({status:"draft",offerVersionId:offerId,autopilotPolicy:{activationMode:"manual"}});
   expect(await db.db.select().from(outreachActions).where(eq(outreachActions.campaignId,campaign!.id))).toHaveLength(0);
+  await db.db.update(channelAssessments).set({status:"failed",errorCode:"CHANNEL_ASSESSMENT_FAILED"}).where(eq(channelAssessments.id,assessmentId));
+  const retryArgs={requestKey:crypto.randomUUID(),assessmentId};
+  const retryCommand={operation:"acquisition_plan_retry_assessment" as const,requestKey:retryArgs.requestKey,inputHash:canonicalMcpWriteHash(retryArgs),arguments:retryArgs};
+  const retry=await writes.execute(context,retryCommand);
+  expect(retry).toMatchObject({id:assessmentId,state:"queued"});
+  expect(await writes.execute(context,retryCommand)).toEqual(retry);
+  const retried=await db.db.select().from(jobs).where(and(eq(jobs.workspaceId,workspaceId),eq(jobs.type,"prospecting.channel.assess")));
+  expect(retried.filter(job=>(job.payload as {assessmentId?:string}).assessmentId===assessmentId)).toHaveLength(1);
+  const [pending]=await db.db.select().from(channelAssessments).where(eq(channelAssessments.id,assessmentId));
+  expect(pending!.status).toBe("pending");
+  // A retry of a legacy study also remains preparation-only when its worker creates a new campaign.
+  const legacyBrief={...(run!.brief as Record<string,unknown>)};delete legacyBrief.campaignActivationMode;
+  await db.db.update(productResearchRuns).set({brief:legacyBrief}).where(eq(productResearchRuns.id,runId));
+  const emailAssessmentId=crypto.randomUUID();
+  await db.db.insert(channelAssessments).values({id:emailAssessmentId,workspaceId,planId,channel:"email",status:"failed"});
+  const emailArgs={requestKey:crypto.randomUUID(),assessmentId:emailAssessmentId};
+  const emailRetry=await writes.execute(context,{operation:"acquisition_plan_retry_assessment",requestKey:emailArgs.requestKey,inputHash:canonicalMcpWriteHash(emailArgs),arguments:emailArgs});
+  await db.db.update(jobs).set({status:"dead_lettered"}).where(eq(jobs.id,emailRetry.jobId!));
+  await db.db.update(channelAssessments).set({status:"failed"}).where(eq(channelAssessments.id,emailAssessmentId));
+  // Same shared service called by HTTP, without a new manual override.
+  const httpRetry=await new PostgresProspectingPlanRepository(db.db).restartAssessment({workspaceId,assessmentId:emailAssessmentId,now:new Date()});
+  const queue=new PostgresJobQueue(db.client);
+  const leased=(await queue.lease({workerId:"retry-assessment",types:["prospecting.channel.assess"],limit:100,leaseMs:60000,now:new Date()})).find(job=>job.id===httpRetry.jobId)!;
+  expect(leased.payload).toMatchObject({activationMode:"manual"});
+  await new ChannelAssessmentJobProcessor(db.db,queue,{plan:async()=>({query:"PME France",sourceKinds:[],rationale:"Fixture",sampleSize:3})},{observe:async()=>({metrics:{sampleSize:3,accountsFound:3,peopleFound:3,eligibleIdentities:3,verifiedIdentities:3},evidence:[]})},{now:()=>new Date()}).process(leased);
+  const [emailCampaign]=await db.db.select().from(campaigns).where(eq(campaigns.assessmentId,emailAssessmentId));
+  expect(emailCampaign).toMatchObject({status:"draft",autopilotPolicy:{activationMode:"manual"},offerVersionId:offerId});
+  const missingArgs={requestKey:crypto.randomUUID(),assessmentId:crypto.randomUUID()};
+  const retryClient=new Client({name:"assessment-retry-test",version:"1.0.0"});
+  const retryServer=createMcpTransport({capabilities:{...runtime.capabilities,mcpWrite:writes},allowedHosts:["mcp.example.test"],authorize:async()=>context});
+  await retryClient.connect(new StreamableHTTPClientTransport(new URL(context.audience),{fetch:async(input,init)=>retryServer.handle(input instanceof Request?input:new Request(input,init))}));
+  try {
+    expect((await retryClient.callTool({name:"acquisition_plan_retry_assessment",arguments:missingArgs})).structuredContent).toMatchObject({error:"FAILED_CHANNEL_ASSESSMENT_NOT_FOUND"});
+  } finally { await retryClient.close(); }
  });
 
  test("agent suspends an active campaign once and rejects a stale command",async()=>{

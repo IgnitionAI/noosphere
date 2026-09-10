@@ -4,6 +4,7 @@ import { z } from "zod/v4";
 import { productResearchBriefSchema } from "@outbound/contracts/product-research";
 
 export const MCP_WRITE_TOOL_NAMES = [
+  "acquisition_plan_retry_assessment",
   "campaign_prepare",
   "campaign_pause",
   "content_strategy_update",
@@ -46,6 +47,7 @@ const offerClaim = z.object({
 }).strict();
 
 export const mcpWriteToolArgumentsSchema = {
+  acquisition_plan_retry_assessment: z.object({ requestKey: uuid, assessmentId: uuid }).strict(),
   campaign_prepare: z.object({ requestKey: uuid, planId: uuid, channel: z.enum(["linkedin", "email", "whatsapp"]), offerVersionId: uuid.optional() }).strict(),
   campaign_pause: z.object({ requestKey: uuid, campaignId: uuid, expectedUpdatedAt: z.string().datetime({ offset: true }) }).strict(),
   content_strategy_update: z.object({ requestKey: uuid, strategyId: uuid, expectedUpdatedAt: z.string().datetime({ offset: true }), snapshot: editorialStrategySnapshotSchema }).strict(),

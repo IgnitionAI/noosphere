@@ -3619,6 +3619,7 @@ export const channelAssessments = pgTable(
       .references(() => prospectingPlans.id, { onDelete: "cascade" }),
     channel: prospectingChannelEnum("channel").notNull(),
     status: channelAssessmentStatusEnum("status").notNull().default("pending"),
+    activationMode: text("activation_mode").$type<"manual">(),
     recommendation: channelRecommendationEnum("recommendation"),
     score: integer("score"),
     strategy: jsonb("strategy").notNull().default({}),
