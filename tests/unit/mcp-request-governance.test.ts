@@ -24,6 +24,16 @@ describe("MCP request governance", () => {
     expect(validateMcpExecutionContext({ ...context, scopes: ["mcp:read", "unknown"] as never }, "https://example.test/mcp")).toBeNull();
   });
 
+  test("local HTTP requires an explicit development option and an exact loopback audience", () => {
+    const local = { ...context, audience: "http://127.0.0.1:3380/mcp" };
+    expect(validateMcpExecutionContext(local, local.audience)).toBeNull();
+    expect(validateMcpExecutionContext(local, local.audience, true)).toEqual(local);
+    for (const audience of ["http://example.test/mcp", "http://192.168.1.20/mcp", "http://localhost.evil.test/mcp", "http://user:pass@localhost/mcp"]) {
+      expect(validateMcpExecutionContext({ ...context, audience }, audience, true)).toBeNull();
+    }
+    expect(validateMcpExecutionContext(local, "http://127.0.0.1:3381/mcp", true)).toBeNull();
+  });
+
   test("generates bounded request-local correlation IDs and preserves safe values", () => {
     expect(deriveMcpCorrelationId("request-123")).toBe("request-123");
     expect(deriveMcpCorrelationId("bad value")).not.toBe("bad value");

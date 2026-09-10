@@ -1181,6 +1181,7 @@ const runtimeCapabilities: RuntimeCapabilities = {
 const mcpTransport = createMcpTransport({
   capabilities: runtimeCapabilities,
   expectedAudience: mcpResource,
+  allowLocalHttpAudience: environment.NODE_ENV !== "production",
   observability: createMcpObservabilityLogger(),
   oauthResourceMetadataUrl: `${mcpIssuer}/.well-known/oauth-protected-resource`,
   allowedHosts: mcpAllowedHostsFromEnvironment(),

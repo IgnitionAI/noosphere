@@ -39,6 +39,8 @@ export interface McpTransportOptions {
   readonly allowedHosts?: readonly string[];
   /** Exact HTTPS resource audience expected from the authorization boundary. */
   readonly expectedAudience?: string;
+  /** Trusted runtime opt-in for loopback HTTP in development; never inferred from request headers. */
+  readonly allowLocalHttpAudience?: boolean;
   /** RFC 9728 metadata URL advertised for bearer challenges. */
   readonly oauthResourceMetadataUrl?: string;
   readonly maxBodyBytes?: number;
@@ -133,7 +135,7 @@ export function createMcpTransport(options: McpTransportOptions): McpTransport {
         }), "mcp_auth", { code: "MCP_AUTH_REQUIRED", authDecision: "denied" });
       }
       const expectedAudience = options.expectedAudience ?? `${url.origin}/mcp`;
-      const executionContext = typeof authorized === "object" ? validateMcpExecutionContext(authorized, expectedAudience) : null;
+      const executionContext = typeof authorized === "object" ? validateMcpExecutionContext(authorized, expectedAudience, options.allowLocalHttpAudience === true) : null;
       if (!executionContext) {
         return finish(httpError(401, "MCP_AUTH_CONTEXT_INVALID", correlationId, "MCP authentication context is invalid"), "mcp_auth", { code: "MCP_AUTH_CONTEXT_INVALID", authDecision: "invalid" });
       }

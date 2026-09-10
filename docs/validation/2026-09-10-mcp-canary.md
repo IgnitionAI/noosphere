@@ -186,3 +186,16 @@ Neither a queued response nor an accepted proposal is delivery proof. Record the
 provider confirmation, ingested reply, CRM/inbox reconciliation and controlled
 worker interruption before declaring the live loop complete. This command is a
 resume contract, not evidence that the missing external scenario ran.
+
+
+## Interactive local OAuth acceptance — 2026-09-10
+
+The actual application origin `http://127.0.0.1:3380` previously advertised OAuth/MCP URLs that returned Next.js 404 responses. Development-only rewrites now forward discovery, MCP, registration, token and revocation endpoints to the API while keeping browser consent in Next.js. The E2E launcher isolates MCP host/origin allowlists from ambient runtime ports.
+
+A second defect rejected valid local OAuth tokens because transport audience validation required HTTPS even in development. The bootstrap now explicitly permits HTTP loopback audiences outside production. Default validation and production remain HTTPS-only; exact audience matching, port, path, query/fragment and userinfo checks remain enforced. Remote HTTP hosts are rejected.
+
+Fresh verification against the interactive local database used browser consent with PKCE S256 and only `mcp:read`, followed by the official MCP client SDK. Initialization and discovery of 49 tools succeeded. `workspace_get_summary`, `offer_list`, `research_list` and `campaign_list` all returned successful results. Token revocation returned 200 and subsequent access returned 401. All three temporary verification clients and their token families were revoked afterward. No business writes, model calls, external messages or publications were triggered by this verification.
+
+Regression checks: 330 MCP/OAuth unit and HTTP tests passed (1,239 assertions), TypeScript checks passed, and the development-origin routing browser test passed on desktop and mobile (2 tests). The routing test failed with 404 before the change; the local-audience unit test also failed before its fix.
+
+This proves local OAuth and authenticated SDK reads, not a hosted ChatGPT connection or real delivery through an external service. Direct brand/Inbound-strategy management tools are absent from the current catalog, and the campaign activation execution adapter remains unavailable. Those limits must not be described as complete product parity.
