@@ -63,6 +63,11 @@ export class CampaignCompositionJobProcessor {
       await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
       return;
     }
+    if (campaign.status === "draft" && !payload.incremental && campaign.automationStage === "preflight" && campaign.channel
+      && resolveCampaignAutopilotPolicy(campaign.autopilotPolicy, campaign.channel).activationMode === "manual") {
+      await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
+      return;
+    }
     if (!campaign.channel || (!payload.incremental && campaign.automationStage !== "composing")) {
       await this.#needsAttention(payload, "CAMPAIGN_NOT_READY_FOR_COMPOSITION", "La campagne n’est pas prête pour la composition.");
       await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
@@ -306,7 +311,7 @@ export class CampaignCompositionJobProcessor {
       // Serialize with interactive transitions and recheck after slow generation.
       // A pause accepted while the model ran must never be undone by this job.
       await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${input.campaignId}, 0))`);
-      const [current] = await tx.select({ status: campaigns.status, sequenceVersionId: campaigns.sequenceVersionId, automationStage: campaigns.automationStage }).from(campaigns)
+      const [current] = await tx.select({ status: campaigns.status, sequenceVersionId: campaigns.sequenceVersionId, automationStage: campaigns.automationStage, autopilotPolicy: campaigns.autopilotPolicy }).from(campaigns)
         .where(and(eq(campaigns.workspaceId, input.workspaceId), eq(campaigns.id, input.campaignId))).for("update").limit(1);
       if (!current || ["paused", "archived", "completed"].includes(current.status)) return;
       if (!input.incremental && ["scheduled", "running", "completed"].includes(current.automationStage)) return;
@@ -338,6 +343,14 @@ export class CampaignCompositionJobProcessor {
           .update(sequences)
           .set({ status: "published", updatedAt: now })
           .where(and(eq(sequences.workspaceId, input.workspaceId), eq(sequences.id, input.campaign.sequenceId)));
+      }
+      if (current.status === "draft" && resolveCampaignAutopilotPolicy(current.autopilotPolicy, input.campaign.channel!).activationMode === "manual") {
+        if (!input.incremental && current.automationStage === "preflight") return;
+        await tx.update(campaigns).set({ sequenceVersionId, automationStage: "preflight", automationErrorCode: null, automationErrorMessage: null, updatedAt: now })
+          .where(and(eq(campaigns.workspaceId, input.workspaceId), eq(campaigns.id, input.campaignId)));
+        await tx.insert(outboxEvents).values({ workspaceId: input.workspaceId, aggregateType: "Campaign", aggregateId: input.campaignId,
+          eventType: "CampaignPrepared", payload: { campaignId: input.campaignId, sequenceVersionId, activationRequired: true } });
+        return;
       }
       const prospects = await tx
         .select({

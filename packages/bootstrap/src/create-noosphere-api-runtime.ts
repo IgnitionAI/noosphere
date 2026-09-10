@@ -493,6 +493,13 @@ export function createMcpWriteCapabilities(database: Database, clock: Clock, aiA
       const started = await research.start({ workspaceId: context.workspaceId, runId: created.id, correlationId });
       return { id: started.id, version: started.version, state: started.status, status: started.status, operation: command.operation, correlationId };
     }
+    if (command.operation === "campaign_prepare") {
+      const row = await new PostgresProspectingPlanRepository(transactionalDatabase).prepareChannel({
+        workspaceId: context.workspaceId, planId: String(args.planId), channel: args.channel as "linkedin" | "email" | "whatsapp",
+        ...(typeof args.offerVersionId === "string" ? { offerVersionId: args.offerVersionId } : {}), now,
+      });
+      return { id: row.id, version: 1, state: row.status, status: row.automationStage, operation: command.operation, correlationId };
+    }
     if (command.operation === "campaign_pause") {
       if (context.role !== "admin" && context.role !== "owner") throw new Error("WRITE_FORBIDDEN");
       await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${String(args.campaignId)}, 0))`);

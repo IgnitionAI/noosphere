@@ -1,6 +1,6 @@
 import { offerVersions } from "@outbound/infrastructure/database/schema";
 import { researchOfferId } from "@outbound/infrastructure/gtm/research-acquisition-preparation";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import type { ChannelStrategy } from "@outbound/application/campaigns/channel-assessment";
 import {
   buildAutonomousSourcingFilters,
@@ -181,6 +181,22 @@ export class PostgresProspectingPlanRepository {
         )
         .returning({ planId: channelAssessments.planId });
       if (assessment) await finalizePlan(tx, input.workspaceId, assessment.planId, input.completedAt);
+    });
+  }
+
+  async prepareChannel(input: { workspaceId: string; planId: string; channel: ProspectingChannel; offerVersionId?: string; now: Date }) {
+    return this.db.transaction(async (tx) => {
+      const [assessment] = await tx.select().from(channelAssessments).where(and(
+        eq(channelAssessments.workspaceId, input.workspaceId), eq(channelAssessments.planId, input.planId),
+        eq(channelAssessments.channel, input.channel), eq(channelAssessments.status, "completed"),
+      )).limit(1);
+      if (!assessment) throw new Error("CHANNEL_ASSESSMENT_NOT_COMPLETED");
+      const strategy = assessment.strategy as ChannelStrategy;
+      if (typeof strategy.query !== "string" || !strategy.query.trim()) throw new Error("CHANNEL_ASSESSMENT_STRATEGY_REQUIRED");
+      const campaignId = await ensureChannelCampaign(tx, { ...input, assessmentId: assessment.id, strategy, activationMode: "manual" });
+      const [campaign] = await tx.select().from(campaigns).where(and(eq(campaigns.workspaceId, input.workspaceId), eq(campaigns.id, campaignId))).limit(1);
+      if (!campaign) throw new Error("CAMPAIGN_NOT_FOUND");
+      return campaign;
     });
   }
 
@@ -380,10 +396,13 @@ async function ensureChannelCampaign(
     channel: ProspectingChannel;
     strategy: ChannelStrategy;
     now: Date;
+    activationMode?: "manual";
+    offerVersionId?: string;
   },
 ): Promise<string> {
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`${input.workspaceId}:${input.planId}:${input.channel}`}, 0))`);
   const [existing] = await tx
-    .select({ id: campaigns.id })
+    .select({ id: campaigns.id, offerVersionId: campaigns.offerVersionId })
     .from(campaigns)
     .where(
       and(
@@ -393,7 +412,10 @@ async function ensureChannelCampaign(
       ),
     )
     .limit(1);
-  if (existing) return existing.id;
+  if (existing) {
+    if (input.offerVersionId && input.offerVersionId !== existing.offerVersionId) throw new Error("CAMPAIGN_OFFER_VERSION_CONFLICT");
+    return existing.id;
+  }
   const [plan] = await tx
     .select({ icpVersionId: prospectingPlans.icpVersionId })
     .from(prospectingPlans)
@@ -427,6 +449,7 @@ async function ensureChannelCampaign(
   const autopilotPolicy = {
     ...(await workspaceCampaignPolicy(tx, input.workspaceId, input.channel)),
     executionMode: "live" as const,
+    ...(input.activationMode ? { activationMode: input.activationMode } : {}),
   };
   await tx.insert(sequences).values({
     id: sequenceId,
@@ -458,9 +481,15 @@ async function ensureChannelCampaign(
     createdAt: input.now,
   });
   const [researchOffer] = version.runId ? await tx.select({ id: offerVersions.id }).from(offerVersions).where(and(eq(offerVersions.workspaceId, input.workspaceId), eq(offerVersions.offerId, researchOfferId(input.workspaceId, version.runId)))).limit(1) : [];
+  const offerVersionId = input.offerVersionId ?? researchOffer?.id ?? null;
+  if (input.activationMode === "manual") {
+    const [offer] = offerVersionId ? await tx.select({ id: offerVersions.id }).from(offerVersions)
+      .where(and(eq(offerVersions.workspaceId, input.workspaceId), eq(offerVersions.id, offerVersionId))).limit(1) : [];
+    if (!offer) throw new Error("CAMPAIGN_OFFER_VERSION_REQUIRED");
+  }
   await tx.insert(campaigns).values({
     id: campaignId,
-    offerVersionId: researchOffer?.id ?? null,
+    offerVersionId,
     workspaceId: input.workspaceId,
     icpVersionId: plan.icpVersionId,
     planId: input.planId,

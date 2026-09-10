@@ -4,10 +4,11 @@ import { canonicalMcpWriteHash, isMcpWriteRoleAllowed, mcpWriteToolArgumentsSche
 
 const STABLE_WRITE_ERRORS = new Set(["AI_SETUP_REQUIRED", "MCP_WRITE_IDEMPOTENCY_CONFLICT", "MCP_WRITE_VERSION_CONFLICT", "MCP_WRITE_IN_PROGRESS", "MCP_WRITE_RECOVERY_REQUIRED", "WRITE_NOT_FOUND", "WRITE_FORBIDDEN", "WRITE_SCOPE_REQUIRED", "WRITE_RATE_LIMITED"]);
 // Queued provider work is still an external effect of the initiating tool.
-const DEFERRED_EXTERNAL_TOOLS = new Set<McpWriteToolName>(["content_strategy_prepare", "research_launch", "content_draft_create", "conversation_set_automation", "content_autopilot_configure"]);
+const DEFERRED_EXTERNAL_TOOLS = new Set<McpWriteToolName>(["campaign_prepare", "content_strategy_prepare", "research_launch", "content_draft_create", "conversation_set_automation", "content_autopilot_configure"]);
 const AUTOMATION_CONFIGURATION_TOOLS = new Set<McpWriteToolName>(["conversation_set_automation", "content_autopilot_configure"]);
-const STABLE_DOMAIN_ERROR = /^(?:OFFER|PRODUCT_RESEARCH|CAMPAIGN|CONVERSATION|KNOWLEDGE|CONTENT_AUTOPILOT|CONTENT_BRAND_KIT|EDITORIAL_STRATEGY)_[A-Z0-9_]+$/;
+const STABLE_DOMAIN_ERROR = /^(?:OFFER|PRODUCT_RESEARCH|PROSPECTING_PLAN|CHANNEL_ASSESSMENT|CAMPAIGN|CONVERSATION|KNOWLEDGE|CONTENT_AUTOPILOT|CONTENT_BRAND_KIT|EDITORIAL_STRATEGY)_[A-Z0-9_]+$/;
 const TOOL_DESCRIPTIONS: Readonly<Record<McpWriteToolName, string>> = {
+  campaign_prepare: "Prepare a channel campaign from acquisition_plan_list/get and an existing offer version. Reuses an existing campaign without changing its status. New campaigns source prospects and compose drafts but require explicit activation. Follow campaign_get_status with campaignId equal to the returned id for preparation progress. Does not send messages.",
   campaign_pause: "Suspend an active campaign. Admin or owner only. Read campaign_list for campaignId and expectedUpdatedAt first. Does not resume or activate a campaign; retain requestKey for retries.",
   content_strategy_update: "Save a reviewed editorial draft. Pass strategyId and expectedUpdatedAt from content_strategy_get. Preserves its original offer and ICP sources.",
   content_strategy_publish: "Activate the reviewed editorial version. Admin or owner only. Does not schedule or publish a social post. Pass strategyId and expectedUpdatedAt from content_strategy_get.",

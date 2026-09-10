@@ -15,7 +15,7 @@ import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/cli
 import { createNoosphereApiRuntime, createMcpWriteCapabilities } from "@outbound/bootstrap/create-noosphere-api-runtime";
 import { createMcpTransport } from "@outbound/interface/mcp/mcp-transport";
 import { createDatabase } from "@outbound/infrastructure/database/client";
-import { authUsers, mcpOauthClients, workspaceMembers, workspaces, offers, offerVersions, icps, icpVersions, campaigns, sequences, jobs, sequenceSteps, contacts, prospectDiscoveryRuns, prospectDiscoveryCandidates, campaignProspects, outreachActions, outboxEvents, auditLogs, sequenceVersions } from "@outbound/infrastructure/database/schema";
+import { authUsers, mcpOauthClients, workspaceMembers, workspaces, offers, offerVersions, icps, icpVersions, campaigns, sequences, jobs, sequenceSteps, contacts, prospectDiscoveryRuns, prospectDiscoveryCandidates, campaignProspects, outreachActions, outboxEvents, auditLogs, sequenceVersions, prospectingPlans, channelAssessments } from "@outbound/infrastructure/database/schema";
 import type { McpExecutionContext } from "@outbound/application/mcp/mcp-read-capabilities";
 
 const url = process.env.TEST_DATABASE_URL;
@@ -96,6 +96,37 @@ const url = process.env.TEST_DATABASE_URL;
   expect(calendar.structuredContent).toMatchObject({data:[]});
  });
 
+ test("agent prepares Outbound from an assessed plan without manual configuration IDs or implicit activation",async()=>{
+  const icpId=crypto.randomUUID(),icpVersionId=crypto.randomUUID(),offerId=crypto.randomUUID(),offerVersionId=crypto.randomUUID(),planId=crypto.randomUUID();
+  await db.db.insert(icps).values({id:icpId,workspaceId,name:"Preparation ICP"});
+  await db.db.insert(icpVersions).values({id:icpVersionId,workspaceId,icpId,version:1,name:"Preparation ICP",confidence:"0.9000",criteria:{},buyingCommittee:[],problems:[],signals:[],exclusions:[],unknowns:[],unresolvedContradictions:[],blockedFindings:[],publishedAt:new Date()});
+  await db.db.insert(offers).values({id:offerId,workspaceId,name:"Preparation offer"});
+  await db.db.insert(offerVersions).values({id:offerVersionId,workspaceId,offerId,version:1,name:"Preparation offer",category:"service",valueProposition:"Conseil",targetAudience:"PME",publishedAt:new Date()});
+  await db.db.insert(prospectingPlans).values({id:planId,workspaceId,icpVersionId,name:"Preparation plan",status:"ready"});
+  await db.db.insert(channelAssessments).values({id:crypto.randomUUID(),workspaceId,planId,channel:"linkedin",status:"completed",recommendation:"recommended",strategy:{query:"dirigeants PME France",sourceKinds:[]}});
+  const args={requestKey:crypto.randomUUID(),planId,channel:"linkedin",offerVersionId};
+  const foreignOffer=await client.callTool({name:"campaign_prepare",arguments:{...args,requestKey:crypto.randomUUID(),offerVersionId:crypto.randomUUID()}});
+  expect(foreignOffer.structuredContent).toMatchObject({error:"CAMPAIGN_OFFER_VERSION_REQUIRED"});
+  const prepared=await client.callTool({name:"campaign_prepare",arguments:args});
+  expect(prepared.isError).not.toBe(true);
+  const result=prepared.structuredContent as any;
+  expect(result.state).toBe("draft");
+  const listed=(await client.callTool({name:"campaign_list",arguments:{}})).structuredContent as any;
+  const campaign=listed.data.find((row:any)=>row.id===result.id);
+  expect(campaign).toMatchObject({planId,offerVersionId,icpVersionId,status:"draft",autopilotPolicy:{activationMode:"manual"}});
+  expect(campaign.sequenceId).toBeTruthy();
+  expect((await client.callTool({name:"campaign_prepare",arguments:args})).structuredContent).toEqual(result);
+  expect((await client.callTool({name:"campaign_prepare",arguments:{...args,requestKey:crypto.randomUUID()}})).structuredContent).toMatchObject({id:result.id,state:"draft"});
+  expect(await db.db.select().from(outreachActions).where(eq(outreachActions.campaignId,result.id))).toHaveLength(0);
+  await db.db.update(campaigns).set({status:"active"}).where(eq(campaigns.id,result.id));
+  const [active]=await db.db.select().from(campaigns).where(eq(campaigns.id,result.id));
+  const reused=await client.callTool({name:"campaign_prepare",arguments:{...args,requestKey:crypto.randomUUID()}});
+  expect(reused.structuredContent).toMatchObject({id:result.id,state:"active"});
+  const [unchanged]=await db.db.select().from(campaigns).where(eq(campaigns.id,result.id));
+  expect(unchanged).toEqual(active);
+
+ });
+
  test("agent suspends an active campaign once and rejects a stale command",async()=>{
   const icpId=crypto.randomUUID(), icpVersionId=crypto.randomUUID(), campaignId=crypto.randomUUID();
   await db.db.insert(icps).values({id:icpId,workspaceId,name:"Pause test"});
@@ -164,6 +195,35 @@ const url = process.env.TEST_DATABASE_URL;
   const resumedJobs=await db.db.select().from(jobs).where(and(eq(jobs.workspaceId,workspaceId),eq(jobs.type,"campaign.messages.compose"),eq(jobs.status,"pending")));
   expect(resumedJobs.filter(job=>(job.payload as {campaignId?:string}).campaignId===campaignId)).toHaveLength(1);
 
+ });
+
+ test("manual preparation composes drafts and stops before activation or scheduling",async()=>{
+  const icpId=crypto.randomUUID(), icpVersionId=crypto.randomUUID(), campaignId=crypto.randomUUID(), sequenceId=crypto.randomUUID(), contactId=crypto.randomUUID(), runId=crypto.randomUUID(), candidateId=crypto.randomUUID();
+  await db.db.insert(icps).values({id:icpId,workspaceId,name:"Manual preparation"});
+  await db.db.insert(icpVersions).values({id:icpVersionId,workspaceId,icpId,version:1,name:"Manual preparation",confidence:"0.9000",criteria:{},buyingCommittee:[],problems:[],signals:[],exclusions:[],unknowns:[],unresolvedContradictions:[],blockedFindings:[],publishedAt:new Date()});
+  await db.db.insert(sequences).values({id:sequenceId,workspaceId,name:"Manual preparation"});
+  await db.db.insert(sequenceSteps).values(defaultCampaignSequenceSteps("linkedin").map(step=>({id:crypto.randomUUID(),workspaceId,sequenceId,...step})));
+  await db.db.insert(campaigns).values({id:campaignId,workspaceId,sequenceId,icpVersionId,channel:"linkedin",name:"Manual preparation",status:"draft",automationStage:"composing",autopilotPolicy:{activationMode:"manual",enabled:true}});
+  await db.db.insert(contacts).values({id:contactId,workspaceId,firstName:"Camille",lastName:"Test"});
+  await db.db.insert(prospectDiscoveryRuns).values({id:runId,workspaceId,icpVersionId,filters:{},status:"completed"});
+  await db.db.insert(prospectDiscoveryCandidates).values({id:candidateId,workspaceId,runId,fullName:"Camille Test",channels:{linkedin:{value:"https://linkedin.com/in/camille-test",normalizedValue:"linkedin.com/in/camille-test",status:"verified",confidence:"high",source:"fixture"},email:{value:null,normalizedValue:null,status:"unavailable",confidence:"none",source:null},whatsapp:{value:null,normalizedValue:null,status:"unavailable",confidence:"none",source:null}},providerData:{providerId:"fixture-camille"}});
+  await db.db.insert(campaignProspects).values({workspaceId,campaignId,candidateId,contactId,eligible:true,state:"imported",score:90});
+  const jobId=crypto.randomUUID();
+  await db.db.insert(jobs).values({id:jobId,workspaceId,type:"campaign.messages.compose",payload:{workspaceId,campaignId},idempotencyKey:jobId,correlationId:jobId,maxAttempts:3,priority:0,availableAt:new Date()});
+  const queue=new PostgresJobQueue(db.client);
+  const leased=(await queue.lease({workerId:"concurrent-pause",types:["campaign.messages.compose"],limit:100,leaseMs:60000,now:new Date()})).find(job=>job.id===jobId)!;
+  let generated=0;
+  await new CampaignCompositionJobProcessor(db.db,queue,{generate:async(input)=>{
+    generated++;
+    return {steps:input.templateSteps.map(step=>({position:step.position,subject:null,body:"Bonjour Camille, échangeons sur votre projet."})),metadata:{provider:"fixture",model:"fixture",promptVersion:"fixture"}};
+  }},{resolveHealthyAccount:async()=>({provider:"unipile",accountId:"fixture-account"})},{now:()=>new Date()}).process(leased);
+  expect(generated).toBe(1);
+  const after=(await client.callTool({name:"campaign_list",arguments:{}})).structuredContent as any;
+  expect(after.data.find((row:any)=>row.id===campaignId)).toMatchObject({status:"draft",automationStage:"preflight"});
+  expect(after.data.find((row:any)=>row.id===campaignId).sequenceVersionId).toBeTruthy();
+  expect(await db.db.select().from(outreachActions).where(eq(outreachActions.campaignId,campaignId))).toHaveLength(0);
+  const [job]=await db.db.select().from(jobs).where(eq(jobs.id,jobId));
+  expect(job!.status).toBe("completed");
  });
 
  test("campaign suspension requires an administrator and refuses workspace overrides or unknown campaigns",async()=>{
