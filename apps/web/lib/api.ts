@@ -4003,3 +4003,15 @@ export async function selectInstanceAiDefault(input: { connectionId: string; mod
   const response = await apiFetch("/api/v1/instance/ai/default", { method: "POST", body: JSON.stringify(input) });
   if (!response.ok) await throwApiError(response);
 }
+
+export interface ChatGptDeviceFlow {
+  state: "starting" | "waiting" | "connected" | "failed" | "idle";
+  verificationUrl?: string;
+  userCode?: string;
+}
+export async function instanceChatGptLogin(connectionId: string, begin: boolean): Promise<ChatGptDeviceFlow> {
+  const response = await apiFetch(begin ? "/api/v1/instance/ai/chatgpt" : `/api/v1/instance/ai/chatgpt?connectionId=${encodeURIComponent(connectionId)}`,
+    begin ? { method: "POST", body: JSON.stringify({ connectionId }) } : undefined);
+  if (!response.ok) await throwApiError(response);
+  return response.json();
+}

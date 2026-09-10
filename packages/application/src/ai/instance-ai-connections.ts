@@ -4,7 +4,14 @@ import type { InstanceSetupRepository } from "@outbound/application/ai/instance-
 
 export const instanceAiProviders = ["openai-api", "anthropic", "openrouter", "openai-compatible", "kimi-code", "codex-cli"] as const;
 export type InstanceAiProvider = (typeof instanceAiProviders)[number];
+export interface InstanceAiDeviceFlow {
+  state: "starting" | "waiting" | "connected" | "failed" | "idle";
+  verificationUrl?: string;
+  userCode?: string;
+}
 export interface InstanceAiAuthenticationReader {
+  begin?(connection: InstanceAiConnectionView): Promise<InstanceAiDeviceFlow>;
+  deviceFlow?(connection: InstanceAiConnectionView): InstanceAiDeviceFlow;
   status(connection: InstanceAiConnectionView): Promise<{ state: "unavailable" | "action_required" | "connected" | "expired" | "in_progress" } | null>;
 }
 export interface InstanceAiModel {
@@ -83,6 +90,13 @@ export class InstanceAiConnectionsApplication {
     }
     if (!await this.repository.finishTest({ ...lease, errorCode })) throw new InstanceAiError("AI_CONNECTION_CHANGED");
     return { ...input, status: errorCode ? "failed" as const : "ready" as const, errorCode };
+  }
+  async deviceLogin(userId: string, connectionId: string, begin: boolean) {
+    await this.requireAdministrator(userId);
+    const connection = (await this.repository.list()).find(item => item.id === connectionId);
+    if (!connection || connection.provider !== "codex-cli") throw new InstanceAiError("AI_CONNECTION_NOT_FOUND");
+    if (!this.authentication?.begin || !this.authentication.deviceFlow) throw new InstanceAiError("AI_PROVIDER_UNAVAILABLE");
+    return begin ? this.authentication.begin(connection) : this.authentication.deviceFlow(connection);
   }
   async setDefault(userId: string, input: InstanceAiDefaultSelection) {
     await this.requireAdministrator(userId);

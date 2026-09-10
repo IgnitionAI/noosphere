@@ -38,3 +38,9 @@ export async function selectDefaultAction(connectionId: string, model: string, f
   catch (cause) { error = cause instanceof OutboundApiError ? cause.code : "AI_CONNECTION_NOT_VALIDATED"; }
   redirect(error ? `/setup?error=${encodeURIComponent(error)}` : "/setup?notice=default");
 }
+
+export async function chatGptLoginAction(connectionId: string, begin: boolean) {
+  const { instanceChatGptLogin } = await import("@/lib/api");
+  try { return await instanceChatGptLogin(connectionId, begin); }
+  catch { return { state: "failed" as const }; }
+}

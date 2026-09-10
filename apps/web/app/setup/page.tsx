@@ -1,3 +1,4 @@
+import { ChatGptConnect } from "./chatgpt-connect";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSession, getInstanceSetup, getInstanceAiConnections } from "@/lib/api";
@@ -16,7 +17,7 @@ export default async function InstanceSetupPage({ searchParams }: { searchParams
       <h1 className="mt-5 text-3xl font-semibold text-ink">L’IA de votre instance</h1>
       <p className="mt-3 text-sm leading-6 text-muted">Les connexions IA sont partagées par vos workspaces. Vous pouvez explorer Noosphere et préparer vos données avant de connecter un modèle.</p>
       {query.error ? <p role="alert" className="mt-5 text-sm text-danger">{connectionError(query.error)}</p> : null}
-      {query.notice ? <p role="status" className="mt-5 text-sm text-success">{query.notice === "tested" ? "Le modèle a répondu au test. Vous pouvez le choisir comme modèle par défaut." : query.notice === "default" ? "Le modèle par défaut est prêt pour vos workspaces." : "Connexion enregistrée. Testez les modèles avant de les utiliser."}</p> : null}
+      {query.notice ? <p role="status" className="mt-5 text-sm text-success">{query.notice === "chatgpt" ? "Compte ChatGPT connecté. Vous pouvez maintenant tester votre modèle." : query.notice === "tested" ? "Le modèle a répondu au test. Vous pouvez le choisir comme modèle par défaut." : query.notice === "default" ? "Le modèle par défaut est prêt pour vos workspaces." : "Connexion enregistrée. Testez les modèles avant de les utiliser."}</p> : null}
       {state.skipped ? <p className="mt-5 text-sm text-muted">Vous avez choisi de configurer l’IA plus tard.</p> : null}
       <div className="mt-6 rounded-xl border border-line bg-canvas p-5">
         <h2 className="font-semibold">Connexion IA</h2>
@@ -27,17 +28,11 @@ export default async function InstanceSetupPage({ searchParams }: { searchParams
         {ai.connections.map((connection) => <section key={connection.id} className="rounded-xl border border-line p-5">
           <h2 className="font-semibold">{connection.name}</h2>
           <p className="mt-1 text-xs text-muted">{connectionProviderLabels[connection.provider]} · {connection.provider === "codex-cli" ? "Compte ChatGPT isolé" : "Clé enregistrée et masquée"}</p>
-          {connection.provider === "codex-cli" ? <div className="my-3 space-y-2 rounded-lg bg-canvas p-3 text-sm">
-            <p>{connection.authentication?.state === "in_progress" ? "Connexion ChatGPT en cours. Terminez la connexion sur la machine hôte ; les tests sont suspendus pendant cette étape." : connection.authentication?.state === "connected" ? "Compte connecté. Testez le modèle pour valider son utilisation." : connection.authentication?.state === "expired" ? "Connexion expirée. Renouvelez la connexion ChatGPT, puis retestez le modèle." : connection.authentication?.state === "unavailable" ? "Configurez INSTANCE_CODEX_HOME sur l’API et les workers pour activer la connexion de service." : "Action requise : connectez votre compte ChatGPT."}</p>
-            <p>Sur la machine qui héberge Noosphere, lancez la commande puis ouvrez le lien affiché par Codex :</p>
-            <p className="text-xs font-medium">Développement local</p><code className="block break-all text-xs">bun run instance:codex:login {connection.id}</code>
-            <p className="text-xs font-medium">Docker Compose, dans le conteneur API</p><code className="block break-all text-xs">bun dist/codex-login/instance-codex-login.js {connection.id}</code>
-            <p>La même commande permet de renouveler la connexion. Revenez ensuite sur cette page et testez le modèle. Les identifiants restent dans un volume de service privé partagé avec les workers.</p>
-          </div> : null}
+          {connection.provider === "codex-cli" ? <ChatGptConnect connectionId={connection.id} connected={connection.authentication?.state === "connected"} /> : null}
           <ul className="mt-4 space-y-4">{connection.models.map((model) => <li key={model.model}>
             <div className="flex flex-wrap items-center gap-2"><span className="font-mono text-sm">{model.model}</span><span className="badge">{model.status === "ready" ? "Test réussi" : model.status === "testing" ? "Test en cours" : model.status === "failed" ? "Test échoué" : "À tester"}</span>{ai.defaultModel?.connectionId === connection.id && ai.defaultModel.model === model.model ? <span className="badge badge-signal">Par défaut</span> : null}</div>
-            {model.errorCode ? <p className="mt-2 text-sm text-danger">{connectionError(model.errorCode)}</p> : null}
-            <div className="mt-2 flex flex-wrap gap-2"><form action={testConnectionAction.bind(null, connection.id, model.model)}><button className="button" type="submit">Tester {model.model}</button></form>{model.status === "ready" ? <form action={selectDefaultAction.bind(null, connection.id, model.model)}><button className="button" type="submit">Utiliser par défaut</button></form> : null}</div>
+            {model.errorCode && (connection.provider !== "codex-cli" || connection.authentication?.state === "connected") ? <p className="mt-2 text-sm text-danger">{connectionError(model.errorCode)}</p> : null}
+            <div className="mt-2 flex flex-wrap gap-2"><form action={testConnectionAction.bind(null, connection.id, model.model)}><button className="button" type="submit" disabled={connection.provider === "codex-cli" && connection.authentication?.state !== "connected"}>Tester {model.model}</button></form>{model.status === "ready" ? <form action={selectDefaultAction.bind(null, connection.id, model.model)}><button className="button" type="submit">Utiliser par défaut</button></form> : null}</div>
           </li>)}</ul>
           <details className="mt-5"><summary className="cursor-pointer text-sm font-medium">Modifier la connexion</summary><ConnectionForm connection={connection} /></details>
         </section>)}

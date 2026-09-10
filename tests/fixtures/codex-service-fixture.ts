@@ -7,6 +7,8 @@ if (!home || home !== process.env.HOME || process.env.OPENAI_API_KEY || process.
 const authPath = join(home, "auth.json");
 if (process.argv.includes("login")) {
   if (!process.argv.includes("--device-auth")) process.exit(4);
+  console.log("https://auth.openai.com/codex/device\nABCD-12345");
+  await Bun.sleep(4000);
   writeFileSync(authPath, JSON.stringify({ auth_mode: "chatgpt", tokens: { access_token: "browser-fixture-access", refresh_token: "browser-fixture-refresh" } }), { mode: 0o600 });
 } else {
   let auth;

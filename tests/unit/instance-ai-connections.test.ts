@@ -36,3 +36,10 @@ test("a connection changed during its real invocation cannot be marked ready by 
   h.release();
   await expect(pending).rejects.toThrow("AI_CONNECTION_CHANGED");
 });
+
+test("only an instance administrator can start or inspect a ChatGPT device login", async () => {
+  const h = harness();
+  await expect(h.app.deviceLogin("workspace-owner", "connection", true)).rejects.toThrow("INSTANCE_ADMIN_REQUIRED");
+  await expect(h.app.deviceLogin("workspace-owner", "connection", false)).rejects.toThrow("INSTANCE_ADMIN_REQUIRED");
+  await expect(h.app.deviceLogin("admin", "missing", true)).rejects.toThrow("AI_CONNECTION_NOT_FOUND");
+});

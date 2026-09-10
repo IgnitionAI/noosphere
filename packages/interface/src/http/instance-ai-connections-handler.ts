@@ -27,8 +27,16 @@ export function createInstanceAiConnectionsHttpHandler(input: { application: Ins
     if (!session) return problem(401, "AUTHENTICATION_REQUIRED");
     try {
       if (path === "/api/v1/instance/ai" && request.method === "GET") return Response.json(await input.application.list(session.userId), { headers: { "cache-control": "no-store" } });
+      if (path === "/api/v1/instance/ai/chatgpt" && request.method === "GET") {
+        const connectionId = z.string().uuid().parse(new URL(request.url).searchParams.get("connectionId"));
+        return Response.json(await input.application.deviceLogin(session.userId, connectionId, false), { headers: { "cache-control": "no-store" } });
+      }
       if (request.method !== "POST") return problem(405, "METHOD_NOT_ALLOWED");
       if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) return problem(415, "JSON_REQUIRED");
+      if (path === "/api/v1/instance/ai/chatgpt") {
+        const { connectionId } = z.object({ connectionId: z.string().uuid() }).strict().parse(await request.json());
+        return Response.json(await input.application.deviceLogin(session.userId, connectionId, true), { headers: { "cache-control": "no-store" } });
+      }
       if (path === "/api/v1/instance/ai/connections") return Response.json(await input.application.save(session.userId, connection.parse(await request.json())), { status: 201 });
       if (path === "/api/v1/instance/ai/test") return Response.json(await input.application.test(session.userId, selection.parse(await request.json())));
       if (path === "/api/v1/instance/ai/default") return Response.json(await input.application.setDefault(session.userId, defaultSelection.parse(await request.json())));
