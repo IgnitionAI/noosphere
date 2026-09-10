@@ -1,5 +1,5 @@
 import { and, eq, sql } from "drizzle-orm";
-import { ProductResearchApplication } from "@outbound/application/gtm/product-research-application";
+import { ProductResearchApplication, ProductResearchNotFoundError } from "@outbound/application/gtm/product-research-application";
 import { CryptoIdGenerator, SystemClock, type Clock } from "@outbound/application/shared/ports";
 import { createBetterAuthRuntime } from "@outbound/infrastructure/auth/better-auth-runtime";
 import { createDatabase, type Database } from "@outbound/infrastructure/database/client";
@@ -143,6 +143,9 @@ import { PostgresMcpGovernedEffectRepository } from "@outbound/infrastructure/mc
 import { createPostgresMcpGovernedEffectCapabilities } from "@outbound/infrastructure/mcp/postgres-mcp-governed-effect-capabilities";
 import { createMcpObservabilityLogger } from "@outbound/interface/mcp/mcp-observability";
 import { resolveLocalFakeMode } from "@outbound/infrastructure/mcp/local-governed-effect-fakes";
+import { PostgresOfferRepository } from "@outbound/infrastructure/offers/postgres-offer-repository";
+import { PostgresCampaignRepository } from "@outbound/infrastructure/campaigns/postgres-campaign-repository";
+import { PostgresConversationCommandRepository } from "@outbound/infrastructure/campaigns/postgres-conversation-command-repository";
 
 export interface McpDevAuthorization {
   readonly token: string;
@@ -212,11 +215,20 @@ function isMcpScope(value: string): value is McpExecutionContext["scopes"][numbe
 /** Compose the production MCP write capabilities around a database transaction. */
 export function createMcpWriteCapabilities(database: Database, clock: Clock): McpWriteCapabilities {
   return createPostgresAtomicMcpWriteCapabilities(database, async (tx: PostgresMcpWriteTransaction, context, command, correlationId) => {
+    // Drizzle transactions expose the same query/savepoint surface consumed by
+    // these infrastructure repositories. The outer MCP ledger remains the
+    // commit boundary; nested `transaction()` calls become savepoints.
+    const transactionalDatabase = tx as unknown as Database;
     const mcpCrmRepository = new PostgresCrmRepository(tx);
     const mcpOpportunityRepository = new PostgresOpportunityRepository(tx);
     const mcpProspectViews = new PostgresProspectViewRepository(tx);
     const mcpProspectDecisionScheduler = new PostgresProspectDecisionScheduler(tx, clock);
     const mcpContentIdeaRepository = new PostgresContentIdeaRepository(tx);
+    const mcpOfferRepository = new PostgresOfferRepository(transactionalDatabase);
+    const mcpCampaignRepository = new PostgresCampaignRepository(transactionalDatabase);
+    const mcpConversationCommands = new PostgresConversationCommandRepository(transactionalDatabase);
+    const mcpKnowledgeService = new PostgresKnowledgeService(transactionalDatabase, clock, new CryptoIdGenerator());
+    const mcpContentAutopilot = new ContentAutopilotApplication(new PostgresContentAutopilotRepository(transactionalDatabase), clock);
     const contentGenerationApplication = new ContentGenerationApplication(new PostgresContentGenerationRepository(tx));
     const args = command.arguments as Readonly<Record<string, unknown>>;
     const now = clock.now();
@@ -383,6 +395,90 @@ export function createMcpWriteCapabilities(database: Database, clock: Clock): Mc
       });
       return { id: scheduled.decision.id, version: 1, state: "queued", operation: command.operation, correlationId };
     }
+    if (command.operation === "offer_create") {
+      const row = await mcpOfferRepository.createOffer({
+        id: crypto.randomUUID(), workspaceId: context.workspaceId, createdBy: context.userId,
+        name: String(args.name), category: String(args.category), targetAudience: String(args.targetAudience),
+      });
+      return { id: row.id, version: row.revision, state: "created", operation: command.operation, correlationId };
+    }
+    if (command.operation === "offer_update") {
+      const offerId = String(args.offerId);
+      const existing = await mcpOfferRepository.getOffer({ workspaceId: context.workspaceId, offerId });
+      if (!existing) throw new Error("WRITE_NOT_FOUND");
+      if (typeof args.expectedVersion === "number") assertMcpExpectedRevision(args.expectedVersion, existing.revision);
+      const allowed = ["name", "category", "valueProposition", "targetAudience", "pricing", "commercialRules", "constraints", "claims", "objections"] as const;
+      const fields = Object.fromEntries(allowed.flatMap((key) => key in args ? [[key, args[key]]] : []));
+      const row = await mcpOfferRepository.updateOffer({ workspaceId: context.workspaceId, offerId, fields,
+        ...(typeof args.expectedVersion === "number" ? { expectedRevision: args.expectedVersion } : {}),
+      }).catch((error: unknown) => {
+        if (error instanceof Error && error.message === "OFFER_REVISION_CONFLICT") throw new Error("MCP_WRITE_VERSION_CONFLICT");
+        throw error;
+      });
+      return { id: row.id, version: row.revision, state: "updated", operation: command.operation, correlationId };
+    }
+    if (command.operation === "offer_publish") {
+      if (context.role !== "admin" && context.role !== "owner") throw new Error("WRITE_FORBIDDEN");
+      const offerId = String(args.offerId);
+      const row = await mcpOfferRepository.publishOffer({ id: crypto.randomUUID(), workspaceId: context.workspaceId, offerId, userId: context.userId, publishedAt: now,
+        ...(typeof args.expectedVersion === "number" ? { expectedRevision: args.expectedVersion } : {}),
+      }).catch((error: unknown) => {
+        if (error instanceof Error && error.message === "OFFER_REVISION_CONFLICT") throw new Error("MCP_WRITE_VERSION_CONFLICT");
+        throw error;
+      });
+      if (!row) throw new Error("WRITE_FAILED");
+      return { id: row.id, version: row.version, state: "published", operation: command.operation, correlationId };
+    }
+    if (command.operation === "research_launch") {
+      const researchRepository = new PostgresProductResearchRepository(transactionalDatabase);
+      const research = new ProductResearchApplication(researchRepository, researchRepository, new CryptoIdGenerator(), clock);
+      const created = await research.create({ workspaceId: context.workspaceId, brief: args.brief as Parameters<ProductResearchApplication["create"]>[0]["brief"] });
+      const started = await research.start({ workspaceId: context.workspaceId, runId: created.id, correlationId });
+      return { id: started.id, version: started.version, state: started.status, status: started.status, operation: command.operation, correlationId };
+    }
+    if (command.operation === "campaign_create") {
+      const row = await mcpCampaignRepository.createCampaign({
+        id: crypto.randomUUID(), workspaceId: context.workspaceId, createdBy: context.userId,
+        name: String(args.name), objective: String(args.objective), offerVersionId: String(args.offerVersionId), icpVersionId: String(args.icpVersionId),
+        messagingStrategyVersionId: String(args.messagingStrategyVersionId), aiPolicyVersionId: String(args.aiPolicyVersionId), sequenceVersionId: String(args.sequenceVersionId),
+      });
+      return { id: row.id, version: 1, state: row.status, operation: command.operation, correlationId };
+    }
+    if (command.operation === "conversation_set_automation") {
+      const row = await mcpConversationCommands.setAutomationMode({ workspaceId: context.workspaceId, conversationId: String(args.conversationId), mode: String(args.mode) as "setter" | "human" | "disabled", now });
+      return { id: row.id, version: 1, state: row.automationMode, operation: command.operation, correlationId };
+    }
+    if (command.operation === "content_autopilot_configure") {
+      const row = await mcpContentAutopilot.configure({
+        workspaceId: context.workspaceId, userId: context.userId, requestKey: command.requestKey, enabled: Boolean(args.enabled),
+        localTime: String(args.localTime), timezone: String(args.timezone),
+        ...(Array.isArray(args.publicationTimes) ? { publicationTimes: args.publicationTimes as string[] } : {}),
+        ...(Array.isArray(args.publicationDays) ? { publicationDays: args.publicationDays as number[] } : {}),
+      });
+      return { id: context.workspaceId, version: 1, state: row.enabled ? "enabled" : "disabled", operation: command.operation, correlationId };
+    }
+    if (command.operation === "knowledge_source_create") {
+      const row = await mcpKnowledgeService.createSource({
+        workspaceId: context.workspaceId, actorUserId: context.userId, type: String(args.type) as "product_document" | "proof" | "customer_case" | "objection_response",
+        title: String(args.title), content: typeof args.content === "string" ? args.content : null, researchDocumentId: typeof args.researchDocumentId === "string" ? args.researchDocumentId : null,
+        authorName: String(args.authorName), publishedAt: new Date(String(args.publishedAt)), freshnessUntil: typeof args.freshnessUntil === "string" ? new Date(args.freshnessUntil) : null,
+      });
+      return { id: row.id, version: 1, state: row.status, operation: command.operation, correlationId };
+    }
+    if (command.operation === "knowledge_source_validate") {
+      if (context.role !== "admin" && context.role !== "owner") throw new Error("WRITE_FORBIDDEN");
+      const row = await mcpKnowledgeService.validateSource({ workspaceId: context.workspaceId, actorUserId: context.userId, sourceId: String(args.sourceId) });
+      return { id: row.id, version: 1, state: row.status, operation: command.operation, correlationId };
+    }
+    if (command.operation === "knowledge_claim_create") {
+      const row = await mcpKnowledgeService.createClaim({ workspaceId: context.workspaceId, actorUserId: context.userId, claim: String(args.claim), offerClaimId: typeof args.offerClaimId === "string" ? args.offerClaimId : null, sourceIds: Array.isArray(args.sourceIds) ? args.sourceIds as string[] : [] });
+      return { id: row.id, version: 1, state: row.status, operation: command.operation, correlationId };
+    }
+    if (command.operation === "knowledge_claim_validate") {
+      if (context.role !== "admin" && context.role !== "owner") throw new Error("WRITE_FORBIDDEN");
+      const row = await mcpKnowledgeService.validateClaim({ workspaceId: context.workspaceId, actorUserId: context.userId, claimId: String(args.claimId) });
+      return { id: row.id, version: 1, state: row.status, operation: command.operation, correlationId };
+    }
     throw new Error("WRITE_FAILED");
   });
 }
@@ -466,9 +562,10 @@ const workspaceData = createWorkspaceDataHttpHandler({
   clock,
   downloads: workspaceArchiveStorage,
 });
+const knowledgeService = new PostgresKnowledgeService(database.db, clock, ids);
 const knowledge = createKnowledgeHttpHandler({
   contextResolver: auth.contextResolver,
-  service: new PostgresKnowledgeService(database.db, clock, ids),
+  service: knowledgeService,
 });
 const evaluation = createEvaluationHttpHandler({
   contextResolver: auth.contextResolver,
@@ -550,6 +647,8 @@ const mcpOpportunityRepository = new PostgresOpportunityRepository(database.db);
 const mcpProspectViews = new PostgresProspectViewRepository(database.db);
 const mcpProspectDecisionScheduler = new PostgresProspectDecisionScheduler(database.db, clock);
 const mcpOperationalViews = new PostgresOperationalViews(database.db);
+const mcpOfferRepository = new PostgresOfferRepository(database.db);
+const mcpCampaignRepository = new PostgresCampaignRepository(database.db);
 const unipileDsn = environment.UNIPILE_DSN ?? "";
 const unipileApiKey = environment.UNIPILE_API_KEY ?? "";
 const connectedAccountClient = unipileDsn && unipileApiKey
@@ -822,9 +921,48 @@ const mcpReadCapabilities: McpReadCapabilities = createMcpReadCapabilities({
       const result = await mcpOperationalViews.listConversations({ workspaceId: context.workspaceId, ...(input.channel ? { channel: input.channel } : {}), ...(input.search ? { search: input.search } : {}), page, pageSize: input.limit });
       return toMcpReadPage({ data: result.data, nextCursor: result.pagination.hasNext ? encodeMcpCursor({ kind: "conversation", page: page + 1 }) : null });
     },
+    get: async (context, input) => toMcpReadValue(await mcpOperationalViews.getConversation(context.workspaceId, input.conversationId)),
   },
   campaign: {
+    list: async (context, input) => paginateMcpQuery("campaign", context.workspaceId, input,
+      (limit, offset) => mcpCampaignRepository.listCampaigns(context.workspaceId, { limit, offset })),
     getStatus: async (context, input) => toMcpReadValue(await mcpOperationalViews.getCampaignView(context.workspaceId, input.campaignId)),
+  },
+  offer: {
+    list: async (context, input) => paginateMcpRows("offer", context.workspaceId, input, await mcpOfferRepository.listOffers(context.workspaceId)),
+    get: async (context, input) => toMcpReadValue(await mcpOfferRepository.getOffer({ workspaceId: context.workspaceId, offerId: input.offerId })),
+  },
+  research: {
+    list: async (context, input) => paginateMcpQuery("research", context.workspaceId, input,
+      async (limit, offset) => (await repository.listRecent(context.workspaceId, limit, offset)).map((run) => run.snapshot)),
+    get: async (context, input) => {
+      try { return toMcpReadValue(await application.get({ workspaceId: context.workspaceId, runId: input.runId })); }
+      catch (error) {
+        if (error instanceof ProductResearchNotFoundError) return null;
+        throw error;
+      }
+    },
+  },
+  calls: {
+    list: async (context, input) => paginateMcpQuery("calls", context.workspaceId, input,
+      (limit, offset) => calendarIntegration.listBookings({ workspaceId: context.workspaceId, ...(input.contactId ? { contactId: input.contactId } : {}), ...(input.opportunityId ? { opportunityId: input.opportunityId } : {}), limit, offset }),
+      { contactId: input.contactId ?? null, opportunityId: input.opportunityId ?? null }),
+  },
+  knowledge: {
+    listSources: async (context, input) => {
+      const status = context.role === "viewer" ? "validated" : input.status;
+      return paginateMcpRows("knowledge_sources", context.workspaceId, input, await knowledgeService.listSources({
+        workspaceId: context.workspaceId,
+        ...(input.type ? { type: input.type } : {}),
+        ...(status ? { status } : {}),
+      }), { type: input.type ?? null, status: status ?? null });
+    },
+    listClaims: async (context, input) => {
+      const rows = await knowledgeService.listClaims({ workspaceId: context.workspaceId });
+      return paginateMcpRows("knowledge_claims", context.workspaceId, input,
+        rows.filter((claim) => context.role !== "viewer" || claim.status === "validated"),
+        { validatedOnly: context.role === "viewer" });
+    },
   },
   content: {
     getCalendar: async (context, input) => toMcpReadPage(await contentPublicationRepository.list({
@@ -834,6 +972,7 @@ const mcpReadCapabilities: McpReadCapabilities = createMcpReadCapabilities({
       ...(input.to ? { to: new Date(input.to) } : {}),
       limit: input.limit,
     })),
+    getAutopilot: async (context) => toMcpReadValue(await contentAutopilotApplication.get(context.workspaceId)),
   },
   operations: {
     getHealth: async () => {
@@ -1054,6 +1193,27 @@ function toMcpReadPage(value: { readonly data: readonly unknown[]; readonly next
     data: JSON.parse(JSON.stringify(value.data)) as readonly McpReadValue[],
     nextCursor: typeof value.nextCursor === "string" ? value.nextCursor : null,
   };
+}
+
+function mcpPageOffset(kind: string, workspaceId: string, input: { cursor?: string | undefined }, filters: unknown = null): number {
+  if (!input.cursor) return 0;
+  const cursor = decodeMcpCursor(input.cursor);
+  if (cursor.kind !== kind || cursor.workspaceId !== workspaceId || JSON.stringify(cursor.filters) !== JSON.stringify(filters)
+    || typeof cursor.offset !== "number" || !Number.isSafeInteger(cursor.offset) || cursor.offset < 0) throw new Error("MCP_CURSOR_INVALID");
+  return cursor.offset;
+}
+
+function paginateMcpRows(kind: string, workspaceId: string, input: { limit: number; cursor?: string | undefined }, rows: readonly unknown[], filters: unknown = null): McpReadPage {
+  const offset = mcpPageOffset(kind, workspaceId, input, filters);
+  return toMcpReadPage({ data: rows.slice(offset, offset + input.limit), nextCursor: rows.length > offset + input.limit
+    ? encodeMcpCursor({ kind, workspaceId, filters, offset: offset + input.limit }) : null });
+}
+
+async function paginateMcpQuery(kind: string, workspaceId: string, input: { limit: number; cursor?: string | undefined }, load: (limit: number, offset: number) => Promise<readonly unknown[]>, filters: unknown = null): Promise<McpReadPage> {
+  const offset = mcpPageOffset(kind, workspaceId, input, filters);
+  const rows = await load(input.limit + 1, offset);
+  return toMcpReadPage({ data: rows.slice(0, input.limit), nextCursor: rows.length > input.limit
+    ? encodeMcpCursor({ kind, workspaceId, filters, offset: offset + input.limit }) : null });
 }
 
 function encodeMcpCursor(value: unknown): string {

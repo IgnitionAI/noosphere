@@ -25,6 +25,7 @@ databaseDescribe("MCP OAuth family revocation durability", () => {
   const refreshTokenValue = `refresh-${workspaceId}`;
   const now = new Date("2026-08-29T12:00:00.000Z");
   const expiresAt = new Date(now.getTime() + 300_000);
+  let dynamicClientId: string | null = null;
 
   beforeAll(async () => {
     await migrate(database.db, { migrationsFolder: resolve(import.meta.dir, "../../packages/infrastructure/migrations") });
@@ -61,6 +62,10 @@ databaseDescribe("MCP OAuth family revocation durability", () => {
   });
 
   afterAll(async () => {
+    if (dynamicClientId) {
+      await database.client`delete from mcp_oauth_audit_events where client_id = ${dynamicClientId}`;
+      await database.client`delete from mcp_oauth_clients where client_id = ${dynamicClientId}`;
+    }
     await database.db.delete(mcpOauthAuditEvents).where(eq(mcpOauthAuditEvents.workspaceId, workspaceId));
     await database.db.delete(mcpOauthRefreshTokens).where(eq(mcpOauthRefreshTokens.workspaceId, workspaceId));
     await database.db.delete(mcpOauthAccessTokens).where(eq(mcpOauthAccessTokens.workspaceId, workspaceId));
@@ -69,6 +74,37 @@ databaseDescribe("MCP OAuth family revocation durability", () => {
     await database.db.delete(authUsers).where(eq(authUsers.id, userId));
     await database.db.delete(workspaces).where(eq(workspaces.id, workspaceId));
     await database.close();
+  });
+
+  test("persists an unbound dynamic client and binds authorization to the active workspace", async () => {
+    const oauth = createPostgresMcpOAuthService(database.db, { issuer: "https://example.test", resource: `https://example.test${MCP_OAUTH_RESOURCE}`, now: () => now });
+    const client = await oauth.registerDynamicClient({
+      clientName: "ChatGPT dynamic test",
+      redirectUris: ["https://chatgpt.com/connector/oauth/callback"],
+      allowedScopes: ["mcp:read", "mcp:write", "mcp:approve"],
+    });
+    dynamicClientId = client.clientId;
+    expect(await new PostgresMcpOAuthStore(database.db).findClient(client.clientId)).toMatchObject({
+      userId: null,
+      workspaceId: null,
+      workspaceSlug: null,
+    });
+    const consent = await oauth.beginAuthorization({
+      clientId: client.clientId,
+      redirectUri: "https://chatgpt.com/connector/oauth/callback",
+      state: "state",
+      codeChallenge: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      codeChallengeMethod: "S256",
+      requestedScopes: ["mcp:read", "mcp:write", "mcp:approve"],
+      resource: `https://example.test${MCP_OAUTH_RESOURCE}`,
+      approved: false,
+      userId,
+      workspaceId,
+      workspaceSlug,
+      role: "owner",
+    });
+    expect(consent.client).toMatchObject({ userId, workspaceId, workspaceSlug });
+    expect(consent.effectiveScopes).toEqual(["mcp:read", "mcp:write", "mcp:approve"]);
   });
 
   test("revokeRefreshFamily is visible after a fresh store and never crosses families", async () => {

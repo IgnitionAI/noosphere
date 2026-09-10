@@ -96,7 +96,7 @@ export class PostgresProductResearchRepository
     return row ? ProductResearchRun.restore(toRunSnapshot(row)) : null;
   }
 
-  async listRecent(workspaceId: string, limit: number): Promise<readonly ProductResearchRun[]> {
+  async listRecent(workspaceId: string, limit: number, offset = 0): Promise<readonly ProductResearchRun[]> {
     const rows = await this.db
       .select()
       .from(productResearchRuns)
@@ -106,7 +106,7 @@ export class PostgresProductResearchRepository
         desc(productResearchRuns.createdAt),
         desc(productResearchRuns.id),
       )
-      .limit(limit);
+      .limit(limit).offset(offset);
     return rows.map((row) => ProductResearchRun.restore(toRunSnapshot(row)));
   }
 

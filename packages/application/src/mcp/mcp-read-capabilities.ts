@@ -55,15 +55,33 @@ export interface McpReadCapabilities {
       context: McpExecutionContext,
       input: McpReadPagination & { readonly channel?: "linkedin" | "email" | "whatsapp" | undefined; readonly search?: string | undefined; readonly page?: number | undefined },
     ) => Promise<McpReadPage>;
+    readonly get: (context: McpExecutionContext, input: { readonly conversationId: string }) => Promise<McpReadValue | null>;
   };
   readonly campaign: {
+    readonly list: (context: McpExecutionContext, input: McpReadPagination) => Promise<McpReadPage>;
     readonly getStatus: (context: McpExecutionContext, input: { readonly campaignId: string }) => Promise<McpReadValue | null>;
+  };
+  readonly offer: {
+    readonly list: (context: McpExecutionContext, input: McpReadPagination) => Promise<McpReadPage>;
+    readonly get: (context: McpExecutionContext, input: { readonly offerId: string }) => Promise<McpReadValue | null>;
+  };
+  readonly research: {
+    readonly list: (context: McpExecutionContext, input: McpReadPagination) => Promise<McpReadPage>;
+    readonly get: (context: McpExecutionContext, input: { readonly runId: string }) => Promise<McpReadValue | null>;
+  };
+  readonly calls: {
+    readonly list: (context: McpExecutionContext, input: McpReadPagination & { readonly contactId?: string | undefined; readonly opportunityId?: string | undefined }) => Promise<McpReadPage>;
+  };
+  readonly knowledge: {
+    readonly listSources: (context: McpExecutionContext, input: McpReadPagination & { readonly type?: "product_document" | "proof" | "customer_case" | "objection_response" | undefined; readonly status?: "draft" | "validated" | "expired" | "withdrawn" | undefined }) => Promise<McpReadPage>;
+    readonly listClaims: (context: McpExecutionContext, input: McpReadPagination) => Promise<McpReadPage>;
   };
   readonly content: {
     readonly getCalendar: (
       context: McpExecutionContext,
       input: McpReadPagination & { readonly from?: string | undefined; readonly to?: string | undefined },
     ) => Promise<McpReadPage>;
+    readonly getAutopilot: (context: McpExecutionContext) => Promise<McpReadValue>;
   };
   readonly operations: {
     readonly getHealth: (context: McpExecutionContext) => Promise<McpReadValue>;

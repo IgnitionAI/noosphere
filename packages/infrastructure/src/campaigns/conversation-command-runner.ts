@@ -173,7 +173,9 @@ export class ConversationCommandJobProcessor {
         body,
         idempotencyKey: command.idempotencyKey,
         conversationId: command.providerThreadId,
-        replyToProviderMessageId: command.latestInboundProviderMessageId,
+        ...(command.channel === "email"
+          ? { replyToUnipileMessageId: command.latestInboundProviderMessageId }
+          : { replyToProviderMessageId: command.latestInboundProviderMessageId }),
       });
       const now = this.clock.now();
       await this.database.transaction(async (tx) => {

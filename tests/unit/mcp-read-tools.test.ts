@@ -24,9 +24,13 @@ function readCapabilities(): McpReadCapabilities {
     prospect: { get360: async (_context, input) => ({ id: input.contactId, facts: { confirmedNeeds: [] }, hypotheses: [], recommendations: [], contradictions: [], missingInformation: [], provenance: [] }) },
     pipeline: { list: async () => page("pipeline-1") },
     opportunity: { get: async (_context, input) => ({ id: input.opportunityId, amount: 10, currency: "EUR" }) },
-    conversation: { list: async () => page("conversation-1") },
-    campaign: { getStatus: async (_context, input) => ({ id: input.campaignId, status: "healthy" }) },
-    content: { getCalendar: async () => page("calendar-1") },
+    conversation: { list: async () => page("conversation-1"), get: async (_context, input) => ({ id: input.conversationId, messages: [] }) },
+    campaign: { list: async () => page("campaign-1"), getStatus: async (_context, input) => ({ id: input.campaignId, status: "healthy" }) },
+    offer: { list: async () => page("offer-1"), get: async (_context, input) => ({ id: input.offerId }) },
+    research: { list: async () => page("research-1"), get: async (_context, input) => ({ id: input.runId }) },
+    calls: { list: async () => page("call-1") },
+    knowledge: { listSources: async () => page("source-1"), listClaims: async () => page("claim-1") },
+    content: { getCalendar: async () => page("calendar-1"), getAutopilot: async () => ({ enabled: false }) },
     operations: {
       getHealth: async () => ({ status: "ready" }),
       get: async (_context, input) => ({ operationId: input.operationId, jobId: crypto.randomUUID(), correlationId: crypto.randomUUID(), status: "queued", resultRefs: [], errorCode: null, createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(), operationUri: `noosphere://operations/${input.operationId}`, inputHash: "leak", args: { secret: "leak" } } as never),
@@ -65,7 +69,7 @@ function createClient() {
 }
 
 describe("MCP read tools and resources", () => {
-  test("discovers and calls all eleven read tools with structured bounded output", async () => {
+  test("discovers and calls the complete workspace read surface with structured bounded output", async () => {
     const { client, sdkTransport } = createClient();
     await client.connect(sdkTransport);
     const tools = await client.listTools();
@@ -73,6 +77,8 @@ describe("MCP read tools and resources", () => {
     expect(names).toEqual(expect.arrayContaining([
       "workspace_get_summary", "crm_search", "company_get_brief", "prospect_get_360", "pipeline_list",
       "opportunity_get", "conversation_list", "campaign_get_status", "content_get_calendar", "operations_get_health", "operation_get",
+      "conversation_get", "campaign_list", "offer_list", "offer_get", "research_list", "research_get", "call_list",
+      "knowledge_source_list", "knowledge_claim_list", "content_autopilot_get",
     ]));
     const id = crypto.randomUUID();
     const calls: [string, Record<string, unknown>][] = [
@@ -81,6 +87,9 @@ describe("MCP read tools and resources", () => {
       ["pipeline_list", { limit: 1 }], ["opportunity_get", { opportunityId: id }],
       ["conversation_list", { limit: 1 }], ["campaign_get_status", { campaignId: id }],
       ["content_get_calendar", { limit: 1 }], ["operations_get_health", {}], ["operation_get", { operationId: id }],
+      ["conversation_get", { conversationId: id }], ["campaign_list", { limit: 1 }], ["offer_list", { limit: 1 }], ["offer_get", { offerId: id }],
+      ["research_list", { limit: 1 }], ["research_get", { runId: id }], ["call_list", { limit: 1 }],
+      ["knowledge_source_list", { limit: 1 }], ["knowledge_claim_list", { limit: 1 }], ["content_autopilot_get", {}],
     ];
     for (const [name, args] of calls) {
       const result = await client.callTool({ name, arguments: args });

@@ -115,10 +115,10 @@ databaseDescribe("outbound send safety", () => {
     await database.close();
   });
 
-  test("a wait reply resumes only the action from the replying campaign", async () => {
+  test.each(["linkedin", "email"] as const)("a repeated %s reply shared by campaign prospects resumes only its conversation campaign", async (channel) => {
     await database.client`delete from jobs where workspace_id = ${workspaceId}`;
-    const first = await campaignFixture("reply-campaign", `reply-account-${workspaceId}`);
-    const second = await campaignFixture("other-campaign", `other-account-${workspaceId}`, "cancelled", -1_000);
+    const first = await campaignFixture(`${channel}-reply-campaign`, `${channel}-reply-account-${workspaceId}`, "cancelled", 0, contactId, channel);
+    const second = await campaignFixture(`${channel}-other-campaign`, channel === "email" ? first.accountId : `other-account-${workspaceId}`, "cancelled", -1_000, contactId, channel);
     await database.db.insert(campaignProspects).values({
       workspaceId,
       campaignId: first.campaignId,
@@ -136,7 +136,8 @@ databaseDescribe("outbound send safety", () => {
         ${database.client.json({
           event: "message_received",
           account_id: first.accountId,
-          account_type: "LINKEDIN",
+          account_type: channel === "email" ? "GMAIL" : "LINKEDIN",
+          from_attendee: { identifier: "marie@example.com" },
           chat_id: `chat-${eventId}`,
           id: `message-${eventId}`,
           text: "Recontactez-moi le mois prochain.",
@@ -152,7 +153,7 @@ databaseDescribe("outbound send safety", () => {
         provider_thread_id, channel, status, unread_count, last_message_at, created_at, updated_at
       ) values (
         ${crypto.randomUUID()}, ${workspaceId}, ${contactId}, ${first.campaignId}, 'unipile',
-        ${first.accountId}, ${`chat-${eventId}`}, 'linkedin', 'open', 0, ${now}, ${now}, ${now}
+        ${first.accountId}, ${`chat-${eventId}`}, ${channel}, 'open', 0, ${now}, ${now}, ${now}
       )
     `;
 
@@ -181,7 +182,12 @@ databaseDescribe("outbound send safety", () => {
       maxAttempts: 1,
       availableAt: now,
     }, "reply-worker");
-    await new InboundReplyJobProcessor(database.db, queue, agent, clock, null).process(inboundJob);
+    const processor = new InboundReplyJobProcessor(database.db, queue, agent, clock, null);
+    await processor.process(inboundJob);
+    const replay = await prepareLeasedJob({ id: crypto.randomUUID(), workspaceId, type: "inbound.reply.process", payload: { workspaceId, integrationEventId: eventId }, idempotencyKey: `process:${eventId}:replay`, correlationId: eventId, maxAttempts: 1, availableAt: now }, "reply-replay-worker");
+    await processor.process(replay);
+    const [classificationCount] = await database.client`select count(*)::int as count from reply_classifications r join messages m on m.id = r.message_id and m.workspace_id = r.workspace_id where m.workspace_id = ${workspaceId} and m.provider_message_id = ${`message-${eventId}`}`;
+    expect(classificationCount!.count).toBe(1);
 
     const [replyAction, otherAction] = await Promise.all([
       action(first.actionId),
@@ -1046,6 +1052,7 @@ databaseDescribe("outbound send safety", () => {
     status: "cancelled" | "scheduled" | "executing" = "cancelled",
     dueOffsetMs = 0,
     fixtureContactId = contactId,
+    channel: "linkedin" | "email" = "linkedin",
   ) {
     const sequenceId = crypto.randomUUID();
     const sequenceVersionId = crypto.randomUUID();
@@ -1072,7 +1079,7 @@ databaseDescribe("outbound send safety", () => {
       name: `Campaign ${label}`,
       status: "active",
       icpVersionId,
-      channel: "linkedin",
+      channel,
       sequenceId,
       sequenceVersionId,
       autopilotPolicy: { enabled: true, executionMode: "live" },
@@ -1095,9 +1102,9 @@ databaseDescribe("outbound send safety", () => {
       contactId: fixtureContactId,
       sequenceVersionId,
       providerAccountId: accountId,
-      channel: "linkedin",
+      channel,
       stepPosition: 1,
-      stepKind: "linkedin_message",
+      stepKind: channel === "email" ? "email" : "linkedin_message",
       status,
       idempotencyKey: `${label}:send`,
       dueAt: new Date(now.getTime() + dueOffsetMs),

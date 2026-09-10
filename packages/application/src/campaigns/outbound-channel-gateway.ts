@@ -14,6 +14,9 @@ export interface OutboundSendRequest {
   readonly body: string;
   readonly idempotencyKey: string;
   readonly conversationId?: string | null;
+  /** Unipile's local email object id; the gateway resolves its upstream provider_id. */
+  readonly replyToUnipileMessageId?: string | null;
+  /** Upstream email Message-ID, already resolved by the caller. */
   readonly replyToProviderMessageId?: string | null;
 }
 

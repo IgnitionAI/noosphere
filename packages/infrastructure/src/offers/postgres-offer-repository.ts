@@ -7,7 +7,7 @@ export class PostgresOfferRepository {
   constructor(private readonly db: Database) {}
 
   async listOffers(workspaceId: string) {
-    return this.db.select().from(offers).where(eq(offers.workspaceId, workspaceId)).orderBy(desc(offers.updatedAt));
+    return this.db.select().from(offers).where(eq(offers.workspaceId, workspaceId)).orderBy(desc(offers.updatedAt), asc(offers.id));
   }
 
   async createOffer(input: {
@@ -30,12 +30,12 @@ export class PostgresOfferRepository {
   }
 
   async updateOffer(input: {
-    workspaceId: string; offerId: string; fields: Partial<Pick<typeof offers.$inferInsert,
+    workspaceId: string; offerId: string; expectedRevision?: number; fields: Partial<Pick<typeof offers.$inferInsert,
       "name" | "category" | "valueProposition" | "targetAudience" | "pricing" | "commercialRules" | "constraints" | "claims" | "objections">>;
   }) {
-    const rows = await this.db.update(offers).set({ ...input.fields, updatedAt: new Date() })
-      .where(and(eq(offers.workspaceId, input.workspaceId), eq(offers.id, input.offerId))).returning();
-    if (!rows[0]) throw new Error("OFFER_NOT_FOUND");
+    const rows = await this.db.update(offers).set({ ...input.fields, revision: sql`${offers.revision} + 1`, updatedAt: new Date() })
+      .where(and(eq(offers.workspaceId, input.workspaceId), eq(offers.id, input.offerId), ...(input.expectedRevision === undefined ? [] : [eq(offers.revision, input.expectedRevision)]))).returning();
+    if (!rows[0]) throw new Error(input.expectedRevision === undefined ? "OFFER_NOT_FOUND" : "OFFER_REVISION_CONFLICT");
     return rows[0];
   }
 
@@ -52,13 +52,14 @@ export class PostgresOfferRepository {
     }));
   }
 
-  async publishOffer(input: { id: string; workspaceId: string; offerId: string; userId: string; publishedAt: Date }) {
+  async publishOffer(input: { id: string; workspaceId: string; offerId: string; userId: string; publishedAt: Date; expectedRevision?: number }) {
     return this.db.transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${input.offerId}, 0))`);
       const rows = await tx.select().from(offers)
-        .where(and(eq(offers.workspaceId, input.workspaceId), eq(offers.id, input.offerId))).limit(1);
+        .where(and(eq(offers.workspaceId, input.workspaceId), eq(offers.id, input.offerId))).limit(1).for("update");
       const offer = rows[0];
       if (!offer) throw new Error("OFFER_NOT_FOUND");
+      if (input.expectedRevision !== undefined && offer.revision !== input.expectedRevision) throw new Error("OFFER_REVISION_CONFLICT");
       if (offer.deletedAt) throw new Error("OFFER_DELETED");
       const draft = toDraft(offer);
       const missing = validateOfferForPublication(draft);

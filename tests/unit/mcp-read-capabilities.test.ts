@@ -24,9 +24,13 @@ function fakeCapabilities(): McpReadCapabilities {
     prospect: { get360: async (_context, input) => ({ id: input.contactId }) },
     pipeline: { list: async (context) => ({ data: [{ id: context.workspaceId }], nextCursor: null }) },
     opportunity: { get: async (_context, input) => ({ id: input.opportunityId }) },
-    conversation: { list: async (context) => ({ data: [{ id: context.workspaceId }], nextCursor: null }) },
-    campaign: { getStatus: async (_context, input) => ({ id: input.campaignId }) },
-    content: { getCalendar: async (context) => ({ data: [{ id: context.workspaceId }], nextCursor: null }) },
+    conversation: { list: async (context) => ({ data: [{ id: context.workspaceId }], nextCursor: null }), get: async (_context, input) => ({ id: input.conversationId }) },
+    campaign: { list: async (context) => ({ data: [{ id: context.workspaceId }], nextCursor: null }), getStatus: async (_context, input) => ({ id: input.campaignId }) },
+    offer: { list: async () => ({ data: [], nextCursor: null }), get: async (_context, input) => ({ id: input.offerId }) },
+    research: { list: async () => ({ data: [], nextCursor: null }), get: async (_context, input) => ({ id: input.runId }) },
+    calls: { list: async () => ({ data: [], nextCursor: null }) },
+    knowledge: { listSources: async () => ({ data: [], nextCursor: null }), listClaims: async () => ({ data: [], nextCursor: null }) },
+    content: { getCalendar: async (context) => ({ data: [{ id: context.workspaceId }], nextCursor: null }), getAutopilot: async () => ({ enabled: false }) },
     operations: {
       getHealth: async (context) => ({ workspaceId: context.workspaceId }),
       get: async (_context, input) => ({

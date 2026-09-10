@@ -48,9 +48,13 @@ databaseDescribe("MCP governed external effects schema", () => {
     const journal = JSON.parse(await readFile(resolve(import.meta.dir, "../../packages/infrastructure/migrations/meta/_journal.json"), "utf8")) as {
       entries: Array<{ idx: number; tag: string }>;
     };
-    expect(journal.entries.at(-1)).toMatchObject({
+    expect(journal.entries).toContainEqual(expect.objectContaining({
       idx: 106,
       tag: "0106_mcp_reconciliation_matched_invariant",
+    }));
+    expect(journal.entries.find((entry) => entry.tag === "0107_mcp_dynamic_client_registration")).toMatchObject({
+      idx: 107,
+      tag: "0107_mcp_dynamic_client_registration",
     });
 
     const columns = await database.client`

@@ -67,7 +67,10 @@ async function runLocalMcpCommandInternal(
   argv: readonly string[],
   options: LocalMcpRunOptions = {},
 ): Promise<LocalMcpCommandResult> {
-  const env: Record<string, string> = {};
+  // Bun automatically loads .env from the child cwd even when spawn receives
+  // an explicit environment. Disable that implicit second configuration
+  // source so the allowlist below remains the complete child environment.
+  const env: Record<string, string> = { BUN_OPTIONS: "--no-env-file" };
   for (const key of SAFE_CHILD_ENV_KEYS) {
     const value = process.env[key];
     if (value !== undefined) env[key] = value;
@@ -505,7 +508,9 @@ export async function startLocalMcp(options: LocalMcpStartOptions): Promise<Loca
   for (const port of [options.httpPort, options.httpsPort]) {
     if (!(await probePort(port))) fail("MCP_LOCAL_PORT_OCCUPIED");
   }
-  await runChecked(run, [...base, "build", "api", "web", "worker"], "MCP_LOCAL_BUILD_FAILED", composeEnv, options.commandTimeoutMs ?? COLD_BUILD_TIMEOUT_MS);
+  // BuildKit progress can exceed the bounded diagnostic channel on a cold
+  // machine. Keep the security bound and request Docker's digest-only output.
+  await runChecked(run, [...base, "build", "--quiet", "api", "web", "worker"], "MCP_LOCAL_BUILD_FAILED", composeEnv, options.commandTimeoutMs ?? COLD_BUILD_TIMEOUT_MS);
   await runChecked(run, [...base, "up", "-d", "--wait", "database", "minio", "searxng", "crawler", "migrate", "api", "web", "proxy", "worker"], "MCP_LOCAL_COMPOSE_START_FAILED", composeEnv, options.commandTimeoutMs ?? COMPOSE_START_TIMEOUT_MS);
   const healthUrl = `https://${LOCAL_RESOURCE_HOST}:${options.httpsPort}/health/ready`;
   await runChecked(run, ["curl", "--fail", "--silent", "--show-error", "--max-time", "10", "--cacert", caCertificatePath, healthUrl], "MCP_LOCAL_HEALTH_FAILED", undefined, options.commandTimeoutMs);
@@ -543,7 +548,13 @@ function parseServiceStatus(stdout: string): readonly LocalMcpServiceStatus[] {
   try {
     parsed = JSON.parse(stdout);
   } catch {
-    return ["proxy", "worker"].map((name) => ({ name, state: stdout.includes(name) ? "running" : "missing", health: "unknown" }));
+    try {
+      const rows = stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => JSON.parse(line));
+      if (rows.length === 0) throw new Error("empty");
+      parsed = rows;
+    } catch {
+      return ["proxy", "worker"].map((name) => ({ name, state: stdout.includes(name) ? "running" : "missing", health: "unknown" }));
+    }
   }
   const rows = Array.isArray(parsed) ? parsed : [parsed];
   return rows.slice(0, 32).flatMap((row): LocalMcpServiceStatus[] => {

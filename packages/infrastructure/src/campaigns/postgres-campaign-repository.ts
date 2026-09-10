@@ -170,7 +170,7 @@ export class PostgresCampaignRepository {
     });
   }
 
-  async listCampaigns(workspaceId: string) {
+  async listCampaigns(workspaceId: string, page: { limit: number; offset: number } = { limit: 100, offset: 0 }) {
     return this.db
       .select({
         id: campaigns.id,
@@ -232,8 +232,8 @@ export class PostgresCampaignRepository {
         ),
       )
       .where(eq(campaigns.workspaceId, workspaceId))
-      .orderBy(desc(campaigns.updatedAt))
-      .limit(100);
+      .orderBy(desc(campaigns.updatedAt), asc(campaigns.id))
+      .limit(page.limit).offset(page.offset);
   }
 
   async getCampaign(input: { workspaceId: string; campaignId: string }) {

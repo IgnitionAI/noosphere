@@ -127,6 +127,53 @@ describe("MCP governed effect tools", () => {
     }
   });
 
+  test("auto-executes an explicit owner action while preserving the final policy decision", async () => {
+    let decisions = 0;
+    const instance = runtime(governed({
+      decide: async (_context, input) => {
+        decisions += 1;
+        expect(input).toMatchObject({
+          approvalItemId: "approval-1",
+          decision: "approve",
+          justification: expect.stringContaining("policy finale"),
+        });
+        return { ...status, status: "queued", approvalDecision: "approve" };
+      },
+    }), () => context("owner"));
+    const { client, close } = await connected(instance, "governed-owner-auto-execute");
+    try {
+      const result = await client.callTool({
+        name: "conversation_prepare_reply",
+        arguments: {
+          requestKey: crypto.randomUUID(),
+          conversationId: crypto.randomUUID(),
+          body: "Une réponse explicite depuis ChatGPT",
+          executeWhenAllowed: true,
+        },
+      });
+      expect(result.isError).not.toBe(true);
+      expect(decisions).toBe(1);
+      expect(result.structuredContent).toMatchObject({ status: "queued", approvalDecision: "approve" });
+    } finally {
+      await close();
+    }
+  });
+
+  test("keeps operator and owner preparation as durable proposals by default", async () => {
+    let decisions = 0;
+    const capability = governed({ decide: async () => { decisions += 1; return { ...status, status: "queued" }; } });
+    const operatorResult = await callWithContext(capability, "conversation_prepare_reply", {
+      requestKey: crypto.randomUUID(), conversationId: crypto.randomUUID(), body: "Operator draft",
+    }, "operator", ["mcp:read", "mcp:write"]);
+    expect(operatorResult.structuredContent).toMatchObject({ status: "approval_required" });
+
+    const ownerResult = await callWithContext(capability, "conversation_prepare_reply", {
+      requestKey: crypto.randomUUID(), conversationId: crypto.randomUUID(), body: "Owner draft",
+    }, "owner", allScopes);
+    expect(ownerResult.structuredContent).toMatchObject({ status: "approval_required" });
+    expect(decisions).toBe(0);
+  });
+
   test("allows reviewer list/get reads with bounded redacted projections", async () => {
     let listInput: unknown;
     let statusInput: unknown;
