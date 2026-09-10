@@ -552,7 +552,7 @@ const instanceAiRepository = createInstanceAiRepository(database.db, environment
 const workspaceAiPolicies = new InstanceWorkspaceAiPolicyReader(workspaceAiSettingsRepository, instanceAiRepository);
 const aiAvailable = createInstanceWorkspaceAiAvailability(environment, workspaceAiPolicies, instanceAiRepository);
 const instanceAiConnections = createInstanceAiConnectionsHttpHandler({
-  application: new InstanceAiConnectionsApplication(new PostgresInstanceSetupRepository(database.db), instanceAiRepository, new InstanceModelConnectionTester(instanceAiRepository, undefined, { environment }), new InstanceCodexAuthenticationReader(environment)),
+  application: new InstanceAiConnectionsApplication(new PostgresInstanceSetupRepository(database.db, environment.BOOTSTRAP_OWNER_EMAIL), instanceAiRepository, new InstanceModelConnectionTester(instanceAiRepository, undefined, { environment }), new InstanceCodexAuthenticationReader(environment)),
   sessions: auth.sessions,
 });
 const application = new ProductResearchApplication(
@@ -567,7 +567,7 @@ const productResearch = createProductResearchHttpHandler({
   contextResolver: auth.contextResolver,
 });
 const instanceSetup = createInstanceSetupHttpHandler({
-  application: new InstanceSetupApplication(new PostgresInstanceSetupRepository(database.db), async () => !!await instanceAiRepository.getDefault()),
+  application: new InstanceSetupApplication(new PostgresInstanceSetupRepository(database.db, environment.BOOTSTRAP_OWNER_EMAIL), async () => !!await instanceAiRepository.getDefault()),
   sessions: auth.sessions,
 });
 const workspace = createWorkspaceHttpHandler({

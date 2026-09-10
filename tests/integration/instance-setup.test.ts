@@ -20,16 +20,20 @@ const url = process.env.TEST_DATABASE_URL;
     const first = await bootstrapInstanceAdministrator(database.db, input);
     const again = await bootstrapInstanceAdministrator(database.db, input);
     expect(again.userId).toBe(first.userId);
-    const app = new InstanceSetupApplication(new PostgresInstanceSetupRepository(database.db));
+    const app = new InstanceSetupApplication(new PostgresInstanceSetupRepository(database.db, input.email));
     expect((await app.get(first.userId)).isAdministrator).toBe(true);
     const otherId = crypto.randomUUID();
     await database.db.insert(authUsers).values({ id: otherId, name: "Workspace owner", email: `${otherId}@example.com` });
     await new PostgresWorkspaceRepository(database.db).createWorkspace({ userId: otherId, name: `Own workspace ${otherId}` });
     expect((await app.get(otherId)).isAdministrator).toBe(false);
+    const former = await bootstrapInstanceAdministrator(database.db, { ...input, email: `former-${crypto.randomUUID()}@example.com` });
+    expect((await app.get(former.userId)).isAdministrator).toBe(false);
+    expect(await new PostgresInstanceSetupRepository(database.db).isAdministrator(first.userId)).toBe(false);
+    expect(await new PostgresInstanceSetupRepository(database.db, `  ${input.email.toUpperCase()}  `).isAdministrator(first.userId)).toBe(true);
     await app.skip(first.userId);
     const reopened = createDatabase(url);
     try {
-      const resumed = new InstanceSetupApplication(new PostgresInstanceSetupRepository(reopened.db));
+      const resumed = new InstanceSetupApplication(new PostgresInstanceSetupRepository(reopened.db, input.email));
       expect(await resumed.get(first.userId)).toEqual({ isAdministrator: true, skipped: true });
     } finally { await reopened.close(); }
   });

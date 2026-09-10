@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getResearchRun, OutboundApiError } from "@/lib/api";
+import { getInstanceSetup, getResearchRun, OutboundApiError } from "@/lib/api";
 import { pauseResearch, resumeResearch, startResearch } from "./actions";
 import { ProgressRefresh } from "./progress-refresh";
 import { canResumeIncompleteResearch, isResearchReportReady } from "./research-progress-state";
@@ -57,6 +57,7 @@ export default async function ResearchProgressPage({
 }) {
   const { workspaceSlug, runId } = await params;
   const query = await searchParams;
+  const instanceSetup = query.error === "AI_SETUP_REQUIRED" ? await getInstanceSetup() : null;
   let run;
   try {
     run = await getResearchRun(workspaceSlug, runId);
@@ -90,7 +91,7 @@ export default async function ResearchProgressPage({
       <ProgressRefresh active={isActive} />
       {query.error === "AI_SETUP_REQUIRED" ? <div role="alert" className="mb-5 rounded-xl border border-line p-4">
         <p>Configurez une connexion IA avant de lancer cette étude. Votre brouillon est conservé.</p>
-        <Link className="button mt-3" href="/settings/instance/ai">Configurer l’IA de l’instance</Link>
+        {instanceSetup?.isAdministrator ? <Link className="button mt-3" href="/settings/instance/ai">Configurer l’IA de l’instance</Link> : <p className="mt-2 text-sm">Demandez au super administrateur de configurer l’IA de l’instance.</p>}
       </div> : null}
       <header className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>

@@ -1,33 +1,39 @@
 import { expect, test } from "@playwright/test";
-import { createDatabase } from "@outbound/infrastructure/database/client";
 import { execFileSync } from "node:child_process";
 
-test("first administrator reaches setup before creating a workspace", async ({ page }) => {
-  const database = createDatabase(process.env.TEST_DATABASE_URL!);
-  const email = `setup-${crypto.randomUUID()}@example.com`;
+test("a different bootstrap account cannot see instance AI or access its pages and APIs", async ({ page }) => {
+  const email = `other-${crypto.randomUUID()}@example.com`;
   const password = "instance-e2e-password-12345";
-  try {
-    execFileSync("bun", ["scripts/bootstrap-owner.ts"], { env: {
-      ...process.env, DATABASE_URL: process.env.TEST_DATABASE_URL!,
-      BOOTSTRAP_OWNER_EMAIL: email, BOOTSTRAP_OWNER_PASSWORD: password,
-      BOOTSTRAP_OWNER_NAME: "Initial administrator", BOOTSTRAP_CREATE_WORKSPACE: "false",
-    }, stdio: "pipe" });
-    await database.client`delete from instance_setup`;
-    await database.client`delete from instance_ai_defaults`;
-  } finally { await database.close(); }
+  const slug = `other-${crypto.randomUUID()}`;
+  execFileSync("bun", ["scripts/bootstrap-owner.ts"], { env: {
+    ...process.env, DATABASE_URL: process.env.TEST_DATABASE_URL!,
+    BOOTSTRAP_OWNER_EMAIL: email, BOOTSTRAP_OWNER_PASSWORD: password,
+    BOOTSTRAP_OWNER_NAME: "Other workspace owner", BOOTSTRAP_CREATE_WORKSPACE: "true",
+    BOOTSTRAP_WORKSPACE_SLUG: slug, BOOTSTRAP_WORKSPACE_NAME: "Other workspace",
+  }, stdio: "pipe" });
   await page.goto("/login");
   await page.getByLabel("Email professionnel").fill(email);
   await page.getByLabel("Mot de passe").fill(password);
   await page.getByRole("button", { name: "Accéder au workspace" }).click();
-  await expect(page).toHaveURL(/\/setup$/);
-  await page.getByRole("button", { name: "Configurer plus tard" }).click();
-  await expect(page.getByRole("heading", { name: "Créez votre workspace" })).toBeVisible();
-  const workspaceName = `Explore ${crypto.randomUUID()}`;
-  await page.getByLabel("Nom du workspace").fill(workspaceName);
-  await page.getByRole("button", { name: "Créer le workspace" }).click();
-  await expect(page.getByRole("heading", { name: `Rendez ${workspaceName} opérationnel` })).toBeVisible();
-  await page.getByRole("link", { name: "Ouvrir l’app" }).click();
-  await expect(page).toHaveURL(/\/w\/[^/]+\/strategy\/product-reading/);
+  await page.waitForURL(/\/w\//);
+  await page.goto(`/w/${slug}/settings`);
+  await expect(page.getByRole("link", { name: "IA de l’instance", exact: true })).toHaveCount(0);
+  for (const path of ["/setup", "/settings/instance/ai"]) {
+    await page.goto(path);
+    await expect(page.getByRole("heading", { name: "L’IA de votre instance" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Enregistrer la connexion" })).toHaveCount(0);
+  }
+  const api = process.env.OUTBOUND_API_URL;
+  expect((await page.request.get(`${api}/api/v1/instance/ai`)).status()).toBe(403);
+  const connectionId = crypto.randomUUID();
+  expect((await page.request.get(`${api}/api/v1/instance/ai/chatgpt?connectionId=${connectionId}`)).status()).toBe(403);
+  for (const [path, data] of [
+    ["/api/v1/instance/setup/skip", {}],
+    ["/api/v1/instance/ai/chatgpt", { connectionId }],
+    ["/api/v1/instance/ai/test", { connectionId, model: "gpt-5.6-luna" }],
+    ["/api/v1/instance/ai/default", { connectionId, model: "gpt-5.6-luna" }],
+    ["/api/v1/instance/ai/connections", { provider: "codex-cli", name: "Forbidden", models: [{ model: "gpt-5.6-luna", reasoningEffort: "low" }] }],
+  ] as const) expect((await page.request.post(`${api}${path}`, { data })).status(), path).toBe(403);
 });
 
 

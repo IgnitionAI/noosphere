@@ -1,6 +1,6 @@
 import { ChatGptConnect } from "./chatgpt-connect";
 import Link from "next/link";
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { getSession, getInstanceSetup, getInstanceAiConnections } from "@/lib/api";
 import { ConnectionForm } from "./connection-form";
 import { skipSetupAction, testConnectionAction, selectDefaultAction } from "./actions";
@@ -9,7 +9,8 @@ export const dynamic = "force-dynamic";
 export default async function InstanceSetupPage({ searchParams }: { searchParams: Promise<{ error?: string; notice?: string }> }) {
   if (!await getSession()) redirect("/login");
   const [state, query] = await Promise.all([getInstanceSetup(), searchParams]);
-  const ai = state.isAdministrator ? await getInstanceAiConnections() : null;
+  if (!state.isAdministrator) notFound();
+  const ai = await getInstanceAiConnections();
   const fallbackUnavailable = !!ai?.fallbackModel && !ai.connections.some((connection) => connection.id === ai.fallbackModel!.connectionId && !connection.authenticationInProgress && connection.models.some((model) => model.model === ai.fallbackModel!.model && model.status === "ready"));
   return <main className="min-h-screen bg-canvas px-5 py-12">
     <section className="panel mx-auto max-w-2xl p-6 sm:p-10">
