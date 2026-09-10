@@ -74,3 +74,11 @@ Root cause: the Unipile adapter and HTTP layer imported two distinct `ProviderUn
 Evidence: actual adapter/HTTP regression went red (500 instead of 503), then passed with the complete connected-account suite (4 tests / 56 assertions). Unipile adapter unit tests: 16 passed. Browser regression reproduced the page error; final desktop/mobile checks both passed, including preservation of the selected channel. TypeScript and architecture checks passed.
 
 The user’s existing root `.env` already contained valid Unipile credentials. These were missing from the isolated runtime. A read-only provider check returned 200; the existing credentials were then applied only to the private local runtime configuration. The real LinkedIn hosted-onboarding request returned 201 with `awaiting_callback` and an official `account.unipile.com` URL. No recipient was contacted. Account authentication remains the user’s next step; hosted-link creation is not proof of a completed account connection or message delivery.
+
+## Empty campaign plan status incident
+
+The plan `30d24c0e-9205-4a5b-8e2c-779dc33fc4d9` initially contained no channel campaign. Its LinkedIn assessment had failed before Unipile configuration; the two other assessments completed without eligible identities. The page nevertheless displayed “Prête” and claimed prospect research had finished. Those labels were based on assessment completion rather than actual campaign creation.
+
+The page now distinguishes assessment pending, assessment failed, and no activated channel, and exposes the channel failure/rationale. Three focused state tests pass; TypeScript and architecture checks validate this local UI change. This is not a new claim of full platform acceptance.
+
+During verification, the live plan had meanwhile progressed: its LinkedIn assessment completed at 16:34:36 UTC and a channel campaign existed. The authenticated browser and API showed 40 discovered profiles, 19 retained at observation time, composing in progress, and zero contacted. The read-only diagnostic executed the current query compiler against the workspace's connected LinkedIn account and received results. It did not retry the assessment, create a campaign or send messages. Discovered profiles and in-progress personalization do not prove ICP relevance or delivery success.
