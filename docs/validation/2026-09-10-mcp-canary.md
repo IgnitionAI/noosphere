@@ -2,6 +2,30 @@
 
 Status: local development evidence; no VPS deployment or external delivery acceptance.
 
+## Current catalog and acceptance boundary — implementation 2921477
+
+This section supersedes catalog counts and implementation limitations in the historical entries below. A fresh local OAuth consent/PKCE exchange and SDK discovery returned **62 tools**; token revocation returned 200 and subsequent access returned 401. Evidence: `/tmp/noosphere-current-catalog-proof.log`. This inventory matches every tool returned by the live server exactly once. Listing a tool proves exposure, not successful completion of every business action.
+
+| Classification | Tools | Boundary |
+| --- | --- | --- |
+| Read only | `workspace_get_summary`, `crm_search`, `company_get_brief`, `prospect_get_360`, `pipeline_list`, `opportunity_get`, `conversation_list`, `conversation_get`, `campaign_list`, `campaign_get_status`, `offer_list`, `offer_get`, `research_list`, `research_get`, `call_list`, `knowledge_source_list`, `knowledge_claim_list`, `content_get_calendar`, `content_autopilot_get`, `operations_get_health`, `operation_get`, `approval_list`, `approval_get`, `workspace_get_readiness`, `brand_get`, `content_strategy_get`, `acquisition_plan_list`, `acquisition_plan_get` | Read scopes, active membership, workspace filtering and role redaction. |
+| Diagnostic read only | `noosphere_ping`, `tracer` | Protocol diagnostics, no business mutation. |
+| Internal record or draft creation/update | `company_upsert`, `contact_upsert`, `opportunity_update`, `opportunity_change_stage`, `prospect_add_note`, `content_idea_create`, `content_draft_create`, `prospect_schedule_dry_run`, `offer_create`, `offer_update`, `campaign_create`, `knowledge_source_create`, `knowledge_claim_create`, `brand_update`, `content_strategy_update`, `campaign_update` | Operator/admin/owner plus `mcp:write`; request-key replay ledger. No delivery confirmation is implied. |
+| Internal approval or authoritative version | `offer_publish`, `knowledge_source_validate`, `knowledge_claim_validate`, `content_strategy_publish` | Same write-role gate; changes the evidence/configuration agents can use. Publishing an offer creates an immutable internal version, not a social post. |
+| Authorized autonomous job | `research_launch`, `content_strategy_prepare`, `campaign_prepare`, `acquisition_plan_retry_assessment` | Durable AI/provider jobs; queued is not completed. MCP preparation and assessment retries retain manual campaign activation intent; no send is implied. |
+| Automation administration | `conversation_set_automation`, `content_autopilot_configure` | Write-role gate, not instance administration. These settings can enable future jobs under workspace policy and must not be presented as harmless drafts. |
+| Governed action preparation | `conversation_prepare_reply`, `content_prepare_publication`, `meeting_prepare_proposal`, `campaign_prepare_activation` | Proposal by default. Explicit execution or approval still requires final authorization and business policy. The native campaign activation adapter is implemented; controlled tests are not real activation proof. |
+| Governed action approval | `approval_decide` | Approval role/scope and durable policy checks; acceptance/queueing does not prove delivery. |
+| Campaign suspension | `campaign_pause` | Admin/owner, expected revision, durable replay; no activation or sending. |
+
+Instance AI administration is not exposed as a workspace MCP capability. Tool annotations do not replace server authorization.
+
+Local Luna proof covers brand/offer writes, completed research, and a persisted Inbound draft. Full Outbound preparation is pending an explicitly selected LinkedIn account in the test workspace. Activation, pause races, and assessment retry persistence have controlled PostgreSQL/SDK coverage; no real campaign activation or provider send is claimed. See [current agent validation](../plans/mcp-agent-platform/validation.md) for commit-specific tests, hosted CI failures, and remaining canary gates.
+
+## Historical validation record
+
+The sections below describe earlier commits and retain their original evidence boundaries.
+
 ## Scope and provenance
 
 The pending MCP changes were copied from the dirty main checkout into a separate
