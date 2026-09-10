@@ -63,7 +63,7 @@ export class CodexCliModelGateway implements ModelGateway {
     const schemaPath = join(directory, "output-schema.json");
     const outputPath = join(directory, "last-message.json");
     try {
-      await writeFile(schemaPath, JSON.stringify(request.outputSchema), { encoding: "utf8", mode: 0o600 });
+      await writeFile(schemaPath, JSON.stringify(codexOutputSchema(request.outputSchema)), { encoding: "utf8", mode: 0o600 });
       const result = await this.#runner.run({
         command: buildCodexCommand({
           binaryPath: this.#binaryPath,
@@ -398,4 +398,12 @@ function requiredAbsolutePath(value: string, name: string): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+// Codex rejects JSON Schema's URI format. Preserve the application schema and
+// validate the returned URLs with request.parse after generation.
+function codexOutputSchema(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(codexOutputSchema);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).filter(([key, entry]) => !(key === "format" && entry === "uri")).map(([key, entry]) => [key, codexOutputSchema(entry)]));
 }
