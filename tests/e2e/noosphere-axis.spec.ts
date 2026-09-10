@@ -170,7 +170,7 @@ test("Outbound surfaces preserve prospect and conversation filters in the URL", 
 
   await navigation.getByRole("link", { name: "Messages", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Messages", exact: true, level: 1 })).toBeVisible();
-  await page.getByLabel("Canal", { exact: true }).selectOption("linkedin");
+  await page.getByRole("combobox", { name: "Canal", exact: true }).selectOption("linkedin");
   await page.getByLabel("Origine", { exact: true }).selectOption("outside_campaign");
   await page.getByLabel("Période", { exact: true }).selectOption("7d");
   await page.getByRole("button", { name: "Filtrer" }).click();
@@ -186,4 +186,16 @@ test("Outbound surfaces preserve prospect and conversation filters in the URL", 
   await page.goto(`/w/${workspaceSlug}/settings`);
   await expect(page.getByRole("heading", { name: "Configuration", exact: true, level: 1 })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Lancement guidé", exact: true })).toBeVisible();
+});
+
+
+test("starting account connection without Unipile keeps integrations usable", async ({ page }) => {
+  await page.goto(`/w/${workspaceSlug}/integrations`);
+  await page.getByRole("combobox", { name: "Canal", exact: true }).selectOption("linkedin");
+  await page.getByRole("button", { name: "Démarrer l’assistant", exact: true }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "Vérifiez la configuration Unipile de l’instance" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Comptes connectés", exact: true })).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "Canal", exact: true })).toHaveValue("linkedin");
+  await expect(page.getByRole("button", { name: "Démarrer l’assistant", exact: true })).toBeEnabled();
+  await expect(page.getByRole("heading", { name: "Impossible de charger les intégrations" })).toHaveCount(0);
 });

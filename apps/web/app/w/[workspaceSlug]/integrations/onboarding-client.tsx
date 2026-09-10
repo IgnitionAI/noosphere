@@ -2,8 +2,9 @@
 
 import { ExternalLink, LoaderCircle, RotateCcw } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useActionState, useEffect } from "react";
 import type { ConnectionOnboarding } from "@/lib/api";
+import type { OnboardingStartState } from "./actions";
 
 const CHANNELS = ["email", "linkedin", "whatsapp"] as const;
 const STATUS: Record<string, { label: string; className: string }> = {
@@ -15,8 +16,13 @@ const STATUS: Record<string, { label: string; className: string }> = {
   expired: { label: "expiré", className: "badge badge-danger" },
 };
 
-export function OnboardingStartForm({ action, defaultChannel = "email" }: { action: (formData: FormData) => Promise<void>; defaultChannel?: (typeof CHANNELS)[number] }) {
-  return <form action={action} className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end"><label className="text-xs font-semibold text-muted">Canal<select className="control mt-1 w-full" defaultValue={defaultChannel} name="channel">{CHANNELS.map((channel) => <option key={channel} value={channel}>{channelLabel(channel)}</option>)}</select></label><button className="button button-signal" type="submit"><ExternalLink size={14} /> Démarrer l’assistant</button></form>;
+export function OnboardingStartForm({ action, defaultChannel = "email" }: { action: (state: OnboardingStartState, formData: FormData) => Promise<OnboardingStartState>; defaultChannel?: (typeof CHANNELS)[number] }) {
+  const [state, submit, pending] = useActionState(action, { error: null });
+  return <form action={submit} onReset={(event) => event.preventDefault()} className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+    <label className="text-xs font-semibold text-muted">Canal<select className="control mt-1 w-full" defaultValue={defaultChannel} name="channel" disabled={pending}>{CHANNELS.map((channel) => <option key={channel} value={channel}>{channelLabel(channel)}</option>)}</select></label>
+    <button className="button button-signal" type="submit" disabled={pending}>{pending ? <LoaderCircle className="animate-spin" size={14} /> : <ExternalLink size={14} />}{pending ? "Connexion en cours…" : "Démarrer l’assistant"}</button>
+    {state.error ? <p role="alert" className="rounded-lg border border-danger/30 p-3 text-sm text-danger sm:col-span-2">{state.error}</p> : null}
+  </form>;
 }
 
 export function OnboardingProgress({ onboarding, workspaceSlug }: { onboarding: ConnectionOnboarding; workspaceSlug: string }) {

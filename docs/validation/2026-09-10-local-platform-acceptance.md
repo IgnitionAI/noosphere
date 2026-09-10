@@ -64,3 +64,13 @@ The original `test-local` run `77f149ee-cedb-4081-9e8f-719221d4640a` completed a
 After the original study completed, the whole local application and its four workers restarted using the persistent private configuration. The original study still returned completed/9 stages, and its report rendered with HTTP 200. The launcher helper detected the already-running instance in a separate check and did not create duplicate processes.
 
 Local reproduction commands: `bun run check`, `bun run test:integration` against a disposable `_test` database, `bun run test:e2e` against a disposable `_e2e` database with the controlled Codex executable. Private credentials, loopback port configuration and separate databases were supplied outside the repository. Final browser result: 48 passed, 0 skipped. Live social messaging/calendar channels are disabled; no real recipients were contacted.
+
+## Follow-up: integration onboarding failure
+
+The earlier readiness claim was too broad: it covered loading the integrations page and channel settings, but missed clicking hosted account onboarding without Unipile configured. A real user click returned 500 and replaced the entire integrations page with its error boundary.
+
+Root cause: the Unipile adapter and HTTP layer imported two distinct `ProviderUnavailableError` classes, so `instanceof` failed. The infrastructure path now re-exports the application error. The onboarding server action returns recoverable form state; the form keeps the selected channel on failure and disables submission while pending.
+
+Evidence: actual adapter/HTTP regression went red (500 instead of 503), then passed with the complete connected-account suite (4 tests / 56 assertions). Unipile adapter unit tests: 16 passed. Browser regression reproduced the page error; final desktop/mobile checks both passed, including preservation of the selected channel. TypeScript and architecture checks passed.
+
+The user’s existing root `.env` already contained valid Unipile credentials. These were missing from the isolated runtime. A read-only provider check returned 200; the existing credentials were then applied only to the private local runtime configuration. The real LinkedIn hosted-onboarding request returned 201 with `awaiting_callback` and an official `account.unipile.com` URL. No recipient was contacted. Account authentication remains the user’s next step; hosted-link creation is not proof of a completed account connection or message delivery.

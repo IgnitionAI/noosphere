@@ -35,16 +35,20 @@ export async function accountAction(workspaceSlug: string, accountId: string, ac
   revalidatePath(path(workspaceSlug));
 }
 
-export async function startOnboardingAction(workspaceSlug: string, formData: FormData) {
+export type OnboardingStartState = { error: string | null };
+
+export async function startOnboardingAction(workspaceSlug: string, _previousState: OnboardingStartState, formData: FormData): Promise<OnboardingStartState> {
   const channel = value(formData, "channel") as OnboardingChannel;
-  if (!["email", "linkedin", "whatsapp"].includes(channel)) throw new Error("Sélectionnez un canal valide.");
+  if (!["email", "linkedin", "whatsapp"].includes(channel)) return { error: "Sélectionnez un canal valide." };
   try {
     const onboarding = await startConnectedAccountOnboarding(workspaceSlug, channel);
     revalidatePath(path(workspaceSlug));
     redirect(`${path(workspaceSlug)}?onboardingId=${onboarding.id}`);
   } catch (error) {
     if (isRedirectError(error)) throw error;
-    throw new Error(formatError(error));
+    return { error: error instanceof OutboundApiError && error.code === "PROVIDER_UNAVAILABLE"
+      ? "La connexion des comptes est indisponible. Vérifiez la configuration Unipile de l’instance, puis réessayez."
+      : "La connexion n’a pas pu démarrer. Vos comptes sont conservés. Réessayez dans quelques instants." };
   }
 }
 

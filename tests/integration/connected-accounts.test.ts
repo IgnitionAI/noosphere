@@ -1,3 +1,4 @@
+import { UnavailableUnipileClient } from "@outbound/infrastructure/integrations/unipile-client";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createHmac } from "node:crypto";
 import { resolve } from "node:path";
@@ -59,6 +60,15 @@ databaseDescribe("F-035 connected accounts", () => {
       await sql`delete from workspaces where id in (${workspaceId}, ${otherWorkspaceId})`;
     });
     await database.close();
+  });
+
+  test("unconfigured Unipile returns a recoverable provider error without creating onboarding", async () => {
+    const unavailable = createConnectedAccountHttpHandler({ database: database.db, contextResolver: { async resolve() { return context; } }, client: new UnavailableUnipileClient(), webhookSecret: secret, publicAppBaseUrl: "http://localhost:3000" });
+    const response = await unavailable(new Request("http://localhost/api/v1/connected-accounts/onboarding", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ channel: "email" }) }));
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
+    const accounts = await unavailable(new Request("http://localhost/api/v1/connected-accounts"));
+    expect(accounts.status).toBe(200);
   });
 
   function send(method: string, path: string, body?: unknown) {

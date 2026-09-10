@@ -13,7 +13,7 @@ import {
   type ConnectionOnboarding,
 } from "@/lib/api";
 import { MutationForm } from "../research/[runId]/report/mutation-form";
-import { accountAction, startOnboardingAction } from "./actions";
+import { accountAction, startOnboardingAction, type OnboardingStartState } from "./actions";
 import { OnboardingProgress, OnboardingStartForm } from "./onboarding-client";
 
 export const metadata = { title: "Intégrations" };
@@ -80,7 +80,7 @@ export default async function IntegrationsPage({
   );
 }
 
-function OnboardingSection({ action, defaultChannel }: { action: (formData: FormData) => Promise<void>; defaultChannel?: "email" | "linkedin" | "whatsapp" }) {
+function OnboardingSection({ action, defaultChannel }: { action: (state: OnboardingStartState, formData: FormData) => Promise<OnboardingStartState>; defaultChannel?: "email" | "linkedin" | "whatsapp" }) {
   return <section className="panel mb-5" id="connect-account"><div className="panel-header"><div><h2 className="flex items-center gap-2 font-semibold"><Link2 size={15} className="text-brand-blue" /> Connecter un compte</h2><p className="mt-1 text-xs text-muted">Choisissez un canal. Un onboarding actif pour ce canal sera repris automatiquement.</p></div></div><div className="panel-body"><OnboardingStartForm action={action} {...(defaultChannel ? { defaultChannel } : {})} /></div></section>;
 }
 
