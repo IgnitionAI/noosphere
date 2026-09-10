@@ -65,7 +65,7 @@ function harness(readPrepare: (input: { readonly context: McpExecutionContext; r
     decideAndQueue: async (input: unknown) => { decisions.push(input); return { ...proposal(), status: "queued" as const, policyCode: "OK", operationId: null, jobId: null, reconciliationId: null, approvalDecision: "approve" as const, intent: null, redacted: true }; },
   } as never;
   const reader = { readPrepare } as never;
-  const capabilities = new PostgresMcpGovernedEffectCapabilities(repository, reader, policy);
+  const capabilities = new PostgresMcpGovernedEffectCapabilities(repository, reader, policy, () => new Date("2026-08-29T12:00:00.000Z"));
   return { capabilities, created, decisions };
 }
 
