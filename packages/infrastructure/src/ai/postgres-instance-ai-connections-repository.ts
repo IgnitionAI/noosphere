@@ -1,5 +1,5 @@
 import { and, eq, sql, isNull } from "drizzle-orm";
-import { InstanceAiError, type InstanceAiConnectionView, type InstanceAiConnectionsRepository, type InstanceAiModel, type InstanceAiModelSelection, type InstanceAiProvider, type InstanceAiTestLease, type SaveInstanceAiConnection } from "@outbound/application/ai/instance-ai-connections";
+import { InstanceAiError, type InstanceAiDefaultSelection, type InstanceAiConnectionView, type InstanceAiConnectionsRepository, type InstanceAiModel, type InstanceAiModelSelection, type InstanceAiProvider, type InstanceAiTestLease, type SaveInstanceAiConnection } from "@outbound/application/ai/instance-ai-connections";
 import type { AiReasoningEffort, ModelGatewayErrorCode, ModelRoute } from "@outbound/application/ai/model-gateway";
 import type { DatabaseExecutor } from "@outbound/infrastructure/database/client";
 import { instanceAiConnections as connections, instanceAiModels as models, instanceAiDefaults as defaults } from "@outbound/infrastructure/database/schema";
@@ -83,15 +83,44 @@ export class PostgresInstanceAiConnectionsRepository implements InstanceAiConnec
     const rows = await this.database.update(models).set({ status: input.errorCode ? "failed" : "ready", errorCode: input.errorCode, testedAt: new Date() }).where(and(eq(models.connectionId, input.connectionId), eq(models.model, input.model), eq(models.connectionVersion, input.version), eq(models.testId, input.testId), eq(models.status, "testing"))).returning({ model: models.model });
     return rows.length === 1;
   }
-  async setDefault(input: InstanceAiModelSelection): Promise<boolean> {
+  async setDefault(input: InstanceAiDefaultSelection): Promise<boolean> {
     return this.database.transaction(async (tx) => {
-      const [connection] = await tx.select().from(connections).where(eq(connections.id, input.connectionId)).for("update").limit(1);
-      if (!connection) return false;
-      const [model] = await tx.select().from(models).where(and(eq(models.connectionId, input.connectionId), eq(models.model, input.model), eq(models.connectionVersion, connection.version), eq(models.status, "ready"))).limit(1);
-      if (!model) return false;
-      await tx.insert(defaults).values({ id: true, ...input }).onConflictDoUpdate({ target: defaults.id, set: input });
+      // Serialize the read-modify-write even before the singleton row exists.
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended('instance-ai:default-selection', 0))`);
+      const [previous] = await tx.select().from(defaults).where(eq(defaults.id, true)).limit(1);
+      const fallback = input.fallback === undefined
+        ? previous?.fallbackConnectionId && previous.fallbackModel
+          ? { connectionId: previous.fallbackConnectionId, model: previous.fallbackModel }
+          : null
+        : input.fallback;
+      if (fallback?.connectionId === input.connectionId && fallback.model === input.model) return false;
+      // A retained fallback may currently be unavailable. Only a new explicit
+      // selection needs fresh readiness; omission preserves the operator's choice.
+      const selections = [input, ...(input.fallback ? [input.fallback] : [])];
+      // Stable connection lock order avoids deadlocks when two administrators
+      // select reversed principal/fallback pairs concurrently.
+      for (const id of [...new Set(selections.map((selection) => selection.connectionId))].sort()) {
+        const [connection] = await tx.select().from(connections).where(eq(connections.id, id)).for("update").limit(1);
+        if (!connection || connection.authenticationSessionId) return false;
+        for (const selection of selections.filter((candidate) => candidate.connectionId === id)) {
+          const [model] = await tx.select().from(models).where(and(eq(models.connectionId, id), eq(models.model, selection.model), eq(models.connectionVersion, connection.version), eq(models.status, "ready"))).limit(1);
+          if (!model) return false;
+        }
+      }
+      const values = { connectionId: input.connectionId, model: input.model, fallbackConnectionId: fallback?.connectionId ?? null, fallbackModel: fallback?.model ?? null };
+      await tx.insert(defaults).values({ id: true, ...values }).onConflictDoUpdate({ target: defaults.id, set: values });
       return true;
     });
+  }
+  async getFallback(): Promise<ModelRoute | null> {
+    const configured = await this.getConfiguredFallback();
+    return configured ? this.getReadyRoute(configured) : null;
+  }
+  async getConfiguredFallback(): Promise<(ModelRoute & { connectionId: string }) | null> {
+    const [row] = await this.database.select({ connectionId: connections.id, connectionVersion: connections.version, provider: connections.provider, model: defaults.fallbackModel, reasoningEffort: models.reasoningEffort }).from(defaults)
+      .innerJoin(connections, eq(connections.id, defaults.fallbackConnectionId))
+      .leftJoin(models, and(eq(models.connectionId, connections.id), eq(models.model, defaults.fallbackModel))).limit(1);
+    return row?.model ? { ...row, model: row.model, provider: row.provider as ModelRoute["provider"], reasoningEffort: (row.reasoningEffort ?? "low") as AiReasoningEffort } : null;
   }
   async getDefault(): Promise<(ModelRoute & { connectionId: string }) | null> {
     const [row] = await this.database.select({ connectionId: connections.id, connectionVersion: connections.version, provider: connections.provider, model: models.model, reasoningEffort: models.reasoningEffort }).from(defaults)

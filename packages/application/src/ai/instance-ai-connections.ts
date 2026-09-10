@@ -33,6 +33,7 @@ export interface SaveInstanceAiConnection {
   readonly models: readonly { readonly model: string; readonly reasoningEffort: AiReasoningEffort }[];
 }
 export interface InstanceAiModelSelection { readonly connectionId: string; readonly model: string }
+export interface InstanceAiDefaultSelection extends InstanceAiModelSelection { readonly fallback?: InstanceAiModelSelection | null | undefined }
 export interface InstanceAiTestLease extends InstanceAiModelSelection {
   readonly version: number;
   readonly testId: string;
@@ -43,7 +44,9 @@ export interface InstanceAiConnectionsRepository {
   save(input: SaveInstanceAiConnection): Promise<InstanceAiConnectionView>;
   beginTest(input: InstanceAiModelSelection): Promise<InstanceAiTestLease>;
   finishTest(input: InstanceAiTestLease & { errorCode: ModelGatewayErrorCode | null }): Promise<boolean>;
-  setDefault(input: InstanceAiModelSelection): Promise<boolean>;
+  setDefault(input: InstanceAiDefaultSelection): Promise<boolean>;
+  getFallback(): Promise<ModelRoute | null>;
+  getConfiguredFallback(): Promise<ModelRoute | null>;
   getDefault(): Promise<(ModelRoute & { connectionId: string }) | null>;
 }
 export interface InstanceAiConnectionTester { test(input: InstanceAiTestLease): Promise<void> }
@@ -63,8 +66,8 @@ export class InstanceAiConnectionsApplication {
   }
   async list(userId: string) {
     await this.requireAdministrator(userId);
-    const [connections, defaultModel] = await Promise.all([this.repository.list(), this.repository.getDefault()]);
-    return { connections: await Promise.all(connections.map(async (connection) => ({ ...connection, authentication: await this.authentication?.status(connection) ?? null }))), defaultModel };
+    const [connections, defaultModel, fallbackModel] = await Promise.all([this.repository.list(), this.repository.getDefault(), this.repository.getConfiguredFallback()]);
+    return { connections: await Promise.all(connections.map(async (connection) => ({ ...connection, authentication: await this.authentication?.status(connection) ?? null }))), defaultModel, fallbackModel };
   }
   async save(userId: string, input: SaveInstanceAiConnection) {
     await this.requireAdministrator(userId);
@@ -81,7 +84,7 @@ export class InstanceAiConnectionsApplication {
     if (!await this.repository.finishTest({ ...lease, errorCode })) throw new InstanceAiError("AI_CONNECTION_CHANGED");
     return { ...input, status: errorCode ? "failed" as const : "ready" as const, errorCode };
   }
-  async setDefault(userId: string, input: InstanceAiModelSelection) {
+  async setDefault(userId: string, input: InstanceAiDefaultSelection) {
     await this.requireAdministrator(userId);
     if (!await this.repository.setDefault(input)) throw new InstanceAiError("AI_CONNECTION_NOT_VALIDATED");
     return this.repository.getDefault();

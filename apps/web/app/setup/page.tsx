@@ -9,6 +9,7 @@ export default async function InstanceSetupPage({ searchParams }: { searchParams
   if (!await getSession()) redirect("/login");
   const [state, query] = await Promise.all([getInstanceSetup(), searchParams]);
   const ai = state.isAdministrator ? await getInstanceAiConnections() : null;
+  const fallbackUnavailable = !!ai?.fallbackModel && !ai.connections.some((connection) => connection.id === ai.fallbackModel!.connectionId && !connection.authenticationInProgress && connection.models.some((model) => model.model === ai.fallbackModel!.model && model.status === "ready"));
   return <main className="min-h-screen bg-canvas px-5 py-12">
     <section className="panel mx-auto max-w-2xl p-6 sm:p-10">
       <span className="badge badge-signal">Configuration de Noosphere</span>
@@ -40,6 +41,20 @@ export default async function InstanceSetupPage({ searchParams }: { searchParams
           </li>)}</ul>
           <details className="mt-5"><summary className="cursor-pointer text-sm font-medium">Modifier la connexion</summary><ConnectionForm connection={connection} /></details>
         </section>)}
+        {ai.defaultModel ? <section className="rounded-xl border border-line p-5">
+          <h2 className="font-semibold">Secours de l’instance</h2>
+          <p className="mt-2 text-sm text-muted">Les workspaces en héritage utiliseront ce modèle si le modèle principal est indisponible. Sans secours, les tâches se mettent en pause. Les tâches déjà lancées conservent leur sélection.</p>
+          {fallbackUnavailable ? <p role="alert" className="mt-2 text-sm text-danger">Le modèle de secours enregistré n’est plus disponible. Retestez-le ou choisissez un autre secours.</p> : null}
+          <form className="mt-4 space-y-3" action={selectDefaultAction.bind(null, ai.defaultModel.connectionId, ai.defaultModel.model)}>
+            <label htmlFor="instance-fallback" className="block text-sm">Modèle de secours</label>
+              <select id="instance-fallback" name="fallback" className="input mt-1 w-full" defaultValue={ai.fallbackModel ? JSON.stringify({ connectionId: ai.fallbackModel.connectionId, model: ai.fallbackModel.model }) : ""}>
+                <option value="">Aucun secours</option>
+                {fallbackUnavailable && ai.fallbackModel ? <option value={JSON.stringify({ connectionId: ai.fallbackModel.connectionId, model: ai.fallbackModel.model })}>{ai.fallbackModel.model} · Indisponible</option> : null}
+                {ai.connections.flatMap((connection) => connection.models.filter((model) => model.status === "ready" && !(connection.id === ai.defaultModel!.connectionId && model.model === ai.defaultModel!.model)).map((model) => <option key={`${connection.id}:${model.model}`} value={JSON.stringify({ connectionId: connection.id, model: model.model })}>{connection.name} · {model.model}</option>))}
+              </select>
+            <button className="button" type="submit">Enregistrer le secours</button>
+          </form>
+        </section> : null}
         <section className="rounded-xl border border-line p-5"><h2 className="font-semibold">Ajouter une connexion IA</h2><ConnectionForm /></section>
         <p className="text-xs text-muted">Tester un modèle effectue un appel court facturé selon votre fournisseur.</p>
       </div> : null}

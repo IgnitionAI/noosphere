@@ -799,6 +799,13 @@
       "when": 1798052400000,
       "tag": "0114_legacy_research_tiers",
       "breakpoints": true
+    },
+    {
+      "idx": 114,
+      "version": "7",
+      "when": 1798056000000,
+      "tag": "0115_instance_ai_fallback",
+      "breakpoints": true
     }
   ]
 }

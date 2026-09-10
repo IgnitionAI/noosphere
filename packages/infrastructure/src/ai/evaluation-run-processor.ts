@@ -87,7 +87,7 @@ export class EvaluationRunProcessor {
           aiConfigurationId: context.configuration.id,
           shadow: true,
           inputHash: new Bun.CryptoHasher("sha256").update(JSON.stringify(item.evaluationCase.input)).digest("hex"),
-          parameters: { evaluationRunId: context.run.id, evaluationCaseId: item.evaluationCase.id },
+          parameters: { evaluationRunId: context.run.id, evaluationCaseId: item.evaluationCase.id, ...(execution.route ? { modelRoute: execution.route } : {}) },
           output,
           status: "completed",
           cost: execution.cost === null ? null : String(execution.cost),

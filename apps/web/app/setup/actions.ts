@@ -27,10 +27,14 @@ export async function testConnectionAction(connectionId: string, model: string, 
   catch (cause) { error = cause instanceof OutboundApiError ? cause.code : "AI_PROVIDER_UNAVAILABLE"; }
   redirect(error ? `/setup?error=${encodeURIComponent(error)}` : "/setup?notice=tested");
 }
-export async function selectDefaultAction(connectionId: string, model: string, _form: FormData) {
+export async function selectDefaultAction(connectionId: string, model: string, form: FormData) {
   const { selectInstanceAiDefault, OutboundApiError } = await import("@/lib/api");
   let error: string | null = null;
-  try { await selectInstanceAiDefault({ connectionId, model }); }
+  try {
+    const selected = String(form.get("fallback") ?? "");
+    const fallback = selected ? JSON.parse(selected) as { connectionId: string; model: string } : null;
+    await selectInstanceAiDefault({ connectionId, model, ...(form.has("fallback") ? { fallback } : {}) });
+  }
   catch (cause) { error = cause instanceof OutboundApiError ? cause.code : "AI_CONNECTION_NOT_VALIDATED"; }
   redirect(error ? `/setup?error=${encodeURIComponent(error)}` : "/setup?notice=default");
 }

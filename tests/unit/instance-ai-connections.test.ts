@@ -12,7 +12,7 @@ function harness() {
     async beginTest(input) { const row = { ...input, version, testId: crypto.randomUUID(), reasoningEffort: "low" as const }; models.set(input.model, row); return row; },
     async finishTest(input) { const row = models.get(input.model); return row?.version === version && row?.testId === input.testId; },
     async setDefault() { return false; },
-    async getDefault() { return null; },
+    async getFallback() { return null; }, async getConfiguredFallback() { return null; }, async getDefault() { return null; },
   };
   const app = new InstanceAiConnectionsApplication({ async isAdministrator(userId: string) { return userId === "admin"; } }, repository, { async test() { calls++; if (finish) await new Promise<void>((resolve) => { finish = resolve; }); } });
   return { app, calls: () => calls, mutate: () => version++, delay: () => { finish = () => {}; }, release: () => finish?.() };

@@ -498,7 +498,11 @@ const knowledge = createKnowledgeHttpHandler({
 });
 const evaluation = createEvaluationHttpHandler({
   contextResolver: auth.contextResolver,
-  service: new PostgresEvaluationService(database.db, clock, ids, workspaceAiPolicies, async (route) => isEnvironmentModelRouteAvailable(environment, route, "evaluation")),
+  service: new PostgresEvaluationService(database.db, clock, ids, workspaceAiPolicies, async (route) => {
+    if (!route.connectionId) return isEnvironmentModelRouteAvailable(environment, route, "evaluation");
+    const ready = await instanceAiRepository.getReadyRoute({ connectionId: route.connectionId, model: route.model });
+    return !!ready && ready.provider === route.provider && (!route.connectionVersion || ready.connectionVersion === route.connectionVersion);
+  }, createTaskAiResumePreparation(environment)),
 });
 const operatorConsole = createOperatorConsoleHttpHandler({
   contextResolver: auth.contextResolver,
@@ -513,7 +517,7 @@ const workspaceAiSettings = createWorkspaceAiSettingsHttpHandler({
     workspaceAiSettingsRepository,
     resolveResearchModelPolicyFromEnvironment(environment),
     () => new Date(),
-    { getDefault: () => instanceAiRepository.getConfiguredDefault(), listAllowed: () => instanceAiRepository.listAllowed() },
+    { getDefault: () => instanceAiRepository.getConfiguredDefault(), getFallback: () => instanceAiRepository.getConfiguredFallback(), listAllowed: () => instanceAiRepository.listAllowed() },
   ),
   contextResolver: auth.contextResolver,
 });

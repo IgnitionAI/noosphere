@@ -3975,6 +3975,7 @@ export async function skipInstanceAiSetup(): Promise<void> {
 }
 
 export interface InstanceAiConnectionSummary {
+  authenticationInProgress?: boolean;
   id: string; name: string; provider: "openai-api" | "anthropic" | "openrouter" | "openai-compatible" | "kimi-code" | "codex-cli"; baseUrl: string; version: number; secretConfigured: boolean;
   authentication?: { state: "unavailable" | "action_required" | "connected" | "expired" | "in_progress" } | null;
   models: { model: string; reasoningEffort: string; status: "untested" | "testing" | "ready" | "failed"; testedAt: string | null; errorCode: string | null }[];
@@ -3982,6 +3983,7 @@ export interface InstanceAiConnectionSummary {
 export interface InstanceAiConnectionsSummary {
   connections: InstanceAiConnectionSummary[];
   defaultModel: { connectionId: string; model: string } | null;
+  fallbackModel: { connectionId: string; model: string } | null;
 }
 export async function getInstanceAiConnections(): Promise<InstanceAiConnectionsSummary> {
   const response = await apiFetch("/api/v1/instance/ai");
@@ -3997,7 +3999,7 @@ export async function testInstanceAiModel(input: { connectionId: string; model: 
   if (!response.ok) await throwApiError(response);
   return response.json();
 }
-export async function selectInstanceAiDefault(input: { connectionId: string; model: string }): Promise<void> {
+export async function selectInstanceAiDefault(input: { connectionId: string; model: string; fallback?: { connectionId: string; model: string } | null }): Promise<void> {
   const response = await apiFetch("/api/v1/instance/ai/default", { method: "POST", body: JSON.stringify(input) });
   if (!response.ok) await throwApiError(response);
 }

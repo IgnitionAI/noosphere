@@ -18,10 +18,10 @@ export function createInstanceAiRepository(database: DatabaseExecutor, environme
   return new PostgresInstanceAiConnectionsRepository(database, { encrypt: (value) => encryptSecret(value, key()), decrypt: (value) => decryptSecret(value, key()) });
 }
 export class InstanceWorkspaceAiPolicyReader implements WorkspaceAiModelPolicyReader {
-  constructor(private readonly workspaces: WorkspaceAiModelPolicyReader, private readonly instance: Pick<PostgresInstanceAiConnectionsRepository, "getConfiguredDefault" | "getReadyRoute">) {}
+  constructor(private readonly workspaces: WorkspaceAiModelPolicyReader, private readonly instance: Pick<PostgresInstanceAiConnectionsRepository, "getConfiguredDefault" | "getConfiguredFallback" | "getReadyRoute">) {}
   async find(workspaceId: string) {
     const workspace = await this.workspaces.find(workspaceId);
-    const inherited = await this.instance.getConfiguredDefault();
+    const [inherited, fallback] = await Promise.all([this.instance.getConfiguredDefault(), this.instance.getConfiguredFallback()]);
     if (!workspace && !inherited) return null;
     const refresh = async (routes: readonly ModelRoute[]) => Promise.all(routes.map(async (route) => {
       if (!route.connectionId) return route;
@@ -29,7 +29,7 @@ export class InstanceWorkspaceAiPolicyReader implements WorkspaceAiModelPolicyRe
       // Keep a withdrawn choice visible and blocked instead of selecting another model.
       return ready && ready.provider === route.provider ? ready : route;
     }));
-    const defaultRoutes = await refresh(workspace?.defaultRoutes?.length ? workspace.defaultRoutes : inherited ? [inherited] : []);
+    const defaultRoutes = await refresh(workspace?.defaultRoutes?.length ? workspace.defaultRoutes : inherited ? [inherited, ...(fallback ? [fallback] : [])] : []);
     const capabilityRoutes: Partial<Record<AiCapability, readonly ModelRoute[]>> = Object.fromEntries(await Promise.all(Object.entries(workspace?.capabilityRoutes ?? {}).map(async ([capability, routes]) => [capability, await refresh(routes)])));
     const researchRoutes = capabilityRoutes.icp_research?.length ? capabilityRoutes.icp_research : defaultRoutes;
     return {

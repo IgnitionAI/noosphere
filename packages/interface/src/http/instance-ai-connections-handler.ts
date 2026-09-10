@@ -5,6 +5,7 @@ import type { AuthenticatedSessionReader } from "@outbound/interface/http/authen
 
 const model = z.string().trim().min(1).max(200).regex(/^[a-zA-Z0-9._:/-]+$/);
 const selection = z.object({ connectionId: z.string().uuid(), model }).strict();
+const defaultSelection = selection.extend({ fallback: selection.nullable().optional() }).refine((value) => !value.fallback || value.connectionId !== value.fallback.connectionId || value.model !== value.fallback.model);
 const connection = z.object({
   id: z.string().uuid().optional(), name: z.string().trim().min(1).max(120), provider: z.enum(instanceAiProviders),
   apiKey: z.string().trim().min(1).max(4096).optional(),
@@ -30,7 +31,7 @@ export function createInstanceAiConnectionsHttpHandler(input: { application: Ins
       if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) return problem(415, "JSON_REQUIRED");
       if (path === "/api/v1/instance/ai/connections") return Response.json(await input.application.save(session.userId, connection.parse(await request.json())), { status: 201 });
       if (path === "/api/v1/instance/ai/test") return Response.json(await input.application.test(session.userId, selection.parse(await request.json())));
-      if (path === "/api/v1/instance/ai/default") return Response.json(await input.application.setDefault(session.userId, selection.parse(await request.json())));
+      if (path === "/api/v1/instance/ai/default") return Response.json(await input.application.setDefault(session.userId, defaultSelection.parse(await request.json())));
       return problem(404, "ROUTE_NOT_FOUND");
     } catch (error) {
       if (error instanceof z.ZodError || error instanceof SyntaxError) return problem(422, "VALIDATION_FAILED");

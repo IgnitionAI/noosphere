@@ -153,7 +153,7 @@ function request(method: string, body?: unknown): Request {
 test("instance-backed workspace API accepts inherited and authorized routes without exposing secrets", async () => {
   const selected = { connectionId: "00000000-0000-4000-8000-000000000003", provider: "openrouter" as const, model: "vendor/model", reasoningEffort: "low" as const };
   const application = new WorkspaceAiSettingsApplication(new InMemoryWorkspaceAiSettingsRepository(), { researchModels: [], synthesisModels: [], defaultRoutes: [] }, () => new Date(), {
-    async getDefault() { return selected; },
+    async getFallback() { return null; }, async getDefault() { return selected; },
     async listAllowed() { return [{ ...selected, connectionName: "Shared connection" }]; },
   });
   const handle = createWorkspaceAiSettingsHttpHandler({ application, contextResolver: new FixedContextResolver({ workspaceId, userId, role: "owner" }) });

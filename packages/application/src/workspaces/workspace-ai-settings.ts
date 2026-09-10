@@ -49,6 +49,7 @@ export interface AuthorizedWorkspaceModel extends ModelRoute {
 
 export interface WorkspaceInstanceAiModels {
   getDefault(): Promise<ModelRoute | null>;
+  getFallback(): Promise<ModelRoute | null>;
   listAllowed(): Promise<readonly AuthorizedWorkspaceModel[]>;
 }
 
@@ -68,7 +69,7 @@ export class WorkspaceAiSettingsApplication {
   async get(workspaceId: string): Promise<WorkspaceAiSettingsView> {
     const settings = await this.repository.find(workspaceId);
     if (this.instance) {
-      const [route, availableModels] = await Promise.all([this.instance.getDefault(), this.instance.listAllowed()]);
+      const [route, fallback, availableModels] = await Promise.all([this.instance.getDefault(), this.instance.getFallback(), this.instance.listAllowed()]);
       const resolve = (routes: readonly ModelRoute[]) => routes.map((selected) => {
         const current = availableModels.find((model) => model.connectionId === selected.connectionId && model.provider === selected.provider && model.model === selected.model);
         return current ? { ...selected, reasoningEffort: current.reasoningEffort } : selected;
@@ -80,7 +81,7 @@ export class WorkspaceAiSettingsApplication {
         defaultRoutes,
         ...(settings?.researchTierRoutes ? { researchTierRoutes: settings.researchTierRoutes } : {}),
         capabilityRoutes: Object.fromEntries(Object.entries(settings?.capabilityRoutes ?? {}).map(([capability, routes]) => [capability, resolve(routes)])),
-        effectiveDefaultRoutes: defaultRoutes.length ? defaultRoutes : route ? [route] : this.defaults.defaultRoutes ?? [],
+        effectiveDefaultRoutes: defaultRoutes.length ? defaultRoutes : route ? [route, ...(fallback ? [fallback] : [])] : this.defaults.defaultRoutes ?? [],
         availableModels,
         source: defaultRoutes.length ? "workspace" : route ? "instance" : "environment",
         updatedAt: settings?.updatedAt ?? null,

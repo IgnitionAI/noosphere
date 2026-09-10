@@ -382,6 +382,8 @@ export const instanceAiModels = pgTable("instance_ai_models", {
   errorCode: text("error_code"),
 }, (table) => [primaryKey({ columns: [table.connectionId, table.model] })]);
 export const instanceAiDefaults = pgTable("instance_ai_defaults", {
+  fallbackConnectionId: uuid("fallback_connection_id").references(() => instanceAiConnections.id),
+  fallbackModel: text("fallback_model"),
   id: boolean("id").primaryKey().default(true),
   connectionId: uuid("connection_id").notNull().references(() => instanceAiConnections.id, { onDelete: "cascade" }),
   model: text("model").notNull(),

@@ -53,7 +53,7 @@ const url = process.env.TEST_DATABASE_URL;
     await db.client`insert into auth_users (id, name, email) values (${userId}, 'Owner', ${`${userId}@example.com`})`;
     await db.client`insert into workspace_ai_settings (workspace_id, research_models, synthesis_models, updated_by) values (${workspaceId}, '["principal"]', '["executor"]', ${userId})`;
     await registerRuntimeAiDefaults(db.client, defaults);
-    const app = new WorkspaceAiSettingsApplication(new PostgresWorkspaceAiSettingsRepository(db.db), defaults, () => new Date(), { async getDefault() { return null; }, async listAllowed() { return []; } });
+    const app = new WorkspaceAiSettingsApplication(new PostgresWorkspaceAiSettingsRepository(db.db), defaults, () => new Date(), { async getFallback() { return null; }, async getDefault() { return null; }, async listAllowed() { return []; } });
     const before = await app.get(workspaceId);
     expect(before.researchTierRoutes?.principal[0]?.model).toBe("principal");
     expect(before.researchTierRoutes?.executor[0]?.model).toBe("executor");
@@ -65,5 +65,47 @@ const url = process.env.TEST_DATABASE_URL;
     const [replaced] = await db.client`select noosphere_capture_ai_policy(${workspaceId}::uuid) as policy`;
     expect(replaced?.policy.researchTierRoutes).toBeUndefined();
     expect(replaced?.policy.defaultRoutes).toEqual(defaults.defaultRoutes);
+  } finally { await db.close(); }
+});
+
+
+(url ? test : test.skip)("upgrade preserves a legacy evaluation candidate after its queue row was retained out", async () => {
+  const { PostgresEvaluationService } = await import("@outbound/infrastructure/ai/postgres-evaluation-service");
+  const { createTaskAiResumePreparation } = await import("@outbound/infrastructure/ai/postgres-task-ai-resume");
+  const db = createDatabase(url!), workspaceId = crypto.randomUUID(), actorUserId = crypto.randomUUID();
+  const legacyRoute = { provider: "kimi-code" as const, model: "legacy-evaluation", reasoningEffort: "low" as const };
+  const runtime = { researchModels: ["current"], synthesisModels: ["current"], defaultRoutes: [{ ...legacyRoute, model: "current" }], capabilityRoutes: {} };
+  try {
+    await migrate(db.db, { migrationsFolder: `${import.meta.dir}/../../packages/infrastructure/migrations` });
+    await db.client`insert into workspaces (id, slug, name) values (${workspaceId}, ${workspaceId}, 'Legacy evaluation')`;
+    await db.client`insert into auth_users (id, name, email) values (${actorUserId}, 'Legacy evaluator', ${`${actorUserId}@example.com`})`;
+    const prepare = createTaskAiResumePreparation({ KIMI_CODE_API_KEY: "fixture-legacy" });
+    const service = new PostgresEvaluationService(db.db, { now: () => new Date() }, { generate: () => crypto.randomUUID() }, undefined, undefined, prepare);
+    const prompt = await service.createPromptVersion({ workspaceId, actorUserId, capability: "setter", content: "Classify a synthetic case." });
+    const configuration = await service.createConfiguration({ workspaceId, actorUserId, capability: "setter", provider: legacyRoute.provider, model: legacyRoute.model, promptVersionId: prompt.id });
+    const dataset = await service.createDataset({ workspaceId, actorUserId, capability: "setter", name: "Legacy synthetic dataset", rubricVersion: "v1", cases: [{ name: "synthetic", input: { message: "EXEMPLE" }, expected: { classification: "qualified" } }] });
+    const run = await service.requestRun({ workspaceId, actorUserId, datasetId: dataset.id, configurationId: configuration.id, requestKey: "before-upgrade" });
+    // Recreate an older failed evaluation whose terminal queue row expired before 0111.
+    await db.client`update evaluation_runs set status = 'failed' where id = ${run.id}`;
+    await db.client`update evaluation_case_results set status = 'failed' where evaluation_run_id = ${run.id}`;
+    await db.client`delete from jobs where workspace_id = ${workspaceId}`;
+    await db.client`delete from task_ai_contexts where workspace_id = ${workspaceId}`;
+    // A subsequently selected managed route is deliberately unrelated to the legacy invocation.
+    const managedRoute = { ...legacyRoute, connectionId: crypto.randomUUID(), connectionVersion: 1 };
+    await db.client`insert into workspace_ai_settings (workspace_id, research_models, synthesis_models, model_routing, updated_by)
+      values (${workspaceId}, '[]', '[]', ${db.client.json({ defaultRoutes: [managedRoute], capabilityRoutes: {} })}, ${actorUserId})`;
+    const retry = { workspaceId, actorUserId, runId: run.id, requestKey: "after-upgrade" };
+    await expect(service.retryFailedRun(retry)).rejects.toThrow("AI_SETUP_REQUIRED");
+    await registerRuntimeAiDefaults(db.client, runtime);
+    const [context] = await db.client`select policy from task_ai_contexts where workspace_id = ${workspaceId} and task_key = ${`ai:run:${run.id}`}`;
+    expect(context?.policy.capabilityRoutes.evaluation).toEqual([legacyRoute]);
+    await service.retryFailedRun(retry);
+    await service.retryFailedRun(retry);
+    const queued = await db.client`select id, ai_policy from jobs where workspace_id = ${workspaceId}`;
+    expect(queued).toHaveLength(1);
+    expect(queued[0]?.ai_policy.capabilityRoutes.evaluation).toEqual([legacyRoute]);
+    await registerRuntimeAiDefaults(db.client, { ...runtime, defaultRoutes: [managedRoute] });
+    const [unchanged] = await db.client`select policy from task_ai_contexts where workspace_id = ${workspaceId} and task_key = ${`ai:run:${run.id}`}`;
+    expect(unchanged?.policy).toEqual(context?.policy);
   } finally { await db.close(); }
 });

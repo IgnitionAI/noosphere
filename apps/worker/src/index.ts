@@ -262,7 +262,7 @@ const prospectMemoryShadowComparator = new DeterministicProspectMemoryShadowComp
 const evaluationRunProcessor = new EvaluationRunProcessor(
   database.db,
   queue,
-  new LangChainEvaluationExecutor(process.env, workspaceStructuredModel),
+  new LangChainEvaluationExecutor(process.env, workspaceStructuredModel, workspaceAiSettings),
   clock,
   ids,
 );

@@ -17,6 +17,20 @@ export async function registerRuntimeAiDefaults(sql: SqlClient, policy: Workspac
         'principal', (select coalesce(jsonb_agg(jsonb_build_object('provider', ${legacyProvider}::text, 'model', value, 'reasoningEffort', case when ordinality = 1 then 'max' else 'low' end) order by ordinality), '[]'::jsonb) from jsonb_array_elements_text(s.research_models) with ordinality),
         'executor', (select coalesce(jsonb_agg(jsonb_build_object('provider', ${legacyProvider}::text, 'model', value, 'reasoningEffort', 'low') order by ordinality), '[]'::jsonb) from jsonb_array_elements_text(s.synthesis_models) with ordinality)))
       where model_routing is null`;
+    // Legacy evaluations pin their explicit candidate, even after queue retention.
+    // Do this before generic queue capture: current managed defaults must never
+    // replace an old environment-backed candidate. Existing managed contexts win.
+    await tx`insert into task_ai_contexts (workspace_id, task_key, policy)
+      select r.workspace_id, 'ai:run:' || r.id::text,
+        jsonb_build_object('researchModels', '[]'::jsonb, 'synthesisModels', '[]'::jsonb,
+          'defaultRoutes', '[]'::jsonb, 'capabilityRoutes', jsonb_build_object('evaluation',
+            jsonb_build_array(jsonb_build_object('provider', case when c.provider = 'openai' then 'openai-api' else c.provider end,
+              'model', c.model, 'reasoningEffort', 'low'))))
+      from evaluation_runs r join ai_configurations c on c.workspace_id = r.workspace_id and c.id = r.configuration_id
+      where c.provider in ('kimi-code', 'codex-cli', 'openai', 'openai-api')
+        and not exists (select 1 from task_ai_contexts existing
+          where existing.workspace_id = r.workspace_id and existing.task_key = 'ai:run:' || r.id::text)
+      on conflict (workspace_id, task_key) do nothing`;
     await tx`insert into task_ai_contexts (workspace_id, task_key, policy)
       select distinct workspace_id,
         case when jsonb_typeof(payload->'runId') = 'string'

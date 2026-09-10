@@ -31,7 +31,7 @@ const url = process.env.TEST_DATABASE_URL;
     }
     const a = await ready("vendor/a"), b = await ready("vendor/b");
     await instance.setDefault(a);
-    const application = new WorkspaceAiSettingsApplication(new PostgresWorkspaceAiSettingsRepository(db.db), { researchModels: [], synthesisModels: [], defaultRoutes: [] }, () => new Date(), { getDefault: () => instance.getConfiguredDefault(), listAllowed: () => instance.listAllowed() });
+    const application = new WorkspaceAiSettingsApplication(new PostgresWorkspaceAiSettingsRepository(db.db), { researchModels: [], synthesisModels: [], defaultRoutes: [] }, () => new Date(), { getDefault: () => instance.getConfiguredDefault(), getFallback: () => instance.getConfiguredFallback(), listAllowed: () => instance.listAllowed() });
     expect((await application.get(one)).effectiveDefaultRoutes).toEqual([a]);
     const { connectionVersion: _version, ...chosenA } = a;
     await application.update({ workspaceId: two, userId, defaultRoutes: [chosenA], capabilityRoutes: {} });

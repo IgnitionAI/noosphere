@@ -1,4 +1,7 @@
+import type { createTaskAiResumePreparation } from "./postgres-task-ai-resume";
+import { taskAiPolicySchema } from "./postgres-task-ai-policy-reader";
 import { AiSetupRequiredError } from "@outbound/application/ai/ai-availability";
+import { resolveEvaluationModelRoute } from "@outbound/application/ai/evaluation-model-route";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Clock, IdGenerator } from "@outbound/application/shared/ports";
 import type { WorkspaceAiModelPolicyReader } from "@outbound/application/workspaces/workspace-ai-settings";
@@ -20,6 +23,7 @@ import {
   knowledgeClaimSources,
   knowledgeSources,
   outboxEvents,
+  taskAiContexts,
 } from "@outbound/infrastructure/database/schema";
 
 type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
@@ -40,13 +44,15 @@ export class PostgresEvaluationService {
     private readonly ids: IdGenerator,
     private readonly modelPolicyReader?: WorkspaceAiModelPolicyReader,
     private readonly routeAvailable?: (route: ModelRoute) => Promise<boolean>,
+    private readonly prepareAiResume?: ReturnType<typeof createTaskAiResumePreparation>,
   ) {}
 
-  private async requireModel(configuration: { provider: string; model: string }): Promise<void> {
-    if (!this.routeAvailable) return;
-    if (!aiProviderIds.includes(configuration.provider as ModelRoute["provider"]) || !await this.routeAvailable({ provider: configuration.provider as ModelRoute["provider"], model: configuration.model, reasoningEffort: "high" })) {
+  private async requireModel(configuration: { workspaceId: string; provider: string; model: string }): Promise<ModelRoute> {
+    const route = resolveEvaluationModelRoute(await this.modelPolicyReader?.find(configuration.workspaceId), configuration);
+    if (this.routeAvailable && !await this.routeAvailable(route)) {
       throw new AiSetupRequiredError();
     }
+    return route;
   }
 
   async createDataset(input: {
@@ -132,7 +138,7 @@ export class PostgresEvaluationService {
     if (!aiProviderIds.includes(provider as (typeof aiProviderIds)[number])) {
       throw new EvaluationServiceError("AI_CONFIGURATION_PROVIDER_INVALID", 422);
     }
-    if (!model || model.length > 200 || !/^[a-zA-Z0-9._:-]+$/.test(model)) {
+    if (!model || model.length > 200 || (!/^[a-zA-Z0-9._:/-]+$/.test(model) || model.split("/").some((segment) => !segment || /^\.+$/.test(segment)))) {
       throw new EvaluationServiceError("AI_CONFIGURATION_MODEL_NOT_ALLOWED", 422);
     }
     return this.database.transaction(async (tx) => {
@@ -154,7 +160,7 @@ export class PostgresEvaluationService {
       const [dataset] = await tx.select().from(evaluationDatasets).where(and(eq(evaluationDatasets.workspaceId, input.workspaceId), eq(evaluationDatasets.id, input.datasetId))).limit(1);
       const [configuration] = await tx.select().from(aiConfigurations).where(and(eq(aiConfigurations.workspaceId, input.workspaceId), eq(aiConfigurations.id, input.configurationId))).limit(1);
       if (!dataset || !configuration || dataset.capability !== configuration.capability) throw new EvaluationServiceError("EVALUATION_CONFIGURATION_MISMATCH", 422);
-      await this.requireModel(configuration);
+      const selectedRoute = await this.requireModel(configuration);
       const cases = await tx.select({ id: evaluationCases.id }).from(evaluationCases).where(and(eq(evaluationCases.workspaceId, input.workspaceId), eq(evaluationCases.datasetId, input.datasetId))).orderBy(asc(evaluationCases.createdAt), asc(evaluationCases.id));
       if (!cases.length) throw new EvaluationServiceError("EVALUATION_DATASET_EMPTY", 422);
       const runId = this.ids.generate();
@@ -164,6 +170,11 @@ export class PostgresEvaluationService {
         if (!winner) throw new EvaluationServiceError("EVALUATION_RUN_CREATE_CONFLICT", 409);
         return winner;
       }
+      // The evaluation has one immutable candidate, not the workspace's fallback chain.
+      // Insert its context before the queue trigger so all retries reuse this identity.
+      await tx.insert(taskAiContexts).values({ workspaceId: input.workspaceId, taskKey: `ai:run:${runId}`, policy: {
+        researchModels: [], synthesisModels: [], defaultRoutes: [], capabilityRoutes: { evaluation: [selectedRoute] },
+      } });
       await tx.insert(evaluationCaseResults).values(cases.map((item) => ({ id: this.ids.generate(), workspaceId: input.workspaceId, evaluationRunId: runId, evaluationCaseId: item.id, createdAt: this.clock.now(), updatedAt: this.clock.now() })));
       const eventId = await recordMutation(tx, { workspaceId: input.workspaceId, actorUserId: input.actorUserId, eventType: "EvaluationRunStarted", subjectType: "EvaluationRun", subjectId: runId, changes: { datasetId: dataset.id, configurationId: configuration.id, requestKey, totalCases: cases.length } });
       await tx.insert(jobs).values({ id: this.ids.generate(), workspaceId: input.workspaceId, type: "ai.evaluation.execute", payload: { workspaceId: input.workspaceId, runId }, idempotencyKey: `evaluation:${runId}`, correlationId: `evaluation:${eventId}`, maxAttempts: 3, availableAt: this.clock.now() }).onConflictDoNothing();
@@ -181,7 +192,15 @@ export class PostgresEvaluationService {
       if (run.status !== "partial" && run.status !== "failed") throw new EvaluationServiceError("EVALUATION_RUN_NOT_RETRYABLE", 409);
       const [configuration] = await tx.select().from(aiConfigurations).where(and(eq(aiConfigurations.workspaceId, input.workspaceId), eq(aiConfigurations.id, run.configurationId))).limit(1);
       if (!configuration) throw new EvaluationServiceError("EVALUATION_CONFIGURATION_MISMATCH", 422);
-      await this.requireModel(configuration);
+      if (this.prepareAiResume) {
+        await this.prepareAiResume(tx, { workspaceId: input.workspaceId, taskKey: `ai:run:${run.id}`, capability: "evaluation" });
+      } else {
+        const [context] = await tx.select().from(taskAiContexts).where(and(eq(taskAiContexts.workspaceId, input.workspaceId), eq(taskAiContexts.taskKey, `ai:run:${run.id}`)));
+        const parsed = taskAiPolicySchema.safeParse(context?.policy);
+        if (!parsed.success) throw new AiSetupRequiredError();
+        const route = resolveEvaluationModelRoute(parsed.data, configuration);
+        if (this.routeAvailable && !await this.routeAvailable(route)) throw new AiSetupRequiredError();
+      }
       const failed = await tx.update(evaluationCaseResults).set({ status: "pending", errorCode: null, updatedAt: this.clock.now() }).where(and(eq(evaluationCaseResults.workspaceId, input.workspaceId), eq(evaluationCaseResults.evaluationRunId, run.id), eq(evaluationCaseResults.status, "failed"))).returning({ id: evaluationCaseResults.id });
       if (!failed.length) throw new EvaluationServiceError("EVALUATION_RUN_NOT_RETRYABLE", 409);
       await tx.update(evaluationRuns).set({ status: "queued", failedCases: 0, completedAt: null, updatedAt: this.clock.now() }).where(and(eq(evaluationRuns.workspaceId, input.workspaceId), eq(evaluationRuns.id, run.id)));
