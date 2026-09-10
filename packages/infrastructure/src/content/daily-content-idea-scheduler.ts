@@ -1,3 +1,4 @@
+import type { WorkspaceAiAvailability } from "@outbound/application/ai/ai-availability";
 import { and, desc, eq, lte, sql } from "drizzle-orm";
 import type { Clock } from "@outbound/application/shared/ports";
 import type { ContentIdeaRepository } from "@outbound/application/content/content-ideas";
@@ -11,6 +12,7 @@ export class DailyContentIdeaScheduler {
     private readonly repository: ContentIdeaRepository,
     private readonly clock: Clock,
     private readonly defaults: { localTime: string; timezone: string } = { localTime: "06:00", timezone: "Europe/Paris" },
+    private readonly aiAvailable?: WorkspaceAiAvailability,
   ) {}
 
   async reconcile(limit = 25): Promise<number> {
@@ -22,6 +24,7 @@ export class DailyContentIdeaScheduler {
     )).limit(limit);
     let scheduled = 0;
     for (const schedule of due) {
+      if (this.aiAvailable && !await this.aiAvailable(schedule.workspaceId, "content_idea")) continue;
       const date = zonedDateKey(now, schedule.timezone);
       await this.repository.createDiscovery({
         workspaceId: schedule.workspaceId,

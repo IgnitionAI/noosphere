@@ -846,7 +846,7 @@ export interface WorkspaceAuditLog {
   readonly createdAt: string;
 }
 
-export type ConsoleJobStatus = "pending" | "running" | "retry" | "completed" | "dead_lettered";
+export type ConsoleJobStatus = "paused" | "pending" | "running" | "retry" | "completed" | "dead_lettered";
 export interface ConsoleJob {
   readonly id: string;
   readonly type: string;
@@ -968,15 +968,18 @@ export interface EvaluationRunDetail extends EvaluationRun {
 }
 
 export interface WorkspaceAiSettings {
+  readonly researchTierRoutes?: Readonly<Record<"principal" | "executor", readonly AiModelRoute[]>>;
   readonly researchModels: readonly string[];
   readonly synthesisModels: readonly string[];
   readonly defaultRoutes: readonly AiModelRoute[];
   readonly capabilityRoutes: Readonly<Partial<Record<AiCapability, readonly AiModelRoute[]>>>;
-  readonly source: "workspace" | "environment";
+  readonly source: "workspace" | "environment" | "instance";
+  readonly effectiveDefaultRoutes?: readonly AiModelRoute[];
+  readonly availableModels?: readonly (AiModelRoute & { readonly connectionName: string })[];
   readonly updatedAt: string | null;
 }
 
-export type AiProviderId = "kimi-code" | "codex-cli" | "openai-api";
+export type AiProviderId = "kimi-code" | "codex-cli" | "openai-api" | "anthropic" | "openrouter" | "openai-compatible";
 export type AiReasoningEffort = "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
 export type AiCapability =
   | "icp_research"
@@ -995,6 +998,7 @@ export type AiCapability =
 export type EvaluationAiCapability = Extract<AiCapability, "icp_research" | "message_generation" | "setter">;
 
 export interface AiModelRoute {
+  readonly connectionId?: string;
   readonly provider: AiProviderId;
   readonly model: string;
   readonly reasoningEffort: AiReasoningEffort;
@@ -1418,7 +1422,7 @@ export async function getWorkspaceAiSettings(
 
 export async function updateWorkspaceAiSettings(
   workspaceSlug: string,
-  settings: Pick<WorkspaceAiSettings, "defaultRoutes" | "capabilityRoutes">,
+  settings: Pick<WorkspaceAiSettings, "defaultRoutes" | "capabilityRoutes"> & { replaceLegacyResearch?: boolean },
 ): Promise<WorkspaceAiSettings> {
   const response = await apiFetch("/api/v1/workspace-ai-settings", {
     method: "PUT",
@@ -3953,4 +3957,49 @@ async function throwApiError(response: Response): Promise<never> {
     body?.detail ?? body?.message ?? "Le serveur n’a pas pu traiter la demande.",
     body ? { errors: body.errors, field: body.field, blockedClaimIds: body.blockedClaimIds, blockers: body.blockers, warnings: body.warnings, campaignId: body.campaignId, campaignName: body.campaignName, reason: body.reason, channel: body.channel, suppressionId: body.suppressionId, contactId: body.contactId } : null,
   );
+}
+
+export interface InstanceSetupState {
+  aiReady?: boolean;
+  readonly isAdministrator: boolean;
+  readonly skipped: boolean;
+}
+export async function getInstanceSetup(): Promise<InstanceSetupState> {
+  const response = await apiFetch("/api/v1/instance/setup");
+  if (!response.ok) return throwApiError(response);
+  return response.json();
+}
+export async function skipInstanceAiSetup(): Promise<void> {
+  const response = await apiFetch("/api/v1/instance/setup/skip", { method: "POST" });
+  if (!response.ok) await throwApiError(response);
+}
+
+export interface InstanceAiConnectionSummary {
+  authenticationInProgress?: boolean;
+  id: string; name: string; provider: "openai-api" | "anthropic" | "openrouter" | "openai-compatible" | "kimi-code" | "codex-cli"; baseUrl: string; version: number; secretConfigured: boolean;
+  authentication?: { state: "unavailable" | "action_required" | "connected" | "expired" | "in_progress" } | null;
+  models: { model: string; reasoningEffort: string; status: "untested" | "testing" | "ready" | "failed"; testedAt: string | null; errorCode: string | null }[];
+}
+export interface InstanceAiConnectionsSummary {
+  connections: InstanceAiConnectionSummary[];
+  defaultModel: { connectionId: string; model: string } | null;
+  fallbackModel: { connectionId: string; model: string } | null;
+}
+export async function getInstanceAiConnections(): Promise<InstanceAiConnectionsSummary> {
+  const response = await apiFetch("/api/v1/instance/ai");
+  if (!response.ok) await throwApiError(response);
+  return response.json();
+}
+export async function saveInstanceAiConnection(input: { id?: string; name: string; provider: "openai-api" | "anthropic" | "openrouter" | "openai-compatible" | "kimi-code" | "codex-cli"; apiKey?: string; baseUrl?: string; models: { model: string; reasoningEffort: "low" }[] }): Promise<void> {
+  const response = await apiFetch("/api/v1/instance/ai/connections", { method: "POST", body: JSON.stringify(input) });
+  if (!response.ok) await throwApiError(response);
+}
+export async function testInstanceAiModel(input: { connectionId: string; model: string }): Promise<{ status: "ready" | "failed"; errorCode: string | null }> {
+  const response = await apiFetch("/api/v1/instance/ai/test", { method: "POST", body: JSON.stringify(input) });
+  if (!response.ok) await throwApiError(response);
+  return response.json();
+}
+export async function selectInstanceAiDefault(input: { connectionId: string; model: string; fallback?: { connectionId: string; model: string } | null }): Promise<void> {
+  const response = await apiFetch("/api/v1/instance/ai/default", { method: "POST", body: JSON.stringify(input) });
+  if (!response.ok) await throwApiError(response);
 }

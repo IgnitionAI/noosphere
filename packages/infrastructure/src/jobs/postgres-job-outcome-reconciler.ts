@@ -89,7 +89,7 @@ export class PostgresJobOutcomeReconciler {
           where ${jobs.workspaceId} = ${outreachActions.workspaceId}
             and ${jobs.type} = 'outreach.dispatch'
             and ${jobs.payload} ->> 'actionId' = ${outreachActions.id}::text
-            and ${jobs.status} in ('pending', 'running', 'retry')
+            and ${jobs.status} in ('pending', 'running', 'retry', 'paused')
         )`,
         sql`not exists (
           select 1 from ${campaignEnrollments} competing_enrollment
@@ -123,7 +123,7 @@ export class PostgresJobOutcomeReconciler {
             where ${jobs.workspaceId} = ${outreachActions.workspaceId}
               and ${jobs.type} = 'outreach.dispatch'
               and ${jobs.payload} ->> 'actionId' = ${outreachActions.id}::text
-              and ${jobs.status} in ('pending', 'running', 'retry')
+              and ${jobs.status} in ('pending', 'running', 'retry', 'paused')
           )`,
         )).returning({ id: outreachActions.id });
         if (!updated) return false;
@@ -190,7 +190,7 @@ export class PostgresJobOutcomeReconciler {
           where ${jobs.workspaceId} = ${outreachActions.workspaceId}
             and ${jobs.type} = 'outreach.dispatch'
             and ${jobs.payload} ->> 'actionId' = ${outreachActions.id}::text
-            and ${jobs.status} in ('pending', 'running', 'retry')
+            and ${jobs.status} in ('pending', 'running', 'retry', 'paused')
         )`,
         sql`not exists (
           select 1 from ${campaignEnrollments} competing_enrollment
@@ -241,7 +241,7 @@ export class PostgresJobOutcomeReconciler {
             where ${jobs.workspaceId} = ${outreachActions.workspaceId}
               and ${jobs.type} = 'outreach.dispatch'
               and ${jobs.payload} ->> 'actionId' = ${outreachActions.id}::text
-              and ${jobs.status} in ('pending', 'running', 'retry')
+              and ${jobs.status} in ('pending', 'running', 'retry', 'paused')
           )`,
           sql`not exists (
             select 1 from ${campaignEnrollments} competing_enrollment
@@ -392,7 +392,7 @@ export class PostgresJobOutcomeReconciler {
           where ${jobs.workspaceId} = ${outreachActions.workspaceId}
             and ${jobs.type} = 'outreach.dispatch'
             and ${jobs.payload} ->> 'actionId' = ${outreachActions.id}::text
-            and ${jobs.status} in ('pending', 'running', 'retry')
+            and ${jobs.status} in ('pending', 'running', 'retry', 'paused')
         )`,
       ))
       .orderBy(asc(outreachActions.updatedAt), asc(outreachActions.id))
@@ -425,7 +425,7 @@ export class PostgresJobOutcomeReconciler {
             where ${jobs.workspaceId} = ${outreachActions.workspaceId}
               and ${jobs.type} = 'outreach.dispatch'
               and ${jobs.payload} ->> 'actionId' = ${outreachActions.id}::text
-              and ${jobs.status} in ('pending', 'running', 'retry')
+              and ${jobs.status} in ('pending', 'running', 'retry', 'paused')
           )`,
           sql`not exists (
             select 1 from ${campaignEnrollments} competing_enrollment

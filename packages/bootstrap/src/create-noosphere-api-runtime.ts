@@ -1,3 +1,16 @@
+import { PostgresModelFallbackRecorder } from "@outbound/infrastructure/ai/postgres-model-fallback-recorder";
+import { createTaskAiResumePreparation } from "@outbound/infrastructure/ai/postgres-task-ai-resume";
+import { registerRuntimeAiDefaults } from "@outbound/infrastructure/ai/register-runtime-ai-defaults";
+import { InstanceCodexAuthenticationReader } from "@outbound/infrastructure/ai/instance-codex-home";
+import { createInstanceAiRepository, InstanceWorkspaceAiPolicyReader, createInstanceWorkspaceAiAvailability, createInstanceApiKeyGateways } from "@outbound/infrastructure/ai/instance-ai-runtime";
+import { InstanceAiConnectionsApplication } from "@outbound/application/ai/instance-ai-connections";
+import { InstanceModelConnectionTester } from "@outbound/infrastructure/ai/instance-ai-connection-tester";
+import { createInstanceAiConnectionsHttpHandler } from "@outbound/interface/http/instance-ai-connections-handler";
+import { createWorkspaceAiAvailabilityFromEnvironment, isEnvironmentModelRouteAvailable } from "@outbound/infrastructure/ai/workspace-ai-availability";
+import { requireWorkspaceAi, type WorkspaceAiAvailability } from "@outbound/application/ai/ai-availability";
+import { InstanceSetupApplication } from "@outbound/application/ai/instance-setup";
+import { PostgresInstanceSetupRepository } from "@outbound/infrastructure/ai/postgres-instance-setup-repository";
+import { createInstanceSetupHttpHandler } from "@outbound/interface/http/instance-setup-handler";
 import { and, eq, sql } from "drizzle-orm";
 import { ProductResearchApplication, ProductResearchNotFoundError } from "@outbound/application/gtm/product-research-application";
 import { CryptoIdGenerator, SystemClock, type Clock } from "@outbound/application/shared/ports";
@@ -213,7 +226,7 @@ function isMcpScope(value: string): value is McpExecutionContext["scopes"][numbe
 }
 
 /** Compose the production MCP write capabilities around a database transaction. */
-export function createMcpWriteCapabilities(database: Database, clock: Clock): McpWriteCapabilities {
+export function createMcpWriteCapabilities(database: Database, clock: Clock, aiAvailabilityForTransaction?: (tx: PostgresMcpWriteTransaction) => WorkspaceAiAvailability): McpWriteCapabilities {
   return createPostgresAtomicMcpWriteCapabilities(database, async (tx: PostgresMcpWriteTransaction, context, command, correlationId) => {
     // Drizzle transactions expose the same query/savepoint surface consumed by
     // these infrastructure repositories. The outer MCP ledger remains the
@@ -228,8 +241,8 @@ export function createMcpWriteCapabilities(database: Database, clock: Clock): Mc
     const mcpCampaignRepository = new PostgresCampaignRepository(transactionalDatabase);
     const mcpConversationCommands = new PostgresConversationCommandRepository(transactionalDatabase);
     const mcpKnowledgeService = new PostgresKnowledgeService(transactionalDatabase, clock, new CryptoIdGenerator());
-    const mcpContentAutopilot = new ContentAutopilotApplication(new PostgresContentAutopilotRepository(transactionalDatabase), clock);
-    const contentGenerationApplication = new ContentGenerationApplication(new PostgresContentGenerationRepository(tx));
+    const mcpContentAutopilot = new ContentAutopilotApplication(new PostgresContentAutopilotRepository(transactionalDatabase), clock, aiAvailabilityForTransaction?.(tx));
+    const contentGenerationApplication = new ContentGenerationApplication(new PostgresContentGenerationRepository(tx), aiAvailabilityForTransaction?.(tx));
     const args = command.arguments as Readonly<Record<string, unknown>>;
     const now = clock.now();
     const actorRole = context.role;
@@ -431,7 +444,7 @@ export function createMcpWriteCapabilities(database: Database, clock: Clock): Mc
     }
     if (command.operation === "research_launch") {
       const researchRepository = new PostgresProductResearchRepository(transactionalDatabase);
-      const research = new ProductResearchApplication(researchRepository, researchRepository, new CryptoIdGenerator(), clock);
+      const research = new ProductResearchApplication(researchRepository, researchRepository, new CryptoIdGenerator(), clock, aiAvailabilityForTransaction?.(tx));
       const created = await research.create({ workspaceId: context.workspaceId, brief: args.brief as Parameters<ProductResearchApplication["create"]>[0]["brief"] });
       const started = await research.start({ workspaceId: context.workspaceId, runId: created.id, correlationId });
       return { id: started.id, version: started.version, state: started.status, status: started.status, operation: command.operation, correlationId };
@@ -524,7 +537,7 @@ const mcpOAuth = createMcpOAuthHandler(mcpOAuthService, {
     }
   },
 });
-const repository = new PostgresProductResearchRepository(database.db);
+const repository = new PostgresProductResearchRepository(database.db, createTaskAiResumePreparation(environment));
 const queue = new PostgresJobQueue(database.client);
 const clock = new SystemClock();
 const ids = new CryptoIdGenerator();
@@ -536,15 +549,28 @@ const documentService = new ResearchDocumentService(
   clock,
   documentServiceOptionsFromEnvironment(),
 );
+const workspaceAiSettingsRepository = new PostgresWorkspaceAiSettingsRepository(database.db);
+const instanceAiRepository = createInstanceAiRepository(database.db, environment);
+const workspaceAiPolicies = new InstanceWorkspaceAiPolicyReader(workspaceAiSettingsRepository, instanceAiRepository);
+const aiAvailable = createInstanceWorkspaceAiAvailability(environment, workspaceAiPolicies, instanceAiRepository);
+const instanceAiConnections = createInstanceAiConnectionsHttpHandler({
+  application: new InstanceAiConnectionsApplication(new PostgresInstanceSetupRepository(database.db), instanceAiRepository, new InstanceModelConnectionTester(instanceAiRepository, undefined, { environment }), new InstanceCodexAuthenticationReader(environment)),
+  sessions: auth.sessions,
+});
 const application = new ProductResearchApplication(
   repository,
   repository,
   ids,
   clock,
+  aiAvailable,
 );
 const productResearch = createProductResearchHttpHandler({
   application,
   contextResolver: auth.contextResolver,
+});
+const instanceSetup = createInstanceSetupHttpHandler({
+  application: new InstanceSetupApplication(new PostgresInstanceSetupRepository(database.db), async () => !!await instanceAiRepository.getDefault()),
+  sessions: auth.sessions,
 });
 const workspace = createWorkspaceHttpHandler({
   sessions: auth.sessions,
@@ -553,8 +579,8 @@ const workspace = createWorkspaceHttpHandler({
   management: new PostgresWorkspaceRepository(database.db),
 });
 const workspaceDataLifecycle = new PostgresWorkspaceDataLifecycle(database.db, clock, ids);
-const workspaceAiSettingsRepository = new PostgresWorkspaceAiSettingsRepository(database.db);
-const workspaceStructuredModel = createWorkspaceStructuredModelFromEnvironment(environment, workspaceAiSettingsRepository);
+
+const workspaceStructuredModel = createWorkspaceStructuredModelFromEnvironment(environment, workspaceAiPolicies, createInstanceApiKeyGateways(instanceAiRepository, environment), new PostgresModelFallbackRecorder(database.db));
 const workspaceArchiveStorage = new S3WorkspaceArchiveStorage(workspaceArchiveOptionsFromEnvironment());
 const workspaceData = createWorkspaceDataHttpHandler({
   contextResolver: auth.contextResolver,
@@ -569,11 +595,15 @@ const knowledge = createKnowledgeHttpHandler({
 });
 const evaluation = createEvaluationHttpHandler({
   contextResolver: auth.contextResolver,
-  service: new PostgresEvaluationService(database.db, clock, ids, workspaceAiSettingsRepository),
+  service: new PostgresEvaluationService(database.db, clock, ids, workspaceAiPolicies, async (route) => {
+    if (!route.connectionId) return isEnvironmentModelRouteAvailable(environment, route, "evaluation");
+    const ready = await instanceAiRepository.getReadyRoute({ connectionId: route.connectionId, model: route.model });
+    return !!ready && ready.provider === route.provider && (!route.connectionVersion || ready.connectionVersion === route.connectionVersion);
+  }, createTaskAiResumePreparation(environment)),
 });
 const operatorConsole = createOperatorConsoleHttpHandler({
   contextResolver: auth.contextResolver,
-  service: new PostgresOperatorConsole(database.db, clock, ids),
+  service: new PostgresOperatorConsole(database.db, clock, ids, createTaskAiResumePreparation(environment)),
 });
 const workspaceOnboarding = createWorkspaceOnboardingHttpHandler({
   contextResolver: auth.contextResolver,
@@ -583,6 +613,8 @@ const workspaceAiSettings = createWorkspaceAiSettingsHttpHandler({
   application: new WorkspaceAiSettingsApplication(
     workspaceAiSettingsRepository,
     resolveResearchModelPolicyFromEnvironment(environment),
+    () => new Date(),
+    { getDefault: () => instanceAiRepository.getConfiguredDefault(), getFallback: () => instanceAiRepository.getConfiguredFallback(), listAllowed: () => instanceAiRepository.listAllowed() },
   ),
   contextResolver: auth.contextResolver,
 });
@@ -720,20 +752,27 @@ const sequenceHandler = createSequenceHttpHandler({
   database: database.db,
   contextResolver: auth.contextResolver,
 });
-const campaignHandler = createCampaignHttpHandler({
-  database: database.db,
-  contextResolver: auth.contextResolver,
-  jobQueue: queue,
-  draftImprover: new LangChainConversationDraftImprover(
+const conversationDraftImprover = new LangChainConversationDraftImprover(
     database.db,
     environment,
-    workspaceAiSettingsRepository,
+    workspaceAiPolicies,
     undefined,
     contentBrandKitRepository,
     workspaceStructuredModel,
     prospectMemoryAssembler,
     prospectMemoryPolicies,
-  ),
+  );
+const campaignHandler = createCampaignHttpHandler({
+  database: database.db,
+  contextResolver: auth.contextResolver,
+  jobQueue: queue,
+  aiAvailable,
+  draftImprover: {
+    async improve(input) {
+      await requireWorkspaceAi(aiAvailable, input.workspaceId, "message_generation");
+      return conversationDraftImprover.improve(input);
+    },
+  },
 });
 const messagingStrategyHandler = createMessagingStrategyHttpHandler({
   database: database.db,
@@ -777,11 +816,12 @@ const contentStrategyApplication = new EditorialStrategyApplication(
   new PostgresEditorialStrategyRepository(database.db),
   new LangChainEditorialStrategyGenerator(
     environment,
-    workspaceAiSettingsRepository,
+    workspaceAiPolicies,
     new PostgresAiRunRecorder(database.db, clock, ids),
     undefined,
     workspaceStructuredModel,
   ),
+  aiAvailable,
 );
 const contentStrategy = createContentStrategyHttpHandler({
   contextResolver: auth.contextResolver,
@@ -790,6 +830,7 @@ const contentStrategy = createContentStrategyHttpHandler({
 const contentAutopilotApplication = new ContentAutopilotApplication(
   new PostgresContentAutopilotRepository(database.db),
   clock,
+  aiAvailable,
 );
 const contentAutopilot = createContentAutopilotHttpHandler({
   contextResolver: auth.contextResolver,
@@ -807,12 +848,13 @@ const contentBrandKitApplication = new ContentBrandKitApplication(
   }),
   new LangChainContentBrandDirectionDesigner(
     environment,
-    workspaceAiSettingsRepository,
+    workspaceAiPolicies,
     new PostgresAiRunRecorder(database.db, clock, ids),
     undefined,
     workspaceStructuredModel,
   ),
   discoveryCrawler ? new CrawlerContentBrandLandingPageReader(discoveryCrawler) : undefined,
+  aiAvailable,
 );
 const contentBrandKit = createContentBrandKitHttpHandler({
   contextResolver: auth.contextResolver,
@@ -829,13 +871,13 @@ const editorialLearning = createEditorialLearningHttpHandler({
   application: editorialLearningApplication,
 });
 const mcpContentIdeaRepository = new PostgresContentIdeaRepository(database.db);
-const contentIdeasApplication = new ContentIdeaApplication(mcpContentIdeaRepository);
+const contentIdeasApplication = new ContentIdeaApplication(mcpContentIdeaRepository, aiAvailable);
 const contentIdeas = createContentIdeaHttpHandler({
   contextResolver: auth.contextResolver,
   application: contentIdeasApplication,
 });
 const contentPublicationRepository = new PostgresContentPublicationRepository(database.db);
-const contentGenerationApplication = new ContentGenerationApplication(new PostgresContentGenerationRepository(database.db));
+const contentGenerationApplication = new ContentGenerationApplication(new PostgresContentGenerationRepository(database.db), aiAvailable);
 const contentGeneration = createContentGenerationHttpHandler({
   contextResolver: auth.contextResolver,
   application: contentGenerationApplication,
@@ -989,7 +1031,10 @@ const mcpReadCapabilities: McpReadCapabilities = createMcpReadCapabilities({
     },
   },
 });
-const mcpWriteCapabilities: McpWriteCapabilities = createMcpWriteCapabilities(database.db, clock);
+const mcpWriteCapabilities: McpWriteCapabilities = createMcpWriteCapabilities(database.db, clock, (tx) => {
+  const instance = createInstanceAiRepository(tx, environment);
+  return createInstanceWorkspaceAiAvailability(environment, new InstanceWorkspaceAiPolicyReader(new PostgresWorkspaceAiSettingsRepository(tx), instance), instance);
+});
 const mcpEffectFactsReader = new PostgresExternalEffectFactsReader(database.db, () => clock.now());
 const mcpEffectPolicy = new ExternalEffectPolicy(mcpEffectFactsReader);
 const mcpEffectRepository = new PostgresMcpGovernedEffectRepository(database.db, () => clock.now(), mcpEffectPolicy);
@@ -999,9 +1044,13 @@ const approvals = createApprovalHttpHandler({
   contextResolver: auth.contextResolver,
   governedEffects: mcpGovernedEffectCapabilities,
 });
+let runtimeDefaultsReady: Promise<void> | undefined;
 async function dispatch(request: Request): Promise<Response> {
+    await (runtimeDefaultsReady ??= registerRuntimeAiDefaults(database.client, resolveResearchModelPolicyFromEnvironment(environment)).catch((error) => { runtimeDefaultsReady = undefined; throw error; }));
     const pathname = new URL(request.url).pathname;
     if (pathname.startsWith("/oauth/") || pathname === "/.well-known/oauth-authorization-server" || pathname.startsWith("/.well-known/oauth-protected-resource")) return mcpOAuth(request);
+    if (pathname.startsWith("/api/v1/instance/ai")) return instanceAiConnections(request);
+    if (pathname.startsWith("/api/v1/instance/setup")) return instanceSetup(request);
     if (pathname === "/mcp") return mcpTransport.handle(request);
     if (pathname.startsWith("/api/auth/")) return runtime.handleAuth(request);
     if (pathname === "/api/v1/approval-items" || pathname.startsWith("/api/v1/approval-items/")) return approvals(request);

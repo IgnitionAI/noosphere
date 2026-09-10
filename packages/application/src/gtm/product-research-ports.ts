@@ -5,9 +5,13 @@ import type {
   ResearchStage,
 } from "@outbound/domain/gtm/product-research";
 import type { AgentExecutionResult, AgentStageInput } from "@outbound/contracts/product-research";
-import type { NewJob } from "@outbound/application/jobs/job-queue";
+import type { NewJob, PauseJobRequest, LeasedJob } from "@outbound/application/jobs/job-queue";
 
 export interface ProductResearchRepository {
+  transitionLocked?(
+    input: { workspaceId: string; runId: string },
+    transition: (run: ProductResearchRun) => { job: NewJob | null; events: readonly ProductResearchEvent[] },
+  ): Promise<ProductResearchRun | null>;
   insert(run: ProductResearchRun): Promise<void>;
   findById(workspaceId: string, runId: string): Promise<ProductResearchRun | null>;
   listRecent(workspaceId: string, limit: number): Promise<readonly ProductResearchRun[]>;
@@ -37,7 +41,8 @@ export interface ProductResearchRepository {
     run: ProductResearchRun,
     checkpoint: ResearchCheckpoint,
     events: readonly ProductResearchEvent[],
-  ): Promise<void>;
+    lease?: Pick<LeasedJob, "id" | "lockedBy">,
+  ): Promise<boolean | void>;
   commitStageCompleted(input: {
     run: ProductResearchRun;
     checkpoint: ResearchCheckpoint;
@@ -62,7 +67,8 @@ export interface ProductResearchRepository {
     run: ProductResearchRun,
     checkpoint: ResearchCheckpoint,
     events: readonly ProductResearchEvent[],
-  ): Promise<void>;
+    pause?: PauseJobRequest,
+  ): Promise<{ pausePersisted: boolean } | void>;
   commitResearchMore(input: {
     run: ProductResearchRun;
     fromStage: ResearchStage;

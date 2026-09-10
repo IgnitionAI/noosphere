@@ -1,3 +1,4 @@
+import { requireWorkspaceAi, type WorkspaceAiAvailability } from "@outbound/application/ai/ai-availability";
 import type {
   ProductResearchBrief,
   ResearchStage,
@@ -28,12 +29,17 @@ export class ProductResearchApplication {
     private readonly views: ProductResearchViewRepository,
     private readonly ids: IdGenerator,
     private readonly clock: Clock,
+    private readonly aiAvailable?: WorkspaceAiAvailability,
   ) {
     this.#create = new CreateProductResearchRun(repository, ids, clock);
     this.#start = new StartProductResearchRun(repository, ids, clock);
     this.#pause = new PauseProductResearchRun(repository, clock);
     this.#resume = new ResumeProductResearchRun(repository, ids, clock);
     this.#researchMore = new RequestMoreProductResearch(repository, ids, clock);
+  }
+
+  private async requireAi(workspaceId: string): Promise<void> {
+    await requireWorkspaceAi(this.aiAvailable, workspaceId, "icp_research");
   }
 
   async create(input: { workspaceId: string; brief: ProductResearchBrief }) {
@@ -43,6 +49,7 @@ export class ProductResearchApplication {
 
   async start(input: { workspaceId: string; runId: string; correlationId: string }) {
     try {
+      await this.requireAi(input.workspaceId);
       const run = await this.#start.execute(input);
       return run.snapshot;
     } catch (error) {
@@ -80,6 +87,7 @@ export class ProductResearchApplication {
 
   async resume(input: { workspaceId: string; runId: string; correlationId: string }) {
     try {
+      // The resume transaction validates the pinned task selection, not the current workspace default.
       const run = await this.#resume.execute(input);
       return run.snapshot;
     } catch (error) {
@@ -105,6 +113,7 @@ export class ProductResearchApplication {
     correlationId: string;
   }) {
     try {
+      await this.requireAi(input.workspaceId);
       const run = await this.#researchMore.execute(input);
       return run.snapshot;
     } catch (error) {
@@ -209,3 +218,5 @@ function rethrowNotFound(error: unknown, runId: string): never {
   }
   throw error;
 }
+
+export { AiSetupRequiredError } from "@outbound/application/ai/ai-availability";

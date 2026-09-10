@@ -1,5 +1,5 @@
 import { ZodError, z } from "zod";
-import type { WorkspaceAiSettingsApplication } from "@outbound/application/workspaces/workspace-ai-settings";
+import { WorkspaceModelNotAuthorizedError, type WorkspaceAiSettingsApplication } from "@outbound/application/workspaces/workspace-ai-settings";
 import {
   aiCapabilities,
   aiProviderIds,
@@ -14,13 +14,15 @@ import {
 
 const route = "/api/v1/workspace-ai-settings";
 const modelRoute = z.object({
+  connectionId: z.string().uuid().optional(),
   provider: z.enum(aiProviderIds),
-  model: z.string().trim().min(1).max(200).regex(/^[a-zA-Z0-9._:-]+$/),
+  model: z.string().trim().min(1).max(200).regex(/^[a-zA-Z0-9._:/-]+$/),
   reasoningEffort: z.enum(aiReasoningEfforts),
-}).strict();
-const routeList = z.array(modelRoute).min(1).max(3).transform(deduplicateRoutes);
+}).strict().transform(({ connectionId, ...route }) => ({ ...route, ...(connectionId ? { connectionId } : {}) }));
+const routeList = z.array(modelRoute).max(3).transform(deduplicateRoutes);
 const settingsInput = z
   .object({
+    replaceLegacyResearch: z.boolean().default(false),
     defaultRoutes: routeList,
     capabilityRoutes: z.partialRecord(z.enum(aiCapabilities), routeList).default({}),
   })
@@ -56,6 +58,9 @@ export function createWorkspaceAiSettingsHttpHandler(input: {
       response.headers.set("allow", "GET, PUT");
       return response;
     } catch (error) {
+      if (error instanceof WorkspaceModelNotAuthorizedError) {
+        return problem(409, error.code, error.message);
+      }
       if (error instanceof ZodError || error instanceof SyntaxError) {
         return problem(400, "INVALID_REQUEST", "The model policy is invalid");
       }
@@ -83,19 +88,22 @@ function requireAdmin(role: string): void {
 
 function serialize(settings: Awaited<ReturnType<WorkspaceAiSettingsApplication["get"]>>) {
   return {
+    ...(settings.researchTierRoutes ? { researchTierRoutes: settings.researchTierRoutes } : {}),
     researchModels: settings.researchModels,
     synthesisModels: settings.synthesisModels,
     defaultRoutes: settings.defaultRoutes,
     capabilityRoutes: settings.capabilityRoutes,
     source: settings.source,
+    ...(settings.effectiveDefaultRoutes ? { effectiveDefaultRoutes: settings.effectiveDefaultRoutes } : {}),
+    ...(settings.availableModels ? { availableModels: settings.availableModels } : {}),
     updatedAt: settings.updatedAt?.toISOString() ?? null,
   };
 }
 
-function deduplicateRoutes<T extends { provider: string; model: string; reasoningEffort: string }>(routes: readonly T[]): T[] {
+function deduplicateRoutes<T extends { connectionId?: string; provider: string; model: string; reasoningEffort: string }>(routes: readonly T[]): T[] {
   const seen = new Set<string>();
   return routes.filter((route) => {
-    const key = `${route.provider}:${route.model}:${route.reasoningEffort}`;
+    const key = `${route.connectionId ?? ""}:${route.provider}:${route.model}:${route.reasoningEffort}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;

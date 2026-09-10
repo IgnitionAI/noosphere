@@ -1,3 +1,4 @@
+import type { AiCapability } from "@outbound/application/ai/model-gateway";
 export interface NewJob<TPayload = unknown> {
   readonly id: string;
   readonly workspaceId: string;
@@ -51,7 +52,16 @@ export interface QuarantineJobRequest {
   readonly errorMessage?: string;
 }
 
+export interface PauseJobRequest {
+  readonly capability?: AiCapability;
+  readonly jobId: string;
+  readonly workerId: string;
+  readonly errorCode: string;
+  readonly errorMessage: string;
+}
+
 export interface JobQueue {
+  pause?(request: PauseJobRequest): Promise<void>;
   enqueue(job: NewJob): Promise<{ inserted: boolean }>;
   lease(request: LeaseJobsRequest): Promise<readonly LeasedJob[]>;
   renewLease(jobId: string, workerId: string, lockedUntil: Date): Promise<boolean>;
@@ -60,4 +70,9 @@ export interface JobQueue {
   retry(request: RetryJobRequest): Promise<"scheduled" | "dead_lettered">;
   /** Optional until all queue implementations support durable quarantine. */
   quarantine?(request: QuarantineJobRequest): Promise<void>;
+}
+
+/** Control signal: the caller already committed this job's pause. */
+export class JobPausePersistedError extends Error {
+  constructor(readonly jobId: string) { super("JOB_PAUSE_PERSISTED"); }
 }

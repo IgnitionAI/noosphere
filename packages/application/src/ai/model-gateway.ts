@@ -1,7 +1,7 @@
-export const aiProviderIds = ["kimi-code", "codex-cli", "openai-api"] as const;
+export const aiProviderIds = ["kimi-code", "codex-cli", "openai-api", "anthropic", "openrouter", "openai-compatible"] as const;
 export type AiProviderId = (typeof aiProviderIds)[number];
 
-export const aiTransports = ["chat-completions", "codex-process", "responses-api"] as const;
+export const aiTransports = ["chat-completions", "codex-process", "responses-api", "anthropic-messages"] as const;
 export type AiTransport = (typeof aiTransports)[number];
 
 export const aiReasoningEfforts = ["low", "medium", "high", "xhigh", "max", "ultra"] as const;
@@ -26,6 +26,8 @@ export const aiCapabilities = [
 export type AiCapability = (typeof aiCapabilities)[number];
 
 export interface ModelRoute {
+  readonly connectionId?: string;
+  readonly connectionVersion?: number;
   readonly provider: AiProviderId;
   readonly model: string;
   readonly reasoningEffort: AiReasoningEffort;
@@ -45,6 +47,8 @@ export interface ModelInvocationMetadata extends ModelRoute {
 }
 
 export interface StructuredModelRequest<T> {
+  readonly connectionId?: string;
+  readonly connectionVersion?: number;
   readonly workspaceId: string;
   readonly capability: AiCapability;
   readonly requestKey: string;
@@ -92,6 +96,7 @@ export interface ModelCatalog {
 }
 
 export type ModelGatewayErrorCode =
+  | "AI_PROVIDER_DESTINATION_FORBIDDEN"
   | "AI_PROVIDER_ABORTED"
   | "AI_PROVIDER_AUTHENTICATION_FAILED"
   | "AI_PROVIDER_CATALOG_UNAVAILABLE"
@@ -101,6 +106,11 @@ export type ModelGatewayErrorCode =
   | "AI_PROVIDER_QUOTA_EXHAUSTED"
   | "AI_PROVIDER_TIMEOUT"
   | "AI_PROVIDER_UNAVAILABLE";
+
+export function allowsExplicitProviderFallback(code: ModelGatewayErrorCode): boolean {
+  return ["AI_PROVIDER_AUTHENTICATION_FAILED", "AI_PROVIDER_CATALOG_UNAVAILABLE", "AI_PROVIDER_INVOCATION_FAILED",
+    "AI_PROVIDER_MODEL_UNAVAILABLE", "AI_PROVIDER_QUOTA_EXHAUSTED", "AI_PROVIDER_TIMEOUT", "AI_PROVIDER_UNAVAILABLE"].includes(code);
+}
 
 export class ModelGatewayError extends Error {
   readonly name: string = "ModelGatewayError";

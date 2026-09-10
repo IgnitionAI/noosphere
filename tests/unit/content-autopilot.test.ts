@@ -56,6 +56,19 @@ describe("AUT-101 daily LinkedIn editorial loop", () => {
     ]);
   });
 
+  test("an already enabled autopilot waits for AI without queuing a generation", async () => {
+    let queued = 0;
+    const repository = {
+      async listEnabled() { return [{ workspaceId: "workspace-1", strategyVersionId: "strategy-1", cadence: { postsPerWeek: 3, preferredDays: [1], timezone: "Europe/Paris" } }]; },
+      async listRepairCandidates() { return []; },
+      async listGenerationCandidates() { return [{ ideaId: "idea-1" }]; },
+      async listPublicationCandidates() { return []; },
+    } as unknown as ContentAutopilotRepository;
+    const reconciler = new ContentAutopilotReconciler(repository, { async createGeneration() { queued++; } } as never, {} as never, { now: () => new Date() }, async () => false);
+    expect(await reconciler.reconcile()).toBe(0);
+    expect(queued).toBe(0);
+  });
+
   test("starts one generation at a time while publishing ready assets independently", async () => {
     const generated: string[] = [];
     const published: string[] = [];

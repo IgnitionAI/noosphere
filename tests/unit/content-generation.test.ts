@@ -338,3 +338,20 @@ function brief() { return { objective: "explain" as const, audience: "Équipes j
 function pipelineContext(stage: "writer" | "audit") { const workspaceId = crypto.randomUUID(); const runId = crypto.randomUUID(); return { run: { id: runId, workspaceId, ideaId: crypto.randomUUID(), assetId: crypto.randomUUID(), assetVersionId: null, status: "running" as const, stage, instruction: null, lastErrorCode: null, lastErrorMessage: null, createdAt: new Date(), completedAt: null }, idea: { id: crypto.randomUUID(), workspaceId, strategyVersionId: crypto.randomUUID(), status: "briefed" as const, angle: "Recherche documentaire prouvée", rationale: "Un angle précis pour les juristes.", audience: "Équipes juridiques", pillar: "Recherche", priority: 90, freshnessUntil: new Date(Date.now() + 60_000), firstSeenAt: new Date(), lastSeenAt: new Date(), sources: [evidence()] }, strategy: { audience: { name: "Équipes juridiques", summary: "Juristes avec des preuves dispersées", awareness: "problem_aware" as const }, pillars: [{ name: "Recherche", promise: "Retrouver les preuves", proofTypes: ["claim"] }, { name: "Sécurité", promise: "Contrôler", proofTypes: ["audit"] }, { name: "Adoption", promise: "Déployer", proofTypes: ["chronologie"] }], voice: { traits: ["direct", "précis"], avoid: ["générique"] }, formats: ["linkedin_text" as const], cadence: { postsPerWeek: 3, preferredDays: [1, 3, 5], timezone: "Europe/Paris" }, callsToAction: ["Comment vérifiez-vous vos preuves ?"], allowedClaimIds: [], forbiddenTopics: [] }, evidence: [evidence()], recentBodies: [], brief: brief(), draft: stage === "audit" ? draft() : null, audit: null, critique: null }; }
 function evidence() { return { key: "proof:1", type: "public_web" as const, sourceRef: "https://example.com", canonicalUrl: "https://example.com", title: "Preuve", excerpt: "Noosphere relie le contenu aux conversations.", contentHash: "proof", collectedAt: new Date() }; }
 function job(workspaceId: string, runId: string): LeasedJob { const now = new Date(); return { id: crypto.randomUUID(), workspaceId, type: "content.asset.generate", payload: { runId }, idempotencyKey: "content", correlationId: "content:test", attempts: 1, maxAttempts: 4, availableAt: now, lockedBy: "worker", lockedUntil: new Date(now.getTime() + 60_000) }; }
+
+test("quota pause preserves the writing checkpoint even on the last processing attempt", async () => {
+  const { AiTaskPauseError } = await import("@outbound/application/ai/ai-task-pause");
+  const { ModelGatewayError } = await import("@outbound/application/ai/model-gateway");
+  const context = pipelineContext("writer");
+  const failure = new AiTaskPauseError(new ModelGatewayError("AI_PROVIDER_QUOTA_EXHAUSTED", "openai-api", "quota", true, false), "content_writer", "write", []);
+  let failed = 0;
+  const repository = { async loadContext() { return context; }, async startRun() {}, async failRun() { failed++; } } as unknown as ContentGenerationRepository;
+  const processor = new ContentGenerationJobProcessor(repository, {
+    async buildBrief() { throw new Error("completed brief must not replay"); }, async write() { throw failure; },
+    async audit() { throw new Error("must not advance"); }, async critique() { throw new Error("must not advance"); },
+  }, {} as JobQueue);
+  const leased = job(context.run.workspaceId, context.run.id);
+  await expect(processor.process({ ...leased, attempts: leased.maxAttempts })).rejects.toBe(failure);
+  expect(failed).toBe(0);
+  expect(context.run.stage).toBe("writer");
+});

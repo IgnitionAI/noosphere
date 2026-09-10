@@ -1,0 +1,52 @@
+import { expect, test } from "@playwright/test";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { join } from "node:path";
+import { readFile, writeFile } from "node:fs/promises";
+import { createDatabase } from "@outbound/infrastructure/database/client";
+
+const execute = promisify(execFile);
+test("guided ChatGPT connection can be validated, expire and be renewed without an API key", async ({ page }) => {
+  test.skip(process.env.E2E_CONTROLLED_CODEX !== "true", "Requires the isolated controlled Codex executable");
+  await page.goto("/login");
+  await page.getByLabel("Email professionnel").fill(process.env.BOOTSTRAP_OWNER_EMAIL ?? "owner@ignition.local");
+  await page.getByLabel("Mot de passe").fill(process.env.BOOTSTRAP_OWNER_PASSWORD ?? "change-me-in-env");
+  await page.getByRole("button", { name: "Accéder au workspace" }).click();
+  await page.waitForURL(/\/w\//);
+  await page.goto("/setup");
+  const form = page.getByRole("heading", { name: "Ajouter une connexion IA" }).locator("..");
+  await form.getByLabel("Fournisseur").selectOption("codex-cli");
+  await expect(form.getByLabel("Clé API")).toHaveCount(0);
+  const name = `ChatGPT E2E ${crypto.randomUUID()}`;
+  await form.getByLabel("Nom de la connexion").fill(name);
+  await form.getByLabel("Modèles autorisés").fill("controlled-codex-model");
+  await form.getByRole("button", { name: "Enregistrer la connexion" }).click();
+  const section = page.getByRole("heading", { name, exact: true }).locator("..");
+  await expect(section.getByText("Action requise : connectez votre compte ChatGPT.")).toBeVisible();
+  const database = createDatabase(process.env.TEST_DATABASE_URL!);
+  try {
+    const [connection] = await database.client`select id from instance_ai_connections where name = ${name}`;
+    const id = String(connection!.id);
+    await expect(section.getByText(`bun run instance:codex:login ${id}`, { exact: true })).toBeVisible();
+    const login = () => execute("bun", ["scripts/instance-codex-login.ts", id], { cwd: process.cwd(), env: { ...process.env, DATABASE_URL: process.env.TEST_DATABASE_URL! } });
+    await login();
+    await page.reload();
+    await expect(section.getByText("Compte connecté. Testez le modèle pour valider son utilisation.")).toBeVisible();
+    await section.getByRole("button", { name: "Tester controlled-codex-model" }).click();
+    await expect(section.getByText("Test réussi", { exact: true })).toBeVisible();
+    await section.getByRole("button", { name: "Utiliser par défaut" }).click();
+    await expect(section.getByText("Par défaut", { exact: true })).toBeVisible();
+    const authPath = join(process.env.INSTANCE_CODEX_HOME!, id, "auth.json");
+    const auth = JSON.parse(await readFile(authPath, "utf8"));
+    await writeFile(authPath, JSON.stringify({ ...auth, expired: true }), { mode: 0o600 });
+    await section.getByRole("button", { name: "Tester controlled-codex-model" }).click();
+    await expect(section.getByText("Connexion expirée. Renouvelez la connexion ChatGPT, puis retestez le modèle.")).toBeVisible();
+    await login();
+    await page.reload();
+    await expect(section.getByText("À tester", { exact: true })).toBeVisible();
+    await section.getByRole("button", { name: "Tester controlled-codex-model" }).click();
+    await expect(section.getByText("Test réussi", { exact: true })).toBeVisible();
+    expect(await page.content()).not.toContain("browser-fixture-access");
+    expect(await page.content()).not.toContain("browser-fixture-refresh");
+  } finally { await database.close(); }
+});

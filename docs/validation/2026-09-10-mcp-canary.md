@@ -59,6 +59,28 @@ Unipile v1 identifier contracts were checked against the official
 [chat attendees](https://developer.unipile.com/reference/chatscontroller_listattendees)
 documentation. Real account response compatibility remains to be accepted.
 
+## Combined Setup IA and MCP validation
+
+The isolated branch now contains both lots, with journal indexes and timestamps in
+strict order from `0107` through `0116`. Conflicts preserved the expanded catalog,
+transactional repositories, `AI_SETUP_REQUIRED`, and shared instance AI availability.
+
+- Combined `bun run check`: 1,072 unit/HTTP tests, 43 crawler tests, typecheck,
+  architecture/self-hosting checks and production build passed.
+- Combined integration suite: 313 passed, 4 skipped; includes migration from the
+  pre-Setup schema and the offer-publication concurrency guard.
+- Follow-up composition regression: 3 PostgreSQL tests / 19 assertions passed after
+  reproducing missing AI checks in MCP research/autopilot constructors. Research
+  rejection rolls back its draft, job and write ledger. Disabling autopilot remains
+  possible without an available model.
+- Follow-up SDK annotation regression: provider-backed jobs expose `openWorldHint`;
+  automation replacements expose `destructiveHint`. Roles and scopes are unchanged.
+- A fresh database applied the full combined journal. Against that database, Caddy
+  HTTPS and both official SDK paths passed isolation, redaction, revocation and rate
+  limiting. HTTPS dynamic registration returned 201 with no client secret; database
+  inspection confirmed the client has no user/workspace binding before consent.
+- Authenticated desktop/mobile browser verification is recorded below when complete.
+
 ## Local HTTPS, restart and database restoration
 
 These separate checks ran on Setup IA commit `9429429`, before this MCP lot. They
@@ -85,8 +107,8 @@ ChatGPT connection, an off-site Restic restore, or a storage-object restore.
 
 The MCP journal includes dynamic registration migration `0107` and the additive
 `0116_offer_draft_revision.sql`. Setup IA has migrations `0108` through `0115`.
-The final combined journal must contain all migrations in that order before any
-VPS application: applying Setup IA first and then an older migration can cause
+The combined journal now contains all migrations in that order. Before any
+VPS application, inspect the target migration history: applying Setup IA first and then an older migration can cause
 Drizzle to skip the older entry. No production migration has been applied.
 
 The draft revision counter is separate from published offer versions. Existing data

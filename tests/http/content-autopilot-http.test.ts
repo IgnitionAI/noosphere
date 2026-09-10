@@ -7,6 +7,18 @@ const userId = crypto.randomUUID();
 const view = { configured: true, enabled: true, localTime: "06:00", timezone: "Europe/Paris", publicationTimes: ["09:00", "17:00"], publicationDays: [1, 2, 3, 4, 5, 6, 7], postsPerWeek: 14, lastRunAt: null, nextRunAt: new Date(), nextPublicationAt: null, queuedIdeas: 2, generatingAssets: 1, readyAssets: 0, scheduledPublications: 0, blockedAssets: 0, exceptions: 0 };
 
 describe("AUT-101 content autopilot HTTP", () => {
+  test("requires AI to enable autopilot but always allows disabling it", async () => {
+    const writes: unknown[] = [];
+    const handler = createContentAutopilotHttpHandler({
+      application: new ContentAutopilotApplication({ async configure(input: unknown) { writes.push(input); return view; } } as never, { now: () => new Date() }, async () => false),
+      contextResolver: context("owner"),
+    });
+    expect((await handler(request("PUT", { requestKey: "enable-without-ai", enabled: true, localTime: "06:00", timezone: "Europe/Paris" }))).status).toBe(409);
+    expect(writes).toHaveLength(0);
+    expect((await handler(request("PUT", { requestKey: "disable-without-ai", enabled: false, localTime: "06:00", timezone: "Europe/Paris" }))).status).toBe(200);
+    expect(writes).toHaveLength(1);
+  });
+
   test("derives workspace and actor exclusively from the request context", async () => {
     const writes: unknown[] = [];
     const repository = {

@@ -1,3 +1,4 @@
+import { AiTaskPauseError } from "@outbound/application/ai/ai-task-pause";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import type { InboundReplyAgent } from "@outbound/application/campaigns/inbound-reply-agent";
 import type { OutboundChannelGateway } from "@outbound/application/campaigns/outbound-channel-gateway";
@@ -252,6 +253,12 @@ export class ConversationCommandJobProcessor {
       });
       await this.queue.acknowledge(job.id, job.lockedBy, now);
     } catch (error) {
+      if (error instanceof AiTaskPauseError) {
+        // Generation failed before gateway.send; return the command to its pre-send state.
+        await this.database.update(conversationCommands).set({ status: "scheduled", errorCode: error.code, errorMessage: error.code, updatedAt: this.clock.now() })
+          .where(and(eq(conversationCommands.workspaceId, payload.workspaceId), eq(conversationCommands.id, payload.commandId), eq(conversationCommands.status, "sending")));
+        throw error;
+      }
       if (error instanceof SetterStoppedConversationError) {
         await this.#cancel(payload, error.code, error.message);
         await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());

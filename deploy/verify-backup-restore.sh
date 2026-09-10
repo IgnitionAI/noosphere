@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 ROOT_DIR="${APP_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env}"
@@ -12,7 +13,7 @@ set +a
 : "${BACKUP_DIR:?BACKUP_DIR is required}"
 BACKUP_MODE="${BACKUP_MODE:-restic}"
 restore_dir="$(mktemp -d "${TMPDIR:-/tmp}/noosphere-restore.XXXXXX")"
-trap 'rm -rf "$restore_dir"' EXIT
+trap 'if command -v trash >/dev/null; then trash "$restore_dir"; else echo "Restore files retained in private directory: $restore_dir" >&2; fi' EXIT
 
 if [[ "$BACKUP_MODE" == "restic" ]]; then
   : "${RESTIC_REPOSITORY:?RESTIC_REPOSITORY is required}"
@@ -34,8 +35,11 @@ if ! find "$backup_root" -type d -path '*/minio/latest' -print -quit | grep -q .
   echo "Restore drill found no MinIO mirror" >&2
   exit 1
 fi
+credentials_file="$(find "$backup_root" -type f -name 'ai_*.tar.gz' -print | sort | tail -n 1)"
+if [[ -z "$credentials_file" ]]; then echo "Restore drill found no AI credentials archive" >&2; exit 1; fi
+docker run --rm --network none --entrypoint /bin/sh -v "$credentials_file:/credentials.tar.gz:ro" paradedb/paradedb:v0.23.5 -ec 'tar -tzf /credentials.tar.gz | grep -q "./environment.env"'
 if [[ "$BACKUP_MODE" == "restic" ]]; then
-  echo "Latest off-site backup restored and validated"
+  echo "Latest off-site archives retrieved and checked; an application restore test is still required"
 else
-  echo "Latest local backup validated. This does not prove recovery after VPS loss."
+  echo "Latest local archives checked. This does not prove application recovery or recovery after VPS loss."
 fi

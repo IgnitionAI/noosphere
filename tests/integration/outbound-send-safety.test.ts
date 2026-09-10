@@ -1046,6 +1046,54 @@ databaseDescribe("outbound send safety", () => {
     expect(blockedAfterReplay?.value).toBe(1);
   });
 
+  test("JIT quota pause releases the pre-send action without retrying or sending", async () => {
+    const { AiTaskPauseError } = await import("@outbound/application/ai/ai-task-pause");
+    const { ModelGatewayError } = await import("@outbound/application/ai/model-gateway");
+    await database.client`delete from jobs where workspace_id = ${workspaceId}`;
+    await database.db.update(campaignEnrollments).set({ status: "cancelled", completedAt: now })
+      .where(eq(campaignEnrollments.workspaceId, workspaceId));
+    await database.db.update(outreachActions).set({ status: "cancelled" }).where(eq(outreachActions.workspaceId, workspaceId));
+    const fixture = await campaignFixture("paused-jit", `paused-account-${workspaceId}`, "scheduled");
+    await database.db.insert(campaignProspects).values({ workspaceId, campaignId: fixture.campaignId, candidateId, contactId, status: "enrolled", score: 78, eligible: true });
+    const original = await action(fixture.actionId);
+    await database.db.update(outreachActions).set({ contentSnapshot: { ...(original!.contentSnapshot as Record<string, unknown>), generationPending: true, template: { position: 1, kind: "linkedin_message", delayDays: 0, body: "Message à personnaliser" } } }).where(eq(outreachActions.id, fixture.actionId));
+    const failure = new AiTaskPauseError(new ModelGatewayError("AI_PROVIDER_QUOTA_EXHAUSTED", "openai-api", "quota", true, false), "message_generation", "jit", []);
+    let sent = 0, generated = 0;
+    const processor = new OutreachDispatchJobProcessor(database.db, queue, { async send() { sent++; return { providerRequestId: "must-not-send", conversationId: null }; } }, clock, undefined, { async generate() { generated++; throw failure; } });
+    const job = await leasedJob(fixture.actionId, "paused-jit-worker");
+    await expect(processor.process(job)).rejects.toBe(failure);
+    expect(generated).toBe(1);
+    expect(sent).toBe(0);
+    expect(await action(fixture.actionId)).toMatchObject({ status: "scheduled", lockedBy: null, lastErrorCode: failure.code });
+    await queue.pause({ jobId: job.id, workerId: job.lockedBy, errorCode: failure.code, errorMessage: failure.code, capability: failure.capability });
+    const reconciler = new PostgresJobOutcomeReconciler(database.db, clock);
+    await reconciler.reconcileExhaustedPreSendWaits();
+    await reconciler.reconcileRecoverableOutreachActions();
+    expect(await queue.lease({ workerId: "restarted-jit", types: ["outreach.dispatch"], limit: 1, leaseMs: 30_000, now: new Date(now.getTime() + 86_400_000) })).toEqual([]);
+    // A later recoverable domain classification must not bypass the paused queue job.
+    await database.db.update(outreachActions).set({ status: "failed", lastErrorCode: "ACTION_EXECUTION_STATE_UNKNOWN" }).where(eq(outreachActions.id, fixture.actionId));
+    await reconciler.reconcileExhaustedPreSendWaits();
+    expect(await action(fixture.actionId)).toMatchObject({ status: "failed" });
+    // A cancellation during the pause remains authoritative after manual resume.
+    await database.db.update(outreachActions).set({ status: "cancelled" }).where(eq(outreachActions.id, fixture.actionId));
+    const actor = crypto.randomUUID();
+    await database.client`insert into auth_users (id, name, email) values (${actor}, 'Resume operator', ${actor + '@example.com'})`;
+    const { PostgresOperatorConsole } = await import("@outbound/infrastructure/operations/postgres-operator-console");
+    const { createTaskAiResumePreparation } = await import("@outbound/infrastructure/ai/postgres-task-ai-resume");
+    const policy = { defaultRoutes: [{ provider: "kimi-code", model: "controlled", reasoningEffort: "low" }], capabilityRoutes: {}, researchModels: ["controlled"], synthesisModels: ["controlled"] };
+    await database.client`update task_ai_contexts set policy = ${JSON.stringify(policy)}::jsonb where workspace_id = ${workspaceId} and task_key = ${'job:' + job.id}`;
+    const consoleService = new PostgresOperatorConsole(database.db, clock, { generate: () => crypto.randomUUID() }, createTaskAiResumePreparation({ KIMI_CODE_API_KEY: "controlled" }));
+    await Promise.all([1, 2].map(() => consoleService.requeue({ workspaceId, actorUserId: actor, jobId: job.id })));
+    const [resumed] = await queue.lease({ workerId: "manual-jit", types: ["outreach.dispatch"], limit: 1, leaseMs: 30_000, now });
+    expect(resumed?.id).toBe(job.id);
+    await processor.process(resumed!);
+    expect(sent).toBe(0);
+    expect(generated).toBe(1);
+    expect(await action(fixture.actionId)).toMatchObject({ status: "cancelled" });
+    expect(await queue.lease({ workerId: "duplicate-jit", types: ["outreach.dispatch"], limit: 1, leaseMs: 30_000, now })).toEqual([]);
+
+  });
+
   async function campaignFixture(
     label: string,
     accountId: string,

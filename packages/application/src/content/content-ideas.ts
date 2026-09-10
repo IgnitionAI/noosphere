@@ -1,3 +1,5 @@
+import { AiTaskPauseError } from "@outbound/application/ai/ai-task-pause";
+import { requireWorkspaceAi, type WorkspaceAiAvailability } from "@outbound/application/ai/ai-availability";
 import type { JobQueue, LeasedJob } from "@outbound/application/jobs/job-queue";
 import type { EditorialStrategySnapshot } from "@outbound/domain/content/editorial-strategy";
 import type { ContentIdeaCandidate, ContentIdeaSourceType, ContentIdeaStatus } from "@outbound/domain/content/content-idea";
@@ -95,7 +97,7 @@ export interface ContentIdeaCandidateGenerator {
 }
 
 export class ContentIdeaApplication {
-  constructor(private readonly repository: ContentIdeaRepository) {}
+  constructor(private readonly repository: ContentIdeaRepository, private readonly aiAvailable?: WorkspaceAiAvailability) {}
 
   list(input: Parameters<ContentIdeaRepository["list"]>[0]) { return this.repository.list(input); }
   findRun(input: Parameters<ContentIdeaRepository["findRun"]>[0]) { return this.repository.findRun(input); }
@@ -103,6 +105,7 @@ export class ContentIdeaApplication {
   async discover(input: { workspaceId: string; userId: string; requestKey: string; now?: Date }) {
     const replay = await this.repository.findRequest({ workspaceId: input.workspaceId, requestKey: input.requestKey });
     if (replay) return replay;
+    await requireWorkspaceAi(this.aiAvailable, input.workspaceId, "content_idea");
     return this.repository.createDiscovery({ ...input, trigger: "manual", now: input.now ?? new Date() });
   }
 }
@@ -154,6 +157,7 @@ export class ContentIdeaDiscoveryJobProcessor {
       await this.repository.completeRun({ workspaceId: job.workspaceId, runId: payload.runId, partial, now: this.now() });
       await this.queue.acknowledge(job.id, job.lockedBy, this.now());
     } catch (error) {
+      if (error instanceof AiTaskPauseError) throw error;
       if (job.attempts >= job.maxAttempts) {
         await this.repository.failRun({ workspaceId: job.workspaceId, runId: payload.runId, code: "CONTENT_IDEA_DISCOVERY_FAILED", message: error instanceof Error ? error.message : String(error), now: this.now() });
       }

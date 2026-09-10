@@ -1,3 +1,4 @@
+import { aiSetupProblem } from "@outbound/interface/http/ai-setup-problem";
 import { z } from "zod";
 import { EvaluationServiceError } from "@outbound/infrastructure/ai/postgres-evaluation-service";
 import type { RequestContextResolver, WorkspaceRole } from "@outbound/interface/http/request-context";
@@ -104,6 +105,8 @@ export function createEvaluationHttpHandler(dependencies: { contextResolver: Req
       }
       return problem(404, "ROUTE_NOT_FOUND", "Route not found");
     } catch (error) {
+      const setupProblem = aiSetupProblem(error);
+      if (setupProblem) return setupProblem;
       if (error instanceof EvaluationServiceError) return problem(error.status, error.code, error.message);
       if (error instanceof z.ZodError || error instanceof SyntaxError) return problem(422, "VALIDATION_FAILED", error instanceof Error ? error.message : "Invalid request");
       if (error instanceof Error && error.name === "RequestAuthenticationError") return problem(401, "AUTHENTICATION_REQUIRED", error.message);

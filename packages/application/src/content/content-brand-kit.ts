@@ -1,3 +1,4 @@
+import { requireWorkspaceAi, type WorkspaceAiAvailability } from "@outbound/application/ai/ai-availability";
 import type { ContentBrandKitSnapshot, ContentBrandPaletteContrast } from "@outbound/domain/content/content-brand-kit";
 import { assertContentBrandKit, contentBrandPaletteContrast, DEFAULT_CONTENT_BRAND_KIT } from "@outbound/domain/content/content-brand-kit";
 
@@ -89,6 +90,7 @@ export class ContentBrandKitApplication {
     private readonly assetStorage?: ContentBrandAssetStorage,
     private readonly directionDesigner?: ContentBrandDirectionDesigner,
     private readonly landingPageReader?: ContentBrandLandingPageReader,
+    private readonly aiAvailable?: WorkspaceAiAvailability,
   ) {}
 
   async get(workspaceId: string): Promise<ContentBrandKitView> {
@@ -171,6 +173,7 @@ export class ContentBrandKitApplication {
   }): Promise<ContentBrandDirectionView> {
     const replay = await this.repository.findRequest({ workspaceId: input.workspaceId, requestKey: input.requestKey });
     if (replay) return { brandKit: replay, contrast: contentBrandPaletteContrast(replay.snapshot.colors), metadata: null };
+    await requireWorkspaceAi(this.aiAvailable, input.workspaceId, "brand_direction");
     if (!this.directionDesigner) throw new Error("CONTENT_BRAND_DIRECTION_UNAVAILABLE");
     const current = await this.get(input.workspaceId);
     const sources: ("landing_page" | "logo" | "description")[] = [];

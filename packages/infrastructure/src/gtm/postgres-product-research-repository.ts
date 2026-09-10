@@ -1,3 +1,5 @@
+import type { PauseJobRequest, LeasedJob } from "@outbound/application/jobs/job-queue";
+import type { createTaskAiResumePreparation } from "@outbound/infrastructure/ai/postgres-task-ai-resume";
 import { and, asc, desc, eq, gt, inArray, ne, notInArray, or, sql } from "drizzle-orm";
 import {
   ProductResearchRun,
@@ -53,7 +55,7 @@ type ReadWriteExecutor = Pick<Database, "select" | "insert" | "update">;
 export class PostgresProductResearchRepository
   implements ProductResearchRepository, ProductResearchViewRepository
 {
-  constructor(private readonly db: Database) {}
+  constructor(private readonly db: Database, private readonly prepareAiResume?: ReturnType<typeof createTaskAiResumePreparation>) {}
 
   async insert(run: ProductResearchRun): Promise<void> {
     await this.db.transaction(async (tx) => {
@@ -194,6 +196,49 @@ export class PostgresProductResearchRepository
     return rows.map(toCheckpoint);
   }
 
+  async transitionLocked(
+    input: { workspaceId: string; runId: string },
+    transition: (run: ProductResearchRun) => { job: NewJob | null; events: readonly ProductResearchEvent[] },
+  ): Promise<ProductResearchRun | null> {
+    return this.db.transaction(async (tx) => {
+      const [row] = await tx.select().from(productResearchRuns).where(and(
+        eq(productResearchRuns.workspaceId, input.workspaceId), eq(productResearchRuns.id, input.runId),
+      )).limit(1).for("update");
+      if (!row) return null;
+      const run = ProductResearchRun.restore(toRunSnapshot(row));
+      const { job, events } = transition(run);
+      if (job || events.length) {
+        // Terminal children acquire this lock before inserting their next job (task lock).
+        // Keep the same order during resume before locking/updating child work items.
+        if (job && run.nextStage() === "market_investigation") {
+          const fanoutLockKey = `research:fanout:${input.workspaceId}:${input.runId}:market_investigation`;
+          await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${fanoutLockKey}, 0))`);
+        }
+        const refreshedPolicy = job && this.prepareAiResume ? await this.prepareAiResume(tx, { workspaceId: input.workspaceId, taskKey: `research:run:${input.runId}`, capability: "icp_research" }) : undefined;
+        await updateRun(tx, run);
+        const fanoutJobs = job && run.nextStage() === "market_investigation" ? await tx.select().from(jobs).where(and(
+          eq(jobs.workspaceId, input.workspaceId), eq(jobs.type, "research.stage.execute"),
+          sql`${jobs.payload}->>'runId' = ${input.runId}`,
+          sql`${jobs.payload}->>'stage' = 'market_investigation'`,
+          sql`(coalesce(${jobs.payload}->>'workItemKey', 'main') <> 'main' OR ${jobs.payload}->>'finalizeFanout' = 'true')`,
+          inArray(jobs.status, ["paused", "pending", "retry", "running"]),
+        )).for("update") : [];
+        for (const child of fanoutJobs) {
+          if (child.status === "running") continue;
+          await tx.update(jobs).set({
+            ...(refreshedPolicy ? { aiPolicy: refreshedPolicy } : {}),
+            ...(child.status === "paused" ? { status: "pending" as const, attempts: 0, availableAt: new Date(), lockedBy: null, lockedAt: null, lockedUntil: null, lastErrorCode: null, lastErrorMessage: null } : {}),
+            updatedAt: new Date(),
+          }).where(eq(jobs.id, child.id));
+        }
+        if (fanoutJobs.length) await tx.update(researchWorkItems).set({ status: "pending", errorCode: null, updatedAt: new Date() }).where(and(eq(researchWorkItems.workspaceId, input.workspaceId), eq(researchWorkItems.runId, input.runId), eq(researchWorkItems.status, "paused")));
+        if (job && !fanoutJobs.length) await insertJob(tx, job);
+        await insertEvents(tx, events);
+      }
+      return run;
+    });
+  }
+
   async commitRunTransition(
     run: ProductResearchRun,
     job: NewJob | null,
@@ -210,9 +255,18 @@ export class PostgresProductResearchRepository
     run: ProductResearchRun,
     checkpoint: ResearchCheckpoint,
     events: readonly ProductResearchEvent[],
-  ): Promise<void> {
-    await this.db.transaction(async (tx) => {
-      await updateRun(tx, run);
+    lease?: Pick<LeasedJob, "id" | "lockedBy">,
+  ): Promise<boolean> {
+    return this.db.transaction(async (tx) => {
+      const [current] = await tx.select({ status: productResearchRuns.status }).from(productResearchRuns).where(and(eq(productResearchRuns.workspaceId, checkpoint.workspaceId), eq(productResearchRuns.id, checkpoint.runId))).for("update");
+      if (current?.status === "paused") {
+        if (!lease) throw new Error("PRODUCT_RESEARCH_RUN_PAUSED");
+        const paused = await tx.update(jobs).set({ status: "paused", lockedBy: null, lockedAt: null, lockedUntil: null, lastErrorCode: "RUN_PAUSED", lastErrorMessage: "Research run is paused", updatedAt: new Date() }).where(and(eq(jobs.workspaceId, checkpoint.workspaceId), eq(jobs.id, lease.id), eq(jobs.status, "running"), eq(jobs.lockedBy, lease.lockedBy))).returning({ id: jobs.id });
+        if (paused.length !== 1) throw new Error("JOB_LEASE_LOST");
+        return false;
+      }
+      // Fanout children do not own aggregate transitions and must not overwrite a sibling pause.
+      if ((checkpoint.workItemKey ?? "main") === "main") await updateRun(tx, run);
       await tx
         .update(researchStageRuns)
         .set({
@@ -245,6 +299,7 @@ export class PostgresProductResearchRepository
           );
       }
       await insertEvents(tx, events);
+      return true;
     });
   }
 
@@ -388,9 +443,26 @@ export class PostgresProductResearchRepository
     run: ProductResearchRun,
     checkpoint: ResearchCheckpoint,
     events: readonly ProductResearchEvent[],
-  ): Promise<void> {
-    await this.db.transaction(async (tx) => {
-      await updateRun(tx, run);
+    pause?: PauseJobRequest,
+  ): Promise<{ pausePersisted: boolean }> {
+    return this.db.transaction(async (tx) => {
+      const isChild = (checkpoint.workItemKey ?? "main") !== "main";
+      let committedEvents = events;
+      if (isChild && pause) {
+        // Merge a child's pause into the locked aggregate; sibling snapshots are stale.
+        const [current] = await tx.select().from(productResearchRuns).where(and(eq(productResearchRuns.workspaceId, checkpoint.workspaceId), eq(productResearchRuns.id, checkpoint.runId))).for("update");
+        if (!current) throw new Error("PRODUCT_RESEARCH_RUN_NOT_FOUND");
+        const latest = ProductResearchRun.restore(toRunSnapshot(current));
+        if (latest.snapshot.status !== "paused") {
+          latest.pause(run.snapshot.updatedAt);
+          await updateRun(tx, latest);
+          committedEvents = latest.pullEvents();
+        } else committedEvents = [];
+      } else if (!isChild) await updateRun(tx, run);
+      if (pause) {
+        const paused = await tx.update(jobs).set({ status: "paused", aiPauseCapability: pause.capability ?? null, lockedAt: null, lockedUntil: null, lockedBy: null, lastErrorCode: pause.errorCode, lastErrorMessage: pause.errorMessage, updatedAt: run.snapshot.updatedAt }).where(and(eq(jobs.workspaceId, run.snapshot.workspaceId), eq(jobs.id, pause.jobId), eq(jobs.status, "running"), eq(jobs.lockedBy, pause.workerId))).returning({ id: jobs.id });
+        if (paused.length !== 1) throw new Error("JOB_LEASE_LOST");
+      }
       const updated = await tx
         .update(researchStageRuns)
         .set(toCheckpointUpdate(checkpoint))
@@ -403,7 +475,11 @@ export class PostgresProductResearchRepository
         )
         .returning({ id: researchStageRuns.id });
       if (updated.length !== 1) throw new Error("CHECKPOINT_HUMAN_REVIEW_LOCKED");
-      await insertEvents(tx, events);
+      if (run.snapshot.status === "paused" && (checkpoint.workItemKey ?? "main") !== "main") {
+        await tx.update(researchWorkItems).set({ status: "paused", errorCode: checkpoint.errorCode, updatedAt: run.snapshot.updatedAt }).where(and(eq(researchWorkItems.workspaceId, checkpoint.workspaceId), eq(researchWorkItems.runId, checkpoint.runId), eq(researchWorkItems.workItemKey, checkpoint.workItemKey!)));
+      }
+      await insertEvents(tx, committedEvents);
+      return { pausePersisted: !!pause };
     });
   }
 

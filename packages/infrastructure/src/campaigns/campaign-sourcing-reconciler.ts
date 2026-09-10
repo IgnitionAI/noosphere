@@ -118,7 +118,7 @@ export class CampaignSourcingReconciler {
             and(
               eq(jobs.workspaceId, campaign.workspaceId),
               eq(jobs.type, PROSPECT_DISCOVERY_JOB_TYPE),
-              inArray(jobs.status, ["pending", "running"]),
+              inArray(jobs.status, ["pending", "running", "retry", "paused"]),
               sql`${jobs.payload} ->> 'runId' = ${runId}`,
             ),
           )

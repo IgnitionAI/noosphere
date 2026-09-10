@@ -1,3 +1,4 @@
+import { AiTaskPauseError } from "@outbound/application/ai/ai-task-pause";
 import { and, asc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { EvaluationExecutor } from "@outbound/application/ai/evaluation-executor";
@@ -86,7 +87,7 @@ export class EvaluationRunProcessor {
           aiConfigurationId: context.configuration.id,
           shadow: true,
           inputHash: new Bun.CryptoHasher("sha256").update(JSON.stringify(item.evaluationCase.input)).digest("hex"),
-          parameters: { evaluationRunId: context.run.id, evaluationCaseId: item.evaluationCase.id },
+          parameters: { evaluationRunId: context.run.id, evaluationCaseId: item.evaluationCase.id, ...(execution.route ? { modelRoute: execution.route } : {}) },
           output,
           status: "completed",
           cost: execution.cost === null ? null : String(execution.cost),
@@ -96,6 +97,7 @@ export class EvaluationRunProcessor {
         await tx.update(evaluationCaseResults).set({ aiRunId, status: "completed", output, scores, cost: execution.cost === null ? null : String(execution.cost), latencyMs: execution.latencyMs, errorCode: null, updatedAt: this.clock.now() }).where(and(eq(evaluationCaseResults.workspaceId, context.run.workspaceId), eq(evaluationCaseResults.id, item.result.id)));
       });
     } catch (error) {
+      if (error instanceof AiTaskPauseError) throw error;
       const errorCode = evaluationErrorCode(error);
       await this.database.update(evaluationCaseResults).set({ status: "failed", errorCode, latencyMs: Math.max(0, this.clock.now().getTime() - startedAt.getTime()), updatedAt: this.clock.now() }).where(and(eq(evaluationCaseResults.workspaceId, context.run.workspaceId), eq(evaluationCaseResults.id, item.result.id)));
     }

@@ -1,3 +1,4 @@
+import { AiTaskPauseError } from "@outbound/application/ai/ai-task-pause";
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import type {
   CampaignChannelReadiness,
@@ -188,6 +189,7 @@ export class CampaignCompositionJobProcessor {
       });
       await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
     } catch (error) {
+      if (error instanceof AiTaskPauseError) throw error;
       const message = error instanceof Error ? error.message : String(error);
       const outcome = await this.queue.retry({
         jobId: job.id,

@@ -1,3 +1,5 @@
+import { AiTaskPauseError } from "@outbound/application/ai/ai-task-pause";
+import { ModelGatewayError } from "@outbound/application/ai/model-gateway";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { and, eq, inArray } from "drizzle-orm";
@@ -233,6 +235,26 @@ databaseDescribe("V3 automatic ICP publication", () => {
           lockedUntil,
         })
         .where(and(eq(jobs.workspaceId, workspaceId), eq(jobs.id, job.id)));
+      if (job.id === assessmentJobs[0]?.id) {
+        const failure = new AiTaskPauseError(
+          new ModelGatewayError("AI_PROVIDER_QUOTA_EXHAUSTED", "openai-api", "quota", false, false),
+          "icp_research", "channel-pause", [],
+        );
+        const pausedProcessor = new ChannelAssessmentJobProcessor(
+          database.db, queue, { async plan() { throw failure; } },
+          new FixtureChannelObservationSource(), clock,
+        );
+        await expect(pausedProcessor.process({
+          ...job, attempts: 1, lockedBy: "channel-assessment-worker", lockedUntil,
+        })).rejects.toBe(failure);
+        const [retained] = await database.db.select().from(channelAssessments)
+          .where(eq(channelAssessments.id, (job.payload as { assessmentId: string }).assessmentId));
+        expect(retained?.status).toBe("running");
+        const [retainedJob] = await database.db.select().from(jobs).where(eq(jobs.id, job.id));
+        expect(retainedJob?.status).toBe("running");
+        // The processor propagates the pause to the worker; no retry has been scheduled.
+        // Explicitly calling it again here verifies that the retained domain state is resumable.
+      }
       await processor.process({
         id: job.id,
         workspaceId: job.workspaceId,
@@ -642,6 +664,18 @@ databaseDescribe("V3 automatic ICP publication", () => {
       now: clock.now(),
     });
     expect(leasedCompositionJob).toBeDefined();
+    const compositionPause = new AiTaskPauseError(
+      new ModelGatewayError("AI_PROVIDER_QUOTA_EXHAUSTED", "openai-api", "quota", false, false),
+      "message_generation", "composition-pause", [],
+    );
+    await expect(new CampaignCompositionJobProcessor(
+      database.db, queue, { async generate() { throw compositionPause; } },
+      { async resolveHealthyAccount() { return { provider: "unipile", accountId: linkedinAccountId }; } },
+      clock,
+    ).process(leasedCompositionJob!)).rejects.toBe(compositionPause);
+    const [pausedComposition] = await database.db.select().from(jobs).where(eq(jobs.id, leasedCompositionJob!.id));
+    expect(pausedComposition?.status).toBe("running");
+    expect(await database.db.select().from(outreachActions).where(eq(outreachActions.campaignId, firstCampaign.id))).toHaveLength(0);
     await new CampaignCompositionJobProcessor(
       database.db,
       queue,
@@ -1116,6 +1150,18 @@ databaseDescribe("V3 automatic ICP publication", () => {
       now: clock.now(),
     });
     expect(inboundJob).toBeDefined();
+    const inboundPause = new AiTaskPauseError(
+      new ModelGatewayError("AI_PROVIDER_QUOTA_EXHAUSTED", "openai-api", "quota", false, false),
+      "message_generation", "inbound-pause", [],
+    );
+    await expect(new InboundReplyJobProcessor(
+      database.db, queue, { async decide() { throw inboundPause; } }, clock,
+      "https://cal.example.com/ignition",
+    ).process(inboundJob!)).rejects.toBe(inboundPause);
+    const [pausedInbound] = await database.db.select().from(jobs).where(eq(jobs.id, inboundJob!.id));
+    expect(pausedInbound?.status).toBe("running");
+    expect(await database.db.select().from(messages).where(eq(messages.workspaceId, workspaceId))).toHaveLength(1);
+    expect(await database.db.select().from(replyClassifications).where(eq(replyClassifications.workspaceId, workspaceId))).toHaveLength(0);
     await new InboundReplyJobProcessor(
       database.db,
       queue,

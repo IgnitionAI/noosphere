@@ -1,3 +1,4 @@
+import { requireWorkspaceAi, type WorkspaceAiAvailability } from "@outbound/application/ai/ai-availability";
 import {
   assertStrategyClaimsAreAuthorized,
   type EditorialStrategySnapshot,
@@ -101,6 +102,7 @@ export class EditorialStrategyApplication {
   constructor(
     private readonly repository: EditorialStrategyRepository,
     private readonly generator: EditorialStrategyGenerator,
+    private readonly aiAvailable?: WorkspaceAiAvailability,
   ) {}
 
   find(workspaceId: string): Promise<EditorialStrategyView | null> {
@@ -110,6 +112,7 @@ export class EditorialStrategyApplication {
   async derive(input: { workspaceId: string; userId: string; requestKey: string }): Promise<EditorialStrategyView> {
     const replay = await this.repository.findRequest({ ...input, operation: "strategy.derive" });
     if (replay) return replay as EditorialStrategyView;
+    await requireWorkspaceAi(this.aiAvailable, input.workspaceId, "content_strategy");
     const grounding = await this.repository.grounding(input.workspaceId);
     const generated = await this.generator.generate({ workspaceId: input.workspaceId, grounding });
     const snapshot = editorialStrategySnapshotSchema.parse(generated.snapshot);
