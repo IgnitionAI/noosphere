@@ -87,7 +87,7 @@ describe("LangChainContentPipelineAgent", () => {
       { purpose: "content_brief", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-brief-v8", contentGenerationRunId: context.run.id },
       { purpose: "content_writer", model: "k3", promptVersion: "noosphere-content-writer-v15", contentGenerationRunId: context.run.id },
       { purpose: "content_audit", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-audit-v6", contentGenerationRunId: context.run.id },
-      { purpose: "content_critic", model: "k3", promptVersion: "noosphere-content-critic-v12", contentGenerationRunId: context.run.id },
+      { purpose: "content_critic", model: "k3", promptVersion: "noosphere-content-critic-v13", contentGenerationRunId: context.run.id },
     ]);
   });
 });
@@ -157,4 +157,59 @@ test("judges current public work without upstream approval or internal brief ins
   expect(payload).not.toHaveProperty("strategy.pillars");
   expect(payload).not.toHaveProperty("strategy.callsToAction");
   expect(calls[1]!.context).toMatchObject({brief: context.brief, audit: context.audit});
+});
+
+
+test("constrains model citations to exact current public passages without changing revise verdicts", async () => {
+  const currentDraft = { ...draft(), body: "Un champ masqué ne filtre pas les résultats.\n\nLe document doit être exclu pour un utilisateur non autorisé." };
+  const expected = "Un champ masqué ne filtre pas les résultats.";
+  let calls = 0;
+  const routedModel = { async invoke(input: any) {
+    calls++;
+    const candidate = critique();
+    candidate.qualityAssessment = Object.fromEntries(editorialQualityCriteria.map(key => [key, {
+      verdict: "revise", reason: "Le document répète la distinction sans expliquer une décision nouvelle.", excerpts: [expected],
+    }])) as unknown as ContentQualityAssessment;
+    expect(input.schema.safeParse(candidate).success).toBe(true);
+    for (const excerpt of ["un champ masqué ne filtre pas les résultats.", "Cette phrase provient d'une ancienne version."]) {
+      const bad = { ...candidate, qualityAssessment: { ...candidate.qualityAssessment, readerValue: { ...candidate.qualityAssessment.readerValue, excerpts: [excerpt] } } };
+      expect(input.schema.safeParse(bad).success).toBe(false);
+    }
+    expect(input.payload.currentPublicPassages).toContain(expected);
+    return { output: candidate, metadata: { provider: "codex-cli", model: "gpt-5.6-luna" } };
+  } } as unknown as WorkspaceStructuredModel;
+  const agent = new LangChainContentPipelineAgent({}, undefined, undefined, undefined, routedModel);
+  const result = await agent.critique({ ...pipelineContext(), brief: brief(), draft: currentDraft, audit: audit() });
+  expect(calls).toBe(1);
+  expect(result.qualityAssessment?.readerValue).toMatchObject({ verdict: "revise", excerpts: [expected] });
+});
+
+
+test("keeps multiline short copy and the end of historical long paragraphs citable", async () => {
+  for (const body of [
+    "Qui lit ?\nQuel rôle ?\nQuel accès ?\nUn compte.\nUn groupe.\nUne règle.\nUn essai.\nUn refus.\nÀ vérifier.",
+    "Une longue explication historique. ".repeat(60) + "La décision finale doit rester visible.",
+  ]) {
+    let calls = 0;
+    const routedModel = { async invoke(input: any) {
+      calls++;
+      const passages = input.payload.currentPublicPassages as string[];
+      expect(passages.length).toBeGreaterThan(0);
+      const ending = body.includes("La décision finale") ? "La décision finale doit rester visible." : "À vérifier.";
+      expect(passages.some(passage => passage.includes(ending))).toBe(true);
+      for (const passage of passages) {
+        expect(passage.length).toBeGreaterThanOrEqual(12);
+        expect(passage.length).toBeLessThanOrEqual(1500);
+        expect(body.includes(passage)).toBe(true);
+      }
+      const candidate = critique();
+      candidate.qualityAssessment = Object.fromEntries(editorialQualityCriteria.map(key => [key, {
+        verdict: "revise", reason: "Ce passage doit être retravaillé pour démontrer la décision.", excerpts: [passages.at(-1)!],
+      }])) as unknown as ContentQualityAssessment;
+      return { output: input.schema.parse(candidate), metadata: { provider: "codex-cli", model: "gpt-5.6-luna" } };
+    } } as unknown as WorkspaceStructuredModel;
+    const agent = new LangChainContentPipelineAgent({}, undefined, undefined, undefined, routedModel);
+    await agent.critique({ ...pipelineContext(), brief: brief(), draft: { ...draft(), body, hook: body.split("\n")[0]!, callToAction: null }, audit: audit() });
+    expect(calls).toBe(1);
+  }
 });

@@ -4,7 +4,7 @@ import { contentRuntimeSkills } from "@outbound/infrastructure/content/content-r
 import { selectNextContentFormat } from "@outbound/domain/content/content-brand-kit";
 import { ChatOpenAI } from "@langchain/openai";
 import { tool } from "@langchain/core/tools";
-import type { ZodType } from "zod";
+import { z, type ZodType } from "zod";
 import type { ContentPipelineAgent, ContentGenerationContext } from "@outbound/application/content/content-generation";
 import type { AiRunRecorder } from "@outbound/application/ai/ai-run-recorder";
 import type { WorkspaceAiModelPolicyReader } from "@outbound/application/workspaces/workspace-ai-settings";
@@ -59,8 +59,8 @@ export class LangChainContentPipelineAgent implements ContentPipelineAgent {
     if (invalid.length === 0) return critique;
     const repair = {
       ...critiqueContext(input),
-      currentPublicPassages: contentPublicText(input.draft).split("\n").filter(passage => passage.trim().length >= 12),
-      validationFeedback: [`CONTENT_CRITIC_ASSESSMENT_INVALID: ${invalid.join(", ")}. Re-evaluate the unchanged current draft. Every criterion needs a reason of at least 20 characters and at least one exact contiguous public excerpt of at least 12 characters. Select each excerpt by copying one of currentPublicPassages or an exact contiguous part of it. Never paraphrase an excerpt or quote the brief, sources, prior versions or your assessment reasons. Preserve substantive concerns; a technical repair is not a request to approve the post.`],
+      currentPublicPassages: publicPassages(input.draft),
+      validationFeedback: [`CONTENT_CRITIC_ASSESSMENT_INVALID: ${invalid.join(", ")}. Re-evaluate the unchanged current draft. Every criterion needs a reason of at least 20 characters and at least one exact contiguous public excerpt of at least 12 characters. Select each excerpt by copying one complete entry from currentPublicPassages. Never paraphrase an excerpt or quote the brief, sources, prior versions or your assessment reasons. Preserve substantive concerns; a technical repair is not a request to approve the post.`],
     };
     return currentContentEditorialCritiqueSchema.parse(await this.invoke("critic", input.run.workspaceId, input.run.id, repair, repair, "assessment-repair"));
   }
@@ -107,7 +107,7 @@ export class LangChainContentPipelineAgent implements ContentPipelineAgent {
       model,
       promptVersion: role === "writer"
         ? "noosphere-content-writer-v15"
-        : role === "critic" ? "noosphere-content-critic-v12" : role === "audit" ? "noosphere-content-audit-v6" : "noosphere-content-brief-v8",
+        : role === "critic" ? "noosphere-content-critic-v13" : role === "audit" ? "noosphere-content-audit-v6" : "noosphere-content-brief-v8",
       shadow: false,
       inputHash: new Bun.CryptoHasher("sha256").update(JSON.stringify(original)).digest("hex"),
       output,
@@ -162,8 +162,44 @@ function critiqueContext(input: Parameters<ContentPipelineAgent["critique"]>[0])
     brandKit: input.brandKit,
     evidence: input.evidence,
     draft: input.draft,
+    currentPublicPassages: publicPassages(input.draft),
     recentBodies: input.recentBodies.slice(0, 12),
   };
+}
+
+// Model-facing choices are exact public copy; persisted critique contracts stay unchanged.
+function publicPassages(draft: Parameters<ContentPipelineAgent["critique"]>[0]["draft"]): string[] {
+  const passages: string[] = [];
+  const text = contentPublicText(draft);
+  const lines = text.split("\n");
+  const candidates = lines.filter(line => line.trim().length >= 12);
+  // Short titles/lines still need citable context, including multiline-only copy.
+  if (lines.some(line => line.trim().length > 0 && line.trim().length < 12)) candidates.push(text);
+  for (const line of candidates) {
+    // Historical drafts may contain paragraphs above the excerpt limit. Overlap
+    // windows so the last characters remain available with their context.
+    for (let start = 0; start < line.length; start += 1488) {
+      const passage = line.slice(start, start + 1500);
+      passages.push(passage);
+      if (start + 1500 >= line.length) break;
+    }
+  }
+  return [...new Set(passages)];
+}
+
+function criticModelSchema(context: unknown) {
+  const { currentPublicPassages } = z.object({ currentPublicPassages: z.array(z.string().min(12).max(1500)).min(1) }).parse(context);
+  const excerpts = z.array(z.enum(currentPublicPassages as [string, ...string[]])).min(1).max(4);
+  const shape = currentContentEditorialCritiqueSchema.shape.qualityAssessment.shape;
+  return currentContentEditorialCritiqueSchema.extend({ qualityAssessment: z.object({
+    audienceRelevance: shape.audienceRelevance.extend({ excerpts }),
+    readerValue: shape.readerValue.extend({ excerpts }),
+    coherence: shape.coherence.extend({ excerpts }),
+    sourceAttribution: shape.sourceAttribution.extend({ excerpts }),
+    ctaTruthfulness: shape.ctaTruthfulness.extend({ excerpts }),
+    brandVoice: shape.brandVoice.extend({ excerpts }),
+    distinctness: shape.distinctness.extend({ excerpts }),
+  }).strict() });
 }
 
 async function invokePipelineModel(input: Parameters<ModelInvoker>[0]) {
@@ -244,7 +280,7 @@ function pipelineModelSpec(role: PipelineRole, context: unknown) {
   return {
     name: "submit_editorial_critique",
     description: "Submit the independent final anti-generic editorial critique.",
-    schema: currentContentEditorialCritiqueSchema,
+    schema: criticModelSchema(context),
     system: [
       "You are Noosphere's principal editorial critic, independent from the writer.",
       contentRuntimeSkills.guardian,
@@ -260,6 +296,7 @@ function pipelineModelSpec(role: PipelineRole, context: unknown) {
       "If validationFeedback reports CONTENT_CRITIC_ASSESSMENT_INVALID, correct your assessment of the unchanged draft using its exact current public copy. Rejected citations are not evidence. Preserve every substantive concern; do not approve merely to satisfy the output contract.",
       "A blocker means the draft must not become ready. Never rewrite the draft and never weaken an evidence audit.",
       "Be demanding but concrete. Advice is allowed only for non-blocking polish. Do not schedule or publish.",
+      "For each qualityAssessment criterion, select complete exact excerpts from currentPublicPassages, as enumerated in the output schema. Select passages relevant to your reason. Never paraphrase, change capitalization or return only part of a passage. Citation validity is independent of editorial quality: preserve substantive concerns and reject low-value copy.",
       "Call submit_editorial_critique exactly once.",
     ].join("\n"),
     context,
@@ -270,7 +307,7 @@ async function invokeTool(input: {
   readonly fields: ConstructorParameters<typeof ChatOpenAI>[0];
   readonly name: string;
   readonly description: string;
-  readonly schema: typeof contentBriefSnapshotSchema | typeof contentDraftSnapshotSchema | typeof contentEvidenceAuditSchema | typeof currentContentEditorialCritiqueSchema;
+  readonly schema: ZodType;
   readonly system: string;
   readonly context: unknown;
 }) {

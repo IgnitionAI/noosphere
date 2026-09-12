@@ -253,3 +253,16 @@ All five original pages were visually inspected. The corrected native cover and 
 Full local `bun run check` passes. Both independent static reviews found no blocker in this bounded diff. CI on b6c8a9a was still running at this check; this local validation does not establish CI or release acceptance for the visual changes.
 
 The PDF remains blocked from publication: the recorded critic citation mismatch and audience objection are unresolved, and manual review still finds repeated explanation across the five pages. Better contrast is not editorial acceptance. No production deployment, publication, resumption or persisted settings change occurred.
+
+
+## Exact model citation choices (2026-09-13)
+
+The critic's model-facing schema now enumerates exact passages from current public body/media copy. It keeps the existing persisted assessment shape, verdicts, factual audit and final readiness validation. Passages from historical posts, sources or internal instructions are not choices. Long historical paragraphs use overlapping windows of at most 1,500 characters; when public copy contains short nonempty lines, full-text windows retain their contiguous multiline context. Critic prompt version advances to v13. No writer repair or additional retry budget was added.
+
+A private prototype used actual Luna medium on the blocked access carousel and the previously captured hollow preparation post. Each needed one call with valid citations (25.340 and 34.454 seconds). The carousel received all passes; the hollow post was rejected for readerValue and coherence. The prototype's success therefore concerns citation validity, not reliable editorial approval.
+
+The implemented model adapter was then exercised without the prototype schema override on the same two saved drafts. Each again used one real Luna medium call with valid citations (26.994 and 49.853 seconds). The hollow post remained blocked for readerValue/audienceRelevance; the carousel again received all passes despite the manual repetition objection. This is critique-only replay, not fresh generation, media acceptance or a latency benchmark. Private artifacts: `noosphere-critic-passage-enum.json` and `noosphere-critic-passage-native.json`.
+
+The public-agent regression first failed because changed-case and absent citations were accepted by the model schema, then passed with exact choices while preserving revise verdicts. Both reviews identified a short-line edge case before commit; a second red-green regression now covers multiline short copy and the last words of a historical long paragraph. That final catalogue expansion was tested locally after the real replay; it is not a separate live-model result. Both reviews subsequently found no remaining blocker.
+
+Full local `bun run check` passes (unit/HTTP tests, crawler tests, types, architecture and builds). CI on b6c8a9a completed successfully. No production deployment, publication, checkpoint write, resumption or persisted model change occurred. Reader-value reliability, representative generation across formats/topics and latency remain open acceptance requirements.
