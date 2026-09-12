@@ -7,7 +7,9 @@ async function runHardening(cidr: string, existing = false, inputRules = "", inp
   const dir = await mkdtemp(join(tmpdir(), "noosphere-firewall-test-"));
   const bin = join(dir, "bin");
   await mkdir(bin);
-  await symlink(Bun.which("python3")!, join(bin, "python3"));
+  const python = Bun.spawnSync([Bun.which("python3")!, "-c", "import sys; print(sys.executable)"], { stdout: "pipe", stderr: "pipe" });
+  if (python.exitCode !== 0) throw new Error(python.stderr.toString());
+  await symlink(python.stdout.toString().trim(), join(bin, "python3"));
   if (ufwInstalled) await writeFile(join(bin, "ufw"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
   const log = join(dir, "commands");
   await writeFile(log, "");
