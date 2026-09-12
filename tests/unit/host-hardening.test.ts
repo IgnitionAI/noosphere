@@ -1,12 +1,14 @@
 import { expect, test } from "bun:test";
-import { mkdtemp, mkdir, writeFile, readFile } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-async function runHardening(cidr: string, existing = false, inputRules = "", inputRules6 = inputRules) {
+async function runHardening(cidr: string, existing = false, inputRules = "", inputRules6 = inputRules, ufwInstalled = false) {
   const dir = await mkdtemp(join(tmpdir(), "noosphere-firewall-test-"));
   const bin = join(dir, "bin");
   await mkdir(bin);
+  await symlink(Bun.which("python3")!, join(bin, "python3"));
+  if (ufwInstalled) await writeFile(join(bin, "ufw"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
   const log = join(dir, "commands");
   await writeFile(log, "");
   for (const name of ["id", "apt-get", "docker", "iptables", "ip6tables", "systemctl", "netfilter-persistent"]) {
@@ -18,8 +20,8 @@ if [ "$1" = -C ]; then exit ${existing ? 0 : 1}; fi
 exit 0
 `, { mode: 0o755 });
   }
-  const result = Bun.spawnSync(["bash", "deploy/harden-host.sh"], {
-    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, COMMAND_LOG: log, INPUT_RULES: inputRules, INPUT_RULES6: inputRules6, SSH_ALLOWED_CIDR: cidr, EXTERNAL_INTERFACE: "eth0" },
+  const result = Bun.spawnSync([Bun.which("bash")!, "deploy/harden-host.sh"], {
+    env: { ...process.env, PATH: bin, COMMAND_LOG: log, INPUT_RULES: inputRules, INPUT_RULES6: inputRules6, SSH_ALLOWED_CIDR: cidr, EXTERNAL_INTERFACE: "eth0" },
     stdout: "pipe", stderr: "pipe",
   });
   return { code: result.exitCode, commands: await readFile(log, "utf8") };
@@ -78,4 +80,10 @@ test("changing the administrator CIDR refuses the old permission without modifyi
   expect(result.code).not.toBe(0);
   expect(result.commands).not.toContain("apt-get");
   expect(result.commands).not.toMatch(/ -(?:A|I|P|N|F) /);
+});
+
+test("refuses an installed UFW before any firewall or package changes", async () => {
+  const result = await runHardening("192.0.2.10/32", false, "", "", true);
+  expect(result.code).not.toBe(0);
+  expect(result.commands).toBe("");
 });
