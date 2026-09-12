@@ -91,7 +91,11 @@ databaseDescribe("IDE-101 durable content idea discovery", () => {
     expect(queued[0]?.count).toBe(1);
     expect(queued[0]?.priority).toBe(60);
 
+    await database.db.insert(offerVersions).values({ id: crypto.randomUUID(), workspaceId, offerId, version: 2, name: "Unrelated new offer", category: "service", valueProposition: "New value", targetAudience: "Other buyers", publishedBy: userId, publishedAt: new Date(now.getTime() + 1000) });
+    await database.db.insert(icpVersions).values({ id: crypto.randomUUID(), workspaceId, icpId, version: 2, name: "Other buyers", confidence: "0.9", criteria: {}, buyingCommittee: {}, problems: [], signals: [], exclusions: [], unknowns: [], unresolvedContradictions: [], blockedFindings: [], publishedBy: userId, publishedAt: new Date(now.getTime() + 1000) });
     const context = await repository.loadDiscoveryContext({ workspaceId, runId: first.id });
+    expect(context.businessContext).toMatchObject({offer: {versionId: offerVersionId, name: "Noosphere"}, icp: {versionId: icpVersionId, name: "Équipes juridiques", problems: ["Recherche documentaire"]}});
+    await expect(repository.loadDiscoveryContext({workspaceId: otherWorkspaceId, runId: first.id})).rejects.toThrow("CONTENT_IDEA_RUN_NOT_FOUND");
     expect(context.strategy.allowedClaimIds).toEqual([claimId]);
     expect(context.internalEvidence.map((item) => item.key)).toContain(`offer_claim:${claimId}`);
     const source = context.internalEvidence[0]!;

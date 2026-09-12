@@ -17,10 +17,11 @@ describe("Noosphere content idea radar", () => {
     const saved: number[] = [];
     const leased = job();
     const discoveryRun = { ...run(), cursor: 1 };
+    const businessContext = { offer: { versionId: "pinned-offer", name: "Specific offer" }, icp: { versionId: "pinned-icp", exclusions: ["unrelated buyers"] } };
     let completed = false;
     let acknowledged = false;
     const repository = {
-      async loadDiscoveryContext() { return { run: discoveryRun, strategy: strategy(), queries: ["q0", "q1", "q2"], internalEvidence: [] }; },
+      async loadDiscoveryContext() { return { run: discoveryRun, businessContext, strategy: strategy(), queries: ["q0", "q1", "q2"], internalEvidence: [] }; },
       async startRun() {},
       async saveStep(input: { cursor: number }) { saved.push(input.cursor); },
       async completeRun() { completed = true; },
@@ -34,7 +35,7 @@ describe("Noosphere content idea radar", () => {
         expect(input.deadlineAt).toEqual(discoveryRun.deadlineAt);
         return [evidence(`proof:${input.query}`)];
       } },
-      { async generate(input) { return [candidate([input.evidence[0]!.key])]; } },
+      { async generate(input) { expect(input).toHaveProperty("businessContext", businessContext); return [candidate([input.evidence[0]!.key])]; } },
       queue,
     );
     await processor.process(leased);
@@ -94,4 +95,23 @@ test("a provider failure before the deadline remains a failure on the final atte
   const leased = job();
   await expect(processor.process({ ...leased, attempts: leased.maxAttempts })).rejects.toBe(failure);
   expect({ failed, completed, acknowledged }).toEqual({ failed: true, completed: false, acknowledged: false });
+});
+
+
+test("idea model receives pinned business context and traces changes to it", async () => {
+  const { LangChainContentIdeaGenerator } = await import("@outbound/infrastructure/content/langchain-content-idea-generator");
+  const calls: any[] = [], records: any[] = [];
+  const routed = { async invoke(input: any) { calls.push(input); return {output: {ideas: []}, metadata: {provider: "codex-cli", model: "gpt-5.6-luna"}}; } };
+  const agent = new LangChainContentIdeaGenerator({}, undefined, {async record(input) {records.push(input); return {id: crypto.randomUUID()};}}, undefined, routed as any);
+  const businessContext = {
+    offer: {versionId: "offer1", name: "Atelier", category: "service", valueProposition: "Refonte accessible", targetAudience: "Associations", constraints: [], objections: []},
+    icp: {versionId: "icp1", name: "Associations", problems: ["Site inaccessible"], buyingCommittee: {}, exclusions: ["E-commerce"], criteria: {}},
+  };
+  const input = {workspaceId: crypto.randomUUID(), strategy: strategy(), query: "accessibilité", evidence: [evidence("source1")], businessContext};
+  expect(await agent.generate(input)).toEqual([]);
+  await agent.generate({...input, businessContext: {...businessContext, offer: {...businessContext.offer, versionId: "offer2"}}});
+  expect(calls[0].payload.businessContext).toEqual(businessContext);
+  expect(calls[0].requestKey).not.toBe(calls[1].requestKey);
+  expect(records[0].inputHash).not.toBe(records[1].inputHash);
+  expect(records[0].promptVersion).toBe("noosphere-content-ideas-v2");
 });

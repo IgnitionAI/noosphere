@@ -1,3 +1,4 @@
+import type { ContentBusinessContext } from "@outbound/application/content/editorial-strategy";
 import { AiTaskPauseError } from "@outbound/application/ai/ai-task-pause";
 import { requireWorkspaceAi, type WorkspaceAiAvailability } from "@outbound/application/ai/ai-availability";
 import type { JobQueue, LeasedJob } from "@outbound/application/jobs/job-queue";
@@ -57,6 +58,7 @@ export interface ContentIdeaDiscoveryRunView {
 }
 
 export interface ContentIdeaDiscoveryContext {
+  readonly businessContext?: ContentBusinessContext;
   readonly run: ContentIdeaDiscoveryRunView;
   readonly strategy: EditorialStrategySnapshot;
   readonly queries: readonly string[];
@@ -103,6 +105,7 @@ export interface ContentIdeaCandidateGenerator {
   generate(input: {
     workspaceId: string;
     strategy: EditorialStrategySnapshot;
+    businessContext?: ContentBusinessContext;
     query: string;
     evidence: readonly ContentIdeaEvidence[];
   }): Promise<readonly ContentIdeaCandidate[]>;
@@ -162,7 +165,7 @@ export class ContentIdeaDiscoveryJobProcessor {
           break;
         }
         const evidence = [...context.internalEvidence, ...publicEvidence];
-        const candidates = await this.generator.generate({ workspaceId: job.workspaceId, strategy: context.strategy, query, evidence });
+        const candidates = await this.generator.generate({ workspaceId: job.workspaceId, strategy: context.strategy, ...(context.businessContext ? { businessContext: context.businessContext } : {}), query, evidence });
         for (const candidate of candidates) assertGroundedIdeaCandidate(candidate, evidence.map((item) => item.key));
         await this.repository.saveStep({
           workspaceId: job.workspaceId,

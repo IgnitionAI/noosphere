@@ -160,3 +160,8 @@ export class EditorialStrategyApplication {
     return this.repository.publish(input);
   }
 }
+
+export interface ContentBusinessContext {
+  readonly offer: Pick<EditorialStrategyGrounding["offer"], "versionId" | "name" | "category" | "valueProposition" | "targetAudience" | "constraints" | "objections">;
+  readonly icp: Pick<EditorialStrategyGrounding["icp"], "versionId" | "name" | "problems" | "buyingCommittee" | "exclusions" | "criteria">;
+}

@@ -270,6 +270,7 @@ export function evaluateContentReadiness(input: {
   // A title quotation or a diagnostic checklist is not a competing CTA.
   // Editorial critique still checks whether the list supplies genuine reader value.
   const readerQuestions = input.draft.body
+    .replace(/https?:\/\/[^\s<>"«»\)\]]+/gi, "")
     .replace(/«[^»]*»/g, "")
     .split("\n")
     .filter((line) => !/^[ \t]*\d{1,2}[.)][ \t]+/.test(line))

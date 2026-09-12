@@ -3,7 +3,7 @@ import { requireWorkspaceAi, type WorkspaceAiAvailability } from "@outbound/appl
 import type { JobQueue, LeasedJob } from "@outbound/application/jobs/job-queue";
 import type { EditorialStrategySnapshot } from "@outbound/domain/content/editorial-strategy";
 import type { ContentBrandKitSnapshot, LinkedinContentFormat } from "@outbound/domain/content/content-brand-kit";
-import type { EditorialStrategyGrounding } from "@outbound/application/content/editorial-strategy";
+import type { ContentBusinessContext } from "@outbound/application/content/editorial-strategy";
 import type { StoredContentMedia } from "@outbound/application/content/content-media";
 import { ContentMediaProducer } from "@outbound/application/content/content-media";
 import type { ContentIdeaEvidence, ContentIdeaView } from "@outbound/application/content/content-ideas";
@@ -65,10 +65,7 @@ export interface ContentAssetView {
 
 export interface ContentGenerationContext {
   /** Source versions pinned by the editorial strategy, never the latest mutable offer. */
-  readonly businessContext?: {
-    readonly offer: Pick<EditorialStrategyGrounding["offer"], "versionId" | "name" | "category" | "valueProposition" | "targetAudience" | "constraints" | "objections">;
-    readonly icp: Pick<EditorialStrategyGrounding["icp"], "versionId" | "name" | "problems" | "buyingCommittee" | "exclusions" | "criteria">;
-  };
+  readonly businessContext?: ContentBusinessContext;
   readonly run: ContentGenerationRunView;
   readonly idea: ContentIdeaView;
   readonly strategy: EditorialStrategySnapshot;

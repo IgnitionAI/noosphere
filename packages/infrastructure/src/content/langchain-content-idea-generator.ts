@@ -12,6 +12,7 @@ type IdeasModelInvoker = (input: {
   readonly fields: ConstructorParameters<typeof ChatOpenAI>[0];
   readonly strategy: Parameters<ContentIdeaCandidateGenerator["generate"]>[0]["strategy"];
   readonly query: string;
+  readonly businessContext?: Parameters<ContentIdeaCandidateGenerator["generate"]>[0]["businessContext"];
   readonly evidence: Parameters<ContentIdeaCandidateGenerator["generate"]>[0]["evidence"];
 }) => Promise<unknown>;
 
@@ -28,7 +29,8 @@ export class LangChainContentIdeaGenerator implements ContentIdeaCandidateGenera
   async generate(input: Parameters<ContentIdeaCandidateGenerator["generate"]>[0]) {
     if (input.evidence.length === 0) return [];
     const startedAt = performance.now();
-    const spec = ideaModelSpec(input.strategy, input.query, input.evidence);
+    const spec = ideaModelSpec(input.strategy, input.query, input.evidence, input.businessContext);
+    const inputHash = new Bun.CryptoHasher("sha256").update(JSON.stringify({ strategy: input.strategy, businessContext: input.businessContext, query: input.query, evidence: input.evidence.map((item) => item.contentHash) })).digest("hex");
     let parsed: ReturnType<typeof contentIdeaBatchSchema.parse>;
     let provider: string;
     let model: string;
@@ -36,7 +38,7 @@ export class LangChainContentIdeaGenerator implements ContentIdeaCandidateGenera
       const result = await this.routedModel.invoke({
         workspaceId: input.workspaceId,
         capability: "content_idea",
-        requestKey: `content-idea:${new Bun.CryptoHasher("sha256").update(JSON.stringify({ query: input.query, evidence: input.evidence.map((item) => item.contentHash) })).digest("hex")}`,
+        requestKey: `content-idea:${inputHash}`,
         fallbackRoutes: this.fallbackRoutes(),
         systemPrompt: spec.system,
         payload: spec.payload,
@@ -54,6 +56,7 @@ export class LangChainContentIdeaGenerator implements ContentIdeaCandidateGenera
       parsed = contentIdeaBatchSchema.parse(await this.invokeModel({
         fields: buildChatModelFields(this.#configuration, model, "low"),
         strategy: input.strategy,
+        businessContext: input.businessContext,
         query: input.query,
         evidence: input.evidence,
       }));
@@ -63,9 +66,9 @@ export class LangChainContentIdeaGenerator implements ContentIdeaCandidateGenera
       purpose: "content_idea_discovery",
       provider,
       model,
-      promptVersion: "noosphere-content-ideas-v1",
+      promptVersion: "noosphere-content-ideas-v2",
       shadow: false,
-      inputHash: new Bun.CryptoHasher("sha256").update(JSON.stringify({ query: input.query, evidence: input.evidence.map((item) => item.contentHash) })).digest("hex"),
+      inputHash,
       output: parsed,
       status: "completed",
       cost: null,
@@ -89,7 +92,7 @@ async function invokeIdeasModel(input: Parameters<IdeasModelInvoker>[0]) {
     description: "Submit grounded and deduplicable LinkedIn content ideas.",
     schema: contentIdeaBatchSchema,
   });
-  const spec = ideaModelSpec(input.strategy, input.query, input.evidence);
+  const spec = ideaModelSpec(input.strategy, input.query, input.evidence, input.businessContext);
   const response = await new ChatOpenAI(input.fields).bindTools([submit], { tool_choice: "auto" }).invoke([
     { role: "system", content: spec.system },
     { role: "user", content: JSON.stringify(spec.payload) },
@@ -103,6 +106,7 @@ function ideaModelSpec(
   strategy: Parameters<ContentIdeaCandidateGenerator["generate"]>[0]["strategy"],
   query: string,
   evidence: Parameters<ContentIdeaCandidateGenerator["generate"]>[0]["evidence"],
+  businessContext: Parameters<ContentIdeaCandidateGenerator["generate"]>[0]["businessContext"],
 ) {
   return {
     system: [
@@ -110,12 +114,13 @@ function ideaModelSpec(
       "Return at most three precise ideas for this research query.",
       "Every idea must cite one or more exact evidence keys supplied in evidence. Never invent or transform a fact beyond its excerpt.",
       "Questions and objections from real conversations are valid sources for an angle, but do not identify the person.",
-      "Use the strategy audience, pillar, voice and allowed claims. Reject generic advice that could fit any company.",
+      "Use the pinned businessContext offer scope, buyer problems and exclusions to select relevance; strategy supplies the editorial pillar and voice. Business context is positioning, not factual evidence for invented product capabilities.",
+      "An idea must promise a useful point the supplied excerpts actually support for that audience. Name that point and its limits in rationale. Do not infer a general business decision rule from API configuration examples or treat neighboring mechanisms as independent causes. Discard navigation-only or irrelevant excerpts. Return fewer ideas, including an empty batch, when no useful supported angle remains.",
       "conceptKey is a stable factual concept, not a hook, date or stylistic variation; it is used for deduplication.",
       "freshnessDays reflects how quickly the underlying source becomes stale. priority is 0 to 100.",
       "Do not create a draft, CTA, publication time or provider action.",
       "Return the complete structured content idea batch.",
     ].join("\n"),
-    payload: { strategy, query, evidence },
+    payload: { strategy, businessContext, query, evidence },
   };
 }

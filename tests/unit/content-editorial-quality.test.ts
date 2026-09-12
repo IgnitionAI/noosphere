@@ -85,3 +85,11 @@ test('multiline slide headings cannot shift numeric claims outside the checked t
   const candidate = {hook:'Méthode',body:'Une proposition.',callToAction:null,factualClaims:[],opinionStatements:[],mediaPlan:{format:'linkedin_document' as const,visualTone:'editorial' as const,title:'Méthode',subtitle:null,altText:'Méthode',slides:[{title:'Introduction\nMéthode',body:'Contexte.'},{title:'Vérification',body:'Procédure.'},{title:'42% de gains',body:'Résultat.'}],scenes:[]}};
   expect(()=>assertGroundedContentDraft(candidate,[])).toThrow('CONTENT_DRAFT_UNSOURCED_NUMBER');
 });
+
+
+test('URL query separators are not reader questions, including beside a genuine CTA', () => {
+  const copy = body + '\nSources : https://example.com/a?hl=fr ; [Documentation](https://example.com/b?lang=fr&view=full)\nQuel cas ajouteriez-vous ?';
+  expect(evaluate(assessment(), copy).ready).toBe(true);
+  expect(evaluate(assessment(), copy + '\nQuelle méthode utilisez-vous ?').blockers).toContain('multiple_questions');
+  expect(evaluate(assessment(), body + '\nUtilisez-vous [ce guide](https://example.com/guide)?\nConsultez-vous [cette page](https://example.com/page)?').blockers).toContain('multiple_questions');
+});
