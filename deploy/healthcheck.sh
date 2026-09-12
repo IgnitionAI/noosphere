@@ -4,6 +4,10 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 ENV_FILE="${ENV_FILE:-.env}"
+set -a
+# shellcheck disable=SC1090
+source "$ENV_FILE"
+set +a
 export APP_ENV_FILE="$ENV_FILE"
 
 running_services="$(docker compose --env-file "$ENV_FILE" \
@@ -23,8 +27,8 @@ for service in "${required_services[@]}"; do
 done
 
 BASE_URL="${PUBLIC_WEBHOOK_BASE_URL:?PUBLIC_WEBHOOK_BASE_URL is required}"
-readiness="$(curl --fail --silent --show-error "${BASE_URL%/}/health/ready")"
-curl --fail --silent --show-error "${BASE_URL%/}/login" >/dev/null
+readiness="$(curl --fail --silent --show-error --retry 12 --retry-all-errors --retry-delay 5 --max-time 15 "${BASE_URL%/}/health/ready")"
+curl --fail --silent --show-error --retry 12 --retry-all-errors --retry-delay 5 --max-time 15 "${BASE_URL%/}/login" >/dev/null
 if ! grep -q '"status":"ready"' <<<"$readiness"; then
   echo "Public API readiness payload is invalid" >&2
   exit 1

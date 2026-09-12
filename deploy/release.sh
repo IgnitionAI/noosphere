@@ -258,6 +258,7 @@ fi
 "${compose[@]}" up -d --no-build --wait database tei-embedding tei-reranker minio searxng crawler
 "${compose[@]}" run --rm --no-deps minio-init
 "${compose[@]}" up --no-build migrate
+"${compose[@]}" run --rm --no-deps migrate bun dist/bootstrap/bootstrap-owner.js
 "${compose[@]}" up -d --no-build --wait --remove-orphans api web worker decision-worker setter-worker memory-worker proxy
 
 ENV_FILE="$ENV_FILE" bash deploy/healthcheck.sh

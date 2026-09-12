@@ -12,6 +12,14 @@ import {
 } from "../../scripts/prepare-mcp-production-smoke";
 
 describe("MCP production smoke fixture seeder", () => {
+  test("normalizes the production HTTPS audience and keeps nonstandard ports", () => {
+    const plan = createMcpSmokeSeedPlan({ fixtureKey: "unit-production-audience", host: "noosphere.example.com", httpsPort: 443 });
+    const environment = formatMcpSmokeEnvironmentFile(plan, "noosphere.example.com", 443);
+    expect(environment).toContain("MCP_SMOKE_URL='https://noosphere.example.com/mcp'");
+    expect(environment).toContain("MCP_SMOKE_RESOURCE='https://noosphere.example.com/mcp'");
+    const local = formatMcpSmokeEnvironmentFile(plan, "mcp-smoke.localhost", 18443);
+    expect(local).toContain("MCP_SMOKE_RESOURCE='https://mcp-smoke.localhost:18443/mcp'");
+  });
   test("resolves a deterministic conversation source chain for each aggregate", () => {
     const fixtureKey = "unit-conversation-chain";
     const ids = resolveMcpSmokeFixtureIds(fixtureKey);

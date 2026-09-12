@@ -27,7 +27,7 @@ recommended production host has 12 dedicated cores and 32 GiB RAM. A GPU is
 not required. TEI keeps Qwen and BGE resident in RAM, while intensive CPU use
 occurs during indexing, hybrid search and reranking rather than continuously.
 
-Use Ubuntu 24.04 LTS and install Docker Engine with the Compose v2 plugin.
+Use Ubuntu 24.04 LTS or Debian 13 and install Docker Engine with its Compose plugin from the official Docker repository. Host hardening uses iptables-persistent; do not combine it with UFW. Existing firewall installations require a reviewed migration.
 
 ## Choose an image mode
 

@@ -30,10 +30,11 @@ else
 fi
 
 compose=(docker compose --env-file "$ENV_FILE" -f compose.infrastructure.yml -f compose.production.yml)
-failed_jobs="$("${compose[@]}" exec -T database psql -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-ignition_outbound}" -Atc "select count(*) from jobs where status in ('failed','dead_lettered') and updated_at >= now() - interval '24 hours'" 2>/dev/null || true)"
+# Queue failures awaiting another attempt are retry; exhausted or quarantined jobs are dead_lettered.
+failed_jobs="$("${compose[@]}" exec -T database psql -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-ignition_outbound}" -Atc "select count(*) from jobs where status = 'dead_lettered' and updated_at >= now() - interval '24 hours'" 2>/dev/null || true)"
 failed_jobs="${failed_jobs//[[:space:]]/}"
 if [[ ! "$failed_jobs" =~ ^[0-9]+$ ]]; then failures+=("job backlog could not be inspected");
-elif [[ "$failed_jobs" -gt 0 ]]; then failures+=("${failed_jobs} failed or dead-lettered jobs in 24h"); fi
+elif [[ "$failed_jobs" -gt 0 ]]; then failures+=("${failed_jobs} dead-lettered jobs in 24h"); fi
 
 if (( ${#failures[@]} )); then
   message="Noosphere alert: $(IFS='; '; echo "${failures[*]}")"
