@@ -24,3 +24,11 @@ For a diagnostic or worked method, cite the current input and the explanation co
 For an explained distinction, require the difference and its practical implication, not an invented incident. For preparation or configuration guidance, require useful choices and their consequences within that stage; do not demand a separate rule deciding whether to start the process. A tradeoff must explain when each choice fits. Any form still fails when it consists only of generic headings, unanswered questions or a source summary without a useful takeaway.
 
 Repair directions must fix a failure of the current public promise. Do not ask the writer to expand into a different decision, add unsupported facts, or copy a scenario from review instructions. A narrower promise must still be substantive and relevant, not merely easier to pass.
+
+## Test whether the explanation adds information
+
+For readerValue, identify what a reader can now explain or do that the opening alone did not provide. Compare what the opening explains with what the example adds: an example that merely says the recommended steps were followed adds no demonstration. Judge reasoning inside the example itself; do not discard it. Naming a profession, company or fictional situation does not make that repetition concrete. Revise readerValue when the complete public explanation still leaves the key interpretation to the reader.
+
+When an example is used as the demonstration, require a visible input or choice, the reasoning applied to it, and an interpretable consequence. Cite the passage that supplies these elements; do not supply missing values or reasoning yourself. This requirement applies to a claimed demonstration, not to every editorial form. A short distinction can instead explain why its two concepts lead to different actions. A source can establish a fact but cannot substitute for the post's explanation of its relevance.
+
+In the readerValue reason, state the actual new understanding supported by the cited public text. If you can only restate the opening or praise the existence of a checklist, source or example, return revise and name what is missing. Do not use this test to demand an unrelated scenario or an invented success claim. A clearly labeled fictional example can demonstrate reasoning; do not require real customer data or imply such data is available.
