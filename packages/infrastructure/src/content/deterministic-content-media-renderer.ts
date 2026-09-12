@@ -36,8 +36,8 @@ export class DeterministicContentMediaRenderer implements ContentMediaRenderer {
         return {
           ...mediaResult(bytes, "image/png", "linkedin-image.png", { renderer: "sharp-svg-v3", cards: 1, logo: Boolean(input.logoBytes) }, 1),
           // The layout contains text, not arbitrary diagrams imagined by the writer.
-          altText: [input.brandKit.brandName, visibleText.title.join(" "), visibleText.focus.join(" "), input.brandKit.tagline]
-            .filter(Boolean).join(". "),
+          altText: excerpt([input.brandKit.brandName, visibleText.title.join(" "), visibleText.focus.join(" "), input.brandKit.tagline]
+            .filter(Boolean).join(". "), 500),
         };
       }
       if (input.format === "linkedin_document") return await this.#renderDocument(input.plan, input.brandKit, input.logoBytes);

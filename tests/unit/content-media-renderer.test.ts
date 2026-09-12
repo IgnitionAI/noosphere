@@ -35,6 +35,19 @@ describe("DeterministicContentMediaRenderer", () => {
     expect(result.altText).not.toContain("SUFFIXE_ABSENT_DU_VISUEL");
   });
 
+  test("keeps generated alternative text within the persisted media limit for valid long brand fields", async () => {
+    const result = await new DeterministicContentMediaRenderer().render({
+      format: "linkedin_image",
+      plan: { format: "linkedin_image", visualTone: "editorial", title: "méthode ".repeat(18).trim(), subtitle: "information ".repeat(22).trim(), altText: "Carte", slides: [], scenes: [] },
+      body: "Texte",
+      brandKit: { ...DEFAULT_CONTENT_BRAND_KIT, brandName: "Marque ".repeat(20).slice(0, 120).trim(), tagline: "Une signature longue ".repeat(10).slice(0, 180).trim() },
+      outputDirectory: `/tmp/noosphere-image-alt-limit-${crypto.randomUUID()}`,
+    });
+    expect(result.altText!.length).toBeLessThanOrEqual(500);
+    expect(result.altText).toContain("méthode");
+    expect(result.altText).toContain("information");
+  });
+
   test("keeps the four image art directions visually distinct", async () => {
     const renderer = new DeterministicContentMediaRenderer();
     const hashes = await Promise.all((["editorial", "technical", "bold", "minimal"] as const).map(async (imageStyle) => {
