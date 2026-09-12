@@ -89,6 +89,25 @@ describe("self-hosting distribution", () => {
     expect(overwrite.stderr.toString()).toContain("Refusing to overwrite");
   });
 
+  test("allows only the public hostname and the exact private OAuth API hop", () => {
+    const directory = temporaryDirectory();
+    const environmentFile = join(directory, ".env");
+    expect(runBash(`bash deploy/configure.sh --non-interactive --profile quickstart --mode local-build --version v1.2.3 --domain noosphere.example.com --admin-email owner@example.com --admin-name Owner --output '${environmentFile}'`).exitCode).toBe(0);
+    const original = readFileSync(environmentFile, "utf8");
+    for (const [hosts, valid] of [
+      ["noosphere.example.com,api:3001", true],
+      ["noosphere.example.com", true],
+      ["api:3001", false],
+      ["noosphere.example.com,evil.example.com", false],
+      ["noosphere.example.com,api:3002", false],
+      ["noosphere.example.com,*", false],
+    ] as const) {
+      writeFileSync(environmentFile, original.replace(/^MCP_ALLOWED_HOSTS=.*$/m, `MCP_ALLOWED_HOSTS=${hosts}`));
+      const result = runBash(`ENV_FILE='${environmentFile}' bash deploy/validate-production-env.sh`);
+      expect({hosts, valid: result.exitCode === 0}).toEqual({hosts, valid});
+    }
+  });
+
   test("requires off-VPS Restic for the production profile", () => {
     const directory = temporaryDirectory();
     const environmentFile = join(directory, ".env");
