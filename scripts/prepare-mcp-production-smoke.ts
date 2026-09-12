@@ -301,7 +301,7 @@ export async function revokeMcpProductionSmoke(databaseUrl: string, fixtureKey: 
       for (const slug of slugs) {
         const rows = await tx`select id from workspaces where slug = ${slug}` as Array<{ readonly id: string }>;
         for (const row of rows) {
-          await tx`update workspace_members set status = 'inactive' where workspace_id = ${row.id}`;
+          await tx`update workspace_members set status = 'disabled' where workspace_id = ${row.id}`;
           await tx`update mcp_oauth_clients set revoked_at = coalesce(revoked_at, now()) where workspace_id = ${row.id}`;
           await tx`update mcp_oauth_access_tokens set revoked_at = coalesce(revoked_at, now()) where workspace_id = ${row.id}`;
         }
