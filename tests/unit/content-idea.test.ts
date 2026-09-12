@@ -15,10 +15,12 @@ describe("Noosphere content idea radar", () => {
 
   test("resumes from the durable cursor and acknowledges only after completion", async () => {
     const saved: number[] = [];
+    const leased = job();
+    const discoveryRun = { ...run(), cursor: 1 };
     let completed = false;
     let acknowledged = false;
     const repository = {
-      async loadDiscoveryContext() { return { run: { ...run(), cursor: 1 }, strategy: strategy(), queries: ["q0", "q1", "q2"], internalEvidence: [] }; },
+      async loadDiscoveryContext() { return { run: discoveryRun, strategy: strategy(), queries: ["q0", "q1", "q2"], internalEvidence: [] }; },
       async startRun() {},
       async saveStep(input: { cursor: number }) { saved.push(input.cursor); },
       async completeRun() { completed = true; },
@@ -27,11 +29,15 @@ describe("Noosphere content idea radar", () => {
     const queue = { async acknowledge() { acknowledged = true; } } as unknown as JobQueue;
     const processor = new ContentIdeaDiscoveryJobProcessor(
       repository,
-      { async search(input) { return [evidence(`proof:${input.query}`)]; } },
+      { async search(input) {
+        expect(input.workspaceId).toBe(leased.workspaceId);
+        expect(input.deadlineAt).toEqual(discoveryRun.deadlineAt);
+        return [evidence(`proof:${input.query}`)];
+      } },
       { async generate(input) { return [candidate([input.evidence[0]!.key])]; } },
       queue,
     );
-    await processor.process(job());
+    await processor.process(leased);
     expect(saved).toEqual([2, 3]);
     expect(completed).toBe(true);
     expect(acknowledged).toBe(true);
@@ -55,4 +61,37 @@ test("provider pause keeps the discovery cursor resumable at the attempt limit",
   await expect(processor.process({ ...leased, attempts: leased.maxAttempts })).rejects.toBe(failure);
   expect(failed).toBe(0);
   expect(saved).toBe(0);
+});
+
+test("budget expiry during the final attempt completes partial without advancing the cursor", async () => {
+  const { ContentIdeaSourceDeadlineError } = await import("@outbound/application/content/content-ideas");
+  let failed = false, saved = false, partial = false, acknowledged = false;
+  const repository = {
+    async loadDiscoveryContext() { return { run: { ...run(), cursor: 1 }, strategy: strategy(), queries: ["q0", "q1"], internalEvidence: [] }; },
+    async startRun() {}, async saveStep() { saved = true; }, async failRun() { failed = true; },
+    async completeRun(input: { partial: boolean }) { partial = input.partial; },
+  } as unknown as ContentIdeaRepository;
+  const processor = new ContentIdeaDiscoveryJobProcessor(repository,
+    { async search() { throw new ContentIdeaSourceDeadlineError(); } },
+    { async generate() { throw new Error("must not generate after expiry"); } },
+    { async acknowledge() { acknowledged = true; } } as unknown as JobQueue);
+  const leased = job();
+  await processor.process({ ...leased, attempts: leased.maxAttempts });
+  expect({ failed, saved, partial, acknowledged }).toEqual({ failed: false, saved: false, partial: true, acknowledged: true });
+});
+
+test("a provider failure before the deadline remains a failure on the final attempt", async () => {
+  let failed = false, completed = false, acknowledged = false;
+  const repository = {
+    async loadDiscoveryContext() { return { run: run(), strategy: strategy(), queries: ["q0"], internalEvidence: [] }; },
+    async startRun() {}, async failRun() { failed = true; }, async completeRun() { completed = true; },
+  } as unknown as ContentIdeaRepository;
+  const failure = new Error("CRAWLER_UNAVAILABLE");
+  const processor = new ContentIdeaDiscoveryJobProcessor(repository,
+    { async search() { throw failure; } },
+    { async generate() { throw new Error("must not generate"); } },
+    { async acknowledge() { acknowledged = true; } } as unknown as JobQueue);
+  const leased = job();
+  await expect(processor.process({ ...leased, attempts: leased.maxAttempts })).rejects.toBe(failure);
+  expect({ failed, completed, acknowledged }).toEqual({ failed: true, completed: false, acknowledged: false });
 });

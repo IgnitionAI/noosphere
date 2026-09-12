@@ -113,3 +113,23 @@ describe("CrawlerClient browser-pool backpressure", () => {
     expect(error).toMatchObject({ name: "RetryableAgentError", code: "CRAWLER_JOB_LOST" });
   });
 });
+
+test("source deadline cancels a real HTTP search and stays a budget expiry", async () => {
+  const { CrawlerContentIdeaSource } = await import("@outbound/infrastructure/content/crawler-content-idea-source");
+  const { ContentIdeaSourceDeadlineError } = await import("@outbound/application/content/content-ideas");
+  let requestBody: unknown;
+  let release!: () => void;
+  const blocked = new Promise<void>(resolve => { release = resolve; });
+  const server = Bun.serve({ port: 0, async fetch(request) {
+    requestBody = await request.json();
+    await blocked;
+    return Response.json({ success: true, query: "q", results: [], provider: "searxng" });
+  } });
+  servers.push(server);
+  const client = new CrawlerClient({ baseUrl: server.url.origin, apiKey: "test" });
+  const source = new CrawlerContentIdeaSource(client);
+  try {
+    await expect(source.search({ workspaceId: "workspace-a", query: "q", limit: 2, correlationId: "deadline-test", deadlineAt: new Date(Date.now() + 100) })).rejects.toBeInstanceOf(ContentIdeaSourceDeadlineError);
+    expect(requestBody).toEqual({ query: "q", limit: 2, correlationId: "deadline-test", searchDepth: "advanced", scrapeContent: false });
+  } finally { release(); }
+});

@@ -83,8 +83,20 @@ export interface ContentIdeaRepository {
   failRun(input: { workspaceId: string; runId: string; code: string; message: string; now: Date }): Promise<void>;
 }
 
+export class ContentIdeaSourceDeadlineError extends Error {
+  constructor() { super("CONTENT_SOURCE_DEADLINE_EXCEEDED"); }
+}
+
+export interface ContentIdeaSourceRequest {
+  readonly workspaceId: string;
+  readonly query: string;
+  readonly limit: number;
+  readonly correlationId: string;
+  readonly deadlineAt: Date;
+}
+
 export interface ContentIdeaSourceDiscovery {
-  search(input: { query: string; limit: number; correlationId: string }): Promise<readonly ContentIdeaEvidence[]>;
+  search(input: ContentIdeaSourceRequest): Promise<readonly ContentIdeaEvidence[]>;
 }
 
 export interface ContentIdeaCandidateGenerator {
@@ -135,11 +147,20 @@ export class ContentIdeaDiscoveryJobProcessor {
         }
         const query = context.queries[cursor]!;
         const remaining = Math.max(0, context.run.sourceLimit - sourceCount);
-        const publicEvidence = await this.sourceDiscovery.search({
-          query,
-          limit: Math.min(8, remaining),
-          correlationId: `${job.correlationId}:query:${cursor}`,
-        });
+        let publicEvidence: readonly ContentIdeaEvidence[];
+        try {
+          publicEvidence = await this.sourceDiscovery.search({
+            workspaceId: job.workspaceId,
+            deadlineAt: context.run.deadlineAt,
+            query,
+            limit: Math.min(8, remaining),
+            correlationId: `${job.correlationId}:query:${cursor}`,
+          });
+        } catch (error) {
+          if (!(error instanceof ContentIdeaSourceDeadlineError)) throw error;
+          partial = true;
+          break;
+        }
         const evidence = [...context.internalEvidence, ...publicEvidence];
         const candidates = await this.generator.generate({ workspaceId: job.workspaceId, strategy: context.strategy, query, evidence });
         for (const candidate of candidates) assertGroundedIdeaCandidate(candidate, evidence.map((item) => item.key));

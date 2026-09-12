@@ -96,14 +96,18 @@ export class CrawlerClient {
     limit: number;
     correlationId: string;
     searchDepth?: "basic" | "advanced";
+    signal?: AbortSignal;
   }): Promise<readonly CrawlerSearchResult[]> {
     const response = await this.#request("/crawl/search", {
       method: "POST",
       body: JSON.stringify({
-        ...input,
+        query: input.query,
+        limit: input.limit,
+        correlationId: input.correlationId,
         searchDepth: input.searchDepth ?? "advanced",
         scrapeContent: false,
       }),
+      ...(input.signal ? { signal: input.signal } : {}),
     });
     return searchResponseSchema.parse(await response.json()).results;
   }
