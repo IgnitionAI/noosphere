@@ -47,6 +47,11 @@ databaseDescribe("Noosphere editorial strategy persistence", () => {
     await seedGrounding(otherWorkspaceId, "Noosphere B");
   });
 
+  test("explicit sources cannot resolve a different workspace or silently select latest", async () => {
+    const foreign = await repository.grounding(otherWorkspaceId);
+    await expect(repository.grounding(workspaceId, { offerVersionId: foreign.offer.versionId, icpVersionId: foreign.icp.versionId })).rejects.toThrow("EDITORIAL_STRATEGY_OFFER_REQUIRED");
+  });
+
   afterAll(async () => {
     await database.client`drop trigger if exists audit_logs_immutable_trg on audit_logs`;
     await database.client`drop trigger if exists editorial_strategy_versions_immutable_trg on editorial_strategy_versions`;

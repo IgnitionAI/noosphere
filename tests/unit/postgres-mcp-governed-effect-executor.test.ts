@@ -4,10 +4,12 @@ import { OutboundDeliveryError } from "@outbound/application/campaigns/outbound-
 import { CalendarIntegrationError } from "@outbound/infrastructure/calendar/postgres-calendar-integration";
 import {
   PostgresMcpGovernedEffectExecutor,
+  PostgresMcpGovernedEffectSourceReader,
   type ConversationExecutionSource,
   type McpGovernedEffectExecutionSource,
   type McpGovernedEffectSourceReader,
 } from "@outbound/infrastructure/mcp/postgres-mcp-governed-effect-executor";
+import { mcpEffectProposals, conversations, contacts, contactIdentities, messages } from "@outbound/infrastructure/database/schema";
 
 const identity = (kind: "conversation_reply" | "content_publication" | "meeting_proposal" | "campaign_activation") => ({
   workspaceId: "00000000-0000-4000-8000-000000000001",
@@ -35,6 +37,30 @@ function sourceReader(source: McpGovernedEffectExecutionSource): McpGovernedEffe
 }
 
 describe("Postgres governed-effect provider executor", () => {
+  test("keeps a mirrored Unipile email id distinct from an upstream reply id", async () => {
+    const fixtureRows = new Map<unknown, unknown[]>([
+      [mcpEffectProposals, [{ intentSnapshot: { body: "Email reply", subject: "Re: Hello" } }]],
+      [conversations, [{ id: "conversation-1", contactId: "contact-1", provider: "unipile", providerAccountId: "account-1", channel: "email", providerThreadId: "thread-1" }]],
+      [contacts, [{ id: "contact-1" }]],
+      [contactIdentities, [{ type: "email", value: "person@example.test", normalizedValue: "person@example.test" }]],
+      [messages, [{ providerMessageId: "unipile-local-email-1" }]],
+    ]);
+    const database = { select: () => ({ from: (table: unknown) => {
+      const query = { where: () => query, orderBy: () => query, limit: async () => fixtureRows.get(table) ?? [] };
+      return query;
+    } }) };
+    const calls: unknown[] = [];
+    const executor = new PostgresMcpGovernedEffectExecutor(database as never, {
+      outbound: { send: async (request) => {
+        calls.push(request);
+        return { providerRequestId: "sent-email-1", conversationId: "thread-1" };
+      } },
+    }, new PostgresMcpGovernedEffectSourceReader(database as never));
+    await expect(executor.execute({ identity: identity("conversation_reply"), marker: marker("conversation_reply") })).resolves.toMatchObject({ outcome: "delivered" });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ replyToUnipileMessageId: "unipile-local-email-1", replyToProviderMessageId: null });
+  });
+
   test("sends a bounded conversation reply through the existing gateway", async () => {
     const calls: unknown[] = [];
     const source: McpGovernedEffectExecutionSource = {
@@ -59,7 +85,7 @@ describe("Postgres governed-effect provider executor", () => {
     const result = await executor.execute({ identity: identity("conversation_reply"), marker: marker("conversation_reply") });
     expect(result).toEqual({ outcome: "delivered", authoritative: true, code: "DELIVERED", result: { providerRequestId: "request-1", conversationId: "provider-thread-1" } });
     expect(calls).toHaveLength(1);
-    expect(calls[0]).toMatchObject({ accountId: "account-1", channel: "email", body: "A bounded reply", idempotencyKey: "mcp-effect:test:v1", conversationId: "provider-thread-1" });
+    expect(calls[0]).toMatchObject({ accountId: "account-1", channel: "email", body: "A bounded reply", idempotencyKey: "mcp-effect:test:v1", conversationId: "provider-thread-1", replyToProviderMessageId: "message-1" });
   });
 
   test("maps ambiguous provider errors to unknown and never retries the mutation", async () => {

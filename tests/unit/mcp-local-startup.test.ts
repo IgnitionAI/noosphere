@@ -115,6 +115,7 @@ test("uses one worker and reports a canonical local resource", async () => {
     httpPort: 18080,
     httpsPort: 18443,
     caCertificatePath,
+    probePort: () => true,
     run,
   } as never);
   expect(ready.resource).toBe("https://mcp.localhost:18443/mcp");
@@ -122,6 +123,7 @@ test("uses one worker and reports a canonical local resource", async () => {
   expect(ready.workerCount).toBe(1);
   expect(commands.some((argv) => argv.includes("config"))).toBe(true);
   expect(commands.some((argv) => argv.includes("build"))).toBe(true);
+  expect(commands.find((argv) => argv.includes("build"))).toContain("--quiet");
   expect(commands.some((argv) => argv.includes("up") && argv.includes("worker"))).toBe(true);
   expect(commands.some((argv) => argv[0] === "curl" && argv.includes("https://mcp.localhost:18443/health/ready"))).toBe(true);
   const health = commands.find((argv) => argv[0] === "curl");
@@ -151,6 +153,7 @@ test("gives cold build and Compose startup their own bounded long timeout", asyn
     httpPort: 18080,
     httpsPort: 18443,
     caCertificatePath,
+    probePort: () => true,
     run,
   } as never);
 
@@ -220,6 +223,28 @@ test("inspects a bounded redacted service status", async () => {
   expect(status.workerCount).toBe(1);
   expect(status.redacted).toBe(true);
   expect(JSON.stringify(status)).not.toContain("stderr");
+});
+
+test("parses Docker Compose newline-delimited JSON status", async () => {
+  const envFilePath = await privateEnvFile();
+  const status = await inspectLocalMcp({
+    envFilePath,
+    projectName: "noosphere-mcp-local",
+    run: async (argv: readonly string[]) => {
+      if (argv.includes("ls")) return { exitCode: 0, stdout: "[]", stderr: "" };
+      return {
+        exitCode: 0,
+        stdout: [
+          JSON.stringify({ Service: "database", State: "running", Health: "healthy" }),
+          JSON.stringify({ Service: "proxy", State: "running", Health: "" }),
+          JSON.stringify({ Service: "worker", State: "running", Health: "" }),
+        ].join("\n"),
+        stderr: "",
+      };
+    },
+  });
+  expect(status.services.map((service) => service.name)).toEqual(["database", "proxy", "worker"]);
+  expect(status.workerCount).toBe(1);
 });
 
 test("rejects malformed Compose JSON instead of accepting a text summary", async () => {
@@ -641,7 +666,7 @@ test("does not pass ambient Compose or proxy variables to the controlled runner"
     return { exitCode: 0, stdout: "", stderr: "" };
   };
   try {
-    await startLocalMcp({ envFilePath, projectName: "noosphere-mcp-local", httpPort: 18080, httpsPort: 18443, caCertificatePath, run });
+    await startLocalMcp({ envFilePath, projectName: "noosphere-mcp-local", httpPort: 18080, httpsPort: 18443, caCertificatePath, probePort: () => true, run });
   } finally {
     for (const [key, value] of Object.entries(original)) {
       if (value === undefined) delete process.env[key];

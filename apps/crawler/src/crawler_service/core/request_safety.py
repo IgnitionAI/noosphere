@@ -29,7 +29,7 @@ def collected_at() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-async def install_safe_request_interceptor(page, **_kwargs):
+async def install_safe_request_interceptor(page, navigation_guard=None, **_kwargs):
     """Abort every browser request whose target is not publicly routable."""
 
     context = getattr(page, "context", None)
@@ -42,7 +42,7 @@ async def install_safe_request_interceptor(page, **_kwargs):
                 request_id = event["requestId"]
                 target = event["request"]["url"]
                 scheme = urlparse(target).scheme
-                if scheme in ("data", "blob", "about") or await is_url_allowed_async(target):
+                if (scheme in ("data", "blob", "about") or await is_url_allowed_async(target)) and (navigation_guard is None or event.get("resourceType") != "Document" or await navigation_guard(target)):
                     await client.send(
                         "Fetch.continueRequest",
                         {"requestId": request_id},
@@ -78,7 +78,7 @@ async def install_safe_request_interceptor(page, **_kwargs):
         if scheme in ("data", "blob", "about"):
             await _continue_safely(route)
             return
-        if await is_url_allowed_async(target):
+        if await is_url_allowed_async(target) and (navigation_guard is None or not request.is_navigation_request() or await navigation_guard(target)):
             await _continue_safely(route)
         else:
             await route.abort("blockedbyclient")
@@ -105,13 +105,6 @@ async def _continue_safely(route):
         await fallback()
     else:
         await route.continue_()
-
-
-def configure_safe_crawler(crawler) -> None:
-    crawler.crawler_strategy.set_hook(
-        "on_page_context_created",
-        install_safe_request_interceptor,
-    )
 
 
 def bounded_markdown(value: str) -> str:

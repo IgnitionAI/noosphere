@@ -1,3 +1,4 @@
+import { aiSetupProblem } from "@outbound/interface/http/ai-setup-problem";
 import { ZodError, z } from "zod";
 import type { EditorialStrategyApplication } from "@outbound/application/content/editorial-strategy";
 import { editorialStrategySnapshotSchema } from "@outbound/contracts/content";
@@ -13,6 +14,7 @@ const updateSchema = requestSchema.extend({ snapshot: editorialStrategySnapshotS
 
 export function isContentStrategyRoute(pathname: string): boolean {
   return pathname === "/api/v1/content/strategy"
+    || pathname === "/api/v1/content/strategy/preparation"
     || pathname === "/api/v1/content/strategy/derive"
     || pathname === "/api/v1/content/strategy/publish";
 }
@@ -25,6 +27,10 @@ export function createContentStrategyHttpHandler(input: {
     try {
       const context = await input.contextResolver.resolve(request);
       const pathname = new URL(request.url).pathname;
+      if (pathname === "/api/v1/content/strategy/preparation" && request.method === "GET") {
+        requireViewer(context.role);
+        return json(await input.application.preparation(context.workspaceId));
+      }
       if (pathname === "/api/v1/content/strategy" && request.method === "GET") {
         requireViewer(context.role);
         const strategy = await input.application.find(context.workspaceId);
@@ -47,6 +53,8 @@ export function createContentStrategyHttpHandler(input: {
       }
       return problem(405, "METHOD_NOT_ALLOWED", "The HTTP method is not allowed");
     } catch (error) {
+      const setupProblem = aiSetupProblem(error);
+      if (setupProblem) return setupProblem;
       if (error instanceof ZodError || error instanceof SyntaxError) return problem(422, "VALIDATION_FAILED", "The request is invalid");
       if (error instanceof RequestAuthenticationError) return problem(401, "AUTHENTICATION_REQUIRED", error.message);
       if (error instanceof WorkspaceContextRequiredError) return problem(400, "WORKSPACE_CONTEXT_REQUIRED", error.message);
@@ -54,6 +62,7 @@ export function createContentStrategyHttpHandler(input: {
       const code = error instanceof Error ? error.message : "";
       if (code === "EDITORIAL_STRATEGY_OFFER_REQUIRED") return problem(409, code, "Publish an offer before deriving the strategy");
       if (code === "EDITORIAL_STRATEGY_ICP_REQUIRED") return problem(409, code, "Publish an ICP before deriving the strategy");
+      if (code === "EDITORIAL_STRATEGY_VERSION_CONFLICT") return problem(409, code, "The strategy changed; reload it before retrying");
       if (code === "EDITORIAL_STRATEGY_NOT_FOUND") return problem(404, code, "No editorial strategy exists for this workspace");
       if (code === "EDITORIAL_STRATEGY_UNAUTHORIZED_CLAIM") return problem(422, code, "The strategy references an unauthorized offer claim");
       if (code === "EDITORIAL_STRATEGY_OUTPUT_INVALID") return problem(502, code, "The AI returned an invalid editorial strategy after a bounded retry. Retry without changing your product brief");

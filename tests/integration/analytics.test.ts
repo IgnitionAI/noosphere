@@ -66,6 +66,8 @@ databaseDescribe("F-051 deterministic workspace analytics", () => {
       stage: "won",
       amount: 1250.5,
       currency: "EUR",
+      createdAt: new Date("2026-08-15T12:00:00Z"),
+      updatedAt: new Date("2026-08-15T12:00:00Z"),
     });
     const response = await handle(new Request("http://localhost/api/v1/analytics/funnel?from=2026-08-01T00:00:00Z&to=2026-09-01T00:00:00Z"));
     expect(response.status).toBe(200);

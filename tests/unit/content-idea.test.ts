@@ -43,3 +43,16 @@ function evidence(key: string) { return { key, type: "public_web" as const, sour
 function run() { return { id: crypto.randomUUID(), workspaceId: crypto.randomUUID(), strategyVersionId: crypto.randomUUID(), status: "running" as const, trigger: "manual" as const, cursor: 0, queryCount: 0, sourceCount: 0, ideaCount: 0, queryLimit: 3, sourceLimit: 40, deadlineAt: new Date(Date.now() + 60_000), lastErrorCode: null, lastErrorMessage: null, createdAt: new Date(), completedAt: null }; }
 function strategy() { return { audience: { name: "Legal", summary: "Legal teams", awareness: "problem_aware" as const }, pillars: [{ name: "Recherche", promise: "Retrouver les preuves", proofTypes: ["étude"] }, { name: "Sécurité", promise: "Garder le contrôle", proofTypes: ["audit"] }, { name: "Déploiement", promise: "Livrer vite", proofTypes: ["chronologie"] }], voice: { traits: ["direct", "précis"], avoid: ["générique"] }, formats: ["linkedin_text" as const], cadence: { postsPerWeek: 3, preferredDays: [1, 3, 5], timezone: "Europe/Paris" }, callsToAction: ["Répondre"], allowedClaimIds: [], forbiddenTopics: [] }; }
 function job(): LeasedJob { const now = new Date(); return { id: crypto.randomUUID(), workspaceId: crypto.randomUUID(), type: "content.ideas.discover", payload: { runId: crypto.randomUUID() }, idempotencyKey: "ideas", correlationId: "ideas:test", attempts: 1, maxAttempts: 5, availableAt: now, lockedBy: "worker", lockedUntil: new Date(now.getTime() + 60_000) }; }
+
+test("provider pause keeps the discovery cursor resumable at the attempt limit", async () => {
+  const { AiTaskPauseError } = await import("@outbound/application/ai/ai-task-pause");
+  const { ModelGatewayError } = await import("@outbound/application/ai/model-gateway");
+  const failure = new AiTaskPauseError(new ModelGatewayError("AI_PROVIDER_UNAVAILABLE", "anthropic", "unavailable", true, true), "content_idea", "ideas", []);
+  let failed = 0, saved = 0;
+  const repository = { async loadDiscoveryContext() { return { run: { ...run(), cursor: 1 }, strategy: strategy(), queries: ["q0", "q1"], internalEvidence: [] }; }, async startRun() {}, async failRun() { failed++; }, async saveStep() { saved++; } } as unknown as ContentIdeaRepository;
+  const processor = new ContentIdeaDiscoveryJobProcessor(repository, { async search(input) { expect(input.query).toBe("q1"); return [evidence("proof")]; } }, { async generate() { throw failure; } }, {} as JobQueue);
+  const leased = job();
+  await expect(processor.process({ ...leased, attempts: leased.maxAttempts })).rejects.toBe(failure);
+  expect(failed).toBe(0);
+  expect(saved).toBe(0);
+});

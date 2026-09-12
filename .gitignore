@@ -20,6 +20,7 @@ __pycache__/
 !.env.example
 !deploy/.env.production.example
 !deploy/.env.quickstart.example
+.mcp-local/
 
 # Python
 __pycache__/
@@ -30,3 +31,13 @@ __pycache__/
 .claude/
 .codex/
 .kimi/
+
+# Terraform: keep the dependency lock; keep state, plans and operator inputs private.
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+*.tfvars.json
+crash.log
+crash.*.log

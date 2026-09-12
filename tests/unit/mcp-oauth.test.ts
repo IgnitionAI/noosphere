@@ -6,6 +6,7 @@ import {
   MCP_OAUTH_RESOURCE,
   MCP_OAUTH_SCOPES,
   type McpOAuthClient,
+  type AuthorizedMcpOAuthClient,
   type McpOAuthService,
   type McpOAuthStore,
   type McpOAuthAuthorizationCode,
@@ -20,7 +21,7 @@ const issuer = "https://example.test";
 const challenge = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
 function service(overrides: Partial<McpOAuthService> = {}): McpOAuthService {
-  const client: McpOAuthClient = {
+  const client: AuthorizedMcpOAuthClient = {
     id: "client-row",
     clientId: "client-public",
     clientName: "Smoke client",
@@ -43,6 +44,7 @@ function service(overrides: Partial<McpOAuthService> = {}): McpOAuthService {
       authorization_endpoint: `${issuer}/oauth/authorize`,
       token_endpoint: `${issuer}/oauth/token`,
       revocation_endpoint: `${issuer}/oauth/revoke`,
+      registration_endpoint: `${issuer}/oauth/register`,
       response_types_supported: ["code"],
       grant_types_supported: ["authorization_code", "refresh_token"],
       code_challenge_methods_supported: ["S256"],
@@ -56,6 +58,7 @@ function service(overrides: Partial<McpOAuthService> = {}): McpOAuthService {
       bearer_methods_supported: ["header"],
     }),
     registerClient: async () => client,
+    registerDynamicClient: async () => ({ ...client, userId: null, workspaceId: null, workspaceSlug: null }),
     beginAuthorization: async (input: OAuthAuthorizeContext) => ({
       client,
       effectiveScopes: input.requestedScopes,
@@ -78,6 +81,32 @@ function service(overrides: Partial<McpOAuthService> = {}): McpOAuthService {
 }
 
 describe("MCP workspace OAuth", () => {
+  test("cancels oversized streaming registration bodies before draining them", async () => {
+    let pulls = 0;
+    let cancelled = false;
+    let registrations = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls += 1;
+        if (pulls === 1) controller.enqueue(new Uint8Array(MCP_OAUTH_MAX_BODY_BYTES));
+        else if (pulls <= 3) controller.enqueue(new Uint8Array(1));
+        else controller.close();
+      },
+      cancel() { cancelled = true; },
+    }, { highWaterMark: 0 });
+    const handler = createMcpOAuthHandler(service({ registerDynamicClient: async () => {
+      registrations += 1;
+      throw new Error("Registration must not run");
+    } }), { issuer, resource: `${issuer}${MCP_OAUTH_RESOURCE}` });
+    const response = await handler(new Request(`${issuer}/oauth/register`, {
+      method: "POST", headers: { "content-type": "application/json" }, body,
+    }));
+    expect(response.status).toBe(413);
+    expect(cancelled).toBe(true);
+    expect(pulls).toBe(2);
+    expect(registrations).toBe(0);
+  });
+
   test("serves RFC metadata and protected-resource metadata", async () => {
     const handler = createMcpOAuthHandler(service(), { issuer, resource: `${issuer}${MCP_OAUTH_RESOURCE}` });
     const metadata = await handler(new Request(`${issuer}/.well-known/oauth-authorization-server`));
@@ -85,11 +114,94 @@ describe("MCP workspace OAuth", () => {
     expect(await metadata.json()).toMatchObject({
       issuer,
       token_endpoint: `${issuer}/oauth/token`,
+      registration_endpoint: `${issuer}/oauth/register`,
       code_challenge_methods_supported: ["S256"],
     });
     const resource = await handler(new Request(`${issuer}/.well-known/oauth-protected-resource`));
     expect(resource.status).toBe(200);
     expect(await resource.json()).toMatchObject({ resource: `${issuer}${MCP_OAUTH_RESOURCE}`, authorization_servers: [issuer], scopes_supported: [...MCP_OAUTH_SCOPES] });
+  });
+
+  test("dynamically registers a public PKCE client and binds it only during workspace consent", async () => {
+    const store = memoryStore("owner");
+    const oauth = createMcpOAuthService(store, { issuer, resource: `${issuer}${MCP_OAUTH_RESOURCE}` });
+    const handler = createMcpOAuthHandler(oauth, { issuer, resource: `${issuer}${MCP_OAUTH_RESOURCE}` });
+    const registeredResponse = await handler(new Request(`${issuer}/oauth/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        client_name: "ChatGPT",
+        redirect_uris: ["https://chatgpt.com/connector/oauth/callback"],
+        token_endpoint_auth_method: "none",
+        scope: "mcp:read mcp:write mcp:approve",
+      }),
+    }));
+    expect(registeredResponse.status).toBe(201);
+    const registration = await registeredResponse.json() as { client_id: string };
+    expect(typeof registration.client_id).toBe("string");
+    expect(registration).toMatchObject({
+      token_endpoint_auth_method: "none",
+      grant_types: ["authorization_code", "refresh_token"],
+      response_types: ["code"],
+    });
+    const consent = await oauth.beginAuthorization({
+      clientId: registration.client_id,
+      redirectUri: "https://chatgpt.com/connector/oauth/callback",
+      state: "state",
+      codeChallenge: challenge,
+      codeChallengeMethod: "S256",
+      requestedScopes: [...MCP_OAUTH_SCOPES],
+      resource: `${issuer}${MCP_OAUTH_RESOURCE}`,
+      approved: false,
+      userId: "user-1",
+      workspaceId: "workspace-1",
+      workspaceSlug: "acme",
+      role: "owner",
+    });
+    expect(consent.client).toMatchObject({ userId: "user-1", workspaceId: "workspace-1", workspaceSlug: "acme" });
+    expect(consent.effectiveScopes).toEqual([...MCP_OAUTH_SCOPES]);
+  });
+
+  test("rejects unsafe dynamic client registration", async () => {
+    const handler = createMcpOAuthHandler(createMcpOAuthService(memoryStore(), { issuer, resource: `${issuer}${MCP_OAUTH_RESOURCE}` }), { issuer, resource: `${issuer}${MCP_OAUTH_RESOURCE}` });
+    const secretClient = await handler(new Request(`${issuer}/oauth/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ client_name: "Unsafe", redirect_uris: ["https://client.example/callback"], token_endpoint_auth_method: "client_secret_post" }),
+    }));
+    expect(secretClient.status).toBe(400);
+    const unsafeRedirect = await handler(new Request(`${issuer}/oauth/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ client_name: "Unsafe", redirect_uris: ["http://client.example/callback"] }),
+    }));
+    expect(unsafeRedirect.status).toBe(400);
+    const credentialedRedirect = await handler(new Request(`${issuer}/oauth/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ client_name: "Unsafe", redirect_uris: ["https://user:password@client.example/callback"] }),
+    }));
+    expect(credentialedRedirect.status).toBe(400);
+    const unsupportedGrant = await handler(new Request(`${issuer}/oauth/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        client_name: "Unsafe",
+        redirect_uris: ["https://client.example/callback"],
+        grant_types: ["client_credentials"],
+      }),
+    }));
+    expect(unsupportedGrant.status).toBe(400);
+    const unsupportedResponse = await handler(new Request(`${issuer}/oauth/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        client_name: "Unsafe",
+        redirect_uris: ["https://client.example/callback"],
+        response_types: ["token"],
+      }),
+    }));
+    expect(unsupportedResponse.status).toBe(400);
   });
 
   test("advertises mcp:approve and intersects it by fresh non-hierarchical role membership", async () => {

@@ -18,6 +18,7 @@ export interface KimiModelGatewayOptions {
   readonly baseUrl?: string;
   readonly fetcher?: Fetcher;
   readonly now?: () => Date;
+  readonly maxOutputTokens?: number;
 }
 
 const fallbackModelIds = [
@@ -34,12 +35,14 @@ export class KimiChatModelGateway implements ModelGateway {
   readonly #baseUrl: string;
   readonly #fetcher: Fetcher;
   readonly #now: () => Date;
+  readonly #maxOutputTokens: number | undefined;
 
   constructor(options: KimiModelGatewayOptions) {
     this.#apiKey = required(options.apiKey, "KIMI_CODE_API_KEY");
     this.#baseUrl = normalizedBaseUrl(options.baseUrl ?? "https://api.kimi.com/coding/v1");
     this.#fetcher = options.fetcher ?? fetch;
     this.#now = options.now ?? (() => new Date());
+    this.#maxOutputTokens = options.maxOutputTokens;
   }
 
   async invokeStructured<T>(request: StructuredModelRequest<T>): Promise<StructuredModelResult<T>> {
@@ -48,12 +51,14 @@ export class KimiChatModelGateway implements ModelGateway {
     try {
       const response = await this.#fetcher(`${this.#baseUrl}/chat/completions`, {
         method: "POST",
+        redirect: "error",
         headers: {
           authorization: `Bearer ${this.#apiKey}`,
           "content-type": "application/json",
         },
         body: JSON.stringify({
           model: request.model,
+          ...(this.#maxOutputTokens ? { max_tokens: this.#maxOutputTokens } : {}),
           messages: [
             { role: "system", content: request.systemPrompt },
             { role: "user", content: JSON.stringify(request.input) },

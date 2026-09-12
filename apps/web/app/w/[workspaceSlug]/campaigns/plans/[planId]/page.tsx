@@ -1,3 +1,4 @@
+import { campaignPlanPreparation } from "@/lib/campaign-plan-state";
 import {
   ArrowLeft,
   AtSign,
@@ -83,6 +84,7 @@ export default async function CampaignPage({
   const refreshing = plan.status === "assessing"
     || campaignDetails.some((campaign) => ["sourcing", "enriching", "composing", "scheduled", "running"].includes(campaign.automationStage));
   const exceptions = campaignDetails.filter(isActionableCampaignException);
+  const preparation = campaignPlanPreparation(plan.assessments);
 
   return (
     <>
@@ -94,7 +96,7 @@ export default async function CampaignPage({
       <header className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <div className="mb-2 flex flex-wrap items-center gap-2">
-            <span className={campaignBadge(campaignDetails)}>{campaignStatus(plan.status, campaignDetails)}</span>
+            <span className={campaignBadge(campaignDetails)}>{campaignDetails.length ? campaignStatus(plan.status, campaignDetails) : preparation.label}</span>
             {activeCampaigns.map((campaign) => (
               campaign.channel ? <span className="badge capitalize" key={campaign.id}>{campaign.channel}</span> : null
             ))}
@@ -135,7 +137,7 @@ export default async function CampaignPage({
           <div className="panel-body">
             {prospects.length === 0 ? (
               <p className="py-8 text-center text-sm text-muted">
-                {campaignDetails.some((campaign) => campaign.discoveryStatus === "running")
+                {!campaignDetails.length ? preparation.message : campaignDetails.some((campaign) => campaign.discoveryStatus === "running")
                   ? "La recherche est en cours. Cette page se met à jour automatiquement."
                   : "La recherche est terminée sans cible suffisamment fiable."}
               </p>
@@ -228,7 +230,7 @@ export default async function CampaignPage({
                       <span className="flex items-center gap-2 text-sm font-semibold"><Icon size={15} />{channelLabel(channel)}</span>
                       <span className={channelBadge(assessment?.recommendation, campaign)}>{channelStatus(assessment?.status, assessment?.recommendation, campaign)}</span>
                     </div>
-                    <p className="mt-2 text-xs text-muted">{channelDescription(assessment?.status, campaign)}</p>
+                    <p className="mt-2 text-xs text-muted">{!campaign && assessment?.status === "failed" ? (assessment.errorMessage?.includes("Unipile is not configured") ? "La connexion LinkedIn était indisponible lors de l’évaluation. Vérifiez sa configuration avant de réessayer." : assessment.errorMessage || "L’évaluation de ce canal a échoué.") : !campaign && assessment?.rationale ? assessment.rationale : channelDescription(assessment?.status, campaign)}</p>
                   </div>
                 );
               })}

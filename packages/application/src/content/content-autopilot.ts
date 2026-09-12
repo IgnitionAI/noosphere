@@ -1,3 +1,4 @@
+import { requireWorkspaceAi, type WorkspaceAiAvailability } from "@outbound/application/ai/ai-availability";
 import type { ContentGenerationRepository } from "@outbound/application/content/content-generation";
 import type { ContentPublicationApplication } from "@outbound/application/content/content-publications";
 import type { Clock } from "@outbound/application/shared/ports";
@@ -89,13 +90,14 @@ export class ContentAutopilotApplication {
   constructor(
     private readonly repository: ContentAutopilotRepository,
     private readonly clock: Clock,
+    private readonly aiAvailable?: WorkspaceAiAvailability,
   ) {}
 
   get(workspaceId: string): Promise<ContentAutopilotView> {
     return this.repository.get({ workspaceId });
   }
 
-  configure(input: {
+  async configure(input: {
     readonly workspaceId: string;
     readonly userId: string;
     readonly requestKey: string;
@@ -105,6 +107,11 @@ export class ContentAutopilotApplication {
     readonly publicationTimes?: readonly string[];
     readonly publicationDays?: readonly number[];
   }): Promise<ContentAutopilotView> {
+    if (input.enabled) {
+      for (const capability of ["content_idea", "content_brief", "content_writer", "content_audit", "content_critic"] as const) {
+        await requireWorkspaceAi(this.aiAvailable, input.workspaceId, capability);
+      }
+    }
     return this.repository.configure({ ...input, now: this.clock.now() });
   }
 }
@@ -115,6 +122,7 @@ export class ContentAutopilotReconciler {
     private readonly generation: ContentGenerationRepository,
     private readonly publications: ContentPublicationApplication,
     private readonly clock: Clock,
+    private readonly aiAvailable?: WorkspaceAiAvailability,
   ) {}
 
   async reconcile(limit = 25): Promise<number> {
@@ -129,11 +137,15 @@ export class ContentAutopilotReconciler {
 
   async #reconcileWorkspace(workspace: ContentAutopilotWorkspace, now: Date): Promise<number> {
     let progressed = 0;
-    const repairCandidates = await this.repository.listRepairCandidates({
+    const canGenerate = !this.aiAvailable || (await Promise.all(
+      (["content_brief", "content_writer", "content_audit", "content_critic"] as const)
+        .map((capability) => this.aiAvailable!(workspace.workspaceId, capability)),
+    )).every(Boolean);
+    const repairCandidates = canGenerate ? await this.repository.listRepairCandidates({
       workspaceId: workspace.workspaceId,
       strategyVersionId: workspace.strategyVersionId,
       limit: Math.min(8, Math.max(2, workspace.cadence.postsPerWeek)),
-    });
+    }) : [];
     for (const candidate of repairCandidates.slice(0, 1)) {
       await this.generation.createGeneration({
         workspaceId: workspace.workspaceId,
@@ -147,7 +159,7 @@ export class ContentAutopilotReconciler {
       progressed += 1;
     }
 
-    if (repairCandidates.length === 0) {
+    if (canGenerate && repairCandidates.length === 0) {
       const generationCandidates = await this.repository.listGenerationCandidates({
         workspaceId: workspace.workspaceId,
         strategyVersionId: workspace.strategyVersionId,

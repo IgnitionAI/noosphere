@@ -11,8 +11,8 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getResearchRun, OutboundApiError } from "@/lib/api";
-import { pauseResearch, resumeResearch, startResearch } from "./actions";
+import { getInstanceSetup, getResearchRun, OutboundApiError } from "@/lib/api";
+import { pauseResearch, resumeResearch, resumeResearchWithCurrentModels, startResearch } from "./actions";
 import { ProgressRefresh } from "./progress-refresh";
 import { canResumeIncompleteResearch, isResearchReportReady } from "./research-progress-state";
 
@@ -50,10 +50,14 @@ export const dynamic = "force-dynamic";
 
 export default async function ResearchProgressPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ workspaceSlug: string; runId: string }>;
+  searchParams: Promise<{ error?: string }>;
 }) {
   const { workspaceSlug, runId } = await params;
+  const query = await searchParams;
+  const instanceSetup = query.error === "AI_SETUP_REQUIRED" ? await getInstanceSetup() : null;
   let run;
   try {
     run = await getResearchRun(workspaceSlug, runId);
@@ -74,21 +78,28 @@ export default async function ResearchProgressPage({
     run.stages.find((stage) => stage.stage === run.activeStage) ??
     [...run.stages].reverse().find((stage) => stage.lastErrorCode);
   const quotaExhausted =
-    failedStage?.lastErrorCode === "MODEL_PROVIDER_QUOTA_EXHAUSTED";
+    ["MODEL_PROVIDER_QUOTA_EXHAUSTED", "AI_PROVIDER_QUOTA_EXHAUSTED"].includes(failedStage?.lastErrorCode ?? "");
   const failedStageLabel = failedStage
     ? stageLabels[failedStage.stage] ?? failedStage.stage
     : "la dernière étape";
   const pause = pauseResearch.bind(null, workspaceSlug, runId);
   const resume = resumeResearch.bind(null, workspaceSlug, runId);
+  const resumeCurrent = resumeResearchWithCurrentModels.bind(null, workspaceSlug, runId);
   const start = startResearch.bind(null, workspaceSlug, runId);
 
   return (
     <>
       <ProgressRefresh active={isActive} />
+      {query.error === "RESEARCH_MODEL_CHANGE_BUSY" ? <div role="alert" className="mb-5 rounded-xl border border-line p-4">Le modèle précédent termine sa réponse. Attendez sa fin avant de reprendre avec le nouveau modèle. Les résultats déjà obtenus sont conservés.</div> : null}
+      {query.error === "PRODUCT_RESEARCH_ALREADY_ACTIVE" ? <div role="alert" className="mb-5 rounded-xl border border-line p-4">Une autre étude est déjà en cours ou en pause dans ce workspace. Terminez-la avant de démarrer celle-ci. Votre brouillon est conservé.</div> : null}
+      {query.error === "AI_SETUP_REQUIRED" ? <div role="alert" className="mb-5 rounded-xl border border-line p-4">
+        <p>Configurez une connexion IA avant de lancer cette étude. Votre brouillon est conservé.</p>
+        {instanceSetup?.isAdministrator ? <Link className="button mt-3" href="/settings/instance/ai">Configurer l’IA de l’instance</Link> : <p className="mt-2 text-sm">Demandez au super administrateur de configurer l’IA de l’instance.</p>}
+      </div> : null}
       <header className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <div className="mb-2 flex items-center gap-2">
-            <span className="badge badge-signal capitalize">{run.status.replaceAll("_", " ")}</span>
+            <span className="badge badge-signal capitalize">{statusLabels[run.status] ?? run.status.replaceAll("_", " ")}</span>
             <span className="font-mono text-[10px] text-muted">{run.id.slice(0, 13)}</span>
           </div>
           <h1 className="page-title">
@@ -133,6 +144,13 @@ export default async function ResearchProgressPage({
               <button className="button" type="submit">
                 <Pause size={16} />
                 Mettre en pause
+              </button>
+            </form>
+          ) : null}
+          {run.status === "paused" || resumableIncomplete ? (
+            <form action={resumeCurrent}>
+              <button className="button" type="submit" title="Utilise le modèle actuellement configuré et conserve les étapes terminées.">
+                Reprendre avec le modèle configuré
               </button>
             </form>
           ) : null}
@@ -213,7 +231,7 @@ export default async function ResearchProgressPage({
         </aside>
 
         <div className="space-y-4">
-          {resumableIncomplete ? (
+          {resumableIncomplete || (run.status === "paused" && failedStage?.lastErrorCode) ? (
             <section
               className={`rounded-xl border p-5 ${
                 quotaExhausted
@@ -225,11 +243,11 @@ export default async function ResearchProgressPage({
                 <AlertTriangle className="mt-0.5 flex-none" size={19} />
                 <div>
                   <h2 className="font-semibold">
-                    {quotaExhausted ? "Quota Kimi épuisé" : "La recherche doit reprendre"}
+                    {quotaExhausted ? "Quota du fournisseur IA épuisé" : "La recherche doit reprendre"}
                   </h2>
                   <p className="mt-1 text-xs leading-5">
                     {quotaExhausted
-                      ? `Les ${completed} checkpoints terminés sont conservés. Renouvelez le quota Kimi, puis reprenez directement depuis « ${failedStageLabel} ».`
+                      ? `Les ${completed} checkpoints terminés sont conservés. Rétablissez le quota du fournisseur, puis reprenez directement depuis « ${failedStageLabel} ».`
                       : `Les checkpoints terminés sont conservés. Vous pouvez relancer directement depuis « ${failedStageLabel} ».`}
                   </p>
                   {quotaExhausted ? (
@@ -282,7 +300,7 @@ export default async function ResearchProgressPage({
 
           <div className="flex flex-col gap-3 rounded-xl border border-signal bg-[#f6ffdf] p-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <strong>Le livrable ICP apparaîtra ici</strong>
+              <strong className="text-signal-ink">{reportReady ? "Votre rapport ICP est disponible" : "Le livrable ICP apparaîtra ici"}</strong>
               <p className="mt-1 text-xs text-signal-ink/80">
                 Le rapport est vérifié automatiquement. Si le résultat ne vous convient pas,
                 vous pourrez relancer une nouvelle étude.

@@ -1,3 +1,5 @@
+import { requireWorkspaceAi, type WorkspaceAiAvailability } from "@outbound/application/ai/ai-availability";
+import { aiSetupProblem } from "@outbound/interface/http/ai-setup-problem";
 import { z, ZodError } from "zod";
 import {
   ConversationDraftNotFoundError,
@@ -116,6 +118,7 @@ export function createCampaignHttpHandler(dependencies: {
   readonly contextResolver: RequestContextResolver;
   readonly database: Database;
   readonly jobQueue?: JobQueue;
+  readonly aiAvailable?: WorkspaceAiAvailability;
   readonly draftImprover?: ConversationDraftImprover;
   readonly conversationCommands?: Pick<PostgresConversationCommandRepository, "create" | "setAutomationMode">;
 }) {
@@ -226,20 +229,11 @@ export function createCampaignHttpHandler(dependencies: {
       if (retryAssessmentMatch && request.method === "POST") {
         requireOperator(context.role);
         if (!dependencies.jobQueue) return problem(503, "JOB_QUEUE_UNAVAILABLE", "Background jobs are unavailable");
+        await requireWorkspaceAi(dependencies.aiAvailable, context.workspaceId, "channel_strategy");
         const assessment = await plans.restartAssessment({
           workspaceId: context.workspaceId,
           assessmentId: postgresUuidSchema.parse(retryAssessmentMatch[1]),
           now: new Date(),
-        });
-        await dependencies.jobQueue.enqueue({
-          id: crypto.randomUUID(),
-          workspaceId: context.workspaceId,
-          type: "prospecting.channel.assess",
-          payload: { workspaceId: context.workspaceId, assessmentId: assessment.id },
-          idempotencyKey: `${assessment.id}:retry:${Date.now()}`,
-          correlationId: `prospecting-plan:${assessment.planId}`,
-          maxAttempts: 3,
-          availableAt: new Date(),
         });
         return json(assessment, 202);
       }
@@ -444,6 +438,8 @@ export function createCampaignHttpHandler(dependencies: {
       if (allowed) return methodNotAllowed(allowed);
       return problem(404, "ROUTE_NOT_FOUND", "Route not found");
     } catch (error) {
+      const setupProblem = aiSetupProblem(error);
+      if (setupProblem) return setupProblem;
       if (error instanceof ZodError || error instanceof SyntaxError) {
         return problem(400, "INVALID_REQUEST", "The request is invalid");
       }

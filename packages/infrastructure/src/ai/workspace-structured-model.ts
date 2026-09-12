@@ -1,3 +1,5 @@
+import type { ModelFallbackRecorder } from "@outbound/application/ai/model-fallback-recorder";
+import { AiTaskPauseError, requiresManualAiResume } from "@outbound/application/ai/ai-task-pause";
 import { z, type ZodType } from "zod";
 import type {
   AiCapability,
@@ -16,12 +18,14 @@ export class WorkspaceStructuredModel {
     private readonly router: ModelRouter,
     private readonly policies: WorkspaceAiModelPolicyReader,
     private readonly now: () => Date = () => new Date(),
+    private readonly fallbacks?: ModelFallbackRecorder,
   ) {}
 
   async invoke<T>(input: {
     readonly workspaceId: string;
     readonly capability: AiCapability;
     readonly requestKey: string;
+    readonly researchTier?: "principal" | "executor";
     readonly fallbackRoutes: readonly ModelRoute[];
     readonly explicitRoutes?: readonly ModelRoute[];
     /**
@@ -42,13 +46,15 @@ export class WorkspaceStructuredModel {
     const policy = input.explicitRoutes?.length ? null : await this.policies.find(input.workspaceId);
     const configuredRoutes = input.explicitRoutes?.length
       ? input.explicitRoutes
-      : routesForCapability(policy, input.capability, input.fallbackRoutes);
+      : (input.capability === "icp_research" && input.researchTier ? policy?.researchTierRoutes?.[input.researchTier] : undefined)
+        ?? routesForCapability(policy, input.capability, input.fallbackRoutes);
     const allowedProviders = input.allowedProviders ? new Set(input.allowedProviders) : null;
     const routes = allowedProviders
       ? configuredRoutes.filter((route) => allowedProviders.has(route.provider))
       : configuredRoutes;
     if (routes.length === 0) throw new Error("AI_PROCESSING_ROUTE_NOT_ALLOWED");
-    return this.router.invokeStructured({
+    try {
+      const result = await this.router.invokeStructured({
       workspaceId: input.workspaceId,
       capability: input.capability,
       requestKey: input.requestKey,
@@ -61,6 +67,16 @@ export class WorkspaceStructuredModel {
       parse: input.parse ?? ((value) => input.schema.parse(value)),
       deadlineAt: new Date(this.now().getTime() + (input.timeoutMs ?? 5 * 60_000)),
       ...(input.signal ? { signal: input.signal } : {}),
-    });
+      });
+      if (result.fallbackReason && this.fallbacks) await this.fallbacks.record({
+        workspaceId: input.workspaceId, requestKey: input.requestKey, capability: input.capability,
+        primary: { provider: routes[0]!.provider, model: routes[0]!.model },
+        selected: { provider: result.metadata.provider, model: result.metadata.model }, reason: result.fallbackReason,
+      });
+      return result;
+    } catch (error) {
+      if (requiresManualAiResume(error)) throw new AiTaskPauseError(error, input.capability, input.requestKey, routes);
+      throw error;
+    }
   }
 }

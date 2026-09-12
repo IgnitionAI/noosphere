@@ -191,6 +191,7 @@ function strategyModelSpec(
       "Return 3 to 6 pillars, 2 to 8 voice traits, 1 to 12 avoid rules, and only UUIDs supplied in authorizedClaims for allowedClaimIds.",
       "Enable linkedin_text, linkedin_image and linkedin_document. The brand kit controls which formats are actually used.",
       "Cadence must be sustainable: default to three posts per week in Europe/Paris unless the inputs justify less.",
+      "Write all user-facing text in the offer commercialRules.languages language; default to French when not specified.",
       "Return the complete structured editorial strategy.",
       retryInstruction,
       `Structured output attempt ${attempt} of ${maxStructuredOutputAttempts}.`,

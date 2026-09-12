@@ -1,8 +1,11 @@
+import { nativeActivationPolicyVersion } from "@outbound/infrastructure/campaigns/native-activation-policy-version";
+import { PostgresCampaignRepository } from "@outbound/infrastructure/campaigns/postgres-campaign-repository";
+import { resolveCampaignAutopilotPolicy } from "@outbound/domain/campaigns/campaign-autopilot-policy";
 import { and, desc, eq, isNull, or } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import type { ExternalEffectFacts, ExternalEffectFactsReader, ExternalEffectFactsReaderInput, ExternalEffectPrepareFactsReaderInput } from "@outbound/application/mcp/external-effect-policy";
 import type { McpGovernedEffectKind } from "@outbound/application/mcp/mcp-governed-effects";
-import type { DatabaseExecutor } from "@outbound/infrastructure/database/client";
+import type { Database, DatabaseExecutor } from "@outbound/infrastructure/database/client";
 import { suppressionFingerprint } from "@outbound/infrastructure/crm/suppression-fingerprint";
 import {
   campaigns, campaignEnrollments, calendarConnections, calendarMeetingTypes, connectedAccounts, contactIdentities, contactSuppressions,
@@ -230,12 +233,17 @@ export class PostgresExternalEffectFactsReader implements ExternalEffectFactsRea
     const selectedAccount = selected.length === 1 ? selected[0] : undefined;
     const account = selectedAccount ? await this.account(workspaceId, { provider: selectedAccount.provider, providerAccountId: selectedAccount.providerAccountId }, "campaign", campaign.channel) : unavailableAccount();
     const policy = objectValue(campaign.autopilotPolicy);
-    const policyVersion = typeof policy?.policyVersion === "string" ? policy.policyVersion : campaign.aiPolicyVersionId ?? "local";
+    let policyVersion = typeof policy?.policyVersion === "string" ? policy.policyVersion : campaign.aiPolicyVersionId ?? "local";
+    const nativePolicy = campaign.channel ? resolveCampaignAutopilotPolicy(campaign.autopilotPolicy, campaign.channel) : null;
+    const nativeActivation = nativePolicy?.activationMode === "manual";
+    if (nativeActivation) policyVersion = await nativeActivationPolicyVersion(this.database, campaign);
     const scheduleWindow = objectSchedule(policy?.scheduleWindow);
-    if (!scheduleWindow) return null;
+    if (!nativeActivation && !scheduleWindow) return null;
     const enrollments = await this.database.select({ id: campaignEnrollments.id, status: campaignEnrollments.status, sequenceVersionId: campaignEnrollments.sequenceVersionId, enrolledAt: campaignEnrollments.enrolledAt, completedAt: campaignEnrollments.completedAt, createdAt: campaignEnrollments.createdAt }).from(campaignEnrollments)
       .where(and(eq(campaignEnrollments.workspaceId, workspaceId), eq(campaignEnrollments.campaignId, aggregateId)));
     const enrollmentFingerprint = enrollmentDigest(enrollments.map((entry) => ({ id: entry.id, status: entry.status, sequenceVersionId: entry.sequenceVersionId, enrolledAt: entry.enrolledAt, completedAt: entry.completedAt, createdAt: entry.createdAt })));
+    const preflight = await new PostgresCampaignRepository(this.database as Database).preflight({ workspaceId, campaignId: aggregateId });
+    const adapterAvailable = preflight.ok && account.adapterAvailable;
     // Enrollment changes are a content digest, not a numeric facts version.
     // factsVersion remains the persisted/source-native version from the proposal.
     const current = versionsFor(persisted.revision, persisted.sourceVersion, persisted.factsVersion);
@@ -244,10 +252,9 @@ export class PostgresExternalEffectFactsReader implements ExternalEffectFactsRea
       kind: "campaign_activation", aggregateId, revision: current.revision, sourceVersion: current.sourceVersion, factsVersion: current.factsVersion,
       sourceId: `campaign:${aggregateId}`, sourceUpdatedAt: campaign.updatedAt.toISOString(), evaluatedAt: this.now().toISOString(), status: campaign.status,
       policyVersion, policyVersionSupported: true, automationStage: campaign.automationStage, enrollmentFingerprint, campaignActive: campaign.status === "active",
-      enrollmentActive: enrollments.length === 0 || enrollments.some((entry) => entry.status === "active"), scheduleWindow, accountHealth,
-      // Campaign activation has no proven external adapter yet; remain frozen
-      // until a concrete campaign adapter is wired and observed healthy.
-      account: { healthy: account.healthy, adapterAvailable: false }, adapterAvailable: false, accountHealthy: account.healthy, quotaAvailable: account.quotaAvailable,
+      enrollmentActive: enrollments.length === 0 || enrollments.some((entry) => entry.status === "active"),
+      ...(nativeActivation ? { activationReady: preflight.ok && campaign.status === "draft", sendSchedule: nativePolicy!.schedule } : { scheduleWindow: scheduleWindow! }), accountHealth,
+      account: { healthy: account.healthy, adapterAvailable }, adapterAvailable, accountHealthy: account.healthy, quotaAvailable: account.quotaAvailable,
     };
   }
 

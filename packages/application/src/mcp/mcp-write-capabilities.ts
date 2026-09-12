@@ -2,8 +2,15 @@ import type { McpExecutionContext } from "./mcp-read-capabilities";
 export type { McpExecutionContext } from "./mcp-read-capabilities";
 
 export type McpWriteToolName =
+  | "acquisition_plan_retry_assessment"
+  | "campaign_prepare" | "campaign_pause"
+  | "content_strategy_update" | "content_strategy_publish"
+  | "content_strategy_prepare" | "brand_update"
   | "company_upsert" | "contact_upsert" | "opportunity_update" | "opportunity_change_stage"
-  | "prospect_add_note" | "content_idea_create" | "content_draft_create" | "prospect_schedule_dry_run";
+  | "prospect_add_note" | "content_idea_create" | "content_draft_create" | "prospect_schedule_dry_run"
+  | "offer_create" | "offer_update" | "offer_publish" | "research_launch" | "campaign_create" | "campaign_update"
+  | "conversation_set_automation" | "content_autopilot_configure"
+  | "knowledge_source_create" | "knowledge_source_validate" | "knowledge_claim_create" | "knowledge_claim_validate";
 export type McpWriteArguments = { readonly [Name in McpWriteToolName]: Readonly<Record<string, unknown>> };
 
 export interface McpWriteResult {

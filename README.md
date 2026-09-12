@@ -2,7 +2,7 @@
 
 **Open-source growth intelligence: discover the right market, run outbound, publish inbound content, and turn conversations into calls.**
 
-[Documentation française](README.fr.md) · [English documentation](README.en.md) · [Architecture](docs/architecture/ARCHITECTURE.md) · [Self-hosting](docs/runbooks/vps-production.md) · [Required subscriptions](docs/runbooks/required-subscriptions.md)
+[Documentation française](README.fr.md) · [English documentation](README.en.md) · [Architecture](docs/architecture/ARCHITECTURE.md) · [Self-hosting](docs/runbooks/vps-production.md) · [ChatGPT / MCP](docs/runbooks/chatgpt-mcp.md) · [Required subscriptions](docs/runbooks/required-subscriptions.md)
 
 Noosphere brings the GTM loop into one multi-workspace application:
 

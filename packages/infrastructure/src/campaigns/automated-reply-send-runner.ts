@@ -67,7 +67,9 @@ export class AutomatedReplySendJobProcessor {
         body: reply.body,
         idempotencyKey: reply.idempotencyKey,
         conversationId: reply.providerThreadId,
-        replyToProviderMessageId: reply.inboundProviderMessageId,
+        ...(reply.channel === "email"
+          ? { replyToUnipileMessageId: reply.inboundProviderMessageId }
+          : { replyToProviderMessageId: reply.inboundProviderMessageId }),
       });
       const now = this.clock.now();
       await this.database.transaction(async (tx) => {

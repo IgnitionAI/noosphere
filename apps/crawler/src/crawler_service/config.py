@@ -44,6 +44,8 @@ class Settings(BaseSettings):
     rate_limit_delay: float = 0.5  # seconds between requests to same domain
     crawl_timeout: int = 300  # 5 minutes per crawl job
     page_timeout_ms: int = 30_000
+    max_document_characters: int = 2_000_000
+    max_links_per_page: int = 1000
     max_markdown_characters: int = 200_000
     max_html_characters: int = 100_000
     respect_robots_txt: bool = True

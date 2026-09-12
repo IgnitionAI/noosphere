@@ -1,3 +1,5 @@
+import { JobPausePersistedError } from "@outbound/application/jobs/job-queue";
+import { AiTaskPauseError } from "@outbound/application/ai/ai-task-pause";
 import {
   type ProductResearchRun,
   type ResearchCheckpoint,
@@ -77,16 +79,6 @@ export class ResearchOrchestrator {
       await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
       return { outcome: "already_completed", stage: "market_investigation" };
     }
-    if (run.snapshot.status === "paused") {
-      await this.queue.retry({
-        jobId: job.id,
-        workerId: job.lockedBy,
-        availableAt: new Date(this.clock.now().getTime() + 60_000),
-        errorCode: "RUN_PAUSED",
-        errorMessage: "Research run is paused",
-      });
-      return { outcome: "paused", stage: "market_investigation" };
-    }
     const previous = await this.repository.listCompletedCheckpoints(payload.workspaceId, payload.runId);
     const stageSnapshot = snapshotForHypothesis(
       buildV3StageSnapshot("market_investigation", previous),
@@ -128,7 +120,7 @@ export class ResearchOrchestrator {
       startedAt: now,
       completedAt: null,
     };
-    await this.repository.commitStageStarted(run, checkpoint, []);
+    if (await this.repository.commitStageStarted(run, checkpoint, [], job) === false) throw new JobPausePersistedError(job.id);
     const finalizerJob = this.#newMarketFinalizerJob(
       run,
       payload.fanoutSize ?? 1,
@@ -173,6 +165,12 @@ export class ResearchOrchestrator {
       await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
       return { outcome: "completed", stage: "market_investigation", nextStage: "market_investigation" };
     } catch (error) {
+      if (error instanceof AiTaskPauseError) {
+        run.pause(this.clock.now());
+        const committed = await this.repository.commitStageFailed(run, { ...checkpoint, status: "failed", errorCode: error.code, completedAt: this.clock.now() }, run.pullEvents(), { jobId: job.id, workerId: job.lockedBy, errorCode: error.code, errorMessage: error.code, capability: error.capability });
+        if (committed?.pausePersisted) error.markPersisted(job.id);
+        throw error;
+      }
       let leaseAlreadyReleased = false;
       const stageBudgetExhausted =
         error instanceof TerminalAgentError && isStageBudgetExhaustion(error.code);
@@ -301,7 +299,7 @@ export class ResearchOrchestrator {
       startedAt: now,
       completedAt: null,
     };
-    await this.repository.commitStageStarted(run, checkpoint, run.pullEvents());
+    if (await this.repository.commitStageStarted(run, checkpoint, run.pullEvents(), job) === false) throw new JobPausePersistedError(job.id);
     checkpoint = {
       ...checkpoint,
       status: "completed",
@@ -348,6 +346,11 @@ export class ResearchOrchestrator {
       await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
       throw new TerminalAgentError("PRODUCT_RESEARCH_RUN_NOT_FOUND", `Run ${payload.runId} was not found`);
     }
+    if (run.snapshot.status === "paused") {
+      if (this.queue.pause) await this.queue.pause({ jobId: job.id, workerId: job.lockedBy, errorCode: "RUN_PAUSED", errorMessage: "Research run is paused" });
+      else await this.queue.retry({ jobId: job.id, workerId: job.lockedBy, availableAt: new Date(this.clock.now().getTime() + 60_000), errorCode: "RUN_PAUSED", errorMessage: "Research run is paused" });
+      return { outcome: "paused", stage: payload.stage };
+    }
     if (payload.finalizeFanout) return this.#finalizeMarketFanout(job, run);
     if (payload.workItemKey !== "main") return this.#processMarketWorkItem(job, run, payload);
 
@@ -370,16 +373,6 @@ export class ResearchOrchestrator {
       return { outcome: "superseded", stage: payload.stage };
     }
 
-    if (run.snapshot.status === "paused") {
-      await this.queue.retry({
-        jobId: job.id,
-        workerId: job.lockedBy,
-        availableAt: new Date(this.clock.now().getTime() + 60_000),
-        errorCode: "RUN_PAUSED",
-        errorMessage: "Research run is paused",
-      });
-      return { outcome: "paused", stage: payload.stage };
-    }
 
     const previous = await this.repository.listCompletedCheckpoints(payload.workspaceId, payload.runId);
     const previousOutputs = run.snapshot.brief.researchVersion === 3
@@ -420,7 +413,7 @@ export class ResearchOrchestrator {
       startedAt: now,
       completedAt: null,
     };
-    await this.repository.commitStageStarted(run, checkpoint, run.pullEvents());
+    if (await this.repository.commitStageStarted(run, checkpoint, run.pullEvents(), job) === false) throw new JobPausePersistedError(job.id);
 
     try {
       const rawExecution = await this.agents.execute(payload.stage, input);
@@ -500,6 +493,12 @@ export class ResearchOrchestrator {
       await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
       return { outcome: "completed", stage: payload.stage, nextStage };
     } catch (error) {
+      if (error instanceof AiTaskPauseError) {
+        run.pause(this.clock.now());
+        const committed = await this.repository.commitStageFailed(run, { ...checkpoint, status: "failed", errorCode: error.code, completedAt: this.clock.now() }, run.pullEvents(), { jobId: job.id, workerId: job.lockedBy, errorCode: error.code, errorMessage: error.code, capability: error.capability });
+        if (committed?.pausePersisted) error.markPersisted(job.id);
+        throw error;
+      }
       const stageBudgetExhausted =
         error instanceof TerminalAgentError && isStageBudgetExhaustion(error.code);
       if (error instanceof RetryableAgentError || stageBudgetExhausted) {

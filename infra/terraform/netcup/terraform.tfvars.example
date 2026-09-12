@@ -1,0 +1,6 @@
+# Copy to terraform.tfvars (ignored by Git) and fill from the selected server.
+server_id            = 12345
+expected_server_name = "v0000000000000000000"
+expected_ipv4        = "192.0.2.10"
+application_hostname = "noosphere.example.com"
+nickname             = "Noosphere"

@@ -148,3 +148,14 @@ function fakeGateway(
     },
   };
 }
+
+test("actual API adapters use only the explicit secondary after a primary quota refusal", async () => {
+  const { OpenAiResponsesModelGateway } = await import("@outbound/infrastructure/ai/openai-model-gateway");
+  const { ApiKeyModelGateway } = await import("@outbound/infrastructure/ai/api-key-model-gateway");
+  const seen: string[] = [];
+  const primary = new OpenAiResponsesModelGateway({ apiKey: "controlled", fetcher: async () => { seen.push("primary"); return Response.json({ error: { code: "insufficient_quota" } }, { status: 429 }); } });
+  const secondary = new ApiKeyModelGateway({ provider: "anthropic", apiKey: "controlled", baseUrl: "https://api.anthropic.com", fetcher: async () => { seen.push("secondary"); return Response.json({ content: [{ type: "tool_use", name: "submit_post", input: { body: "secondary output" } }] }); } });
+  const result = await new ModelRouter([primary, secondary]).invokeStructured({ ...baseRequest, routes: [{ provider: "openai-api", model: "primary-model", reasoningEffort: "low" }, { provider: "anthropic", model: "secondary-model", reasoningEffort: "low" }] });
+  expect(seen).toEqual(["primary", "secondary"]);
+  expect(result).toMatchObject({ output: { body: "secondary output" }, metadata: { provider: "anthropic", model: "secondary-model" }, providerAttempt: 2, fallbackReason: "AI_PROVIDER_QUOTA_EXHAUSTED" });
+});

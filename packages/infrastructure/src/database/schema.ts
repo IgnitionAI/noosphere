@@ -73,6 +73,7 @@ export const researchCheckpointReviewEnum = pgEnum("research_checkpoint_review",
   "human_reviewed",
 ]);
 export const jobStatusEnum = pgEnum("job_status", [
+  "paused",
   "pending",
   "running",
   "retry",
@@ -359,6 +360,44 @@ export const workspaceInvitations = pgTable(
       .where(sql`${table.status} = 'pending'`),
   ],
 );
+
+export const instanceAiConnections = pgTable("instance_ai_connections", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  provider: text("provider").notNull(),
+  baseUrl: text("base_url").notNull(),
+  encryptedApiKey: text("encrypted_api_key"),
+  authenticationSessionId: uuid("authentication_session_id"),
+  version: integer("version").notNull().default(1),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+export const instanceAiModels = pgTable("instance_ai_models", {
+  connectionId: uuid("connection_id").notNull().references(() => instanceAiConnections.id, { onDelete: "cascade" }),
+  model: text("model").notNull(),
+  reasoningEffort: text("reasoning_effort").notNull(),
+  connectionVersion: integer("connection_version").notNull(),
+  status: text("status").notNull().default("untested"),
+  testId: uuid("test_id"),
+  testedAt: timestamp("tested_at", { withTimezone: true }),
+  errorCode: text("error_code"),
+}, (table) => [primaryKey({ columns: [table.connectionId, table.model] })]);
+export const instanceAiDefaults = pgTable("instance_ai_defaults", {
+  fallbackConnectionId: uuid("fallback_connection_id").references(() => instanceAiConnections.id),
+  fallbackModel: text("fallback_model"),
+  id: boolean("id").primaryKey().default(true),
+  connectionId: uuid("connection_id").notNull().references(() => instanceAiConnections.id, { onDelete: "cascade" }),
+  model: text("model").notNull(),
+});
+
+export const instanceAdministrators = pgTable("instance_administrators", {
+  userId: uuid("user_id").primaryKey().references(() => authUsers.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const instanceSetup = pgTable("instance_setup", {
+  id: boolean("id").primaryKey().default(true),
+  skipped: boolean("skipped").notNull().default(false),
+});
 
 export const workspaceAiSettings = pgTable("workspace_ai_settings", {
   workspaceId: uuid("workspace_id")
@@ -1485,6 +1524,7 @@ export const offers = pgTable(
     workspaceId: uuid("workspace_id").notNull(),
     name: varchar("name", { length: 500 }).notNull(),
     status: offerStatusEnum("status").notNull().default("draft"),
+    revision: integer("revision").notNull().default(1),
     currentVersion: integer("current_version").notNull().default(0),
     category: varchar("category", { length: 80 }).notNull().default("autre"),
     valueProposition: text("value_proposition").notNull().default(""),
@@ -3579,6 +3619,7 @@ export const channelAssessments = pgTable(
       .references(() => prospectingPlans.id, { onDelete: "cascade" }),
     channel: prospectingChannelEnum("channel").notNull(),
     status: channelAssessmentStatusEnum("status").notNull().default("pending"),
+    activationMode: text("activation_mode").$type<"manual">(),
     recommendation: channelRecommendationEnum("recommendation"),
     score: integer("score"),
     strategy: jsonb("strategy").notNull().default({}),
@@ -4220,6 +4261,18 @@ export const meetingProposals = pgTable(
   ],
 );
 
+export const taskAiContexts = pgTable("task_ai_contexts", {
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  taskKey: text("task_key").notNull(),
+  policy: jsonb("policy").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [primaryKey({ columns: [table.workspaceId, table.taskKey] })]);
+
+export const instanceAiRuntimeDefaults = pgTable("instance_ai_runtime_defaults", {
+  id: boolean("id").primaryKey().default(true),
+  policy: jsonb("policy").notNull(),
+});
+
 export const jobs = pgTable(
   "jobs",
   {
@@ -4229,6 +4282,9 @@ export const jobs = pgTable(
       .references(() => workspaces.id),
     type: varchar("type", { length: 160 }).notNull(),
     payload: jsonb("payload").notNull(),
+    aiPolicy: jsonb("ai_policy"),
+    aiPauseCapability: text("ai_pause_capability"),
+    aiTaskKey: text("ai_task_key"),
     idempotencyKey: varchar("idempotency_key", { length: 500 }).notNull(),
     correlationId: varchar("correlation_id", { length: 200 }).notNull(),
     status: jobStatusEnum("status").notNull().default("pending"),
@@ -4246,6 +4302,7 @@ export const jobs = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
+    index("jobs_ai_task_key_idx").on(table.workspaceId, table.aiTaskKey).where(sql`${table.aiTaskKey} is not null`),
     unique("jobs_workspace_id_uq").on(table.workspaceId, table.id),
     uniqueIndex("jobs_workspace_type_idempotency_uq").on(
       table.workspaceId,
@@ -4529,9 +4586,9 @@ export const mcpOauthClients = pgTable(
     clientId: varchar("client_id", { length: 180 }).notNull().unique(),
     clientName: varchar("client_name", { length: 200 }).notNull(),
     redirectUris: jsonb("redirect_uris").notNull(),
-    userId: uuid("user_id").notNull().references(() => authUsers.id, { onDelete: "cascade" }),
-    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
-    workspaceSlug: varchar("workspace_slug", { length: 120 }).notNull(),
+    userId: uuid("user_id").references(() => authUsers.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id").references(() => workspaces.id, { onDelete: "cascade" }),
+    workspaceSlug: varchar("workspace_slug", { length: 120 }),
     allowedScopes: jsonb("allowed_scopes").notNull().default(sql`'["mcp:read"]'::jsonb`),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

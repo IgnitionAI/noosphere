@@ -26,6 +26,7 @@ export interface CampaignAutopilotPolicy {
   readonly version: 1;
   readonly enabled: boolean;
   readonly executionMode: "dry_run" | "live";
+  readonly activationMode?: "automatic" | "manual";
   readonly schedule: CampaignSendSchedule;
   readonly email: EmailAutopilotPolicy;
 }
@@ -80,6 +81,7 @@ export function resolveCampaignAutopilotPolicy(
     version: 1,
     enabled: typeof value.enabled === "boolean" ? value.enabled : defaults.enabled,
     executionMode: value.executionMode === "live" ? "live" : "dry_run",
+    ...(value.activationMode === "manual" ? { activationMode: "manual" as const } : {}),
     schedule: {
       activeDays: activeDays.length ? activeDays : [...defaults.schedule.activeDays],
       windowStart: validTime(schedule.windowStart) ?? defaults.schedule.windowStart,

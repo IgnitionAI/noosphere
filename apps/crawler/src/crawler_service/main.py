@@ -45,7 +45,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Ignition Outbound Crawler",
-    description="Private Crawl4AI/SearXNG web research service",
+    description="Private Playwright/SearXNG web research service",
     version="0.1.0",
     lifespan=lifespan,
 )

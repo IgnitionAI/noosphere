@@ -1,3 +1,14 @@
+import { PostgresGovernedCampaignActivation } from "@outbound/infrastructure/mcp/postgres-governed-campaign-activation";
+import { EditorialStrategyApplication } from "@outbound/application/content/editorial-strategy";
+import { PostgresEditorialStrategyRepository } from "@outbound/infrastructure/content/postgres-editorial-strategy-repository";
+import { LangChainEditorialStrategyGenerator } from "@outbound/infrastructure/content/langchain-editorial-strategy-generator";
+import { ResearchInboundPreparationProcessor } from "@outbound/infrastructure/content/research-inbound-preparation-runner";
+import { PostgresModelFallbackRecorder } from "@outbound/infrastructure/ai/postgres-model-fallback-recorder";
+import { registerRuntimeAiDefaults } from "@outbound/infrastructure/ai/register-runtime-ai-defaults";
+import { resolveResearchModelPolicyFromEnvironment } from "@outbound/infrastructure/ai/langchain-research-agent-executor";
+import { TaskAiPolicyScope } from "@outbound/infrastructure/ai/task-ai-policy-scope";
+import { PostgresTaskAiPolicyReader } from "@outbound/infrastructure/ai/postgres-task-ai-policy-reader";
+import { createInstanceAiRepository, InstanceWorkspaceAiPolicyReader, createInstanceWorkspaceAiAvailability, createInstanceApiKeyGateways } from "@outbound/infrastructure/ai/instance-ai-runtime";
 import { ResearchOrchestrator } from "@outbound/application/gtm/research-orchestrator";
 import {
   CryptoIdGenerator,
@@ -230,8 +241,11 @@ const workspaceExportProcessor = new WorkspaceDataExportProcessor(
 );
 const retentionPurgeProcessor = new WorkspaceRetentionPurgeProcessor(database.db, queue, clock);
 const toolRunRecorder = new PostgresResearchToolRunRecorder(database.db);
-const workspaceAiSettings = new PostgresWorkspaceAiSettingsRepository(database.db);
-const workspaceStructuredModel = createWorkspaceStructuredModelFromEnvironment(process.env, workspaceAiSettings);
+await registerRuntimeAiDefaults(database.client, resolveResearchModelPolicyFromEnvironment(process.env));
+const instanceAiRepository = createInstanceAiRepository(database.db, process.env);
+const workspaceAiSettings = new TaskAiPolicyScope(new InstanceWorkspaceAiPolicyReader(new PostgresWorkspaceAiSettingsRepository(database.db), instanceAiRepository), new PostgresTaskAiPolicyReader(database.client));
+const aiAvailable = createInstanceWorkspaceAiAvailability(process.env, workspaceAiSettings, instanceAiRepository);
+const workspaceStructuredModel = createWorkspaceStructuredModelFromEnvironment(process.env, workspaceAiSettings, createInstanceApiKeyGateways(instanceAiRepository, process.env), new PostgresModelFallbackRecorder(database.db, (workspaceId) => workspaceAiSettings.currentJobId(workspaceId)));
 const prospectMemoryEvents = new PostgresProspectMemoryEventRepository(database.client);
 const prospectMemorySnapshots = new PostgresProspectMemorySnapshotRepository(database.client);
 const prospectMemoryPolicies = new PostgresProspectMemoryPolicyReader(database.client);
@@ -253,7 +267,7 @@ const prospectMemoryShadowComparator = new DeterministicProspectMemoryShadowComp
 const evaluationRunProcessor = new EvaluationRunProcessor(
   database.db,
   queue,
-  new LangChainEvaluationExecutor(process.env, workspaceStructuredModel),
+  new LangChainEvaluationExecutor(process.env, workspaceStructuredModel, workspaceAiSettings),
   clock,
   ids,
 );
@@ -318,6 +332,9 @@ const channelAssessmentProcessor = new ChannelAssessmentJobProcessor(
   new LangChainChannelStrategyPlanner(process.env, workspaceStructuredModel),
   new RoutedChannelObservationSource(discoveryCrawler, createProspectSource),
   clock,
+);
+const researchInboundProcessor = new ResearchInboundPreparationProcessor(
+  new EditorialStrategyApplication(new PostgresEditorialStrategyRepository(database.db), new LangChainEditorialStrategyGenerator(process.env, workspaceAiSettings, aiRunRecorder, undefined, workspaceStructuredModel), aiAvailable), queue, clock,
 );
 const campaignAutomationProcessor = new CampaignAutomationJobProcessor(database.db, queue, clock);
 const contentBrandKitRepository = new PostgresContentBrandKitRepository(database.db);
@@ -410,7 +427,7 @@ const contentIdeaDiscoveryProcessor = new ContentIdeaDiscoveryJobProcessor(
 const dailyContentIdeaScheduler = new DailyContentIdeaScheduler(database.db, contentIdeaRepository, clock, {
   localTime: process.env.DAILY_CONTENT_IDEA_TIME ?? "06:00",
   timezone: process.env.DAILY_CONTENT_IDEA_TIMEZONE ?? "Europe/Paris",
-});
+}, aiAvailable);
 const contentGenerationRepository = new PostgresContentGenerationRepository(database.db);
 const contentMediaStorage = new S3ContentMediaStorage({
   endpoint: requiredEnvironment("S3_ENDPOINT"),
@@ -487,6 +504,7 @@ const contentAutopilotReconciler = new ContentAutopilotReconciler(
   contentGenerationRepository,
   contentPublicationApplication,
   clock,
+  aiAvailable,
 );
 const jobOutcomeReconciler = new PostgresJobOutcomeReconciler(database.db, clock);
 const prospectAssessmentReconciler = new ProspectAssessmentReconciler(database.db, clock);
@@ -522,12 +540,12 @@ const localMcpFakes = mcpLocalFakeMode
       counters: { conversationReply: 0, contentPublication: 0, meetingProposal: 0, campaignActivation: 0 },
     } satisfies LocalFakeOptions)
   : null;
-const mcpGovernedEffectAdapters = localMcpFakes?.adapters ?? {
+const mcpGovernedEffectAdapters = { ...(localMcpFakes?.adapters ?? {
   outbound: createOutboundGateway(),
   publisher: socialPublisher,
   ...(socialContentReader ? { socialContentReader } : {}),
   calendar: calendarIntegration,
-};
+}), campaign: new PostgresGovernedCampaignActivation(database.db, () => clock.now()) };
 const mcpGovernedEffectExecutor = new PostgresMcpGovernedEffectExecutor(database.db, mcpGovernedEffectAdapters);
 // Keep the attempt boundary shared by the queue processor and maintenance.
 // Recovery is deliberately bounded and tenant-filtered by the repository's
@@ -711,6 +729,7 @@ const orchestrator = new ResearchOrchestrator(
   contentHasher,
 );
 const worker = new ResearchWorker(queue, orchestrator, clock, {
+  executionContext: workspaceAiSettings,
   workerId: process.env.WORKER_ID ?? `research-${crypto.randomUUID()}`,
   leaseMs: positiveIntegerEnvironment("JOB_LEASE_MS", 60_000),
   leaseHeartbeatMs: positiveIntegerEnvironment("JOB_HEARTBEAT_MS", 20_000),
@@ -718,7 +737,7 @@ const worker = new ResearchWorker(queue, orchestrator, clock, {
   pollIntervalMs: positiveIntegerEnvironment("JOB_POLL_INTERVAL_MS", 1_000),
   ...optionalJobTypes("WORKER_JOB_TYPES"),
   ...optionalExcludedJobTypes("WORKER_EXCLUDED_JOB_TYPES"),
-}, documentService, discoveryProcessor, channelAssessmentProcessor, campaignAutomationProcessor, campaignCompositionProcessor, outreachDispatchProcessor, inboundReplyProcessor, automatedReplySendProcessor, conversationCommandProcessor, process.env.WORKER_DISABLE_MAINTENANCE === "true" ? undefined : maintenance, process.env.WORKER_DISABLE_OUTBOX === "true" ? undefined : outboxDispatcher, importService, process.env.WORKER_DISABLE_OUTREACH_SCHEDULER === "true" ? undefined : outreachScheduler, enrichmentProcessor, signalProcessor, workspaceExportProcessor, retentionPurgeProcessor, knowledgeExpirationProcessor, evaluationRunProcessor, prospectDecisionProcessor, contentIdeaDiscoveryProcessor, contentGenerationProcessor, contentPublicationProcessor, prospectMemoryRefreshProcessor, prospectMemoryBackfillProcessor, mcpTrackedJobLifecycle, mcpGovernedEffectProcessor);
+}, documentService, discoveryProcessor, channelAssessmentProcessor, campaignAutomationProcessor, campaignCompositionProcessor, outreachDispatchProcessor, inboundReplyProcessor, automatedReplySendProcessor, conversationCommandProcessor, process.env.WORKER_DISABLE_MAINTENANCE === "true" ? undefined : maintenance, process.env.WORKER_DISABLE_OUTBOX === "true" ? undefined : outboxDispatcher, importService, process.env.WORKER_DISABLE_OUTREACH_SCHEDULER === "true" ? undefined : outreachScheduler, enrichmentProcessor, signalProcessor, workspaceExportProcessor, retentionPurgeProcessor, knowledgeExpirationProcessor, evaluationRunProcessor, prospectDecisionProcessor, contentIdeaDiscoveryProcessor, contentGenerationProcessor, contentPublicationProcessor, prospectMemoryRefreshProcessor, prospectMemoryBackfillProcessor, mcpTrackedJobLifecycle, mcpGovernedEffectProcessor, researchInboundProcessor);
 
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
   process.once(signal, () => {

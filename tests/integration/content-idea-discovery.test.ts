@@ -111,6 +111,10 @@ databaseDescribe("IDE-101 durable content idea discovery", () => {
     expect((await repository.findRun({ workspaceId, runId: first.id }))?.status).toBe("completed");
 
     const dailyNow = new Date("2026-08-21T04:00:00.000Z");
+    const withoutAi = new DailyContentIdeaScheduler(database.db, repository, { now: () => dailyNow }, undefined, async () => false);
+    expect(await withoutAi.reconcile()).toBe(0);
+    const pendingWithoutAi = await database.client`select id from content_idea_discovery_runs where workspace_id = ${workspaceId} and trigger = 'daily'`;
+    expect(pendingWithoutAi).toHaveLength(0);
     const scheduler = new DailyContentIdeaScheduler(database.db, repository, { now: () => dailyNow });
     expect(await scheduler.reconcile()).toBe(1);
     expect(await scheduler.reconcile()).toBe(0);

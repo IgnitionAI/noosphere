@@ -43,14 +43,32 @@ function register<Name extends McpGovernedEffectToolName>(
   context: McpExecutionContext,
 ): void {
   server.registerTool(name, {
-    description: `Workspace-governed ${name.replaceAll("_", " ")} operation.`,
+    description: isPrepareTool(name)
+      ? `Prepare a governed ${name.replaceAll("_", " ")} proposal. Does not execute by default. Set executeWhenAllowed=true only for an explicitly requested external action; requires owner/admin and approval scopes, and final policy checks still apply.`
+      : `Workspace-governed ${name.replaceAll("_", " ")} operation.`,
     inputSchema,
+    annotations: {
+      readOnlyHint: name === "approval_list" || name === "approval_get",
+      destructiveHint: isPrepareTool(name) || name === "approval_decide",
+      idempotentHint: name !== "approval_decide",
+      openWorldHint: isPrepareTool(name) || name === "approval_decide",
+    },
   }, async (raw) => {
     try {
       const parsed = parseMcpGovernedEffectArguments(name, raw) as McpGovernedEffectToolArguments[Name];
       if (isPrepareTool(name)) {
         requirePrepareAuthority(context);
-        return toolResult(projectProposal(await capabilities.prepare(context, prepareCommand(name, parsed as McpGovernedEffectToolArguments[PrepareToolName])), context));
+        const input = parsed as McpGovernedEffectToolArguments[PrepareToolName];
+        const proposal = await capabilities.prepare(context, prepareCommand(name, input));
+        if (input.executeWhenAllowed && canAutoExecute(context) && proposal.approvalItemId) {
+          const executed = await capabilities.decide(context, {
+            approvalItemId: proposal.approvalItemId,
+            decision: "approve",
+            justification: "Action explicitement demandée via le client MCP ; exécution soumise à la policy finale.",
+          });
+          return toolResult(projectStatus(executed, context));
+        }
+        return toolResult(projectProposal(proposal, context));
       }
       if (name === "approval_list") {
         requireReadScope(context);
@@ -106,6 +124,11 @@ function requireDecisionAuthority(context: McpExecutionContext): void {
   if (!DECISION_SCOPES.every((scope) => context.scopes.includes(scope))) {
     throw new Error("MCP_GOVERNED_EFFECT_SCOPE_REQUIRED");
   }
+}
+
+function canAutoExecute(context: McpExecutionContext): boolean {
+  return (context.role === "admin" || context.role === "owner")
+    && DECISION_SCOPES.every((scope) => context.scopes.includes(scope));
 }
 
 function prepareCommand(name: PrepareToolName, value: McpGovernedEffectToolArguments[PrepareToolName]): McpPrepareCommand {

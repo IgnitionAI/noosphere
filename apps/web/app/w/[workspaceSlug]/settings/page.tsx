@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
   getSession,
+  getInstanceSetup,
   getWorkspaceDataExport,
   getWorkspaceDataPolicy,
   getSetupReadiness,
@@ -22,6 +23,7 @@ export default async function WorkspaceSettingsPage({ params, searchParams }: { 
   const [{ workspaceSlug }, query, session, workspaces] = await Promise.all([params, searchParams, getSession(), listWorkspaces()]);
   const workspace = workspaces.find((candidate) => candidate.slug === workspaceSlug);
   if (!session || !workspace) notFound();
+  const instanceSetup = await getInstanceSetup();
   const operationalReader = workspace.role !== "viewer";
   const canOperate = workspace.role === "owner" || workspace.role === "admin" || workspace.role === "operator";
   const canAdminister = workspace.role === "owner" || workspace.role === "admin";
@@ -50,6 +52,7 @@ export default async function WorkspaceSettingsPage({ params, searchParams }: { 
   const requestExport = requestExportAction.bind(null, workspaceSlug, workspace.id);
 
   return <div className="mx-auto max-w-6xl">
+    {instanceSetup.isAdministrator ? <Link className="button mb-4" href="/settings/instance/ai">IA de l’instance</Link> : null}
     <ExportRefresh active={dataExport?.status === "pending" || dataExport?.status === "processing"} />
     <header className="border-b border-line pb-6"><div className="badge badge-signal w-fit"><Settings size={13} /> Préparer l’autopilote</div><h1 className="page-title mt-3">Configuration</h1><p className="mt-2 max-w-3xl text-sm leading-6 text-muted">Un seul endroit pour connecter ce que vous vendez, qui vous ciblez, vos comptes et votre agenda.</p></header>
     {query.notice ? <p className="mt-5 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800" role="status">{query.notice}</p> : null}

@@ -278,3 +278,19 @@ describe("ProductResearchRun", () => {
     expect(() => assertCheckpointReplaceable(checkpoint)).toThrow("human-reviewed");
   });
 });
+
+test("a day paused does not consume the remaining execution budget", () => {
+  const started = new Date("2026-09-09T10:00:00Z");
+  const run = ProductResearchRun.create({ id: crypto.randomUUID(), workspaceId: crypto.randomUUID(), brief: { ...brief, researchVersion: 3 }, now: started });
+  run.start(started);
+  run.beginStage("product_truth", started);
+  const pausedAt = new Date(started.getTime() + 60000);
+  const remaining = run.snapshot.deadlineAt!.getTime() - pausedAt.getTime();
+  run.pause(pausedAt);
+  const resumedAt = new Date(pausedAt.getTime() + 86400000);
+  run.resume(resumedAt);
+  expect(run.snapshot.deadlineAt!.getTime() - resumedAt.getTime()).toBe(remaining);
+  const deadline = run.snapshot.deadlineAt!.getTime();
+  run.resume(new Date(resumedAt.getTime() + 10000));
+  expect(run.snapshot.deadlineAt!.getTime()).toBe(deadline);
+});

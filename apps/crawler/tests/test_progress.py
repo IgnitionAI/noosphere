@@ -76,7 +76,6 @@ async def run_and_cleanup(job, runner):
 @pytest.fixture(autouse=True)
 def stub_browser_and_network(monkeypatch):
     monkeypatch.setattr(crawler_module, "AsyncWebCrawler", StubAsyncWebCrawler)
-    monkeypatch.setattr(crawler_module, "configure_safe_crawler", lambda _crawler: None)
     monkeypatch.setattr(crawler_module, "is_url_allowed_async", lambda _url: _allowed())
     monkeypatch.setattr(settings, "rate_limit_delay", 0)
 

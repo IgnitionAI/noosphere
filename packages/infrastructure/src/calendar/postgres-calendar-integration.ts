@@ -779,7 +779,7 @@ export class PostgresCalendarIntegration implements WorkspaceCalendarScheduler {
     return bookingResult(persisted, connection.timeZone ?? "Europe/Paris");
   }
 
-  async listBookings(input: { workspaceId: string; contactId?: string; opportunityId?: string; limit: number }): Promise<readonly CalendarProductBookingView[]> {
+  async listBookings(input: { workspaceId: string; contactId?: string; opportunityId?: string; limit: number; offset?: number }): Promise<readonly CalendarProductBookingView[]> {
     const predicates = [eq(calendarBookings.workspaceId, input.workspaceId)];
     if (input.contactId) predicates.push(eq(calendarBookings.contactId, input.contactId));
     if (input.opportunityId) predicates.push(eq(calendarBookings.opportunityId, input.opportunityId));
@@ -797,8 +797,8 @@ export class PostgresCalendarIntegration implements WorkspaceCalendarScheduler {
       .leftJoin(contacts, and(eq(contacts.workspaceId, calendarBookings.workspaceId), eq(contacts.id, calendarBookings.contactId)))
       .leftJoin(opportunities, and(eq(opportunities.workspaceId, calendarBookings.workspaceId), eq(opportunities.id, calendarBookings.opportunityId)))
       .where(and(...predicates))
-      .orderBy(desc(calendarBookings.startAt))
-      .limit(input.limit);
+      .orderBy(desc(calendarBookings.startAt), asc(calendarBookings.id))
+      .limit(input.limit).offset(input.offset ?? 0);
     const ids = rows.map((row) => row.booking.id);
     const [history, attribution] = await Promise.all([
       ids.length ? this.database.select().from(calendarBookingHistory).where(and(eq(calendarBookingHistory.workspaceId, input.workspaceId), inArray(calendarBookingHistory.bookingId, ids))).orderBy(calendarBookingHistory.createdAt) : [],

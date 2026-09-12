@@ -1,3 +1,4 @@
+import { AiTaskPauseError } from "@outbound/application/ai/ai-task-pause";
 import { and, asc, desc, eq, gte, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import type {
   OutboundChannelGateway,
@@ -697,11 +698,12 @@ export class OutreachDispatchJobProcessor {
         lockedAt: null,
         lockedUntil: null,
         lockedBy: null,
-        lastErrorCode: "CAMPAIGN_JIT_GENERATION_FAILED",
+        lastErrorCode: error instanceof AiTaskPauseError ? error.code : "CAMPAIGN_JIT_GENERATION_FAILED",
         lastErrorMessage: message.slice(0, 4_000),
         updatedAt: this.clock.now(),
       })
       .where(and(eq(outreachActions.workspaceId, action.workspaceId), eq(outreachActions.id, action.id)));
+    if (error instanceof AiTaskPauseError) throw error;
     const outcome = await this.queue.retry({
       jobId: job.id,
       workerId: job.lockedBy,

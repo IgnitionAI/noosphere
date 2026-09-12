@@ -1,3 +1,4 @@
+import { validateCampaignSendSchedule } from "@outbound/application/mcp/external-effect-policy";
 import { and, desc, eq, max, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import type {
@@ -44,7 +45,7 @@ const SOURCE_FIELDS: Readonly<Record<McpGovernedEffectKind, readonly string[]>> 
   conversation_reply: ["status", "sourceId", "sourceUpdatedAt", "factsVersion", "suppressed", "suppressionStatus", "humanReply", "humanReplyAt"],
   content_publication: ["status", "sourceId", "sourceUpdatedAt", "factsVersion", "assetVersionId", "contentVersion", "policyVersion", "scheduledFor", "assetId", "publicationId", "assetReady", "assetStatus", "strategyActive", "strategyDeleted", "strategyVersionId", "strategyVersion"],
   meeting_proposal: ["status", "sourceId", "sourceUpdatedAt", "factsVersion", "slotPosition", "slotStart", "slotEnd", "timeZone", "expiresAt"],
-  campaign_activation: ["status", "sourceId", "sourceUpdatedAt", "factsVersion", "policyVersion", "automationStage", "scheduleWindow", "accountHealth", "enrollmentFingerprint"],
+  campaign_activation: ["status", "sourceId", "sourceUpdatedAt", "factsVersion", "policyVersion", "automationStage", "scheduleWindow", "accountHealth", "enrollmentFingerprint", "activationReady", "sendSchedule"],
 };
 const REQUIRED_SOURCE_FIELDS: Readonly<Record<McpGovernedEffectKind, readonly string[]>> = {
   conversation_reply: ["status", "sourceId", "sourceUpdatedAt", "factsVersion", "suppressed"],
@@ -1137,7 +1138,10 @@ function projectSourceSnapshot(kind: McpGovernedEffectKind, aggregateId: string,
   assertPositiveVersion(revision, "MCP_EFFECT_REVISION_INVALID");
   assertPositiveVersion(sourceVersion, "MCP_EFFECT_SOURCE_VERSION_INVALID");
   assertPositiveVersion(factsVersion, "MCP_EFFECT_FACTS_VERSION_INVALID");
-  for (const field of REQUIRED_SOURCE_FIELDS[kind]) {
+  const required = kind === "campaign_activation" && source.activationReady !== undefined
+    ? [...REQUIRED_SOURCE_FIELDS[kind].filter(field => field !== "scheduleWindow"), "activationReady", "sendSchedule"]
+    : REQUIRED_SOURCE_FIELDS[kind];
+  for (const field of required) {
     if (!Object.prototype.hasOwnProperty.call(source, field) || source[field] === undefined) {
       throw new McpGovernedEffectRepositoryError("MCP_EFFECT_SOURCE_FACT_REQUIRED");
     }
@@ -1162,6 +1166,14 @@ function objectRoot(value: unknown, code: string): Record<string, unknown> {
 }
 
 function validateSourceFact(field: string, value: unknown): unknown {
+  if (field === "activationReady") {
+    if (typeof value !== "boolean") throw new McpGovernedEffectRepositoryError("MCP_EFFECT_SOURCE_FACT_TYPE_INVALID");
+    return value;
+  }
+  if (field === "sendSchedule") {
+    if (!validateCampaignSendSchedule(value)) throw new McpGovernedEffectRepositoryError("MCP_EFFECT_SOURCE_FACT_TYPE_INVALID");
+    return structuredClone(value);
+  }
   if (["status", "sourceId", "sourceUpdatedAt", "assetVersionId", "policyVersion", "automationStage", "assetId", "publicationId", "assetStatus", "enrollmentFingerprint"].includes(field)) {
     if (typeof value !== "string" || value.length < 1 || value.length > 200 || (field === "sourceUpdatedAt" && !isIsoDate(value))) throw new McpGovernedEffectRepositoryError("MCP_EFFECT_SOURCE_FACT_TYPE_INVALID");
     if (field === "enrollmentFingerprint" && !/^[a-f0-9]{64}$/.test(value)) throw new McpGovernedEffectRepositoryError("MCP_EFFECT_SOURCE_FACT_TYPE_INVALID");

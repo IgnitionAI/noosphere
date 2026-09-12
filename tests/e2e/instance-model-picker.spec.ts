@@ -1,0 +1,35 @@
+import { expect, test } from "@playwright/test";
+
+test("administrator selects named models without knowing identifiers and preserves custom models", async ({ page }) => {
+  await page.goto("/login");
+  await page.getByLabel("Email professionnel").fill(process.env.BOOTSTRAP_OWNER_EMAIL ?? "owner@ignition.local");
+  await page.getByLabel("Mot de passe").fill(process.env.BOOTSTRAP_OWNER_PASSWORD ?? "change-me-in-env");
+  await page.getByRole("button", { name: "Accéder au workspace" }).click();
+  await page.waitForURL(/\/w\//);
+  await page.goto("/setup");
+  if (await page.getByText("Ajouter une autre connexion IA", { exact: true }).isVisible()) await page.getByText("Ajouter une autre connexion IA", { exact: true }).click();
+  const form = page.getByRole("heading", { name: "Ajouter une connexion IA" }).locator("..");
+  await expect(form.getByRole("checkbox", { name: "GPT-6 Astra", exact: true })).toBeVisible();
+  await form.getByRole("checkbox", { name: "GPT-6 Astra", exact: true }).check();
+  await form.getByLabel("Fournisseur").selectOption("kimi-code");
+  await expect(form.getByRole("checkbox", { name: "GPT-6 Astra", exact: true })).toHaveCount(0);
+  await form.getByRole("checkbox", { name: "Kimi K3", exact: true }).check();
+  const name = `Model picker ${crypto.randomUUID()}`;
+  await form.getByLabel("Nom de la connexion").fill(name);
+  await form.getByLabel("Clé API").fill("synthetic-model-picker-key");
+  await form.getByRole("button", { name: "Enregistrer la connexion" }).click();
+  const section = page.getByRole("heading", { name, exact: true }).locator("..");
+  await expect(section.getByRole("button", { name: "Tester k3", exact: true })).toBeVisible();
+  await expect(section.getByRole("button", { name: "Tester gpt-6-astra", exact: true })).toHaveCount(0);
+  await expect(section.getByText("Connexion enregistrée", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Enregistrer la connexion", exact: true })).not.toBeVisible();
+  await page.getByText("Ajouter une autre connexion IA", { exact: true }).click();
+  await expect(form.getByRole("button", { name: "Enregistrer la connexion", exact: true })).toBeVisible();
+  await section.getByText("Modifier la connexion", { exact: true }).click();
+  await expect(section.getByRole("checkbox", { name: "Kimi K3", exact: true })).toBeChecked();
+  await section.getByText("Ajouter un modèle par son identifiant", { exact: true }).click();
+  await section.getByLabel("Identifiants de modèles (avancé)").fill("custom-future-model");
+  await section.getByRole("button", { name: "Enregistrer les modifications" }).click();
+  await expect(section.getByRole("button", { name: "Tester custom-future-model", exact: true })).toBeVisible();
+  await expect(section.getByRole("button", { name: "Tester k3", exact: true })).toBeVisible();
+});

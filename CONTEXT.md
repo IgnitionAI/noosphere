@@ -34,3 +34,13 @@ _Avoid_: Fait, insight
 Segment acheteur recommandé par une mission, encore modifiable et impropre au
 sourcing tant qu’il n’a pas été publié dans une `ICPVersion`.
 _Avoid_: ICP, segment validé
+
+## Pilotage par agent
+
+**Préparation d’acquisition**:
+Ensemble de livrables Inbound et Outbound issus d’un produit et d’une mission de recherche, encore soumis aux validations nécessaires avant diffusion.
+_Avoid_: Campagne envoyée, acquisition terminée
+
+**Stratégie éditoriale**:
+Choix des sujets, audiences et rythmes de contenu ancrés dans une offre et un ICP identifiés. Son activation ne signifie pas qu’un contenu a été publié.
+_Avoid_: Post, campagne Outbound

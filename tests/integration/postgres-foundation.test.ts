@@ -338,6 +338,12 @@ databaseDescribe("PostgreSQL F-009 foundation", () => {
       runId: second.snapshot.id,
       correlationId: "second-active-run",
     })).rejects.toThrow();
+    const handler = createProductResearchHttpHandler({
+      application: new ProductResearchApplication(repository, repository, ids, clock),
+      contextResolver: { async resolve() { return { userId: crypto.randomUUID(), workspaceId: workspaceA, role: "owner" as const }; } },
+    });
+    const conflict = await handler(new Request(`http://localhost/api/v1/product-research-runs/${second.snapshot.id}/actions/start`, { method: "POST" }));
+    expect(conflict.status).toBe(409);
 
     await database.db
       .update(productResearchRuns)

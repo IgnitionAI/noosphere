@@ -1,3 +1,4 @@
+import { AiTaskPauseError } from "@outbound/application/ai/ai-task-pause";
 import { ChatOpenAI, type ChatOpenAIFields } from "@langchain/openai";
 import { createAgent, toolStrategy } from "langchain";
 import { createDeepAgent, type SubAgent } from "deepagents";
@@ -289,6 +290,7 @@ export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
           const repaired = await this.options.routedModel.invoke({
             workspaceId: input.workspaceId,
             capability: "icp_research",
+            researchTier: modelTierForStage(stage, input.brief.researchVersion),
             requestKey: `${input.runId}:${stage}:evidence-repair`,
             fallbackRoutes: legacyRoutes,
             systemPrompt: `You repair one structured ICP research output. Remove unknown evidence identifiers or mark the affected claim as a hypothesis. Never create a source, URL or identifier. Preserve the exact output contract.`,
@@ -548,6 +550,7 @@ export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
         },
       };
     } catch (error) {
+      if (error instanceof AiTaskPauseError) throw error;
       if (
         error instanceof RetryableAgentError ||
         error instanceof TerminalAgentError
@@ -627,6 +630,7 @@ export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
       const plan = await this.options.routedModel.invoke({
         workspaceId: input.workspaceId,
         capability: "icp_research",
+        researchTier: modelTierForStage(stage, input.brief.researchVersion),
         requestKey: `${input.runId}:${stage}:${input.researchStageRunId}:tool-plan:${round}`,
         fallbackRoutes: fallbackRoutes.map((route) => ({
           ...route,
@@ -709,6 +713,7 @@ export class LangChainResearchAgentExecutor implements ResearchAgentExecutor {
     const synthesisRequest = {
       workspaceId: input.workspaceId,
       capability: "icp_research" as const,
+      researchTier: modelTierForStage(stage, input.brief.researchVersion),
       fallbackRoutes,
       systemPrompt: [
         systemPrompt,
@@ -1261,6 +1266,10 @@ export function modelRoutesForCandidates(
 export function resolveResearchModelConfigurationFromEnvironment(
   environment: Readonly<Record<string, string | undefined>>,
 ): ResearchModelConfiguration {
+  if (isUnconfiguredInstallation(environment)) return {
+    provider: "kimi-code", apiKey: "unused-provider-neutral-runtime",
+    researchModels: [], synthesisModels: [], defaultRoutes: [],
+  };
   const requestedProvider = environment.AI_PROVIDER?.trim()
     || (!environment.KIMI_CODE_API_KEY && environment.CODEX_SERVICE_HOME ? "codex-cli" : "kimi-code");
   if (requestedProvider === "codex-cli") {
@@ -1309,6 +1318,9 @@ export function resolveResearchModelConfigurationFromEnvironment(
 export function resolveResearchModelPolicyFromEnvironment(
   environment: Readonly<Record<string, string | undefined>>,
 ): WorkspaceAiModelPolicy {
+  if (isUnconfiguredInstallation(environment)) return {
+    researchModels: [], synthesisModels: [], defaultRoutes: [], capabilityRoutes: {},
+  };
   const provider = environment.AI_PROVIDER?.trim()
     || (!environment.KIMI_CODE_API_KEY && environment.CODEX_SERVICE_HOME ? "codex-cli" : "kimi-code");
   if (provider === "kimi-code") {
@@ -1843,4 +1855,12 @@ function requiredEnvironmentFrom(
   const value = environment[name]?.trim();
   if (!value) throw new Error(`${name} is required`);
   return value;
+}
+
+function isUnconfiguredInstallation(environment: Readonly<Record<string, string | undefined>>): boolean {
+  const provider = environment.AI_PROVIDER?.trim();
+  return (!provider || ["kimi-code", "codex-cli", "openai"].includes(provider))
+    && !environment.KIMI_CODE_API_KEY?.trim()
+    && !environment.CODEX_SERVICE_HOME?.trim()
+    && !environment.OPENAI_API_KEY?.trim();
 }

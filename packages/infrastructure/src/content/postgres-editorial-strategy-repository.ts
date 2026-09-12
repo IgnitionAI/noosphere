@@ -9,6 +9,7 @@ import { editorialStrategySnapshotSchema } from "@outbound/contracts/content";
 import type { Database } from "@outbound/infrastructure/database/client";
 import {
   auditLogs,
+  jobs,
   contentOperationRequests,
   editorialStrategies,
   editorialStrategyVersions,
@@ -21,13 +22,18 @@ import {
 export class PostgresEditorialStrategyRepository implements EditorialStrategyRepository {
   constructor(private readonly database: Database) {}
 
-  async grounding(workspaceId: string): Promise<EditorialStrategyGrounding> {
+  async preparation(workspaceId: string) {
+    const [job] = await this.database.select({ status: jobs.status, attempts: jobs.attempts, errorCode: jobs.lastErrorCode }).from(jobs).where(and(eq(jobs.workspaceId, workspaceId), eq(jobs.type, "content.strategy.prepare"))).orderBy(desc(jobs.createdAt)).limit(1);
+    return job ?? null;
+  }
+
+  async grounding(workspaceId: string, sources?: { offerVersionId: string; icpVersionId: string }): Promise<EditorialStrategyGrounding> {
     const [offers, icps] = await Promise.all([
       this.database.select().from(offerVersions)
-        .where(eq(offerVersions.workspaceId, workspaceId))
+        .where(and(eq(offerVersions.workspaceId, workspaceId), ...(sources ? [eq(offerVersions.id, sources.offerVersionId)] : [])))
         .orderBy(desc(offerVersions.publishedAt)).limit(1),
       this.database.select().from(icpVersions)
-        .where(eq(icpVersions.workspaceId, workspaceId))
+        .where(and(eq(icpVersions.workspaceId, workspaceId), ...(sources ? [eq(icpVersions.id, sources.icpVersionId)] : [])))
         .orderBy(desc(icpVersions.publishedAt)).limit(1),
     ]);
     const offer = offers[0];
@@ -78,6 +84,14 @@ export class PostgresEditorialStrategyRepository implements EditorialStrategyRep
     return rows[0] ? toStrategy(rows[0]) : null;
   }
 
+  async findForSources(workspaceId: string, offerId: string, icpId: string): Promise<EditorialStrategyView | null> {
+    const [row] = await this.database.select().from(editorialStrategies).where(and(
+      eq(editorialStrategies.workspaceId, workspaceId), eq(editorialStrategies.offerId, offerId),
+      eq(editorialStrategies.icpId, icpId), isNull(editorialStrategies.deletedAt),
+    )).limit(1);
+    return row ? toStrategy(row) : null;
+  }
+
   async findRequest(input: { workspaceId: string; operation: string; requestKey: string }): Promise<EditorialStrategyView | EditorialStrategyVersionView | null> {
     const rows = await this.database.select().from(contentOperationRequests).where(and(
       eq(contentOperationRequests.workspaceId, input.workspaceId),
@@ -121,7 +135,8 @@ export class PostgresEditorialStrategyRepository implements EditorialStrategyRep
         eq(editorialStrategies.icpId, input.grounding.icp.id),
         isNull(editorialStrategies.deletedAt),
       )).limit(1);
-      const now = new Date();
+      if (input.expectedUpdatedAt !== undefined && (existing[0]?.updatedAt.toISOString() ?? null) !== input.expectedUpdatedAt) throw new Error("EDITORIAL_STRATEGY_VERSION_CONFLICT");
+      const now = new Date(Math.max(Date.now(), (existing[0]?.updatedAt.getTime() ?? 0) + 1));
       const values = {
         workspaceId: input.workspaceId,
         name: `${input.grounding.offer.name} · ${input.grounding.icp.name}`,
@@ -160,6 +175,7 @@ export class PostgresEditorialStrategyRepository implements EditorialStrategyRep
 
   async updateDraft(input: Parameters<EditorialStrategyRepository["updateDraft"]>[0]): Promise<EditorialStrategyView> {
     return this.database.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`${input.workspaceId}:editorial-strategy`}, 0))`);
       const current = await tx.select().from(editorialStrategies).where(and(
         eq(editorialStrategies.workspaceId, input.workspaceId),
         isNull(editorialStrategies.deletedAt),
@@ -178,7 +194,9 @@ export class PostgresEditorialStrategyRepository implements EditorialStrategyRep
         )).limit(1);
         if (retained[0]) return toStrategy(retained[0]);
       }
-      const saved = (await tx.update(editorialStrategies).set({ draft: input.snapshot, updatedAt: new Date() })
+      if (input.expectedStrategyId !== undefined && input.expectedStrategyId !== current[0].id
+        || input.expectedUpdatedAt !== undefined && input.expectedUpdatedAt !== current[0].updatedAt.toISOString()) throw new Error("EDITORIAL_STRATEGY_VERSION_CONFLICT");
+      const saved = (await tx.update(editorialStrategies).set({ draft: input.snapshot, updatedAt: new Date(Math.max(Date.now(), current[0].updatedAt.getTime() + 1)) })
         .where(and(eq(editorialStrategies.workspaceId, input.workspaceId), eq(editorialStrategies.id, current[0].id))).returning())[0]!;
       await tx.insert(contentOperationRequests).values({ workspaceId: input.workspaceId, operation: "strategy.update", requestKey: input.requestKey, resourceType: "EditorialStrategy", resourceId: saved.id, response: { strategyId: saved.id } });
       await appendEvent(tx, { workspaceId: input.workspaceId, userId: input.userId, strategyId: saved.id, eventType: "EditorialStrategyDraftUpdated", changes: {} });
@@ -188,6 +206,7 @@ export class PostgresEditorialStrategyRepository implements EditorialStrategyRep
 
   async publish(input: Parameters<EditorialStrategyRepository["publish"]>[0]): Promise<EditorialStrategyVersionView> {
     return this.database.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`${input.workspaceId}:editorial-strategy`}, 0))`);
       const strategies = await tx.select().from(editorialStrategies).where(and(
         eq(editorialStrategies.workspaceId, input.workspaceId),
         isNull(editorialStrategies.deletedAt),
@@ -277,7 +296,7 @@ function toVersion(row: typeof editorialStrategyVersions.$inferSelect): Editoria
   };
 }
 
-async function appendEvent(tx: any, input: { workspaceId: string; userId: string; strategyId: string; eventType: string; changes: unknown }) {
+async function appendEvent(tx: any, input: { workspaceId: string; userId: string | null; strategyId: string; eventType: string; changes: unknown }) {
   const events = await tx.insert(outboxEvents).values({
     workspaceId: input.workspaceId,
     aggregateType: "EditorialStrategy",

@@ -71,6 +71,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.16.2
+          terraform_wrapper: false
+
+      - name: Validate infrastructure configuration
+        run: |
+          terraform -chdir=infra/terraform/netcup fmt -check
+          terraform -chdir=infra/terraform/netcup init -backend=false -input=false -lockfile=readonly
+          terraform -chdir=infra/terraform/netcup validate
+          APP_ENV_FILE=deploy/.env.production.example docker compose --env-file deploy/.env.production.example -f compose.infrastructure.yml -f compose.production.yml config --quiet
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
@@ -116,20 +129,33 @@ jobs:
       - name: Run repository checks
         run: bun run check
 
-      - name: Audit Bun production dependencies
-        run: bun audit --audit-level high
-
-      - name: Audit crawler production dependencies
-        working-directory: apps/crawler
-        run: |
-          uv export --frozen --no-dev --no-emit-project --format requirements.txt --output-file /tmp/noosphere-crawler-requirements.txt
-          uvx pip-audit --no-deps --disable-pip --requirement /tmp/noosphere-crawler-requirements.txt
-
       - name: Run PostgreSQL integration tests
+        env:
+          MCP_LOCAL_FIXTURES_INTEGRATION: "1"
+          MCP_LOCAL_GOVERNED_EFFECTS_INTEGRATION: "1"
         run: bun run test:integration
 
       - name: Install browser for Noosphere P0
         run: bunx playwright install --with-deps chromium
 
       - name: Run Noosphere browser journeys
-        run: bun run test:e2e
+        env:
+          E2E_CONTROLLED_CODEX: "true"
+          INSTANCE_CODEX_HOME: ${{ runner.temp }}/noosphere-e2e-codex
+          CODEX_BINARY_PATH: ${{ github.workspace }}/tests/fixtures/codex-service-fixture.ts
+        run: |
+          mkdir -p "$INSTANCE_CODEX_HOME"
+          chmod 700 "$INSTANCE_CODEX_HOME"
+          chmod +x "$CODEX_BINARY_PATH"
+          bun run test:e2e
+
+      - name: Audit Bun production dependencies
+        if: ${{ !cancelled() }}
+        run: bun audit --audit-level high
+
+      - name: Audit crawler production dependencies
+        if: ${{ !cancelled() }}
+        working-directory: apps/crawler
+        run: |
+          uv export --frozen --no-dev --no-emit-project --format requirements.txt --output-file /tmp/noosphere-crawler-requirements.txt
+          uvx pip-audit --no-deps --disable-pip --requirement /tmp/noosphere-crawler-requirements.txt
