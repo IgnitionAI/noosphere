@@ -36,3 +36,7 @@ provider-adapter imports are reported as architecture violations. The checker
 uses the TypeScript AST, including static imports, re-exports, dynamic
 `import()`, `require()` and `import = require()` declarations, so comments and
 ordinary strings cannot trigger a false positive.
+
+### OAuth browser consent in Docker Compose
+
+`MCP_ALLOWED_HOSTS` includes the public hostname and the exact private service address `api:3001`. The web server uses that internal HTTP hop to request OAuth consent. Caddy remains the only public ingress; the API port is not published. Other hosts and wildcard values remain rejected by deployment validation. `MCP_ALLOWED_ORIGINS` continues to contain HTTPS browser origins only. Existing deployments should add `api:3001` to their environment before using browser OAuth consent.

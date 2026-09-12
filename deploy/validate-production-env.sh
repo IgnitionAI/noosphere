@@ -132,8 +132,10 @@ if os.environ["PUBLIC_WEBHOOK_BASE_URL"].rstrip("/") != expected_origin:
 if expected_origin not in [item.rstrip("/") for item in trusted]:
     raise SystemExit("BETTER_AUTH_TRUSTED_ORIGINS must include the PUBLIC_HOST HTTPS origin")
 allowed_hosts = [item.strip() for item in os.environ["MCP_ALLOWED_HOSTS"].split(",") if item.strip()]
-if allowed_hosts != [host]:
-    raise SystemExit("MCP_ALLOWED_HOSTS must contain only PUBLIC_HOST")
+# The browser consent server reaches OAuth through Compose's private api:3001 hop.
+# Caddy remains the sole public ingress; arbitrary hosts and wildcards stay forbidden.
+if host not in allowed_hosts or any(item not in (host, "api:3001") for item in allowed_hosts):
+    raise SystemExit("MCP_ALLOWED_HOSTS requires PUBLIC_HOST and permits only the private api:3001 hop")
 allowed_origins = [item.strip().rstrip("/") for item in os.environ["MCP_ALLOWED_ORIGINS"].split(",") if item.strip()]
 if not allowed_origins or any(
     urlparse(item).scheme != "https" or not urlparse(item).netloc or urlparse(item).path not in ("", "/")
