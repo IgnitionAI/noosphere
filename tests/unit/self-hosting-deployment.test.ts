@@ -281,7 +281,7 @@ fi
     writeFileSync(join(binaryDirectory, "curl"), curlMock, { mode: 0o755 });
 
     const released = runBash(
-      `ENV_FILE='${environmentFile}' RELEASE_STATE_DIR='${stateDirectory}' BACKUP_BEFORE_RELEASE=false bash deploy/release.sh`,
+      `ENV_FILE='${environmentFile}' RELEASE_STATE_DIR='${stateDirectory}' BACKUP_BEFORE_RELEASE=false bash deploy/release.sh v3.2.2`,
       { PATH: `${binaryDirectory}:${process.env.PATH}` },
     );
     if (released.exitCode !== 0) {
@@ -291,10 +291,12 @@ fi
     const manifest = JSON.parse(
       readFileSync(join(stateDirectory, "last-successful-release.json"), "utf8"),
     );
-    expect(manifest.appVersion).toBe("v3.2.1");
+    expect(manifest.appVersion).toBe("v3.2.2");
+    expect(readFileSync(environmentFile, "utf8")).toContain("APP_VERSION=v3.2.2");
+    expect(statSync(environmentFile).mode & 0o777).toBe(0o600);
     expect(manifest.deployMode).toBe("local-build");
     expect(manifest.images.backend.exact).toBe(
-      "ghcr.io/release-test/noosphere-backend:v3.2.1",
+      "ghcr.io/release-test/noosphere-backend:v3.2.2",
     );
     expect(manifest.images.backend.imageId).toBe("sha256:backend-image-id");
     expect(statSync(join(stateDirectory, "last-successful-release.json")).mode & 0o777).toBe(

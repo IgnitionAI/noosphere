@@ -1,0 +1,6 @@
+# Verified in Netcup on 2026-09-12. Review against the live panel before import.
+server_id            = 936076
+expected_server_name = "v2202609415079516665"
+expected_ipv4        = "62.83.8.34"
+application_hostname = "noosphere.ignitionai.fr"
+nickname             = "Noosphere canary"
