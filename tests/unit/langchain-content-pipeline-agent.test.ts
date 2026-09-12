@@ -85,9 +85,9 @@ describe("LangChainContentPipelineAgent", () => {
     ]);
     expect(recorded.map(({ purpose, model, promptVersion, contentGenerationRunId }) => ({ purpose, model, promptVersion, contentGenerationRunId }))).toEqual([
       { purpose: "content_brief", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-brief-v8", contentGenerationRunId: context.run.id },
-      { purpose: "content_writer", model: "k3", promptVersion: "noosphere-content-writer-v11", contentGenerationRunId: context.run.id },
+      { purpose: "content_writer", model: "k3", promptVersion: "noosphere-content-writer-v12", contentGenerationRunId: context.run.id },
       { purpose: "content_audit", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-audit-v6", contentGenerationRunId: context.run.id },
-      { purpose: "content_critic", model: "k3", promptVersion: "noosphere-content-critic-v9", contentGenerationRunId: context.run.id },
+      { purpose: "content_critic", model: "k3", promptVersion: "noosphere-content-critic-v10", contentGenerationRunId: context.run.id },
     ]);
   });
 });
@@ -153,6 +153,8 @@ test("judges current public work without upstream approval or internal brief ins
   await agent.write(context);
   const payload = calls[0]!.context;
   for (const field of ["audit", "brief", "idea", "run", "validationFeedback"]) expect(payload).not.toHaveProperty(field);
-  expect(payload).toMatchObject({draft: context.draft, evidence: context.evidence, strategy: context.strategy, brandKit: context.brandKit, recentBodies: []});
+  expect(payload).toMatchObject({draft: context.draft, evidence: context.evidence, strategy: {audience: context.strategy.audience, voice: context.strategy.voice}, brandKit: context.brandKit, recentBodies: []});
+  expect(payload).not.toHaveProperty("strategy.pillars");
+  expect(payload).not.toHaveProperty("strategy.callsToAction");
   expect(calls[1]!.context).toMatchObject({brief: context.brief, audit: context.audit});
 });

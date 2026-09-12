@@ -106,8 +106,8 @@ export class LangChainContentPipelineAgent implements ContentPipelineAgent {
       provider,
       model,
       promptVersion: role === "writer"
-        ? "noosphere-content-writer-v11"
-        : role === "critic" ? "noosphere-content-critic-v9" : role === "audit" ? "noosphere-content-audit-v6" : "noosphere-content-brief-v8",
+        ? "noosphere-content-writer-v12"
+        : role === "critic" ? "noosphere-content-critic-v10" : role === "audit" ? "noosphere-content-audit-v6" : "noosphere-content-brief-v8",
       shadow: false,
       inputHash: new Bun.CryptoHasher("sha256").update(JSON.stringify(original)).digest("hex"),
       output,
@@ -157,7 +157,7 @@ function boundedContext(input: Partial<ContentGenerationContext> & Record<string
 
 function critiqueContext(input: Parameters<ContentPipelineAgent["critique"]>[0]) {
   return {
-    strategy: input.strategy,
+    strategy: { audience: input.strategy.audience, voice: input.strategy.voice },
     businessContext: input.businessContext,
     brandKit: input.brandKit,
     evidence: input.evidence,

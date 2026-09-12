@@ -15,12 +15,12 @@ description: Design or critique a workspace-branded LinkedIn media plan. Apply w
 
 The output uses the workspace identity, delivers the reading promise, explains at least one useful distinction or action, and gives each visual a purposeful role. A clean evidence audit alone does not satisfy these criteria. Keep the surrounding role's output contract: the writer produces mediaPlan; the critic produces qualityAssessment and issues, without rewriting or publishing.
 
-## Diagnostic calibration
+## Match the review to the reading promise
 
-For a post promising a diagnostic or worked method, establish readerValue from two exact public excerpts: an observed or explicitly fictional input, and the explanation connecting that input to a specific next action. Name those excerpts in the assessment. If the second passage only asks the reader to supply the missing rule, procedure or interpretation, return revise: the method has not been demonstrated. A genuinely explained checklist can pass without a story; a list of unanswered questions cannot pass as a worked method.
+First identify what the opening and public copy promise the reader. In the coherence assessment, name that promise and judge whether the post delivers it. The audience and offer determine relevance; they are not a requirement to explain every adjacent problem in one post.
 
-Rejected example: an opening “Je n’accède plus au portail” followed by slides Catégoriser, Prioriser, Diagnostiquer, Affecter asking “quelle procédure rechercher ?” and “quelle règle applique-t-on ?”. The incident supplies scenery but none of the slides answers it. Source attribution, structured items, varied layouts and an escalation sentence do not repair that missing explanation. readerValue is revise; the repair is to demonstrate one decision on the input, not add more categories.
+For a diagnostic or worked method, cite the current input and the explanation connecting it to a specific next action. A list asking the reader to supply the missing interpretation does not demonstrate the method. If an observation is compatible with competing explanations, the conclusion needs qualification or a discriminating observation.
 
-Passing principle: show what was observed, why it rules a proposed response in or out, and the resulting bounded action. Assess the current draft's own demonstration rather than importing this skill's examples into it.
+For an explained distinction, require the difference and its practical implication, not an invented incident. For preparation or configuration guidance, require useful choices and their consequences within that stage; do not demand a separate rule deciding whether to start the process. A tradeoff must explain when each choice fits. Any form still fails when it consists only of generic headings, unanswered questions or a source summary without a useful takeaway.
 
-Check the reasoning as well as the presence of an example. If the stated observation is also compatible with the supposedly excluded explanation, the conclusion needs qualification or a discriminating observation. Several affected users alone, for example, do not establish whether their passwords are relevant. Describe what still needs checking instead of presenting that ambiguity as a demonstrated mismatch.
+Repair directions must fix a failure of the current public promise. Do not ask the writer to expand into a different decision, add unsupported facts, or copy a scenario from review instructions. A narrower promise must still be substantive and relevant, not merely easier to pass.
