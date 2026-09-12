@@ -1,4 +1,6 @@
 import { editorialPlaybook } from "@outbound/infrastructure/content/content-editorial-playbook";
+import { contentRuntimeSkills } from "@outbound/infrastructure/content/content-runtime-skills";
+import { selectNextContentFormat } from "@outbound/domain/content/content-brand-kit";
 import { ChatOpenAI } from "@langchain/openai";
 import { tool } from "@langchain/core/tools";
 import type { ZodType } from "zod";
@@ -95,8 +97,8 @@ export class LangChainContentPipelineAgent implements ContentPipelineAgent {
       provider,
       model,
       promptVersion: role === "writer"
-        ? "noosphere-content-writer-v8"
-        : role === "critic" ? "noosphere-content-critic-v6" : role === "audit" ? "noosphere-content-audit-v6" : "noosphere-content-brief-v5",
+        ? "noosphere-content-writer-v9"
+        : role === "critic" ? "noosphere-content-critic-v7" : role === "audit" ? "noosphere-content-audit-v6" : "noosphere-content-brief-v6",
       shadow: false,
       inputHash: new Bun.CryptoHasher("sha256").update(JSON.stringify(original)).digest("hex"),
       output,
@@ -133,6 +135,7 @@ function boundedContext(input: Partial<ContentGenerationContext> & Record<string
     strategy: input.strategy,
     businessContext: input.businessContext,
     brandKit: input.brandKit,
+    preferredFormat: input.brandKit ? selectNextContentFormat(input.brandKit, input.recentFormats ?? []) : null,
     evidence: input.evidence,
     brief: input.brief,
     draft: input.draft,
@@ -155,10 +158,11 @@ function pipelineModelSpec(role: PipelineRole, context: unknown) {
     schema: contentBriefSnapshotSchema,
     system: [
       "You are Noosphere's bounded LinkedIn brief writer.",
+      contentRuntimeSkills.strategist,
       ...editorialPlaybook.brief,
       "Turn the supplied idea into one precise brief. Use only exact evidence keys and authorized claim IDs from the input.",
       "The problem, angle and objective must be specific to the offer and audience. Choose only a CTA from the strategy, or null.",
-      "Choose exactly one format enabled by brandKit. Use its weeklyMix and recentFormats to favor the most underrepresented enabled format, while matching the idea: linkedin_text for nuance, linkedin_image for one memorable point, linkedin_document for a 3-9 page educational carousel, linkedin_video for a 12-60 second motion story.",
+      "Choose exactly one format enabled by brandKit that serves the reader's decision: linkedin_text for nuance, linkedin_image for one memorable point, linkedin_document for a 3-9 page educational carousel, linkedin_video for a 12-60 second motion story. preferredFormat reflects weeklyMix and recentFormats; use it to break ties between equally useful treatments, not to stretch a short observation into a carousel.",
       "Treat strategy.formats as historical guidance, but brandKit.enabledFormats is the current authoritative capability list.",
       "Constraints must include factual grounding, no invented metrics, no generic hook and no unsupported urgency.",
       "Do not write the post, schedule it or call a provider. Call submit_content_brief exactly once.",
@@ -171,6 +175,8 @@ function pipelineModelSpec(role: PipelineRole, context: unknown) {
     schema: contentDraftSnapshotSchema,
     system: [
       "You are Noosphere's principal LinkedIn writer. Write in French unless the strategy explicitly uses another language.",
+      contentRuntimeSkills.strategist,
+      contentRuntimeSkills.guardian,
       ...editorialPlaybook.writer,
       "Use the complete offer context, audience, idea, brief, real evidence and recent posts. The post must be specific enough that it cannot be swapped into another company.",
       "Open with a concrete tension, observation or consequence. Never use empty thought-leadership hooks, fabricated urgency or generic B2B advice.",
@@ -191,7 +197,8 @@ function pipelineModelSpec(role: PipelineRole, context: unknown) {
       "If validationFeedback contains CONTENT_AUDIT_UNGROUNDED_STATEMENT, either add the exact factual sentence to factualClaims only when supplied evidence directly proves it. Otherwise replace the unsupported premise with an explicitly hypothetical worked example that demonstrates a proposed decision without claiming real effectiveness, or remove the premise while preserving the useful explanation. An opinion label such as 'mon analyse' never makes an unsupported product mechanism, outcome or process acceptable. Do not soften a factual claim into an implied claim, and do not substitute a disclaimer for reader value.",
       "If validationFeedback contains CONTENT_AUDIT_UNSUPPORTED_CLAIM, remove or narrow the claim to the exact supplied evidence. Never override or argue with the auditor.",
       "If validationFeedback contains CONTENT_AUDIT_FORBIDDEN_TOPIC, remove the matching passage and every unsupported implication of that topic. Never replace it with a disclaimer or meta-commentary.",
-      "If validationFeedback contains CONTENT_CRITIQUE_BLOCKER or CONTENT_READINESS_BLOCKER, rewrite the complete post to remove every named issue. Apply the feedback directly; never mention, defend or quote the critique in reader-facing copy.",
+      "If validationFeedback contains media_text_overflow, the document could not fit its complete copy legibly. Shorten or redistribute the overloaded slide copy within the existing format and slide limit, retaining the essential example and reasoning. Keep evidence and illustrative ledgers synchronized with the rewritten copy. Never use ellipses to hide missing content or replace the demonstration with empty slogans.",
+      "If validationFeedback contains CONTENT_CRITIQUE_BLOCKER or CONTENT_READINESS_BLOCKER, rewrite the complete post to remove every named issue. Apply the feedback to the supplied current draft and preserve earlier corrections, including visible source attribution, while fixing the new issue. The feedback may include resolved requirements that must remain satisfied. Never mention, defend or quote the critique in reader-facing copy.",
       "Mark personal analysis explicitly in opinionStatements. Do not turn an opinion into a fact.",
       "The body is the complete ready-to-review post, including hook and CTA. Do not schedule or publish. Call submit_linkedin_draft exactly once.",
     ].join("\n"),
@@ -219,6 +226,7 @@ function pipelineModelSpec(role: PipelineRole, context: unknown) {
     schema: currentContentEditorialCritiqueSchema,
     system: [
       "You are Noosphere's principal editorial critic, independent from the writer.",
+      contentRuntimeSkills.guardian,
       ...editorialPlaybook.critic,
       "Reject interchangeable hooks, vague claims, fake intimacy, manufactured urgency, repetition of recent posts and CTA unrelated to the offer or objective.",
       "Reject body longer than 1500 characters, competing reader CTAs, or copy that explains internal evidence, audit, claim-ledger or source-validation mechanics to the reader.",

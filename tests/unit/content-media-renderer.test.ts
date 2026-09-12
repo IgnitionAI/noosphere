@@ -5,6 +5,62 @@ import { DeterministicContentMediaRenderer } from "@outbound/infrastructure/cont
 import { DEFAULT_CONTENT_BRAND_KIT } from "@outbound/domain/content/content-brand-kit";
 
 describe("DeterministicContentMediaRenderer", () => {
+  test.each(["checklist", "comparison"] as const)("fits a long explanation in %s and rejects excessive copy rather than clipping it", async (layout) => {
+    const render = (text: string, count = 1) => new DeterministicContentMediaRenderer().render({
+      format: "linkedin_document",
+      plan: { format: "linkedin_document", visualTone: "editorial", title: "Choisir un contrôle", subtitle: null, altText: "Document", scenes: [],
+        slides: [
+          { layout: "cover", title: "Choisir un contrôle", body: "Comparer les observations." },
+          { layout, title: "La règle de priorité", body: "Voici le point à vérifier.", callout: "Relier le constat à la décision.", items: Array.from({ length: count }, () => ({ label: "Priorité", text })) },
+          { layout: "closing", title: "Un contrôle précis", body: "Conserver la conclusion complète." },
+        ],
+      },
+      body: "Brouillon de test",
+      brandKit: DEFAULT_CONTENT_BRAND_KIT,
+      outputDirectory: `/tmp/noosphere-complete-copy-${crypto.randomUUID()}`,
+    });
+    const full = "La priorité est attribuée à l’aide d’une matrice définie qui prend en compte l’impact métier et l’urgence, et s’aligne directement sur les niveaux de SLA.";
+    expect((await render(full)).pageCount).toBe(3);
+    await expect(render(full, 4)).rejects.toThrow("CONTENT_MEDIA_TEXT_OVERFLOW");
+  });
+
+  test.each(["process", "framework", "auto"] as const)("preserves every supplied field in a %s slide", async (layout) => {
+    const middle = { layout, title: "Un contrôle précis", body: "Observer le point de départ.", kicker: "DÉCISION", callout: "Vérifier avant de conclure.", items: [{ label: "Observation", text: "Examiner le signal disponible." }] };
+    const render = async (slide: typeof middle) => {
+      const result = await new DeterministicContentMediaRenderer().render({ format: "linkedin_document",
+        plan: { format: "linkedin_document", visualTone: "editorial", title: "Document", subtitle: null, altText: "Document", scenes: [],
+          slides: [{ title: "Le point de départ", body: "Comparer les observations." }, slide, { title: "Une décision", body: "Vérifier le résultat." }],
+        }, body: "Texte", brandKit: DEFAULT_CONTENT_BRAND_KIT, outputDirectory: `/tmp/noosphere-field-copy-${crypto.randomUUID()}` });
+      const pdf = await PDFDocument.load(result.bytes);
+      // Compare the page image stream, not PDF metadata or document timestamps.
+      const resources = pdf.getPage(1).node.Resources()!;
+      const { PDFDict, PDFName, PDFRawStream } = await import("pdf-lib");
+      const images = resources.lookup(PDFName.of("XObject"), PDFDict);
+      return images.entries().map(([, ref]) => {
+        const stream = pdf.context.lookup(ref);
+        if (!(stream instanceof PDFRawStream)) throw new Error("Expected page image stream");
+        return new Bun.CryptoHasher("sha256").update(stream.contents).digest("hex");
+      }).join(":");
+    };
+    const original = await render(middle);
+    for (const field of ["body", "callout", "kicker"] as const) {
+      expect(await render({ ...middle, [field]: "Une autre indication." })).not.toBe(original);
+    }
+    expect(await render({ ...middle, items: [{ ...middle.items[0]!, label: "Une autre observation" }] })).not.toBe(original);
+    expect(await render({ ...middle, items: [{ ...middle.items[0]!, text: "Une autre explication complète." }] })).not.toBe(original);
+    await expect(render({ ...middle, items: [{ ...middle.items[0]!, label: "ObservationSansEspace".repeat(4) }] })).rejects.toThrow("CONTENT_MEDIA_TEXT_OVERFLOW");
+  });
+
+  test("rejects closing overlap and unsupported cover items instead of hiding audited copy", async () => {
+    const render = (slides: Array<{ title: string; body: string; callout?: string; items?: Array<{ label: string; text: string }> }>) => new DeterministicContentMediaRenderer().render({
+      format: "linkedin_document", plan: { format: "linkedin_document", visualTone: "editorial", title: "Document", subtitle: null, altText: "Document", scenes: [], slides },
+      body: "Texte", brandKit: DEFAULT_CONTENT_BRAND_KIT, outputDirectory: `/tmp/noosphere-overlap-${crypto.randomUUID()}`,
+    });
+    const regular = { title: "Une décision", body: "Une observation précise." };
+    await expect(render([{ ...regular, items: [{ label: "Réserve", text: "Ne pas conclure sans preuve." }] }, regular, regular])).rejects.toThrow("CONTENT_MEDIA_TEXT_OVERFLOW");
+    await expect(render([regular, regular, { title: "Observation test ".repeat(5).trim(), body: "Une observation claire et utile. ".repeat(5).trim(), callout: "Conserver cette réserve." }])).rejects.toThrow("CONTENT_MEDIA_TEXT_OVERFLOW");
+  });
+
   test("renders a deterministic 4:5 PNG without an external generation provider", async () => {
     const renderer = new DeterministicContentMediaRenderer();
     const result = await renderer.render({
@@ -112,7 +168,7 @@ describe("DeterministicContentMediaRenderer", () => {
     expect(result.mimeType).toBe("application/pdf");
     expect(document.getPageCount()).toBe(5);
     expect(result.pageCount).toBe(5);
-    expect(result.manifest).toEqual(expect.objectContaining({ renderer: "pdf-lib-sharp-v4", narrativeLayouts: ["cover", "insight", "comparison", "process", "closing"] }));
+    expect(result.manifest).toEqual(expect.objectContaining({ renderer: "pdf-lib-sharp-v5", narrativeLayouts: ["cover", "insight", "comparison", "process", "closing"] }));
   });
 
   const ffmpeg = Bun.which("ffmpeg");

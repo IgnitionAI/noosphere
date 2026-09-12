@@ -62,6 +62,7 @@ export class DeterministicContentMediaRenderer implements ContentMediaRenderer {
         total: plan.slides.length,
         variant: index === 0 ? "opening" : index === plan.slides.length - 1 ? "closing" : "step",
         layout,
+        strictText: true,
         kicker: slide.kicker ?? null,
         callout: slide.callout ?? null,
         items: slide.items ?? [],
@@ -80,7 +81,7 @@ export class DeterministicContentMediaRenderer implements ContentMediaRenderer {
       height: HEIGHT,
       pageCount: plan.slides.length,
       durationSeconds: null,
-      manifest: { renderer: "pdf-lib-sharp-v4", slides: plan.slides.length, ratio: "4:5", narrativeLayouts: layouts, logo: Boolean(logoBytes) },
+      manifest: { renderer: "pdf-lib-sharp-v5", slides: plan.slides.length, ratio: "4:5", narrativeLayouts: layouts, logo: Boolean(logoBytes) },
     };
   }
 
@@ -147,6 +148,7 @@ async function renderCard(input: {
   readonly total: number | null;
   readonly variant: "single" | "opening" | "step" | "closing";
   readonly layout: CarouselLayout;
+  readonly strictText?: boolean;
   readonly kicker: string | null;
   readonly callout: string | null;
   readonly items: readonly CarouselItem[];
@@ -171,7 +173,7 @@ async function renderCard(input: {
       : "Inter,DejaVu Sans,Arial,sans-serif";
   const progress = input.index && input.total ? Math.round((input.index / input.total) * 904) : 0;
   const chrome = renderChrome({ input, primary, accent, background, progress });
-  const content = renderLayoutContent({ input, primary, accent, background, text, muted, fontFamily });
+  const content = renderLayoutContent({ input, primary, accent, background, text, muted, fontFamily, strictText: input.strictText ?? false });
   const sequence = input.index && input.total ? ` · ${input.index}/${input.total}` : "";
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${HEIGHT}" viewBox="0 0 ${WIDTH} ${HEIGHT}">
     <rect width="${WIDTH}" height="${HEIGHT}" fill="${surface}"/>
@@ -214,6 +216,7 @@ function renderChrome(input: {
 }
 
 function renderLayoutContent(input: {
+  readonly strictText: boolean;
   readonly input: {
     readonly title: string;
     readonly body: string;
@@ -240,28 +243,37 @@ function renderLayoutContent(input: {
 }
 
 function renderCover(input: Parameters<typeof renderLayoutContent>[0]): string {
-  const title = wrap(input.input.title, 19, 5);
-  const body = wrap(input.input.body, 34, 4);
+  const title = layoutWrap(input, input.input.title, 19, 5);
+  const body = layoutWrap(input, input.input.body, 34, 4);
+  if (input.strictText && input.input.items.length) throw new Error("CONTENT_MEDIA_TEXT_OVERFLOW");
   const kicker = input.input.kicker ?? "DOSSIER PRATIQUE";
+  layoutWrap(input, kicker, 24, 1);
+  const callout = input.input.callout ? layoutWrap(input, input.input.callout, 54, 2) : [];
+  const bodyBottom = 390 + title.length * 84 + (body.length - 1) * 43 + 16;
+  if (input.strictText && bodyBottom > (callout.length ? 985 : 1060)) throw new Error("CONTENT_MEDIA_TEXT_OVERFLOW");
   return `
-    <rect x="88" y="184" width="${Math.min(430, 72 + kicker.length * 16)}" height="52" rx="26" fill="${input.accent}"/>
+    <rect x="88" y="184" width="${Math.min(700, 72 + kicker.length * 22)}" height="52" rx="26" fill="${input.accent}"/>
     <text x="116" y="218" font-family="${input.fontFamily}" font-size="20" font-weight="780" letter-spacing="1.8" fill="${input.primary}">${escapeText(kicker.toUpperCase())}</text>
     <text x="88" y="340" font-family="${input.fontFamily}" font-size="78" font-weight="790" fill="${input.text}">${tspans(title, 340, 84)}</text>
     <text x="88" y="${390 + title.length * 84}" font-family="${input.fontFamily}" font-size="34" font-weight="460" fill="${input.text}" opacity="0.76">${tspans(body, 390 + title.length * 84, 43)}</text>
+    ${callout.length ? `<text x="88" y="1020" font-family="${input.fontFamily}" font-size="28" fill="${input.text}">${tspans(callout, 1020, 35)}</text>` : ""}
     <text x="88" y="1110" font-family="${input.fontFamily}" font-size="21" font-weight="760" letter-spacing="2.2" fill="${input.accent}">FAIRE DÉFILER →</text>`;
 }
 
-function insightTextLines(input: { readonly title: string; readonly body: string; readonly callout: string | null }) {
+function insightTextLines(input: { readonly title: string; readonly body: string; readonly callout: string | null }, strictText = false) {
+  const wrap = strictText ? wrapComplete : wrapText;
   return {
     title: wrap(input.title, 24, 4),
     focus: wrap(input.callout ?? input.body, 29, 5),
-    body: wrap(input.body, 45, 3),
+    body: input.callout ? wrap(input.body, 45, 3) : [],
   };
 }
 
 function renderInsight(input: Parameters<typeof renderLayoutContent>[0]): string {
-  const { title, focus: focusLines, body } = insightTextLines(input.input);
+  const { title, focus: focusLines, body } = insightTextLines(input.input, input.strictText);
   const showBody = Boolean(input.input.callout);
+  const focusBottom = 410 + title.length * 68 + Math.max(260, 96 + focusLines.length * 52);
+  if (input.strictText && focusBottom > (showBody ? 1010 : 1160)) throw new Error("CONTENT_MEDIA_TEXT_OVERFLOW");
   return `
     ${renderKicker(input, 205)}
     <text x="88" y="290" font-family="${input.fontFamily}" font-size="62" font-weight="790" fill="${input.text}">${tspans(title, 290, 68)}</text>
@@ -272,75 +284,102 @@ function renderInsight(input: Parameters<typeof renderLayoutContent>[0]): string
 }
 
 function renderChecklist(input: Parameters<typeof renderLayoutContent>[0]): string {
-  const title = wrap(input.input.title, 24, 3);
-  const items = contentItems(input.input.items, input.input.body, 4);
-  const startY = 430;
-  const rowHeight = Math.min(172, Math.floor(650 / Math.max(items.length, 1)));
-  const rows = items.map((item, index) => {
-    const y = startY + index * (rowHeight + 14);
-    const text = wrap(item.text, 48, 2);
-    return `<rect x="88" y="${y}" width="904" height="${rowHeight}" rx="24" fill="${input.primary}" opacity="0.055"/>
-      <circle cx="143" cy="${y + rowHeight / 2}" r="27" fill="${input.accent}"/>
-      <path d="M130 ${y + rowHeight / 2}l9 10 19-23" fill="none" stroke="${input.primary}" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
-      <text x="198" y="${y + 50}" font-family="${input.fontFamily}" font-size="25" font-weight="780" fill="${input.text}">${escapeText(item.label)}</text>
-      <text x="198" y="${y + 91}" font-family="${input.fontFamily}" font-size="28" font-weight="440" fill="${input.text}" opacity="0.72">${tspans(text, y + 91, 34, 198)}</text>`;
-  }).join("");
-  return `${renderKicker(input, 205)}<text x="88" y="290" font-family="${input.fontFamily}" font-size="62" font-weight="790" fill="${input.text}">${tspans(title, 290, 68)}</text>${rows}`;
+  return renderEditorialRows(input);
+}
+
+/** Content-sized rows preserve the full explanation instead of clipping to card slots. */
+function renderEditorialRows(input: Parameters<typeof renderLayoutContent>[0]): string {
+  const title = layoutWrap(input, input.input.title, 24, 3);
+  const intro = layoutWrap(input, input.input.body, 54, 4);
+  const callout = input.input.callout ? layoutWrap(input, input.input.callout, 54, 2) : [];
+  let y = 290 + (title.length - 1) * 68 + 60;
+  const introduction = `<text x="88" y="${y}" font-family="${input.fontFamily}" font-size="28" fill="${input.text}">${tspans(intro, y, 35)}</text>`;
+  y += (intro.length - 1) * 35 + 62;
+  const rows: string[] = [];
+  for (const item of input.input.items) {
+    const label = layoutWrap(input, item.label, 50, 2);
+    const text = layoutWrap(input, item.text, 52, 5);
+    const textY = y + label.length * 30 + 15;
+    const bottom = textY + (text.length - 1) * 34 + 24;
+    if (bottom > (callout.length ? 1050 : 1130)) throw new Error("CONTENT_MEDIA_TEXT_OVERFLOW");
+    rows.push(`<line x1="88" y1="${y - 22}" x2="992" y2="${y - 22}" stroke="${input.primary}" opacity="0.16"/>
+      <text x="88" y="${y}" font-family="${input.fontFamily}" font-size="26" font-weight="760" fill="${input.text}">${tspans(label, y, 30)}</text>
+      <text x="88" y="${textY}" font-family="${input.fontFamily}" font-size="28" fill="${input.text}">${tspans(text, textY, 34)}</text>`);
+    y = bottom + 30;
+  }
+  if (y > (callout.length ? 1080 : 1160)) throw new Error("CONTENT_MEDIA_TEXT_OVERFLOW");
+  return `${renderKicker(input, 205)}<text x="88" y="290" font-family="${input.fontFamily}" font-size="62" font-weight="790" fill="${input.text}">${tspans(title, 290, 68)}</text>
+    ${introduction}${rows.join("")}
+    ${callout.length ? `<text x="88" y="1100" font-family="${input.fontFamily}" font-size="28" font-weight="700" fill="${input.text}">${tspans(callout, 1100, 35)}</text>` : ""}`;
 }
 
 function renderFramework(input: Parameters<typeof renderLayoutContent>[0]): string {
-  const title = wrap(input.input.title, 24, 3);
-  const items = contentItems(input.input.items, input.input.body, 4);
-  const cards = items.map((item, index) => {
-    const column = index % 2;
-    const row = Math.floor(index / 2);
-    const x = 88 + column * 464;
-    const y = 460 + row * 310;
-    const text = wrap(item.text, 24, 4);
-    return `<rect x="${x}" y="${y}" width="440" height="280" rx="30" fill="${index === 0 ? input.primary : input.accent}" opacity="${index === 0 ? 1 : 0.12}"/>
-      <text x="${x + 32}" y="${y + 54}" font-family="${input.fontFamily}" font-size="21" font-weight="780" letter-spacing="1.4" fill="${index === 0 ? input.background : input.primary}">${escapeText(item.label.toUpperCase())}</text>
-      <text x="${x + 32}" y="${y + 112}" font-family="${input.fontFamily}" font-size="29" font-weight="520" fill="${index === 0 ? input.background : input.text}">${tspans(text, y + 112, 36, x + 32)}</text>`;
-  }).join("");
-  return `${renderKicker(input, 205)}<text x="88" y="290" font-family="${input.fontFamily}" font-size="62" font-weight="790" fill="${input.text}">${tspans(title, 290, 68)}</text>${cards}`;
+  const title = layoutWrap(input, input.input.title, 24, 3);
+  const intro = layoutWrap(input, input.input.body, 54, 4);
+  const introY = 290 + (title.length - 1) * 68 + 60;
+  let y = introY + (intro.length - 1) * 35 + 48;
+  const items = input.input.items;
+  const cards: string[] = [];
+  for (let offset = 0; offset < items.length; offset += 2) {
+    const row = items.slice(offset, offset + 2).map((item) => ({
+      label: layoutWrap(input, item.label, 23, 2), text: layoutWrap(input, item.text, 24, 5),
+    }));
+    const height = Math.max(...row.map((item) => 78 + item.label.length * 28 + item.text.length * 36));
+    if (y + height > (input.input.callout ? 1060 : 1150)) throw new Error("CONTENT_MEDIA_TEXT_OVERFLOW");
+    row.forEach((item, column) => {
+      const x = 88 + column * 464;
+      const textY = y + 46 + item.label.length * 28 + 24;
+      cards.push(`<rect x="${x}" y="${y}" width="440" height="${height}" rx="18" fill="${input.accent}" opacity="0.12"/>
+        <text x="${x + 28}" y="${y + 42}" font-family="${input.fontFamily}" font-size="24" font-weight="780" fill="${input.text}">${tspans(item.label, y + 42, 28, x + 28)}</text>
+        <text x="${x + 28}" y="${textY}" font-family="${input.fontFamily}" font-size="28" fill="${input.text}">${tspans(item.text, textY, 36, x + 28)}</text>`);
+    });
+    y += height + 24;
+  }
+  if (y > (input.input.callout ? 1084 : 1174)) throw new Error("CONTENT_MEDIA_TEXT_OVERFLOW");
+  return `${renderKicker(input, 205)}<text x="88" y="290" font-family="${input.fontFamily}" font-size="62" font-weight="790" fill="${input.text}">${tspans(title, 290, 68)}</text>
+    <text x="88" y="${introY}" font-family="${input.fontFamily}" font-size="28" fill="${input.text}">${tspans(intro, introY, 35)}</text>${cards.join("")}${renderRowCallout(input)}`;
+}
+
+function renderRowCallout(input: Parameters<typeof renderLayoutContent>[0]): string {
+  if (!input.input.callout) return "";
+  const lines = layoutWrap(input, input.input.callout, 54, 2);
+  return `<text x="88" y="1100" font-family="${input.fontFamily}" font-size="28" font-weight="700" fill="${input.text}">${tspans(lines, 1100, 35)}</text>`;
 }
 
 function renderComparison(input: Parameters<typeof renderLayoutContent>[0]): string {
-  const title = wrap(input.input.title, 24, 3);
-  const items = contentItems(input.input.items, input.input.body, 2);
-  const cards = [items[0] ?? { label: "AVANT", text: input.input.body }, items[1] ?? { label: "APRÈS", text: input.input.callout ?? input.input.body }].map((item, index) => {
-    const x = index === 0 ? 88 : 550;
-    const fill = index === 0 ? input.primary : input.accent;
-    const foreground = index === 0 ? input.background : escapeAttribute(bestContrastColor(input.accent, input.primary, input.background));
-    const text = wrap(item.text, 19, 7);
-    return `<rect x="${x}" y="470" width="442" height="570" rx="34" fill="${fill}"/>
-      <text x="${x + 34}" y="535" font-family="${input.fontFamily}" font-size="22" font-weight="790" letter-spacing="2" fill="${foreground}">${escapeText(item.label.toUpperCase())}</text>
-      <line x1="${x + 34}" y1="570" x2="${x + 408}" y2="570" stroke="${foreground}" stroke-width="2" opacity="0.24"/>
-      <text x="${x + 34}" y="640" font-family="${input.fontFamily}" font-size="34" font-weight="590" fill="${foreground}">${tspans(text, 640, 43, x + 34)}</text>`;
-  }).join("");
-  return `${renderKicker(input, 205)}<text x="88" y="290" font-family="${input.fontFamily}" font-size="62" font-weight="790" fill="${input.text}">${tspans(title, 290, 68)}</text>${cards}`;
+  return renderEditorialRows(input);
 }
 
 function renderProcess(input: Parameters<typeof renderLayoutContent>[0]): string {
-  const title = wrap(input.input.title, 24, 3);
-  const items = contentItems(input.input.items, input.input.body, 4);
-  const startY = 455;
-  const gap = Math.floor(600 / Math.max(items.length, 1));
-  const timeline = `<line x1="132" y1="${startY}" x2="132" y2="${startY + gap * Math.max(items.length - 1, 1)}" stroke="${input.primary}" stroke-width="5" opacity="0.15"/>`;
-  const rows = items.map((item, index) => {
-    const y = startY + index * gap;
-    const text = wrap(item.text, 48, 2);
-    return `<circle cx="132" cy="${y}" r="31" fill="${input.accent}"/><text x="132" y="${y + 9}" text-anchor="middle" font-family="${input.fontFamily}" font-size="24" font-weight="800" fill="${input.primary}">${index + 1}</text>
-      <text x="194" y="${y - 5}" font-family="${input.fontFamily}" font-size="27" font-weight="780" fill="${input.text}">${escapeText(item.label)}</text>
-      <text x="194" y="${y + 38}" font-family="${input.fontFamily}" font-size="27" font-weight="440" fill="${input.text}" opacity="0.7">${tspans(text, y + 38, 34, 194)}</text>`;
-  }).join("");
-  return `${renderKicker(input, 205)}<text x="88" y="290" font-family="${input.fontFamily}" font-size="62" font-weight="790" fill="${input.text}">${tspans(title, 290, 68)}</text>${timeline}${rows}`;
+  const title = layoutWrap(input, input.input.title, 24, 3);
+  const intro = layoutWrap(input, input.input.body, 54, 4);
+  const introY = 290 + (title.length - 1) * 68 + 60;
+  let y = introY + (intro.length - 1) * 35 + 70;
+  const rows: string[] = [];
+  for (const [index, item] of input.input.items.entries()) {
+    const label = layoutWrap(input, item.label, 42, 2);
+    const text = layoutWrap(input, item.text, 44, 5);
+    const textY = y + label.length * 32 + 12;
+    const bottom = textY + (text.length - 1) * 34 + 24;
+    if (bottom > (input.input.callout ? 1050 : 1130)) throw new Error("CONTENT_MEDIA_TEXT_OVERFLOW");
+    rows.push(`<circle cx="124" cy="${y - 8}" r="28" fill="${input.accent}"/><text x="124" y="${y}" text-anchor="middle" font-family="${input.fontFamily}" font-size="24" font-weight="800" fill="${input.primary}">${index + 1}</text>
+      <text x="182" y="${y}" font-family="${input.fontFamily}" font-size="27" font-weight="780" fill="${input.text}">${tspans(label, y, 32, 182)}</text>
+      <text x="182" y="${textY}" font-family="${input.fontFamily}" font-size="27" fill="${input.text}">${tspans(text, textY, 34, 182)}</text>`);
+    y = bottom + 38;
+  }
+  if (y > (input.input.callout ? 1088 : 1168)) throw new Error("CONTENT_MEDIA_TEXT_OVERFLOW");
+  return `${renderKicker(input, 205)}<text x="88" y="290" font-family="${input.fontFamily}" font-size="62" font-weight="790" fill="${input.text}">${tspans(title, 290, 68)}</text>
+    <text x="88" y="${introY}" font-family="${input.fontFamily}" font-size="28" fill="${input.text}">${tspans(intro, introY, 35)}</text>${rows.join("")}${renderRowCallout(input)}`;
 }
 
 function renderClosing(input: Parameters<typeof renderLayoutContent>[0]): string {
-  const title = wrap(input.input.title, 16, 5);
-  const body = wrap(input.input.body, 34, 5);
-  const callout = wrap(input.input.callout ?? "À vous de décider", 32, 2);
-  return `<text x="88" y="300" font-family="${input.fontFamily}" font-size="70" font-weight="800" fill="${input.text}">${tspans(title, 300, 76)}</text>
+  const title = layoutWrap(input, input.input.title, 16, 5);
+  const body = layoutWrap(input, input.input.body, 34, 5);
+  const callout = layoutWrap(input, input.input.callout ?? "À vous de décider", 32, 2);
+  if (input.strictText && input.input.items.length) throw new Error("CONTENT_MEDIA_TEXT_OVERFLOW");
+  const bodyBottom = 360 + title.length * 76 + (body.length - 1) * 43 + 18;
+  if (input.strictText && bodyBottom > 865) throw new Error("CONTENT_MEDIA_TEXT_OVERFLOW");
+  return `${renderKicker(input, 185)}<text x="88" y="300" font-family="${input.fontFamily}" font-size="70" font-weight="800" fill="${input.text}">${tspans(title, 300, 76)}</text>
     <text x="88" y="${360 + title.length * 76}" font-family="${input.fontFamily}" font-size="34" font-weight="480" fill="${input.text}" opacity="0.78">${tspans(body, 360 + title.length * 76, 43)}</text>
     <rect x="88" y="900" width="760" height="142" rx="30" fill="${input.background}" opacity="0.94"/>
     <text x="128" y="958" font-family="${input.fontFamily}" font-size="29" font-weight="760" fill="${input.primary}">${tspans(callout, 958, 37, 128)}</text>
@@ -349,13 +388,8 @@ function renderClosing(input: Parameters<typeof renderLayoutContent>[0]): string
 
 function renderKicker(input: Parameters<typeof renderLayoutContent>[0], y: number): string {
   if (!input.input.kicker) return "";
+  layoutWrap(input, input.input.kicker, 45, 1);
   return `<text x="88" y="${y}" font-family="${input.fontFamily}" font-size="20" font-weight="780" letter-spacing="2" fill="${input.text}">${escapeText(input.input.kicker.toUpperCase())}</text>`;
-}
-
-function contentItems(items: readonly CarouselItem[], body: string, maximum: number): readonly CarouselItem[] {
-  if (items.length) return items.slice(0, maximum);
-  const sentences = body.split(/(?<=[.!?])\s+/).map((value) => value.trim()).filter(Boolean).slice(0, maximum);
-  return (sentences.length ? sentences : [body]).map((text, index) => ({ label: `Point ${index + 1}`, text }));
 }
 
 function resolveSlideLayout(slide: ContentMediaPlan["slides"][number], index: number, total: number): CarouselLayout {
@@ -365,17 +399,31 @@ function resolveSlideLayout(slide: ContentMediaPlan["slides"][number], index: nu
   if (slide.layout === "insight" && slide.items?.length) return "checklist";
   if (slide.layout && slide.layout !== "auto" && slide.layout !== "cover" && slide.layout !== "closing") return slide.layout;
   const count = slide.items?.length ?? 0;
+  if (count === 1) return "checklist";
   if (count === 2) return "comparison";
   if (count >= 3) return index % 2 === 0 ? "framework" : "process";
   if (slide.callout) return "insight";
   return index % 2 === 0 ? "checklist" : "insight";
 }
 
+function layoutWrap(input: { readonly strictText: boolean }, value: string, maxCharacters: number, maxLines: number) {
+  return input.strictText ? wrapComplete(value, maxCharacters, maxLines) : wrapText(value, maxCharacters, maxLines);
+}
+
+function wrapComplete(value: string, maxCharacters: number, maxLines: number): readonly string[] {
+  const lines = wrapText(value, maxCharacters, maxLines);
+  const original = value.trim().replace(/\s+/g, " ");
+  if (lines.join(" ") !== original || lines.some((line) => line.length > maxCharacters)) {
+    throw new Error("CONTENT_MEDIA_TEXT_OVERFLOW");
+  }
+  return lines;
+}
+
 function mediaResult(bytes: Uint8Array, mimeType: "image/png", filename: string, manifest: Record<string, unknown>, pageCount: number) {
   return { bytes, mimeType, filename, width: WIDTH, height: HEIGHT, pageCount, durationSeconds: null, manifest };
 }
 
-function wrap(value: string, maxCharacters: number, maxLines: number): readonly string[] {
+function wrapText(value: string, maxCharacters: number, maxLines: number): readonly string[] {
   const words = value.trim().replace(/\s+/g, " ").split(" ").filter(Boolean);
   const lines: string[] = [];
   for (const word of words) {

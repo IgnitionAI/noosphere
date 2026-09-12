@@ -126,7 +126,7 @@ describe("AUT-101 daily LinkedIn editorial loop", () => {
       userId: null,
       assetId: "asset-blocked",
       operation: "asset.improve",
-      requestKey: "autopilot:repair:asset-blocked:linkedin-editorial-v3:v1",
+      requestKey: "autopilot:repair:asset-blocked:linkedin-editorial-v4:v1",
       instruction: expect.stringContaining("ungrounded_statement"),
     })]);
   });

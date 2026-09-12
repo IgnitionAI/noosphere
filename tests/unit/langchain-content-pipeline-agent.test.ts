@@ -3,8 +3,39 @@ import { describe, expect, test } from "bun:test";
 import { LangChainContentPipelineAgent } from "@outbound/infrastructure/content/langchain-content-pipeline-agent";
 import type { ContentGenerationContext } from "@outbound/application/content/content-generation";
 import { DEFAULT_CONTENT_BRAND_KIT } from "@outbound/domain/content/content-brand-kit";
+import type { WorkspaceStructuredModel } from "@outbound/infrastructure/ai/workspace-structured-model";
 
 describe("LangChainContentPipelineAgent", () => {
+  test("delivers adapted skills to the production model roles without changing the factual auditor", async () => {
+    const calls: Array<{ capability: string; systemPrompt: string; payload: unknown }> = [];
+    const routedModel = {
+      async invoke(input: { capability: string; systemPrompt: string; payload: unknown }) {
+        calls.push(input);
+        const output = input.capability === "content_brief" ? brief()
+          : input.capability === "content_writer" ? draft()
+          : input.capability === "content_audit" ? audit() : critique();
+        return { output, metadata: { provider: "codex-cli", model: "gpt-5.6-luna" } };
+      },
+    } as unknown as WorkspaceStructuredModel;
+    const context = pipelineContext();
+    const agent = new LangChainContentPipelineAgent({}, undefined, undefined, undefined, routedModel);
+    const b = await agent.buildBrief(context);
+    const d = await agent.write({ ...context, brief: b });
+    const a = await agent.audit({ ...context, brief: b, draft: d });
+    await agent.critique({ ...context, brief: b, draft: d, audit: a });
+    expect(calls.map(({ systemPrompt }) => ({
+      strategy: systemPrompt.includes("# Content strategy"),
+      brand: systemPrompt.includes("# Brand and creative review"),
+    }))).toEqual([
+      { strategy: true, brand: false }, { strategy: true, brand: true },
+      { strategy: false, brand: false }, { strategy: false, brand: true },
+    ]);
+    for (const { systemPrompt, payload } of calls) {
+      expect(systemPrompt).not.toMatch(/MMIND|Hartmut|360Brew|Dusty Rose/);
+      expect(payload).toMatchObject({ brandKit: context.brandKit });
+    }
+  });
+
   test("passes the versioned offer and buyer context to every editorial role", async () => {
     const businessContext = {
       offer: { versionId: "offer-v1", name: "Assistant documentaire", category: "software", valueProposition: "Retrouver une procédure autorisée", targetAudience: "Support", constraints: ["Pas de réponse hors périmètre"], objections: [] },
@@ -53,10 +84,10 @@ describe("LangChainContentPipelineAgent", () => {
       { role: "critic", model: "k3", effort: "max" },
     ]);
     expect(recorded.map(({ purpose, model, promptVersion, contentGenerationRunId }) => ({ purpose, model, promptVersion, contentGenerationRunId }))).toEqual([
-      { purpose: "content_brief", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-brief-v5", contentGenerationRunId: context.run.id },
-      { purpose: "content_writer", model: "k3", promptVersion: "noosphere-content-writer-v8", contentGenerationRunId: context.run.id },
+      { purpose: "content_brief", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-brief-v6", contentGenerationRunId: context.run.id },
+      { purpose: "content_writer", model: "k3", promptVersion: "noosphere-content-writer-v9", contentGenerationRunId: context.run.id },
       { purpose: "content_audit", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-audit-v6", contentGenerationRunId: context.run.id },
-      { purpose: "content_critic", model: "k3", promptVersion: "noosphere-content-critic-v6", contentGenerationRunId: context.run.id },
+      { purpose: "content_critic", model: "k3", promptVersion: "noosphere-content-critic-v7", contentGenerationRunId: context.run.id },
     ]);
   });
 });

@@ -3,7 +3,6 @@ import { requireWorkspaceAi, type WorkspaceAiAvailability } from "@outbound/appl
 import type { JobQueue, LeasedJob } from "@outbound/application/jobs/job-queue";
 import type { EditorialStrategySnapshot } from "@outbound/domain/content/editorial-strategy";
 import type { ContentBrandKitSnapshot, LinkedinContentFormat } from "@outbound/domain/content/content-brand-kit";
-import { selectNextContentFormat } from "@outbound/domain/content/content-brand-kit";
 import type { EditorialStrategyGrounding } from "@outbound/application/content/editorial-strategy";
 import type { StoredContentMedia } from "@outbound/application/content/content-media";
 import { ContentMediaProducer } from "@outbound/application/content/content-media";
@@ -154,8 +153,7 @@ export class ContentGenerationJobProcessor {
       await this.repository.startRun({ workspaceId: job.workspaceId, runId: payload.runId, now: this.now() });
 
       if (stageAtOrBefore(context.run.stage, "brief")) {
-        const proposedBrief = await this.agent.buildBrief(context);
-        const brief = { ...proposedBrief, format: selectNextContentFormat(context.brandKit, context.recentFormats) };
+        const brief = await this.agent.buildBrief(context);
         assertBriefGrounded(brief, context);
         await this.repository.saveBrief({ workspaceId: job.workspaceId, runId: payload.runId, brief, now: this.now() });
         context = { ...context, brief, run: { ...context.run, stage: "writer" } };
@@ -193,10 +191,14 @@ export class ContentGenerationJobProcessor {
           availableEvidenceKeys: context.evidence.map((item) => item.key),
           recentBodies: context.recentBodies,
         });
+        let media: StoredContentMedia | null;
+        ({ readiness, media } = await this.#renderReadyDraft({ ...context, draft, brief: context.brief }, readiness));
+        let critiqueFeedbackHistory: readonly string[] = [];
         for (let repairAttempt = 1; repairAttempt <= 2 && !readiness.ready; repairAttempt += 1) {
           const critiqueFeedback = repairableCritiqueFeedback(critique, readiness);
           if (critiqueFeedback.length === 0) break;
-          draft = await writeGroundedDraft(this.agent, { ...context, brief: context.brief, draft }, critiqueFeedback);
+          critiqueFeedbackHistory = [...new Set([...critiqueFeedback, ...critiqueFeedbackHistory])];
+          draft = await writeGroundedDraft(this.agent, { ...context, brief: context.brief, draft }, critiqueFeedbackHistory);
           await this.repository.reviseDraftAfterCritique({ workspaceId: job.workspaceId, runId: payload.runId, draft, now: this.now() });
           audit = await this.agent.audit({ ...context, brief: context.brief, draft });
           for (let auditRepairAttempt = 1; auditRepairAttempt <= 2; auditRepairAttempt += 1) {
@@ -216,10 +218,8 @@ export class ContentGenerationJobProcessor {
             availableEvidenceKeys: context.evidence.map((item) => item.key),
             recentBodies: context.recentBodies,
           });
+          ({ readiness, media } = await this.#renderReadyDraft({ ...context, draft, brief: context.brief }, readiness));
         }
-        const media = readiness.ready && context.brief.format !== "linkedin_text"
-          ? await this.#produceMedia({ ...context, draft, brief: context.brief })
-          : null;
         await this.repository.completeRun({ workspaceId: job.workspaceId, runId: payload.runId, critique, readiness, media, now: this.now() });
       }
       await this.queue.acknowledge(job.id, job.lockedBy, this.now());
@@ -229,6 +229,19 @@ export class ContentGenerationJobProcessor {
         await this.repository.failRun({ workspaceId: job.workspaceId, runId: payload.runId, code: "CONTENT_GENERATION_FAILED", message: error instanceof Error ? error.message : String(error), now: this.now() });
       }
       throw error;
+    }
+  }
+
+  async #renderReadyDraft(
+    context: ContentGenerationContext & { readonly brief: ContentBriefSnapshot; readonly draft: ContentDraftSnapshot },
+    readiness: ReturnType<typeof evaluateContentReadiness>,
+  ): Promise<{ readiness: ReturnType<typeof evaluateContentReadiness>; media: StoredContentMedia | null }> {
+    if (!readiness.ready || context.brief.format === "linkedin_text") return { readiness, media: null };
+    try {
+      return { readiness, media: await this.#produceMedia(context) };
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== "CONTENT_MEDIA_TEXT_OVERFLOW") throw error;
+      return { readiness: { ready: false, blockers: ["media_text_overflow"] }, media: null };
     }
   }
 

@@ -41,6 +41,7 @@ COPY --from=build /app/node_modules/@img/sharp-linux-x64 ./node_modules/@img/sha
 COPY --from=build /app/node_modules/@img/sharp-libvips-linux-x64 ./node_modules/@img/sharp-libvips-linux-x64
 
 COPY --from=build /app/dist/backend ./dist/backend
+COPY --from=build /app/packages/infrastructure/src/content/skills/LICENSE.upstream ./licenses/ai-marketing-team.txt
 COPY --from=build /app/dist/migrate ./dist/migrate
 COPY --from=build /app/dist/bootstrap ./dist/bootstrap
 COPY --from=build /app/dist/media-canary ./dist/media-canary

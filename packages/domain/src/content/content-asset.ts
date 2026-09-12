@@ -3,7 +3,7 @@ import type { LinkedinContentFormat } from "@outbound/domain/content/content-bra
 export const contentGenerationStages = ["brief", "writer", "audit", "critic", "completed"] as const;
 export type ContentGenerationStage = (typeof contentGenerationStages)[number];
 
-export const CONTENT_EDITORIAL_POLICY_VERSION = "linkedin-editorial-v3";
+export const CONTENT_EDITORIAL_POLICY_VERSION = "linkedin-editorial-v4";
 
 export const editorialQualityCriteria = ["audienceRelevance", "readerValue", "coherence", "sourceAttribution", "ctaTruthfulness", "brandVoice", "distinctness"] as const;
 export type ContentQualityAssessment = Readonly<Record<(typeof editorialQualityCriteria)[number], {
@@ -189,12 +189,14 @@ function contentPublicText(draft: ContentDraftSnapshot, omitStructuralNumbers = 
   const slideTitles = omitStructuralNumbers
     ? stripOrderedListMarkers(plan.slides.map((slide) => slide.title))
     : plan.slides.map((slide) => slide.title);
+  const kickers = plan.slides.map((slide) => slide.kicker ?? "");
+  const slideKickers = omitStructuralNumbers ? stripSequenceKickers(kickers) : kickers;
   return [
     draft.body,
     plan.title,
     plan.subtitle,
     ...plan.slides.flatMap((slide, index) => [
-      slide.kicker,
+      slideKickers[index],
       slideTitles[index],
       slide.body,
       slide.callout,
@@ -295,6 +297,26 @@ function numberTokens(value: string): readonly string[] {
   // not a measured outcome. Numbers inside each list item still require evidence.
   const prose = stripOrderedListMarkers(value.replace(/https?:\/\/[^\s<>()[\]{}]+/g, "").split("\n")).join("\n");
   return [...prose.matchAll(/\b\d+(?:[.,]\d+)?(?:\s?%|\s?[kKmM€$])?\b/g)].map((match) => match[0]!.replace(/\s/g, "").toLowerCase());
+}
+
+function stripSequenceKickers(values: readonly string[]): readonly string[] {
+  // Only a complete, ordered sequence of standalone navigation labels is structural.
+  // Prose, quantities, percentages and numbers in the rest of the slide stay audited.
+  const groups = new Map<string, Array<{ index: number; ordinal: number }>>();
+  values.forEach((value, index) => {
+    const match = value.trim().match(/^(branche|branch|étape|step|phase|partie|part)\s+([1-9]\d?)$/i);
+    if (!match) return;
+    const label = match[1]!.toLocaleLowerCase("fr-FR");
+    const group = groups.get(label) ?? [];
+    group.push({ index, ordinal: Number(match[2]) });
+    groups.set(label, group);
+  });
+  const result = [...values];
+  for (const [label, group] of groups) {
+    if (group.length < 2 || !group.every((entry, index) => entry.ordinal === index + 1)) continue;
+    for (const entry of group) result[entry.index] = label;
+  }
+  return result;
 }
 
 function stripOrderedListMarkers(values: readonly string[]): readonly string[] {

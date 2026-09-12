@@ -31,8 +31,46 @@ describe("CNT-101 grounded content pipeline", () => {
     expect(selectNextContentFormat(DEFAULT_CONTENT_BRAND_KIT, ["linkedin_text", "linkedin_text", "linkedin_image"])).toBe("linkedin_document");
     expect(selectNextContentFormat({ ...DEFAULT_CONTENT_BRAND_KIT, enabledFormats: ["linkedin_image"], weeklyMix: { linkedin_text: 0, linkedin_image: 7, linkedin_document: 0, linkedin_video: 0 } }, [])).toBe("linkedin_image");
   });
+  test.each([true, false])("preserves the editorial format when enabled and rejects it otherwise (enabled: %s)", async (enabled) => {
+    const original = pipelineContext("writer");
+    const context = { ...original, run: { ...original.run, stage: "brief" as const },
+      brandKit: { ...DEFAULT_CONTENT_BRAND_KIT, enabledFormats: enabled ? ["linkedin_text", "linkedin_document"] : ["linkedin_document"], weeklyMix: { linkedin_text: 1, linkedin_image: 0, linkedin_document: 3, linkedin_video: 0 } },
+      recentFormats: ["linkedin_text", "linkedin_text"],
+    };
+    const saved: unknown[] = [];
+    const received: unknown[] = [];
+    const repository = { async loadContext() { return context; }, async startRun() {},
+      async saveBrief(input: { brief: unknown }) { saved.push(input.brief); },
+      async saveDraft() {}, async saveAudit() {}, async completeRun() {}, async failRun() {},
+    } as unknown as ContentGenerationRepository;
+    const processor = new ContentGenerationJobProcessor(repository, {
+      async buildBrief() { return brief(); },
+      async write(input) { received.push(input.brief); return draft(); },
+      async audit() { return audit(); }, async critique() { return critique(); },
+    }, { async acknowledge() {} } as unknown as JobQueue);
+    const processing = processor.process(job(context.run.workspaceId, context.run.id));
+    if (enabled) await processing;
+    else await expect(processing).rejects.toThrow("CONTENT_BRIEF_FORMAT_DISABLED");
+    expect(saved).toEqual(enabled ? [brief()] : []);
+    expect(received).toEqual(enabled ? [brief()] : []);
+  });
   test("rejects a number that is absent from the sourced claim ledger", () => {
     expect(() => assertGroundedContentDraft({ ...draft(), body: `${draft().body} 42% des équipes y arrivent.` }, ["proof:1"])).toThrow("CONTENT_DRAFT_UNSOURCED_NUMBER");
+  });
+  test.each([
+    { name: "ordered branch labels", labels: ["BRANCHE 1", "BRANCHE 2"], extra: "", valid: true },
+    { name: "ordered step labels", labels: ["Étape 1", "Étape 2"], extra: "", valid: true },
+    { name: "skipped branch", labels: ["BRANCHE 1", "BRANCHE 3"], extra: "", valid: false },
+    { name: "percent in a label", labels: ["BRANCHE 1%", "BRANCHE 2"], extra: "", valid: false },
+    { name: "unrelated labels", labels: ["CLIENT 1", "CLIENT 2"], extra: "", valid: false },
+    { name: "metric beside valid labels", labels: ["BRANCHE 1", "BRANCHE 2"], extra: "42% de réponses correctes.", valid: false },
+  ])("distinguishes carousel navigation from claims: $name", ({ labels, extra, valid }) => {
+    const candidate = { ...draft(), mediaPlan: { format: "linkedin_document" as const, visualTone: "editorial" as const,
+      title: "Choisir le contrôle", subtitle: null, altText: "Une comparaison", scenes: [],
+      slides: labels.map((kicker) => ({ title: "Une observation", kicker, body: "Examiner la procédure.", items: [{ label: "Résultat", text: extra }] })),
+    } };
+    if (valid) expect(() => assertGroundedContentDraft(candidate, ["proof:1"])).not.toThrow();
+    else expect(() => assertGroundedContentDraft(candidate, ["proof:1"])).toThrow("CONTENT_DRAFT_UNSOURCED_NUMBER");
   });
 
   test("rejects a factual ledger detached from the actual post", () => {
@@ -363,6 +401,73 @@ describe("CNT-101 grounded content pipeline", () => {
     expect(feedback[1]).toEqual([...feedback[0]!, "CONTENT_DRAFT_SCENARIO_INVALID"]);
     expect(saved).toEqual(stillInvalid ? [] : [repaired]);
     expect(audits).toBe(stillInvalid ? 1 : 2);
+  });
+
+  test("retains corrected attribution feedback when a later critique requests a better demonstration", async () => {
+    const base = pipelineContext("audit");
+    const context = { ...base, run: { ...base.run, stage: "critic" as const }, audit: audit() };
+    const feedback: Array<readonly string[]> = [];
+    let critiques = 0;
+    const repository = { async loadContext() { return context; }, async startRun() {},
+      async reviseDraftAfterCritique() {}, async saveAudit() {}, async completeRun() {},
+    } as unknown as ContentGenerationRepository;
+    const processor = new ContentGenerationJobProcessor(repository, {
+      async buildBrief() { throw new Error("must not replay"); },
+      async write(input) { feedback.push(input.validationFeedback ?? []); return draft(); },
+      async audit() { return audit(); },
+      async critique() {
+        critiques++;
+        return critiques <= 2 ? { ...critique(), issues: [{ severity: "blocker" as const,
+          code: critiques === 1 ? "missing_source_attribution" : "missing_demonstration",
+          message: critiques === 1 ? "Keep a visible source attribution." : "Show the discriminating observation." }] } : critique();
+      },
+    }, { async acknowledge() {} } as unknown as JobQueue);
+    await processor.process(job(context.run.workspaceId, context.run.id));
+    expect(feedback).toHaveLength(2);
+    expect(feedback[1]).toEqual(expect.arrayContaining(feedback[0]!));
+    expect(feedback[1]!.some((item) => item.includes("missing_demonstration"))).toBe(true);
+    expect(critiques).toBe(3);
+  });
+
+  test.each(["repaired", "persistent", "storage"])("handles media overflow with bounded audited repairs: %s", async (outcome) => {
+    const original = pipelineContext("audit");
+    const candidate = { ...draft(), mediaPlan: { format: "linkedin_document" as const, visualTone: "editorial" as const,
+      title: "Retrouver une preuve", subtitle: null, altText: "Examiner les preuves", scenes: [],
+      slides: Array.from({ length: 3 }, () => ({ title: "Retrouver une preuve", body: "Examiner les preuves disponibles." })),
+    } };
+    const context = { ...original, run: { ...original.run, stage: "critic" as const },
+      brief: { ...brief(), format: "linkedin_document" as const }, draft: candidate, audit: audit() };
+    const calls: string[] = [];
+    const feedback: unknown[] = [];
+    let completed: { readiness: { ready: boolean; blockers: readonly string[] }; media: unknown } | undefined;
+    const repository = { async loadContext() { return context; }, async startRun() {},
+      async reviseDraftAfterCritique() { calls.push("saved"); }, async saveAudit() {},
+      async completeRun(input: typeof completed) { completed = input; }, async failRun() {},
+    } as unknown as ContentGenerationRepository;
+    let renders = 0;
+    const producer = { async produce() {
+      calls.push("render"); renders++;
+      if (outcome === "storage") throw new Error("STORAGE_UNAVAILABLE");
+      if (renders === 1 || outcome === "persistent") throw new Error("CONTENT_MEDIA_TEXT_OVERFLOW");
+      return { marker: "complete media" };
+    } } as unknown as import("@outbound/application/content/content-media").ContentMediaProducer;
+    const processor = new ContentGenerationJobProcessor(repository, {
+      async buildBrief() { throw new Error("must not replay"); },
+      async write(input) { calls.push("write"); feedback.push(input.validationFeedback); return candidate; },
+      async audit() { calls.push("audit"); return audit(); },
+      async critique() { calls.push("critic"); return critique(); },
+    }, { async acknowledge() { calls.push("ack"); } } as unknown as JobQueue, () => new Date(), producer);
+    const processing = processor.process(job(context.run.workspaceId, context.run.id));
+    if (outcome === "storage") {
+      await expect(processing).rejects.toThrow("STORAGE_UNAVAILABLE");
+      expect(completed).toBeUndefined(); expect(feedback).toEqual([]); return;
+    }
+    await processing;
+    const repairs = outcome === "repaired" ? 1 : 2;
+    expect(feedback).toEqual(Array.from({ length: repairs }, () => ["CONTENT_READINESS_BLOCKER: media_text_overflow"]));
+    expect(calls).toEqual(["critic", "render", ...Array.from({ length: repairs }, () => ["write", "saved", "audit", "critic", "render"]).flat(), "ack"]);
+    expect(completed?.readiness).toEqual(outcome === "repaired" ? { ready: true, blockers: [] } : { ready: false, blockers: ["media_text_overflow"] });
+    expect(completed?.media).toEqual(outcome === "repaired" ? { marker: "complete media" } : null);
   });
 
   test("repairs a removable forbidden topic before the final critic", async () => {

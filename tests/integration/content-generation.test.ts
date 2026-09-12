@@ -179,34 +179,36 @@ databaseDescribe("CNT-101 durable content generation", () => {
 
     const autopilotRepository = new PostgresContentAutopilotRepository(database.db);
     expect(await autopilotRepository.get({ workspaceId })).toMatchObject({ readyAssets: 1, blockedAssets: 0 });
-    await database.client`alter table content_asset_versions disable trigger content_asset_versions_immutable_trg`;
-    await database.client`update content_asset_versions set readiness = readiness - 'policyVersion' where workspace_id = ${workspaceId} and id = ${asset!.latest!.id}`;
-    await database.client`alter table content_asset_versions enable trigger content_asset_versions_immutable_trg`;
-    try {
-      expect(await autopilotRepository.get({ workspaceId })).toMatchObject({ readyAssets: 0, blockedAssets: 1 });
-      const legacySummary = await operationalViews.getSummary(workspaceId);
-      expect(legacySummary.nextOutcomes.some((item) => item.id === `content:${asset!.id}`)).toBe(false);
-      const legacyActivity = await operationalViews.getActivity({ workspaceId, lens: "inbound" });
-      expect(legacyActivity.items).toContainEqual(expect.objectContaining({ id: `content-asset:${asset!.id}`, status: "attention" }));
-      expect((await repository.findAssetByIdea({ workspaceId, ideaId }))?.latest?.readiness).toMatchObject({ ready: false, blockers: ["editorial_policy_outdated"] });
-      expect(await autopilotRepository.listRepairCandidates({ workspaceId, strategyVersionId, limit: 10 })).toContainEqual({
-        assetId: asset!.id,
-        attempt: 1,
-        blockers: ["editorial_policy_outdated"],
-      });
-      await expect(publicationRepository.schedule({
-        workspaceId,
-        userId,
-        assetId: asset!.id,
-        requestKey: "publication:legacy-policy:must-not-send",
-        scheduledFor: new Date(now.getTime() + 5_000),
-        account: { provider: "unipile", providerAccountId: "linkedin-account-fixture", displayName: "Compte LinkedIn fixture", selectionVersion: now.toISOString(), observedAt: now.toISOString() },
-        now,
-      })).rejects.toThrow("CONTENT_ASSET_EDITORIAL_POLICY_OUTDATED");
-    } finally {
+    for (const legacyPolicy of [null, "linkedin-editorial-v3"]) {
       await database.client`alter table content_asset_versions disable trigger content_asset_versions_immutable_trg`;
-      await database.client`update content_asset_versions set readiness = jsonb_set(readiness, '{policyVersion}', to_jsonb(${'linkedin-editorial-v3'}::text), true) where workspace_id = ${workspaceId} and id = ${asset!.latest!.id}`;
+      await database.client`update content_asset_versions set readiness = case when ${legacyPolicy}::text is null then readiness - 'policyVersion' else jsonb_set(readiness, '{policyVersion}', to_jsonb(${legacyPolicy}::text), true) end where workspace_id = ${workspaceId} and id = ${asset!.latest!.id}`;
       await database.client`alter table content_asset_versions enable trigger content_asset_versions_immutable_trg`;
+      try {
+        expect(await autopilotRepository.get({ workspaceId })).toMatchObject({ readyAssets: 0, blockedAssets: 1 });
+        const legacySummary = await operationalViews.getSummary(workspaceId);
+        expect(legacySummary.nextOutcomes.some((item) => item.id === `content:${asset!.id}`)).toBe(false);
+        const legacyActivity = await operationalViews.getActivity({ workspaceId, lens: "inbound" });
+        expect(legacyActivity.items).toContainEqual(expect.objectContaining({ id: `content-asset:${asset!.id}`, status: "attention" }));
+        expect((await repository.findAssetByIdea({ workspaceId, ideaId }))?.latest?.readiness).toMatchObject({ ready: false, blockers: ["editorial_policy_outdated"] });
+        expect(await autopilotRepository.listRepairCandidates({ workspaceId, strategyVersionId, limit: 10 })).toContainEqual({
+          assetId: asset!.id,
+          attempt: 1,
+          blockers: ["editorial_policy_outdated"],
+        });
+        await expect(publicationRepository.schedule({
+          workspaceId,
+          userId,
+          assetId: asset!.id,
+          requestKey: "publication:legacy-policy:must-not-send",
+          scheduledFor: new Date(now.getTime() + 5_000),
+          account: { provider: "unipile", providerAccountId: "linkedin-account-fixture", displayName: "Compte LinkedIn fixture", selectionVersion: now.toISOString(), observedAt: now.toISOString() },
+          now,
+        })).rejects.toThrow("CONTENT_ASSET_EDITORIAL_POLICY_OUTDATED");
+      } finally {
+        await database.client`alter table content_asset_versions disable trigger content_asset_versions_immutable_trg`;
+        await database.client`update content_asset_versions set readiness = jsonb_set(readiness, '{policyVersion}', to_jsonb(${'linkedin-editorial-v4'}::text), true) where workspace_id = ${workspaceId} and id = ${asset!.latest!.id}`;
+        await database.client`alter table content_asset_versions enable trigger content_asset_versions_immutable_trg`;
+      }
     }
     const autopilotClock = { now: () => now };
     const autopilotPublishing = new ContentPublicationApplication(
@@ -327,14 +329,14 @@ databaseDescribe("CNT-101 durable content generation", () => {
 
     // Simulate a publication queued before a policy upgrade, retaining its immutable snapshot.
     await database.client`alter table content_asset_versions disable trigger content_asset_versions_immutable_trg`;
-    await database.client`update content_asset_versions set readiness = jsonb_set(readiness, '{policyVersion}', '"linkedin-editorial-v2"'::jsonb) where workspace_id = ${workspaceId} and id = ${scheduled.assetVersionId}`;
+    await database.client`update content_asset_versions set readiness = jsonb_set(readiness, '{policyVersion}', '"linkedin-editorial-v3"'::jsonb) where workspace_id = ${workspaceId} and id = ${scheduled.assetVersionId}`;
     await database.client`alter table content_asset_versions enable trigger content_asset_versions_immutable_trg`;
     try {
       await expect(publicationRepository.claimExecution({ workspaceId, publicationId: scheduled.id, currentAccountId: "linkedin-account-fixture", executionToken: crypto.randomUUID(), now: new Date(now.getTime() + 2_000) })).rejects.toThrow("CONTENT_ASSET_EDITORIAL_POLICY_OUTDATED");
       expect((await publicationRepository.find({ workspaceId, publicationId: scheduled.id }))?.status).toBe("scheduled");
     } finally {
       await database.client`alter table content_asset_versions disable trigger content_asset_versions_immutable_trg`;
-      await database.client`update content_asset_versions set readiness = jsonb_set(readiness, '{policyVersion}', '"linkedin-editorial-v3"'::jsonb) where workspace_id = ${workspaceId} and id = ${scheduled.assetVersionId}`;
+      await database.client`update content_asset_versions set readiness = jsonb_set(readiness, '{policyVersion}', '"linkedin-editorial-v4"'::jsonb) where workspace_id = ${workspaceId} and id = ${scheduled.assetVersionId}`;
       await database.client`alter table content_asset_versions enable trigger content_asset_versions_immutable_trg`;
     }
 
