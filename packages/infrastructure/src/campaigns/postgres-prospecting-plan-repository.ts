@@ -1,4 +1,6 @@
-import { and, asc, eq } from "drizzle-orm";
+import { offerVersions } from "@outbound/infrastructure/database/schema";
+import { researchOfferId } from "@outbound/infrastructure/gtm/research-acquisition-preparation";
+import { and, asc, eq, sql } from "drizzle-orm";
 import type { ChannelStrategy } from "@outbound/application/campaigns/channel-assessment";
 import {
   buildAutonomousSourcingFilters,
@@ -20,6 +22,7 @@ import {
   jobs,
   prospectDiscoveryRuns,
   prospectingPlans,
+  productResearchRuns,
   sequences,
   sequenceSteps,
 } from "@outbound/infrastructure/database/schema";
@@ -111,6 +114,7 @@ export class PostgresProspectingPlanRepository {
     evidence: readonly unknown[];
     decision: ChannelAssessmentDecision;
     completedAt: Date;
+    activationMode?: "manual";
   }) {
     return this.db.transaction(async (tx) => {
       const [assessment] = await tx
@@ -147,6 +151,7 @@ export class PostgresProspectingPlanRepository {
           channel: assessment.channel,
           strategy: input.strategy,
           now: input.completedAt,
+          ...((input.activationMode ?? assessment.activationMode) === "manual" ? { activationMode: "manual" as const } : {}),
         });
       }
       await finalizePlan(tx, input.workspaceId, assessment.planId, input.completedAt);
@@ -179,6 +184,22 @@ export class PostgresProspectingPlanRepository {
         )
         .returning({ planId: channelAssessments.planId });
       if (assessment) await finalizePlan(tx, input.workspaceId, assessment.planId, input.completedAt);
+    });
+  }
+
+  async prepareChannel(input: { workspaceId: string; planId: string; channel: ProspectingChannel; offerVersionId?: string; now: Date }) {
+    return this.db.transaction(async (tx) => {
+      const [assessment] = await tx.select().from(channelAssessments).where(and(
+        eq(channelAssessments.workspaceId, input.workspaceId), eq(channelAssessments.planId, input.planId),
+        eq(channelAssessments.channel, input.channel), eq(channelAssessments.status, "completed"),
+      )).limit(1);
+      if (!assessment) throw new Error("CHANNEL_ASSESSMENT_NOT_COMPLETED");
+      const strategy = assessment.strategy as ChannelStrategy;
+      if (typeof strategy.query !== "string" || !strategy.query.trim()) throw new Error("CHANNEL_ASSESSMENT_STRATEGY_REQUIRED");
+      const campaignId = await ensureChannelCampaign(tx, { ...input, assessmentId: assessment.id, strategy, activationMode: "manual" });
+      const [campaign] = await tx.select().from(campaigns).where(and(eq(campaigns.workspaceId, input.workspaceId), eq(campaigns.id, campaignId))).limit(1);
+      if (!campaign) throw new Error("CAMPAIGN_NOT_FOUND");
+      return campaign;
     });
   }
 
@@ -234,12 +255,13 @@ export class PostgresProspectingPlanRepository {
     return row;
   }
 
-  async restartAssessment(input: { workspaceId: string; assessmentId: string; now: Date }) {
+  async restartAssessment(input: { workspaceId: string; assessmentId: string; now: Date; activationMode?: "manual" }) {
     return this.db.transaction(async (tx) => {
       const [assessment] = await tx
         .update(channelAssessments)
         .set({
           status: "pending",
+          ...(input.activationMode ? { activationMode: input.activationMode } : {}),
           recommendation: null,
           score: null,
           strategy: {},
@@ -271,7 +293,14 @@ export class PostgresProspectingPlanRepository {
             eq(prospectingPlans.id, assessment.planId),
           ),
         );
-      return assessment;
+      const jobId = crypto.randomUUID();
+      await tx.insert(jobs).values({
+        id: jobId, workspaceId: input.workspaceId, type: "prospecting.channel.assess",
+        payload: { workspaceId: input.workspaceId, assessmentId: assessment.id, ...(assessment.activationMode ? { activationMode: assessment.activationMode } : {}) },
+        idempotencyKey: `${assessment.id}:retry:${jobId}`, correlationId: `prospecting-plan:${assessment.planId}`,
+        maxAttempts: 3, availableAt: input.now,
+      });
+      return { ...assessment, jobId };
     });
   }
 
@@ -378,10 +407,13 @@ async function ensureChannelCampaign(
     channel: ProspectingChannel;
     strategy: ChannelStrategy;
     now: Date;
+    activationMode?: "manual";
+    offerVersionId?: string;
   },
 ): Promise<string> {
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`${input.workspaceId}:${input.planId}:${input.channel}`}, 0))`);
   const [existing] = await tx
-    .select({ id: campaigns.id })
+    .select({ id: campaigns.id, offerVersionId: campaigns.offerVersionId })
     .from(campaigns)
     .where(
       and(
@@ -391,7 +423,10 @@ async function ensureChannelCampaign(
       ),
     )
     .limit(1);
-  if (existing) return existing.id;
+  if (existing) {
+    if (input.offerVersionId && input.offerVersionId !== existing.offerVersionId) throw new Error("CAMPAIGN_OFFER_VERSION_CONFLICT");
+    return existing.id;
+  }
   const [plan] = await tx
     .select({ icpVersionId: prospectingPlans.icpVersionId })
     .from(prospectingPlans)
@@ -404,7 +439,7 @@ async function ensureChannelCampaign(
     .limit(1);
   if (!plan) throw new Error("PROSPECTING_PLAN_NOT_FOUND");
   const [version] = await tx
-    .select({ name: icpVersions.name })
+    .select({ name: icpVersions.name, runId: icpVersions.runId })
     .from(icpVersions)
     .where(
       and(
@@ -414,17 +449,22 @@ async function ensureChannelCampaign(
     )
     .limit(1);
   if (!version) throw new Error("ICP_VERSION_NOT_FOUND");
+  const [researchRun] = version.runId ? await tx.select({ brief: productResearchRuns.brief }).from(productResearchRuns)
+    .where(and(eq(productResearchRuns.workspaceId, input.workspaceId), eq(productResearchRuns.id, version.runId))).limit(1) : [];
+  const inheritedMode = (researchRun?.brief as { campaignActivationMode?: string } | undefined)?.campaignActivationMode;
+  const activationMode = input.activationMode ?? (inheritedMode === "manual" ? "manual" : undefined);
   const campaignId = crypto.randomUUID();
   const sequenceId = crypto.randomUUID();
   const discoveryRunId = crypto.randomUUID();
   const sourcingFilters = buildAutonomousSourcingFilters(input.channel, input.strategy);
   const channelLabel = label(input.channel);
   // Channel campaigns are created by the autonomous prospecting plan. They
-  // must be ready to run without an approval queue; safety stops are enforced
+  // inherit a preparation-only research intent when present; safety stops are enforced
   // by the dispatcher (suppression, invalid identity, account and quota).
   const autopilotPolicy = {
     ...(await workspaceCampaignPolicy(tx, input.workspaceId, input.channel)),
     executionMode: "live" as const,
+    ...(activationMode ? { activationMode } : {}),
   };
   await tx.insert(sequences).values({
     id: sequenceId,
@@ -455,8 +495,16 @@ async function ensureChannelCampaign(
     createdBy: null,
     createdAt: input.now,
   });
+  const [researchOffer] = version.runId ? await tx.select({ id: offerVersions.id }).from(offerVersions).where(and(eq(offerVersions.workspaceId, input.workspaceId), eq(offerVersions.offerId, researchOfferId(input.workspaceId, version.runId)))).limit(1) : [];
+  const offerVersionId = input.offerVersionId ?? researchOffer?.id ?? null;
+  if (activationMode === "manual") {
+    const [offer] = offerVersionId ? await tx.select({ id: offerVersions.id }).from(offerVersions)
+      .where(and(eq(offerVersions.workspaceId, input.workspaceId), eq(offerVersions.id, offerVersionId))).limit(1) : [];
+    if (!offer) throw new Error("CAMPAIGN_OFFER_VERSION_REQUIRED");
+  }
   await tx.insert(campaigns).values({
     id: campaignId,
+    offerVersionId,
     workspaceId: input.workspaceId,
     icpVersionId: plan.icpVersionId,
     planId: input.planId,

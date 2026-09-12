@@ -20,6 +20,7 @@ __pycache__/
 !.env.example
 !deploy/.env.production.example
 !deploy/.env.quickstart.example
+.mcp-local/
 
 # Python
 __pycache__/

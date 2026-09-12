@@ -52,6 +52,8 @@ export class ModelRouter {
           deadlineAt: attemptDeadline,
           model: route.model,
           reasoningEffort: route.reasoningEffort,
+          ...(route.connectionId ? { connectionId: route.connectionId } : {}),
+          ...(route.connectionVersion ? { connectionVersion: route.connectionVersion } : {}),
         });
         return {
           ...result,

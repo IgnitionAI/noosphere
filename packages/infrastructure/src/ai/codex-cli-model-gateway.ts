@@ -34,6 +34,7 @@ export interface CodexCliModelGatewayOptions {
   readonly binaryPath?: string;
   readonly runner?: CodexProcessRunner;
   readonly maxOutputBytes?: number;
+  readonly isolatedService?: boolean;
   readonly now?: () => Date;
 }
 
@@ -44,6 +45,7 @@ export class CodexCliModelGateway implements ModelGateway {
   readonly #binaryPath: string;
   readonly #runner: CodexProcessRunner;
   readonly #maxOutputBytes: number;
+  readonly #isolatedService: boolean;
   readonly #now: () => Date;
 
   constructor(options: CodexCliModelGatewayOptions) {
@@ -51,6 +53,7 @@ export class CodexCliModelGateway implements ModelGateway {
     this.#binaryPath = required(options.binaryPath ?? "codex", "CODEX_BINARY_PATH");
     this.#runner = options.runner ?? new BunCodexProcessRunner();
     this.#maxOutputBytes = options.maxOutputBytes ?? DEFAULT_OUTPUT_LIMIT_BYTES;
+    this.#isolatedService = options.isolatedService ?? false;
     this.#now = options.now ?? (() => new Date());
   }
 
@@ -60,10 +63,11 @@ export class CodexCliModelGateway implements ModelGateway {
     const schemaPath = join(directory, "output-schema.json");
     const outputPath = join(directory, "last-message.json");
     try {
-      await writeFile(schemaPath, JSON.stringify(request.outputSchema), { encoding: "utf8", mode: 0o600 });
+      await writeFile(schemaPath, JSON.stringify(codexOutputSchema(request.outputSchema)), { encoding: "utf8", mode: 0o600 });
       const result = await this.#runner.run({
         command: buildCodexCommand({
           binaryPath: this.#binaryPath,
+          isolatedService: this.#isolatedService,
           model: request.model,
           reasoningEffort: request.reasoningEffort,
           schemaPath,
@@ -229,6 +233,7 @@ export class CodexAppServerModelDiscovery implements CodexModelDiscovery {
 }
 
 function buildCodexCommand(input: {
+  readonly isolatedService: boolean;
   readonly binaryPath: string;
   readonly model: string;
   readonly reasoningEffort: AiReasoningEffort;
@@ -242,6 +247,11 @@ function buildCodexCommand(input: {
     "--ephemeral",
     "--ignore-user-config",
     "--ignore-rules",
+    ...(input.isolatedService ? [
+      "--config", "project_doc_max_bytes=0",
+      "--config", 'web_search="disabled"',
+      ...["shell_tool", "unified_exec", "plugins", "remote_plugin", "apps", "hooks", "skill_search", "skill_mcp_dependency_install", "view_image", "browser_use", "browser_use_external", "computer_use", "multi_agent", "multi_agent_v2", "code_mode", "code_mode_host", "workspace_dependencies", "memories", "image_generation"].flatMap((feature) => ["--config", `features.${feature}=false`]),
+    ] : []),
     "--model", input.model,
     "--config", `model_reasoning_effort=${JSON.stringify(input.reasoningEffort)}`,
     "--sandbox", "read-only",
@@ -281,6 +291,9 @@ function classifyCodexFailure(stderr: string, stdout: string): ModelGatewayError
     /(?:you(?:'ve| have) reached your usage limit|usage limit (?:is )?(?:exhausted|reached)|rate_limit_exceeded|quota (?:is )?(?:exhausted|exceeded)|too many requests|insufficient_quota)/.test(detail)
   ) {
     return new ModelGatewayError("AI_PROVIDER_QUOTA_EXHAUSTED", "codex-cli", "Codex usage limit is exhausted", true, false);
+  }
+  if (/requires a newer version of codex|please upgrade to the latest app or cli/.test(detail)) {
+    return new ModelGatewayError("AI_PROVIDER_CLIENT_OUTDATED", "codex-cli", "The Codex service must be upgraded", true, false);
   }
   if (/not logged in|authentication|unauthorized|login required|missing auth/.test(detail)) {
     return new ModelGatewayError("AI_PROVIDER_AUTHENTICATION_FAILED", "codex-cli", "Codex service authentication is unavailable", true, false);
@@ -385,4 +398,12 @@ function requiredAbsolutePath(value: string, name: string): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+// Codex rejects JSON Schema's URI format. Preserve the application schema and
+// validate the returned URLs with request.parse after generation.
+function codexOutputSchema(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(codexOutputSchema);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).filter(([key, entry]) => !(key === "format" && entry === "uri")).map(([key, entry]) => [key, codexOutputSchema(entry)]));
 }

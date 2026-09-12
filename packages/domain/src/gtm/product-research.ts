@@ -65,6 +65,7 @@ export interface ProductResearchBrief {
     | "strategic_market"
     | undefined;
   readonly researchVersion?: 1 | 2 | 3;
+  readonly campaignActivationMode?: "manual" | undefined;
 }
 
 export function researchStagesForBrief(
@@ -244,7 +245,12 @@ export class ProductResearchRun {
     } else if (this.#snapshot.status === "failed") {
       this.#update({ status: "queued", activeStage: null, updatedAt: now });
     } else if (this.#snapshot.status === "paused") {
-      this.#update({ status: this.#snapshot.activeStage ? "running" : "queued", updatedAt: now });
+      const pausedDurationMs = Math.max(0, now.getTime() - this.#snapshot.updatedAt.getTime());
+      this.#update({
+        status: this.#snapshot.activeStage ? "running" : "queued",
+        deadlineAt: this.#snapshot.deadlineAt ? new Date(this.#snapshot.deadlineAt.getTime() + pausedDurationMs) : null,
+        updatedAt: now,
+      });
     } else {
       throw new ProductResearchInvariantError(`Cannot resume a run in status ${this.#snapshot.status}`);
     }

@@ -266,6 +266,22 @@ databaseDescribe("Prospect 360 Setter dry-run", () => {
       eq(outboxEvents.eventType, "SetterReplyGeneratedDryRun"),
     ))).toHaveLength(1);
   });
+  test("a live Setter quota pause leaves the command resumable without sending", async () => {
+    const { AiTaskPauseError } = await import("@outbound/application/ai/ai-task-pause");
+    const { ModelGatewayError } = await import("@outbound/application/ai/model-gateway");
+    const command = await new PostgresConversationCommandRepository(database.db).create({ workspaceId, conversationId, requestedBy: ownerId, mode: "setter", executionMode: "live", body: null, idempotencyKey: `paused-setter:${conversationId}`, now });
+    const failure = new AiTaskPauseError(new ModelGatewayError("AI_PROVIDER_QUOTA_EXHAUSTED", "openai-api", "quota", true, false), "setter", command.id, []);
+    let sent = 0;
+    const processor = new ConversationCommandJobProcessor(database.db, queue, { async send() { sent++; return { providerRequestId: "must-not-send", conversationId: null }; } }, { async decide() { throw failure; } }, { now: () => now }, null);
+    const [job] = await queue.lease({ workerId: "pause-setter", types: [CONVERSATION_COMMAND_JOB_TYPE], limit: 1, leaseMs: 30_000, now });
+    await expect(processor.process(job!)).rejects.toBe(failure);
+    const [row] = await database.db.select().from(conversationCommands).where(eq(conversationCommands.id, command.id));
+    expect(row?.status).toBe("scheduled");
+    expect(sent).toBe(0);
+    await queue.pause({ jobId: job!.id, workerId: job!.lockedBy, errorCode: failure.code, errorMessage: failure.code });
+    expect(await queue.lease({ workerId: "restarted-setter", types: [CONVERSATION_COMMAND_JOB_TYPE], limit: 1, leaseMs: 30_000, now: new Date(now.getTime() + 86_400_000) })).toEqual([]);
+  });
+
 });
 
 function shadowBundle(

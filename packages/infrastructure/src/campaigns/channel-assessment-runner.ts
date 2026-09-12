@@ -1,3 +1,4 @@
+import { AiTaskPauseError } from "@outbound/application/ai/ai-task-pause";
 import type {
   ChannelObservationSource,
   ChannelStrategyPlanner,
@@ -63,6 +64,7 @@ export class ChannelAssessmentJobProcessor {
       });
       await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
     } catch (error) {
+      if (error instanceof AiTaskPauseError) throw error;
       const failure = channelAssessmentFailure(error);
       const outcome = await this.queue.retry({
         jobId: job.id,
@@ -93,11 +95,12 @@ export function channelAssessmentFailure(error: unknown): { errorCode: string; e
   };
 }
 
-function assessmentPayload(value: unknown): { workspaceId: string; assessmentId: string } {
+function assessmentPayload(value: unknown): { workspaceId: string; assessmentId: string; activationMode?: "manual" } {
   if (!value || typeof value !== "object") throw new Error("INVALID_CHANNEL_ASSESSMENT_JOB");
   const payload = value as Record<string, unknown>;
   if (typeof payload.workspaceId !== "string" || typeof payload.assessmentId !== "string") {
     throw new Error("INVALID_CHANNEL_ASSESSMENT_JOB");
   }
-  return { workspaceId: payload.workspaceId, assessmentId: payload.assessmentId };
+  if (payload.activationMode !== undefined && payload.activationMode !== "manual") throw new Error("INVALID_CHANNEL_ASSESSMENT_JOB");
+  return { workspaceId: payload.workspaceId, assessmentId: payload.assessmentId, ...(payload.activationMode === "manual" ? { activationMode: "manual" as const } : {}) };
 }

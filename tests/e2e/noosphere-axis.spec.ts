@@ -9,6 +9,8 @@ test.beforeEach(async ({ page }) => {
   await page.getByLabel("Email professionnel").fill(email);
   await page.getByLabel("Mot de passe").fill(password);
   await page.getByRole("button", { name: "Accéder au workspace" }).click();
+  await page.waitForURL(/\/w\//);
+  await page.goto(`/w/${workspaceSlug}`);
   await expect(page.getByRole("heading", { name: "Votre acquisition, en pilote automatique." })).toBeVisible({ timeout: 20_000 });
   await expect(page).toHaveURL(new RegExp(`/w/${workspaceSlug}/?$`), { timeout: 20_000 });
 });
@@ -58,15 +60,20 @@ test("browser back restores the previous product destination", async ({ page }) 
 });
 
 test("Inbound exposes its grounded editorial strategy without a provider mutation", async ({ page }) => {
+  const mutations: string[] = [];
+  page.on("request", request => {
+    if (["POST", "PUT", "PATCH", "DELETE"].includes(request.method())) mutations.push(`${request.method()} ${request.url()}`);
+  });
   await page.goto(`/w/${workspaceSlug}/content/strategy`);
   await expect(page).toHaveURL(new RegExp(`/w/${workspaceSlug}/content/strategy`));
   await expect(page.getByRole("heading", { name: "Stratégie LinkedIn" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: /Aucune stratégie dérivée|Piliers éditoriaux/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Stratégie Inbound à préparer|Piliers éditoriaux/ })).toBeVisible();
   if (await page.getByRole("button", { name: "2 / jour" }).count()) {
     await expect(page.getByRole("button", { name: "2 / jour" })).toHaveAttribute("aria-pressed", "true");
     await expect(page.getByLabel("Créneau 1")).toHaveValue("09:00");
     await expect(page.getByLabel("Créneau 2")).toHaveValue("17:00");
   }
+  expect(mutations).toEqual([]);
 });
 
 test("workspace surfaces keep one clear heading and never overflow the viewport", async ({ page }) => {
@@ -168,7 +175,7 @@ test("Outbound surfaces preserve prospect and conversation filters in the URL", 
 
   await navigation.getByRole("link", { name: "Messages", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Messages", exact: true, level: 1 })).toBeVisible();
-  await page.getByLabel("Canal", { exact: true }).selectOption("linkedin");
+  await page.getByRole("combobox", { name: "Canal", exact: true }).selectOption("linkedin");
   await page.getByLabel("Origine", { exact: true }).selectOption("outside_campaign");
   await page.getByLabel("Période", { exact: true }).selectOption("7d");
   await page.getByRole("button", { name: "Filtrer" }).click();
@@ -184,4 +191,16 @@ test("Outbound surfaces preserve prospect and conversation filters in the URL", 
   await page.goto(`/w/${workspaceSlug}/settings`);
   await expect(page.getByRole("heading", { name: "Configuration", exact: true, level: 1 })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Lancement guidé", exact: true })).toBeVisible();
+});
+
+
+test("starting account connection without Unipile keeps integrations usable", async ({ page }) => {
+  await page.goto(`/w/${workspaceSlug}/integrations`);
+  await page.getByRole("combobox", { name: "Canal", exact: true }).selectOption("linkedin");
+  await page.getByRole("button", { name: "Démarrer l’assistant", exact: true }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "Vérifiez la configuration Unipile de l’instance" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Comptes connectés", exact: true })).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "Canal", exact: true })).toHaveValue("linkedin");
+  await expect(page.getByRole("button", { name: "Démarrer l’assistant", exact: true })).toBeEnabled();
+  await expect(page.getByRole("heading", { name: "Impossible de charger les intégrations" })).toHaveCount(0);
 });

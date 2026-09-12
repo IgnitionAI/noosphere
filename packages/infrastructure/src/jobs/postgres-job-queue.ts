@@ -5,6 +5,7 @@ import type {
   LeasedJob,
   NewJob,
   QuarantineJobRequest,
+  PauseJobRequest,
   RetryJobRequest,
 } from "@outbound/application/jobs/job-queue";
 import type { SqlClient } from "@outbound/infrastructure/database/client";
@@ -27,6 +28,16 @@ interface JobRow {
 
 export class PostgresJobQueue implements JobQueue {
   constructor(private readonly sql: SqlClient) {}
+
+  async pause(request: PauseJobRequest): Promise<void> {
+    const rows = await this.sql`update jobs set status = 'paused', ai_pause_capability = ${request.capability ?? null},
+      locked_at = null, locked_until = null, locked_by = null,
+      last_error_code = ${request.errorCode}, last_error_message = ${request.errorMessage.slice(0, 4000)}, updated_at = now()
+      where id = ${request.jobId} and status = 'running' and locked_by = ${request.workerId} returning id`;
+    if (rows.length) return;
+    const [row] = await this.sql`select status from jobs where id = ${request.jobId}`;
+    if (row?.status !== "paused") throw new Error("JOB_LEASE_LOST");
+  }
 
   async enqueue(job: NewJob): Promise<{ inserted: boolean }> {
     const payload = this.sql.json(job.payload as never);

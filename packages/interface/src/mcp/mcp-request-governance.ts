@@ -28,9 +28,9 @@ const executionContextSchema = z.object({
  * copied into SDK authInfo. The expected audience is supplied by the
  * transport, never by request arguments or an untrusted header.
  */
-export function validateMcpExecutionContext(value: unknown, expectedAudience: string): McpExecutionContext | null {
+export function validateMcpExecutionContext(value: unknown, expectedAudience: string, allowLocalHttp = false): McpExecutionContext | null {
   const parsed = executionContextSchema.safeParse(value);
-  if (!parsed.success || !isCanonicalHttpsAudience(parsed.data.audience, expectedAudience)) return null;
+  if (!parsed.success || !isCanonicalAudience(parsed.data.audience, expectedAudience, allowLocalHttp)) return null;
   return parsed.data as McpExecutionContext;
 }
 
@@ -143,12 +143,14 @@ function isBoundedRateInput(input: McpRateLimitInput): boolean {
     && Number.isSafeInteger(input.cost) && input.cost >= 1 && input.cost <= MCP_MAX_RATE_LIMIT_COST;
 }
 
-function isCanonicalHttpsAudience(value: string, expected: string): boolean {
+function isCanonicalAudience(value: string, expected: string, allowLocalHttp: boolean): boolean {
   try {
     const actualUrl = new URL(value);
     const expectedUrl = new URL(expected);
-    return actualUrl.protocol === "https:"
-      && expectedUrl.protocol === "https:"
+    const localHttp = allowLocalHttp && actualUrl.protocol === "http:" && expectedUrl.protocol === "http:"
+      && ["localhost", "127.0.0.1", "[::1]"].includes(actualUrl.hostname);
+    return ((actualUrl.protocol === "https:" && expectedUrl.protocol === "https:") || localHttp)
+      && actualUrl.username === "" && actualUrl.password === ""
       && actualUrl.href === expectedUrl.href
       && actualUrl.pathname === "/mcp"
       && actualUrl.search === ""

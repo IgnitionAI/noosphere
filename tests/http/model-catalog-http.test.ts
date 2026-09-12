@@ -39,7 +39,7 @@ describe("model catalog HTTP route", () => {
     expect(await response.json()).toEqual({ providers: [
       expect.objectContaining({ provider: "kimi-code", status: "healthy", models: [expect.objectContaining({ id: "future-kimi" })] }),
       expect.objectContaining({ provider: "codex-cli", status: "healthy", models: [expect.objectContaining({ id: "gpt-5.6-luna" })] }),
-      expect.objectContaining({ provider: "openai-api", status: "unavailable", models: [] }),
+      ...["openai-api", "anthropic", "openrouter", "openai-compatible"].map((provider) => expect.objectContaining({ provider, status: "unavailable", models: [] })),
     ] });
   });
 

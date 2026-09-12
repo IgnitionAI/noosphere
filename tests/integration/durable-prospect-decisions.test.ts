@@ -57,6 +57,23 @@ databaseDescribe("AI-150 durable prospect decisions", () => {
     await database.close();
   });
 
+  test("a provider pause keeps a prospect decision out of automatic retries and rescheduling", async () => {
+    const { ProspectDecisionJobProcessor } = await import("@outbound/infrastructure/campaigns/prospect-decision-runner");
+    const { AiTaskPauseError } = await import("@outbound/application/ai/ai-task-pause");
+    const { ModelGatewayError } = await import("@outbound/application/ai/model-gateway");
+    const input = { id: crypto.randomUUID(), workspaceId: workspaceA, contactId: contactA, kind: "recheck", reason: "Pause test", dueAt: fixedNow, idempotencyKey: "paused-decision", correlationId: "paused-decision" };
+    const scheduled = await scheduler.schedule(input);
+    const failure = new AiTaskPauseError(new ModelGatewayError("AI_PROVIDER_QUOTA_EXHAUSTED", "openai-api", "quota", true, false), "prospect_decision", "decision", []);
+    let calls = 0;
+    const processor = new ProspectDecisionJobProcessor(database.db, queue, { async decide() { calls++; throw failure; } }, { now: () => fixedNow });
+    const [job] = await queue.lease({ workerId: "pause-decision", types: [PROSPECT_DECISION_JOB_TYPE], limit: 1, leaseMs: 30_000, now: fixedNow });
+    await expect(processor.process(job!)).rejects.toBe(failure);
+    await queue.pause({ jobId: job!.id, workerId: job!.lockedBy, errorCode: failure.code, errorMessage: failure.code });
+    expect((await scheduler.schedule({ ...input, reason: "Scheduler revisit" })).decision.id).toBe(scheduled.decision.id);
+    expect(await queue.lease({ workerId: "restarted", types: [PROSPECT_DECISION_JOB_TYPE], limit: 1, leaseMs: 30_000, now: new Date(fixedNow.getTime() + 86_400_000) })).toEqual([]);
+    expect(calls).toBe(1);
+  });
+
   test("reschedules one logical decision and keeps identical keys isolated by workspace", async () => {
     const firstDueAt = new Date("2026-08-13T10:00:00.000Z");
     const revisedDueAt = new Date("2026-08-13T11:00:00.000Z");

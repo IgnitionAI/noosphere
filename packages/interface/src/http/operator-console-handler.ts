@@ -5,7 +5,7 @@ import type { RequestContextResolver, WorkspaceRole } from "@outbound/interface/
 
 const correlationPath = /^\/api\/v1\/console\/correlations\/([^/]+)$/;
 const requeuePath = /^\/api\/v1\/console\/jobs\/([^/]+)\/actions\/requeue$/;
-const allowedStatuses = new Set<ConsoleJobStatus>(["pending", "running", "retry", "completed", "dead_lettered"]);
+const allowedStatuses = new Set<ConsoleJobStatus>(["paused", "pending", "running", "retry", "completed", "dead_lettered"]);
 
 export function isOperatorConsoleRoute(pathname: string): boolean {
   return pathname.startsWith("/api/v1/console/");

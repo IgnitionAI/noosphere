@@ -66,6 +66,8 @@ interface ExternalEffectFactsBase {
   readonly policyVersion?: string;
   readonly policyVersionSupported?: boolean;
   readonly supportedPolicyVersions?: readonly string[];
+  readonly activationReady?: boolean;
+  readonly sendSchedule?: { readonly activeDays: readonly number[]; readonly windowStart: string; readonly windowEnd: string; readonly timezoneMode: string; readonly fallbackTimezone: string };
   readonly campaignActive?: boolean;
   readonly enrollmentActive?: boolean;
   readonly scheduleWindow?: {
@@ -236,7 +238,9 @@ export class ExternalEffectStaleEvaluator {
     if (facts.deleted === true) return "SOURCE_STALE";
     if (facts.cancelled === true || facts.cancelledAt) return "EFFECT_CANCELLED";
     if (isExpired(facts.expiresAt, now)) return "EFFECT_EXPIRED";
-    if (facts.kind === "campaign_activation" && (facts.campaignActive === false || facts.enrollmentActive === false || ["paused", "inactive", "cancelled"].includes(facts.status ?? ""))) {
+    if (facts.kind === "campaign_activation" && (facts.activationReady !== undefined
+      ? !facts.activationReady || facts.status !== "draft"
+      : facts.campaignActive === false || facts.enrollmentActive === false || ["paused", "inactive", "cancelled"].includes(facts.status ?? ""))) {
       return "CAMPAIGN_NOT_ACTIVE";
     }
     if (facts.accountHealthy === false || facts.account?.healthy === false || facts.accountHealth?.status !== undefined && facts.accountHealth.status !== "healthy") return "ACCOUNT_UNHEALTHY";
@@ -331,7 +335,7 @@ function validateFacts(value: unknown): ExternalEffectFacts | null {
   if (!isEffectKind(candidate.kind) || typeof candidate.aggregateId !== "string" || candidate.aggregateId.length === 0) return null;
   if (!validVersion(candidate.factsVersion) || !validVersion(candidate.revision) || !validVersion(candidate.sourceVersion)) return null;
   if (typeof candidate.status !== "string" || candidate.status.length === 0 || typeof candidate.adapterAvailable !== "boolean" || typeof candidate.accountHealthy !== "boolean" || typeof candidate.quotaAvailable !== "boolean" || !isIsoInstant(candidate.evaluatedAt)) return null;
-  for (const field of ["deleted", "contactPresent", "suppressed", "humanReply", "hasHumanReply", "cancelled", "adapterAvailable", "capabilityAvailable", "accountHealthy", "quotaAvailable", "quotaExceeded", "idempotencyConflict", "campaignActive", "enrollmentActive", "policyVersionSupported"] as const) {
+  for (const field of ["deleted", "contactPresent", "suppressed", "humanReply", "hasHumanReply", "cancelled", "adapterAvailable", "capabilityAvailable", "accountHealthy", "quotaAvailable", "quotaExceeded", "idempotencyConflict", "activationReady", "campaignActive", "enrollmentActive", "policyVersionSupported"] as const) {
     if (candidate[field] !== undefined && typeof candidate[field] !== "boolean") return null;
   }
   if (candidate.suppressionStatus !== undefined && candidate.suppressionStatus !== "suppressed" && candidate.suppressionStatus !== "opted_out") return null;
@@ -347,7 +351,7 @@ function validateFacts(value: unknown): ExternalEffectFacts | null {
     || typeof candidate.assetReady !== "boolean" || typeof candidate.assetStatus !== "string" || typeof candidate.strategyActive !== "boolean"
     || typeof candidate.strategyDeleted !== "boolean" || (candidate.strategyVersionId !== undefined && typeof candidate.strategyVersionId !== "string") || !validVersion(candidate.strategyVersion))) return null;
   if (candidate.kind === "meeting_proposal" && (!validNonNegativeVersion(candidate.slotPosition) || !isIsoInstant(candidate.slotStart) || !isIsoInstant(candidate.slotEnd) || typeof candidate.timeZone !== "string" || !candidate.timeZone || !isTimeZone(candidate.timeZone) || !isIsoInstant(candidate.expiresAt))) return null;
-  if (candidate.kind === "campaign_activation" && (typeof candidate.policyVersion !== "string" || typeof candidate.automationStage !== "string" || typeof candidate.enrollmentFingerprint !== "string" || !isEnrollmentFingerprint(candidate.enrollmentFingerprint) || !validateScheduleWindow(candidate.scheduleWindow) || !validateAccountHealth(candidate.accountHealth))) return null;
+  if (candidate.kind === "campaign_activation" && (typeof candidate.policyVersion !== "string" || typeof candidate.automationStage !== "string" || typeof candidate.enrollmentFingerprint !== "string" || !isEnrollmentFingerprint(candidate.enrollmentFingerprint) || (candidate.activationReady !== undefined ? !validateCampaignSendSchedule(candidate.sendSchedule) : !validateScheduleWindow(candidate.scheduleWindow)) || !validateAccountHealth(candidate.accountHealth))) return null;
   if (candidate.policyVersion !== undefined && typeof candidate.policyVersion !== "string") return null;
   if (candidate.supportedPolicyVersions !== undefined && (!Array.isArray(candidate.supportedPolicyVersions) || !candidate.supportedPolicyVersions.every((item) => typeof item === "string"))) return null;
   const projected: Record<string, unknown> = {};
@@ -389,6 +393,7 @@ function validateSnapshot(value: unknown): ExternalEffectSourceSnapshot | null {
   if (candidate.suppressionStatus !== undefined && candidate.suppressionStatus !== "suppressed" && candidate.suppressionStatus !== "opted_out") return null;
   if (candidate.slotPosition !== undefined && !validNonNegativeVersion(candidate.slotPosition)) return null;
   if (candidate.timeZone !== undefined && (typeof candidate.timeZone !== "string" || !isTimeZone(candidate.timeZone))) return null;
+  if (candidate.activationReady !== undefined && (typeof candidate.activationReady !== "boolean" || !validateCampaignSendSchedule(candidate.sendSchedule))) return null;
   if (candidate.scheduleWindow !== undefined && !validateScheduleWindow(candidate.scheduleWindow)) return null;
   if (candidate.accountHealth !== undefined && !validateAccountHealth(candidate.accountHealth)) return null;
   if (candidate.kind === "content_publication" && (
@@ -423,6 +428,19 @@ function validateDates(facts: Record<string, unknown>): boolean {
     if (candidate.timeZone !== undefined && (typeof candidate.timeZone !== "string" || !isTimeZone(candidate.timeZone))) return false;
   }
   return true;
+}
+
+export function validateCampaignSendSchedule(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const schedule = value as Record<string, unknown>;
+  const time = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+  return Object.keys(schedule).every(key => ["activeDays", "windowStart", "windowEnd", "timezoneMode", "fallbackTimezone"].includes(key))
+    && Array.isArray(schedule.activeDays) && schedule.activeDays.length > 0
+    && schedule.activeDays.every(day => Number.isInteger(day) && day >= 1 && day <= 7)
+    && typeof schedule.windowStart === "string" && time.test(schedule.windowStart)
+    && typeof schedule.windowEnd === "string" && time.test(schedule.windowEnd) && schedule.windowStart < schedule.windowEnd
+    && ["recipient", "workspace"].includes(String(schedule.timezoneMode))
+    && typeof schedule.fallbackTimezone === "string" && isTimeZone(schedule.fallbackTimezone);
 }
 
 function validateScheduleWindow(value: unknown): boolean {
@@ -494,7 +512,7 @@ function isEffectKind(value: unknown): value is McpGovernedEffectKind {
 const SNAPSHOT_FIELDS = new Set([
   "kind", "aggregateId", "revision", "sourceVersion", "factsVersion", "sourceId", "sourceUpdatedAt", "status", "conversationStatus",
   "assetId", "publicationId", "assetVersionId", "contentVersion", "assetReady", "assetStatus", "strategyActive", "strategyDeleted", "strategyVersionId", "strategyVersion", "slotStart", "slotEnd", "timeZone", "expiresAt", "cancelledAt", "cancelled",
-  "policyVersion", "automationStage", "campaignActive", "enrollmentActive", "suppressed", "humanReplyAt", "hasHumanReply",
+  "activationReady", "sendSchedule", "policyVersion", "automationStage", "campaignActive", "enrollmentActive", "suppressed", "humanReplyAt", "hasHumanReply",
   "scheduleWindow", "scheduledFor", "accountHealthy", "accountHealth", "account", "capabilityAvailable", "adapterAvailable", "quotaAvailable", "quota", "contact", "idempotency", "suppressionStatus", "humanReply", "slotPosition", "enrollmentFingerprint",
 ]);
 
@@ -503,7 +521,7 @@ const FACTS_FIELDS = new Set([
   "deleted", "contactPresent", "contact", "suppressed", "suppressionStatus", "humanReply", "humanReplyAt", "hasHumanReply",
   "cancelled", "cancelledAt", "expiresAt", "evaluatedAt", "accountHealthy", "account", "capabilityAvailable", "adapterAvailable",
   "quotaAvailable", "quotaExceeded", "quota", "idempotencyConflict", "idempotency", "policyVersion", "policyVersionSupported",
-  "supportedPolicyVersions", "campaignActive", "enrollmentActive", "scheduleWindow", "scheduledFor", "assetId", "publicationId", "assetVersionId", "contentVersion",
+  "activationReady", "sendSchedule", "supportedPolicyVersions", "campaignActive", "enrollmentActive", "scheduleWindow", "scheduledFor", "assetId", "publicationId", "assetVersionId", "contentVersion",
   "assetReady", "assetStatus", "strategyActive", "strategyDeleted", "strategyVersionId", "strategyVersion", "slotPosition", "slotStart", "slotEnd", "timeZone", "automationStage", "enrollmentFingerprint", "accountHealth",
 ]);
 

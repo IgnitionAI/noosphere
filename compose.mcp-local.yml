@@ -50,6 +50,16 @@ services:
       WORKER_ID: mcp-local-worker
       JOB_BATCH_SIZE: "2"
       JOB_POLL_INTERVAL_MS: "500"
+    # The bounded MCP fake canary exercises durable tools and governed effects,
+    # not document search. Avoid pulling or warming both TEI models on a local
+    # control-plane smoke where they are neither called nor required.
+    depends_on: !override
+      migrate:
+        condition: service_completed_successfully
+      minio:
+        condition: service_healthy
+      crawler:
+        condition: service_healthy
 
   proxy:
     environment:

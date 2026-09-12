@@ -574,12 +574,22 @@ async function insertContentSourceFixture(
   const accountId = source.accountId;
   const providerAccountId = source.providerAccountId;
   const campaignSchedule = { start: "09:00", end: "17:00", timeZone: "UTC" };
+  const strategySnapshot = {
+    audience: { name: "Local fixture audience", summary: "Durable MCP smoke fixture", awareness: "problem_aware" },
+    pillars: [{ name: "Proof", promise: "Exercise governed MCP effects", proofTypes: ["fixture"] }],
+    voice: { traits: ["direct"], avoid: ["generic"] },
+    formats: ["linkedin_text"],
+    cadence: { postsPerWeek: 1, preferredDays: [1], timezone: "UTC" },
+    callsToAction: ["Reply"],
+    allowedClaimIds: [],
+    forbiddenTopics: [],
+  };
   await tx`insert into offers (id, workspace_id, name, status, current_version, category, value_proposition, target_audience) values (${offerId}, ${workspaceId}, ${`MCP smoke ${plan.fixtureKey} content offer ${index}`}, 'draft', 1, 'saas', 'Local fixture', 'Local fixture')`;
   await tx`insert into offer_versions (id, workspace_id, offer_id, version, name, category, value_proposition, target_audience, published_at) values (${offerVersionId}, ${workspaceId}, ${offerId}, 1, ${`MCP smoke ${plan.fixtureKey} content offer ${index}`}, 'saas', 'Local fixture', 'Local fixture', ${now})`;
   await tx`insert into icps (id, workspace_id, name, current_version) values (${icpId}, ${workspaceId}, ${`MCP smoke ${plan.fixtureKey} content ICP ${index}`}, 1)`;
   await tx`insert into icp_versions (id, workspace_id, icp_id, version, name, confidence, criteria, buying_committee, problems, signals, exclusions, unknowns, unresolved_contradictions, blocked_findings, published_at) values (${icpVersionId}, ${workspaceId}, ${icpId}, 1, ${`MCP smoke ${plan.fixtureKey} content ICP ${index}`}, '0.9000', ${tx.json({} as never)}, ${tx.json({} as never)}, ${tx.json([] as never)}, ${tx.json([] as never)}, ${tx.json([] as never)}, ${tx.json([] as never)}, ${tx.json([] as never)}, ${tx.json([] as never)}, ${now})`;
-  await tx`insert into editorial_strategies (id, workspace_id, name, offer_id, offer_version_id, icp_id, icp_version_id, status, current_version, draft, provider, model, prompt_version) values (${strategyId}, ${workspaceId}, ${`MCP smoke ${plan.fixtureKey} content strategy ${index}`}, ${offerId}, ${offerVersionId}, ${icpId}, ${icpVersionId}, 'active', 1, ${tx.json({} as never)}, 'fixture', 'fixture', 'v1')`;
-  await tx`insert into editorial_strategy_versions (id, workspace_id, strategy_id, version, offer_version_id, icp_version_id, snapshot, provider, model, prompt_version, published_at) values (${strategyVersionId}, ${workspaceId}, ${strategyId}, 1, ${offerVersionId}, ${icpVersionId}, ${tx.json({} as never)}, 'fixture', 'fixture', 'v1', ${now})`;
+  await tx`insert into editorial_strategies (id, workspace_id, name, offer_id, offer_version_id, icp_id, icp_version_id, status, current_version, draft, provider, model, prompt_version) values (${strategyId}, ${workspaceId}, ${`MCP smoke ${plan.fixtureKey} content strategy ${index}`}, ${offerId}, ${offerVersionId}, ${icpId}, ${icpVersionId}, 'active', 1, ${tx.json(strategySnapshot as never)}, 'fixture', 'fixture', 'v1')`;
+  await tx`insert into editorial_strategy_versions (id, workspace_id, strategy_id, version, offer_version_id, icp_version_id, snapshot, provider, model, prompt_version, published_at) values (${strategyVersionId}, ${workspaceId}, ${strategyId}, 1, ${offerVersionId}, ${icpVersionId}, ${tx.json(strategySnapshot as never)}, 'fixture', 'fixture', 'v1', ${now})`;
   await tx`insert into content_ideas (id, workspace_id, strategy_version_id, status, angle, rationale, audience, pillar, priority, fingerprint, freshness_until, first_seen_at, last_seen_at, created_at, updated_at) values (${ideaId}, ${workspaceId}, ${strategyVersionId}, 'discovered', 'Local fixture angle', 'Local fixture rationale', 'Local fixture audience', 'Local fixture pillar', 50, ${mcpSmokeProposalInputHash(`${plan.fixtureKey}:content:${index}:idea`)}, ${new Date(now.getTime() + 86_400_000)}, ${now}, ${now}, ${now}, ${now})`;
   await tx`insert into content_assets (id, workspace_id, idea_id, type, status, latest_version, revision, created_at, updated_at) values (${aggregateId}, ${workspaceId}, ${ideaId}, 'linkedin_text', 'ready', 1, 1, ${now}, ${now})`;
   await tx`insert into content_generation_runs (id, workspace_id, idea_id, asset_id, strategy_version_id, asset_version_id, status, stage, created_at, updated_at) values (${generationRunId}, ${workspaceId}, ${ideaId}, ${aggregateId}, ${strategyVersionId}, ${assetVersionId}, 'ready', 'completed', ${now}, ${now})`;
@@ -673,7 +683,10 @@ async function removeFixtureRows(tx: any, workspaceSlugs: readonly string[], exp
       for (const user of users) await tx`delete from auth_users where id = ${user.user_id}`;
       // The immutable content source rows are retained under this exact
       // fixture-owned workspace because 0070 intentionally forbids deleting
-      // them. Never disable or bypass that trigger during cleanup.
+      // them. Never disable or bypass that trigger during cleanup. Archive the
+      // mutable strategy so global schedulers cannot treat a retained smoke
+      // fixture as live product configuration after cleanup.
+      await tx`update editorial_strategies set status = 'archived', deleted_at = coalesce(deleted_at, now()), updated_at = now() where workspace_id = ${workspaceId}`;
   }
 }
 

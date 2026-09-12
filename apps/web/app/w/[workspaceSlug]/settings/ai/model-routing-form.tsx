@@ -11,7 +11,7 @@ import type {
   WorkspaceAiSettings,
 } from "@/lib/api";
 
-const capabilities: readonly { id: AiCapability; label: string; detail: string }[] = [
+export const capabilities: readonly { id: AiCapability; label: string; detail: string }[] = [
   { id: "icp_research", label: "Recherche ICP", detail: "Analyse du produit, marché et segments" },
   { id: "content_strategy", label: "Stratégie éditoriale", detail: "Piliers, angle et cadence Inbound" },
   { id: "content_idea", label: "Recherche d’idées", detail: "Sujets sourcés et dédupliqués" },
@@ -31,6 +31,9 @@ const providerLabels: Record<AiProviderId, string> = {
   "kimi-code": "Kimi",
   "codex-cli": "Codex",
   "openai-api": "OpenAI API",
+  anthropic: "Anthropic",
+  openrouter: "OpenRouter",
+  "openai-compatible": "API compatible OpenAI",
 };
 
 const effortLabels: Record<AiReasoningEffort, string> = {

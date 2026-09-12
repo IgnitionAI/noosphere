@@ -42,6 +42,10 @@ const CHANNELS = new Set<ProspectingChannel>(["email", "linkedin", "whatsapp"]);
 
 /** Provider implementations that have an explicit, existing contract. */
 export interface McpGovernedEffectProviderAdapters {
+  readonly campaign?: {
+    activate(input: { workspaceId: string; campaignId: string; proposalId: string }): Promise<Record<string, unknown>>;
+    findReceipt(input: { workspaceId: string; campaignId: string; proposalId: string }): Promise<Record<string, unknown> | null>;
+  };
   readonly outbound?: OutboundChannelGateway;
   readonly publisher?: SocialPublisher;
   readonly socialContentReader?: SocialContentReader;
@@ -57,6 +61,7 @@ export interface ConversationExecutionSource {
   readonly subject: string | null;
   readonly body: string;
   readonly conversationId: string | null;
+  readonly replyToUnipileMessageId?: string | null;
   readonly replyToProviderMessageId: string | null;
 }
 
@@ -88,7 +93,7 @@ export interface McpGovernedEffectSourceReader {
 }
 
 /**
- * Executes only the three effects with an existing provider port. The durable
+ * Executes governed effects through their configured adapters. The durable
  * worker calls this after its attempt marker has committed; this class never
  * creates queue state and never accepts provider response bodies wholesale.
  */
@@ -112,7 +117,17 @@ export class PostgresMcpGovernedEffectExecutor implements ExternalEffectReadOnly
       aggregateId: input.identity.aggregateId,
     });
     if (!source || source.kind !== input.identity.kind) return { outcome: "failed", code: "MCP_EFFECT_ATTEMPT_BINDING_CONFLICT" };
-    if (source.kind === "campaign_activation") return { outcome: "failed", code: "ADAPTER_UNAVAILABLE" };
+    if (source.kind === "campaign_activation") {
+      if (!this.adapters.campaign) return { outcome: "failed", code: "ADAPTER_UNAVAILABLE" };
+      try {
+        return delivered(await this.adapters.campaign.activate({ workspaceId: input.identity.workspaceId, campaignId: input.identity.aggregateId, proposalId: input.identity.proposalId }));
+      } catch (error) {
+        const code = error instanceof Error ? error.message : "";
+        return /^(?:CAMPAIGN|MCP_EFFECT)_[A-Z0-9_]+$/.test(code)
+          ? { outcome: "failed", code }
+          : { outcome: "unknown", code: "EFFECT_EXECUTOR_AMBIGUOUS" };
+      }
+    }
     try {
       if (source.kind === "conversation_reply") return await this.executeConversation(source, input);
       if (source.kind === "content_publication") return await this.executeContent(source, input);
@@ -125,6 +140,10 @@ export class PostgresMcpGovernedEffectExecutor implements ExternalEffectReadOnly
   async reconcileReadOnly(input: ExternalEffectReadOnlyInput): Promise<ExternalEffectReadOnlyResult> {
     const source = await this.sourceReader.read({ workspaceId: input.workspaceId, proposalId: input.proposalId, kind: input.kind, aggregateId: input.aggregateId });
     if (!source || source.kind !== input.kind) return { outcome: "error", code: "ADAPTER_UNAVAILABLE" };
+    if (source.kind === "campaign_activation" && this.adapters.campaign) {
+      const receipt = await this.adapters.campaign.findReceipt({ workspaceId: input.workspaceId, campaignId: input.aggregateId, proposalId: input.proposalId });
+      return receipt ? { outcome: "matched", authoritative: true, candidateCount: 1, result: receipt } : { outcome: "not_found", candidateCount: 0 };
+    }
     if (source.kind === "content_publication" && this.adapters.socialContentReader) {
       if (!source.accountId) return { outcome: "error", code: "ADAPTER_UNAVAILABLE" };
       try {
@@ -168,6 +187,7 @@ export class PostgresMcpGovernedEffectExecutor implements ExternalEffectReadOnly
       body: source.body,
       idempotencyKey: input.marker.idempotencyKey,
       conversationId: boundedText(source.conversationId, MAX_ID_BYTES),
+      replyToUnipileMessageId: boundedText(source.replyToUnipileMessageId, MAX_ID_BYTES),
       replyToProviderMessageId: boundedText(source.replyToProviderMessageId, MAX_ID_BYTES),
     });
     if (!boundedText(result.providerRequestId, MAX_ID_BYTES)) return { outcome: "unknown", code: "EFFECT_PROVIDER_RESPONSE_INVALID" };
@@ -217,7 +237,12 @@ export class PostgresMcpGovernedEffectSourceReader implements McpGovernedEffectS
       const body = stringValue(intent.body);
       if (!identity || !body || !CHANNELS.has(conversation.channel as ProspectingChannel)) return null;
       if (conversation.provider !== "unipile") return null;
-      return { kind: "conversation_reply", provider: "unipile", accountId: conversation.providerAccountId, channel: conversation.channel as ProspectingChannel, recipient: { value: identity.value, normalizedValue: identity.normalizedValue, providerUserId: null }, subject: stringValue(intent.subject), body, conversationId: conversation.providerThreadId, replyToProviderMessageId: inbound?.providerMessageId ?? null };
+      // Inbox synchronization stores the Unipile email object's id here, not
+      // the upstream provider_id required when replying through /emails.
+      return { kind: "conversation_reply", provider: "unipile", accountId: conversation.providerAccountId, channel: conversation.channel as ProspectingChannel, recipient: { value: identity.value, normalizedValue: identity.normalizedValue, providerUserId: null }, subject: stringValue(intent.subject), body, conversationId: conversation.providerThreadId,
+        ...(conversation.channel === "email" ? { replyToUnipileMessageId: inbound?.providerMessageId ?? null } : {}),
+        replyToProviderMessageId: conversation.channel === "email" ? null : inbound?.providerMessageId ?? null,
+      };
     }
     if (input.kind === "content_publication") {
       const publication = (await this.database.select().from(contentPublications).where(and(eq(contentPublications.workspaceId, input.workspaceId), eq(contentPublications.id, input.aggregateId))).limit(1))[0];

@@ -28,10 +28,17 @@ export interface McpOAuthClient {
   readonly clientId: string;
   readonly clientName: string;
   readonly redirectUris: readonly string[];
+  /** Null only for a public PKCE client created through dynamic registration. */
+  readonly userId: string | null;
+  readonly workspaceId: string | null;
+  readonly workspaceSlug: string | null;
+  readonly allowedScopes: readonly McpOAuthScope[];
+}
+
+export interface AuthorizedMcpOAuthClient extends McpOAuthClient {
   readonly userId: string;
   readonly workspaceId: string;
   readonly workspaceSlug: string;
-  readonly allowedScopes: readonly McpOAuthScope[];
 }
 
 export interface OAuthPrincipal {
@@ -67,7 +74,7 @@ export interface OAuthAuthorizeContext {
 }
 
 export interface OAuthAuthorizationResult {
-  readonly client: McpOAuthClient;
+  readonly client: AuthorizedMcpOAuthClient;
   readonly effectiveScopes: readonly McpOAuthScope[];
   readonly consentRequired?: true;
   readonly redirect?: string;
@@ -78,6 +85,7 @@ export interface OAuthAuthorizationServerMetadata {
   readonly authorization_endpoint: string;
   readonly token_endpoint: string;
   readonly revocation_endpoint: string;
+  readonly registration_endpoint: string;
   readonly response_types_supported: readonly ["code"];
   readonly grant_types_supported: readonly ["authorization_code", "refresh_token"];
   readonly code_challenge_methods_supported: readonly ["S256"];
@@ -204,6 +212,11 @@ export interface McpOAuthService {
     readonly workspaceSlug: string;
     readonly allowedScopes?: readonly McpOAuthScope[];
   }): Promise<McpOAuthClient>;
+  registerDynamicClient(input: {
+    readonly clientName: string;
+    readonly redirectUris: readonly string[];
+    readonly allowedScopes?: readonly McpOAuthScope[];
+  }): Promise<McpOAuthClient>;
   beginAuthorization(input: OAuthAuthorizeContext): Promise<OAuthAuthorizationResult>;
   exchangeAuthorizationCode(input: {
     readonly clientId: string;
@@ -280,6 +293,7 @@ export function createMcpOAuthHandler(
         return json(service.protectedResourceMetadata());
       }
       if (url.pathname === "/oauth/authorize") return await handleAuthorize(request, url);
+      if (url.pathname === "/oauth/register") return await handleRegister(request);
       if (url.pathname === "/oauth/token") return await handleToken(request, resource);
       if (url.pathname === "/oauth/revoke") return await handleRevoke(request);
       return oauthError(404, "not_found", "OAuth endpoint not found");
@@ -288,6 +302,46 @@ export function createMcpOAuthHandler(
       return oauthError(500, "server_error", "OAuth request failed");
     }
   };
+
+  async function handleRegister(request: Request): Promise<Response> {
+    if (request.method !== "POST") return methodNotAllowed("POST");
+    await enforceSourceRateLimit("register", request);
+    const body = await readJson(request) as Record<string, unknown>;
+    const clientName = typeof body.client_name === "string" ? body.client_name : "";
+    const redirectUris = Array.isArray(body.redirect_uris)
+      ? body.redirect_uris.filter((value): value is string => typeof value === "string")
+      : [];
+    if (redirectUris.length !== (Array.isArray(body.redirect_uris) ? body.redirect_uris.length : 0)) throw invalidRequest("redirect_uris is invalid");
+    const tokenMethod = body.token_endpoint_auth_method ?? "none";
+    if (tokenMethod !== "none") throw invalidRequest("token_endpoint_auth_method must be none");
+    if (
+      body.grant_types !== undefined &&
+      (!Array.isArray(body.grant_types) ||
+        body.grant_types.some((value) => value !== "authorization_code" && value !== "refresh_token") ||
+        !body.grant_types.includes("authorization_code"))
+    ) {
+      throw invalidRequest("grant_types must include authorization_code and may include refresh_token");
+    }
+    if (
+      body.response_types !== undefined &&
+      (!Array.isArray(body.response_types) ||
+        body.response_types.length !== 1 ||
+        body.response_types[0] !== "code")
+    ) {
+      throw invalidRequest("response_types must be [code]");
+    }
+    const requestedScopes = typeof body.scope === "string" ? parseScopes(body.scope) : [...MCP_OAUTH_SCOPES];
+    const client = await service.registerDynamicClient({ clientName, redirectUris, allowedScopes: requestedScopes });
+    return json({
+      client_id: client.clientId,
+      client_name: client.clientName,
+      redirect_uris: client.redirectUris,
+      token_endpoint_auth_method: "none",
+      grant_types: ["authorization_code", "refresh_token"],
+      response_types: ["code"],
+      scope: client.allowedScopes.join(" "),
+    }, 201);
+  }
 
   async function handleAuthorize(request: Request, url: URL): Promise<Response> {
     if (request.method !== "GET" && request.method !== "POST") return methodNotAllowed("GET, POST");
@@ -397,13 +451,13 @@ export function createMcpOAuthHandler(
   }
 
   async function enforceSourceRateLimit(
-    endpoint: "authorize" | "token" | "revoke",
+    endpoint: "authorize" | "register" | "token" | "revoke",
     request: Request,
   ): Promise<void> {
     if (!options.rateLimiter) return;
     const result = await options.rateLimiter.consume({
       key: `mcp-oauth:${endpoint}:source:ip:${clientIp(request, trustedInternalHosts)}`,
-      limit: endpoint === "authorize" ? 20 : 30,
+      limit: endpoint === "authorize" ? 20 : endpoint === "register" ? 10 : 30,
       windowSeconds: 60,
     });
     if (!result.allowed) throw rateLimitError(result.retryAfterSeconds);
@@ -451,6 +505,17 @@ async function readForm(request: Request, maxBodyBytes = MCP_OAUTH_MAX_BODY_BYTE
   if (request.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !== "application/x-www-form-urlencoded") {
     throw new McpOAuthError(415, "invalid_request", "OAuth endpoints require form encoding");
   }
+  try {
+    const bytes = await readOAuthBody(request, maxBodyBytes);
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    return new URLSearchParams(text);
+  } catch (error) {
+    if (error instanceof McpOAuthError) throw error;
+    throw invalidRequest("Malformed form body");
+  }
+}
+
+async function readOAuthBody(request: Request, maxBodyBytes = MCP_OAUTH_MAX_BODY_BYTES): Promise<Uint8Array> {
   const contentLength = request.headers.get("content-length");
   if (contentLength !== null) {
     if (!/^\d+$/.test(contentLength.trim())) throw invalidRequest("Content-Length is invalid");
@@ -458,7 +523,7 @@ async function readForm(request: Request, maxBodyBytes = MCP_OAUTH_MAX_BODY_BYTE
   }
   try {
     const reader = request.body?.getReader();
-    if (!reader) return new URLSearchParams();
+    if (!reader) return new Uint8Array();
     const chunks: Uint8Array[] = [];
     let total = 0;
     try {
@@ -481,11 +546,10 @@ async function readForm(request: Request, maxBodyBytes = MCP_OAUTH_MAX_BODY_BYTE
       bytes.set(chunk, offset);
       offset += chunk.byteLength;
     }
-    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    return new URLSearchParams(text);
+    return bytes;
   } catch (error) {
     if (error instanceof McpOAuthError) throw error;
-    throw invalidRequest("Malformed form body");
+    throw invalidRequest("Malformed OAuth body");
   }
 }
 
@@ -555,8 +619,21 @@ function methodNotAllowed(method: string): Response {
   return new Response(null, { status: 405, headers: { allow: method } });
 }
 
-function json(value: unknown): Response {
-  return new Response(JSON.stringify(value), { status: 200, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
+function json(value: unknown, status = 200): Response {
+  return new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
+}
+
+async function readJson(request: Request): Promise<unknown> {
+  const contentType = request.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+  if (contentType !== "application/json") throw invalidRequest("content-type must be application/json");
+  const bytes = await readOAuthBody(request);
+  try {
+    const value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("object required");
+    return value;
+  } catch {
+    throw invalidRequest("JSON body is invalid");
+  }
 }
 
 function oauthError(status: number, code: string, description: string, headers: Readonly<Record<string, string>> = {}): Response {
@@ -588,6 +665,7 @@ export function createMcpOAuthService(
       authorization_endpoint: `${issuer}/oauth/authorize`,
       token_endpoint: `${issuer}/oauth/token`,
       revocation_endpoint: `${issuer}/oauth/revoke`,
+      registration_endpoint: `${issuer}/oauth/register`,
       response_types_supported: ["code"],
       grant_types_supported: ["authorization_code", "refresh_token"],
       code_challenge_methods_supported: ["S256"],
@@ -619,7 +697,27 @@ export function createMcpOAuthService(
         allowedScopes,
       };
       await store.insertClient(client);
-      await audit({ action: "mcp_oauth_client_registered", clientId: client.clientId, userId: client.userId, workspaceId: client.workspaceId });
+      await audit({ action: "mcp_oauth_client_registered", clientId: client.clientId, userId: input.userId, workspaceId: input.workspaceId });
+      return client;
+    },
+    registerDynamicClient: async (input) => {
+      const clientName = input.clientName.trim();
+      if (!clientName || clientName.length > 200) throw invalidRequest("client_name is invalid");
+      const redirectUris = [...new Set(input.redirectUris.map((uri) => validateRedirectUri(uri)))];
+      if (redirectUris.length === 0 || redirectUris.length > 20) throw invalidRequest("redirect_uris is invalid");
+      const allowedScopes = normalizeScopes(input.allowedScopes ?? [...MCP_OAUTH_SCOPES]);
+      const client: McpOAuthClient = {
+        id: crypto.randomUUID(),
+        clientId: await randomOpaque(),
+        clientName,
+        redirectUris,
+        userId: null,
+        workspaceId: null,
+        workspaceSlug: null,
+        allowedScopes,
+      };
+      await store.insertClient(client);
+      await audit({ action: "mcp_oauth_dynamic_client_registered", clientId: client.clientId });
       return client;
     },
     beginAuthorization: async (input) => {
@@ -630,22 +728,23 @@ export function createMcpOAuthService(
       if (!input.userId || !input.workspaceId || !input.workspaceSlug || !input.role) {
         throw new McpOAuthError(401, "login_required", "An active workspace session is required");
       }
-      if (input.userId !== client.userId || input.workspaceId !== client.workspaceId || input.workspaceSlug !== client.workspaceSlug) {
+      if (client.userId !== null && (input.userId !== client.userId || input.workspaceId !== client.workspaceId || input.workspaceSlug !== client.workspaceSlug)) {
         throw new McpOAuthError(403, "access_denied", "Client is not registered for this workspace");
       }
       const membership = await store.findActiveMembership(input.userId, input.workspaceId);
-      if (!membership || membership.workspaceSlug !== client.workspaceSlug) throw new McpOAuthError(403, "access_denied", "Workspace membership is inactive");
+      if (!membership || membership.workspaceSlug !== input.workspaceSlug) throw new McpOAuthError(403, "access_denied", "Workspace membership is inactive");
+      const authorizedClient: AuthorizedMcpOAuthClient = { ...client, userId: input.userId, workspaceId: input.workspaceId, workspaceSlug: input.workspaceSlug };
       const effectiveScopes = intersectScopes(input.requestedScopes, client.allowedScopes, roleScopes(membership.role));
       if (effectiveScopes.length === 0) throw new McpOAuthError(403, "invalid_scope", "Requested scope is not permitted");
-      if (!input.approved) return { client, effectiveScopes, consentRequired: true };
+      if (!input.approved) return { client: authorizedClient, effectiveScopes, consentRequired: true };
       const code = await randomOpaque();
       const codeHash = await hashOpaque(code);
       await store.insertAuthorizationCode({
         id: crypto.randomUUID(),
         codeHash,
         clientId: client.clientId,
-        userId: client.userId,
-        workspaceId: client.workspaceId,
+        userId: input.userId,
+        workspaceId: input.workspaceId,
         redirectUri: input.redirectUri,
         codeChallenge: input.codeChallenge,
         codeChallengeMethod: "S256",
@@ -657,8 +756,8 @@ export function createMcpOAuthService(
       const redirect = new URL(input.redirectUri);
       redirect.searchParams.set("code", code);
       redirect.searchParams.set("state", input.state);
-      await audit({ action: "mcp_oauth_authorization_granted", clientId: client.clientId, userId: client.userId, workspaceId: client.workspaceId });
-      return { client, effectiveScopes, redirect: redirect.toString() };
+      await audit({ action: "mcp_oauth_authorization_granted", clientId: client.clientId, userId: input.userId, workspaceId: input.workspaceId });
+      return { client: authorizedClient, effectiveScopes, redirect: redirect.toString() };
     },
     exchangeAuthorizationCode: async (input) => {
       const client = await store.findClient(input.clientId);
@@ -760,7 +859,15 @@ function positiveTtl(value: number | undefined, fallback: number): number {
 
 function validateRedirectUri(value: string): string {
   const parsed = new URL(value);
-  if (parsed.hash || (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(parsed.hostname)))) throw invalidRequest("redirect_uri must use HTTPS (except localhost)");
+  if (
+    parsed.hash ||
+    parsed.username ||
+    parsed.password ||
+    (parsed.protocol !== "https:" &&
+      !(parsed.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(parsed.hostname)))
+  ) {
+    throw invalidRequest("redirect_uri must use HTTPS without credentials (except localhost)");
+  }
   return parsed.toString();
 }
 

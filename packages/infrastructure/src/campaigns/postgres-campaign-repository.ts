@@ -5,10 +5,12 @@ import type { Database } from "@outbound/infrastructure/database/client";
 import { workspaceCampaignPolicy } from "@outbound/infrastructure/workspaces/workspace-campaign-policy";
 import {
   campaigns,
+  jobs,
   aiPolicyVersions,
   auditLogs,
   campaignProspects,
   channelAssessments,
+  prospectingPlans,
   contactChannelAssignments,
   dailyProspectingSchedules,
   dailySourcingCycles,
@@ -166,11 +168,21 @@ export class PostgresCampaignRepository {
         changes: { status: result.status, snapshot: snapshotOf(updated!) },
         sourceEventId: event.id,
       });
+      if (event && (input.transition === "resume" || input.transition === "activate") && current.channel && current.sequenceId) {
+        const [unfinished] = await tx.select({ id: campaignProspects.id }).from(campaignProspects)
+          .where(and(eq(campaignProspects.workspaceId, input.workspaceId), eq(campaignProspects.campaignId, input.campaignId), eq(campaignProspects.eligible, true), eq(campaignProspects.state, "imported"))).limit(1);
+        if (unfinished) await tx.insert(jobs).values({
+          id: crypto.randomUUID(), workspaceId: input.workspaceId, type: "campaign.messages.compose",
+          payload: { workspaceId: input.workspaceId, campaignId: input.campaignId, incremental: current.automationStage !== "composing" },
+          idempotencyKey: `campaign:${input.campaignId}:${input.transition}:${event.id}`, correlationId: `campaign:${input.campaignId}`,
+          maxAttempts: 3, availableAt: input.at, createdAt: input.at, updatedAt: input.at,
+        });
+      }
       return updated!;
     });
   }
 
-  async listCampaigns(workspaceId: string) {
+  async listCampaigns(workspaceId: string, page: { limit: number; offset: number } = { limit: 100, offset: 0 }) {
     return this.db
       .select({
         id: campaigns.id,
@@ -232,8 +244,8 @@ export class PostgresCampaignRepository {
         ),
       )
       .where(eq(campaigns.workspaceId, workspaceId))
-      .orderBy(desc(campaigns.updatedAt))
-      .limit(100);
+      .orderBy(desc(campaigns.updatedAt), asc(campaigns.id))
+      .limit(page.limit).offset(page.offset);
   }
 
   async getCampaign(input: { workspaceId: string; campaignId: string }) {
@@ -504,6 +516,13 @@ export class PostgresCampaignRepository {
     workspaceId: string,
     campaign: typeof campaigns.$inferSelect,
   ): Promise<CampaignPreflightResult> {
+    const policy = campaign.channel ? resolveCampaignAutopilotPolicy(campaign.autopilotPolicy, campaign.channel) : null;
+    const [nativePlan] = campaign.planId && campaign.assessmentId && campaign.channel && policy?.activationMode === "manual"
+      ? await tx.select({ id: prospectingPlans.id }).from(prospectingPlans)
+        .innerJoin(channelAssessments, and(eq(channelAssessments.workspaceId, prospectingPlans.workspaceId), eq(channelAssessments.planId, prospectingPlans.id)))
+        .where(and(eq(prospectingPlans.workspaceId, workspaceId), eq(prospectingPlans.id, campaign.planId), eq(prospectingPlans.icpVersionId, campaign.icpVersionId),
+          eq(channelAssessments.id, campaign.assessmentId), eq(channelAssessments.channel, campaign.channel), eq(channelAssessments.status, "completed"))).limit(1)
+      : [];
     const checks = [
       { reference: "offerVersionId" as const, versionId: campaign.offerVersionId, table: offerVersions, code: "OFFER_VERSION_NOT_PUBLISHED" },
       { reference: "icpVersionId" as const, versionId: campaign.icpVersionId, table: icpVersions, code: "ICP_VERSION_NOT_PUBLISHED" },
@@ -512,7 +531,13 @@ export class PostgresCampaignRepository {
       { reference: "sequenceVersionId" as const, versionId: campaign.sequenceVersionId, table: sequenceVersions, code: "SEQUENCE_VERSION_NOT_PUBLISHED" },
     ];
     const blockers: CampaignPreflightBlocker[] = [];
+    if (nativePlan && campaign.status === "draft" && (campaign.automationStage !== "preflight" || !policy?.enabled)) {
+      blockers.push({ code: "CAMPAIGN_PREPARATION_REQUIRED", reference: "sequenceVersionId", versionId: campaign.sequenceVersionId ?? "", message: "Complete campaign preparation and enable its policy before activation" });
+    }
     for (const check of checks) {
+      // Assessed channel campaigns persist their messaging strategy and policy
+      // in the assessment and campaign; legacy campaigns still require all five versions.
+      if (nativePlan && (check.reference === "messagingStrategyVersionId" || check.reference === "aiPolicyVersionId") && !check.versionId) continue;
       if (!check.versionId) {
         blockers.push({ code: check.code, reference: check.reference, versionId: "", message: `${check.reference} must reference a published version` });
         continue;

@@ -1,11 +1,11 @@
-"""Crawl4AI-based web crawler engine."""
+"""Rendered web crawler engine."""
 
 import asyncio
 import re
 import time
 from urllib.parse import urljoin, urlparse
 
-from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
+from crawler_service.core.browser import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
 
 from crawler_service.config import settings
 from crawler_service.core.job_manager import CrawlJob, job_manager
@@ -17,14 +17,13 @@ from crawler_service.core.request_safety import (
     bounded_markdown,
     canonicalize_url,
     collected_at,
-    configure_safe_crawler,
     content_hash,
 )
 from crawler_service.models.events import CrawledPage, CrawlResult
 
 
 class CrawlerEngine:
-    """Orchestrates web crawling using Crawl4AI."""
+    """Orchestrates web crawling using Playwright."""
 
     def __init__(self, job: CrawlJob):
         self.job = job
@@ -62,7 +61,6 @@ class CrawlerEngine:
 
         try:
             async with AsyncWebCrawler(config=browser_config) as crawler:
-                configure_safe_crawler(crawler)
                 while (
                     self._queue
                     and len(self._results) < self.job.limit
@@ -332,7 +330,6 @@ class SelectiveCrawlerEngine:
 
         try:
             async with AsyncWebCrawler(config=browser_config) as crawler:
-                configure_safe_crawler(crawler)
                 for i, url in enumerate(self.urls):
                     if self.job.cancel_event.is_set():
                         break

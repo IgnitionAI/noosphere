@@ -1,3 +1,4 @@
+import { ProviderUnavailableError } from "@outbound/application/crm/prospect-source";
 import {
   emptyProspectChannels,
   type ProspectChannel,
@@ -37,15 +38,7 @@ export interface ProspectSource {
   resolveHealthyAccount?(channel: "linkedin" | "email" | "whatsapp"): Promise<string>;
 }
 
-export class ProviderUnavailableError extends Error {
-  constructor(
-    message: string,
-    readonly status: number | null = null,
-  ) {
-    super(message);
-    this.name = "ProviderUnavailableError";
-  }
-}
+export { ProviderUnavailableError } from "@outbound/application/crm/prospect-source";
 
 type UnipileAccount = {
   id?: string;

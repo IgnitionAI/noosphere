@@ -5,13 +5,12 @@ import re
 import time
 from urllib.parse import urljoin, urlparse
 
-from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
+from crawler_service.core.browser import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
 
 from crawler_service.api.schemas import DiscoveredPage
 from crawler_service.config import settings
 from crawler_service.core.url_safety import is_url_allowed, is_url_allowed_async
 from crawler_service.core.domain_limiter import domain_limiter
-from crawler_service.core.request_safety import configure_safe_crawler
 
 
 class DiscoveryEngine:
@@ -56,7 +55,6 @@ class DiscoveryEngine:
         )
 
         async with AsyncWebCrawler(config=browser_config) as crawler:
-            configure_safe_crawler(crawler)
             while self._queue and len(self._discovered) < self.max_pages:
                 # Process in batches for speed
                 batch = []

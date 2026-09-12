@@ -18,6 +18,7 @@ const uuid = z.string().uuid();
 const request = z.object({
   requestKey: uuid,
   expectedVersion: z.coerce.number().int().min(0).optional(),
+  executeWhenAllowed: z.boolean().default(false),
 }).strict();
 const boundedBody = z.string().trim().min(1).max(10_000);
 const boundedJustification = z.string().trim().min(1).max(2_000);

@@ -238,3 +238,7 @@ conversation soit dans ou hors campagne.
 Un job peut être livré plusieurs fois. Chaque effet externe possède donc une
 clé d'idempotence stable et chaque transition durable écrit son événement
 outbox dans la même transaction.
+
+### Préparation des deux moteurs après une étude V3
+
+La publication des ICP crée une offre réutilisable issue du brief ou de la synthèse produit, sans transformer les déclarations non vérifiées en preuves commerciales. Les campagnes Outbound référencent cette offre. Dans la même transaction, un job `content.strategy.prepare` prépare le brouillon Inbound pour l’ICP classé premier. Les deux versions sources sont explicites et la reprise est idempotente par étude. La préparation n’active ni les publications ni les envois. L’interface expose l’attente ou l’interruption du job, puis le brouillon produit.

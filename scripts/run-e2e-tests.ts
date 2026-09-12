@@ -24,6 +24,8 @@ const environment = {
   BETTER_AUTH_URL: baseUrl,
   BETTER_AUTH_SECRET: authSecret,
   BETTER_AUTH_TRUSTED_ORIGINS: baseUrl,
+  MCP_ALLOWED_HOSTS: `${new URL(baseUrl).host},127.0.0.1:${process.env.E2E_API_PORT ?? "3301"}`,
+  MCP_ALLOWED_ORIGINS: baseUrl,
   OUTBOUND_API_URL: `http://127.0.0.1:${process.env.E2E_API_PORT ?? "3301"}`,
   APP_ENCRYPTION_KEY: "noosphere-e2e-tests-only",
   BOOTSTRAP_OWNER_EMAIL: ownerEmail,

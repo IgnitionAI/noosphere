@@ -56,24 +56,32 @@ async function resetDatabase(databaseUrl: string): Promise<void> {
 
 async function main(): Promise<void> {
   const testDatabaseUrl = integrationTestDatabaseUrl(process.env);
-  await resetDatabase(testDatabaseUrl);
-  const database = createDatabase(testDatabaseUrl);
-  try {
-    await migrate(database.db, {
-      migrationsFolder: new URL("../packages/infrastructure/migrations", import.meta.url).pathname,
+  const cwd = import.meta.dir + "/..";
+  const files = [...new Bun.Glob("tests/integration/**/*.test.ts").scanSync({ cwd })].sort();
+  // Schedulers scan all workspaces, while some suites deliberately retain
+  // immutable fixtures. A shared database makes later suites consume those
+  // fixtures even when tests run serially. Isolate both database and process
+  // per file; concurrency scenarios within each suite remain unchanged.
+  for (const file of files) {
+    await resetDatabase(testDatabaseUrl);
+    const database = createDatabase(testDatabaseUrl);
+    try {
+      await migrate(database.db, {
+        migrationsFolder: new URL("../packages/infrastructure/migrations", import.meta.url).pathname,
+      });
+    } finally {
+      await database.close();
+    }
+    console.info(`Integration database ready: ${file}`);
+    const child = Bun.spawn(["bun", "test", file], {
+      cwd,
+      env: integrationTestEnvironment(process.env, testDatabaseUrl),
+      stdout: "inherit",
+      stderr: "inherit",
     });
-  } finally {
-    await database.close();
+    const exitCode = await child.exited;
+    if (exitCode !== 0) process.exitCode = exitCode;
   }
-  console.info("Integration test database ready (isolated from development).");
-  const child = Bun.spawn(["bun", "test", "tests/integration"], {
-    cwd: import.meta.dir + "/..",
-    env: integrationTestEnvironment(process.env, testDatabaseUrl),
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-  const exitCode = await child.exited;
-  if (exitCode !== 0) process.exitCode = exitCode;
 }
 
 function databaseNameFrom(url: URL): string {

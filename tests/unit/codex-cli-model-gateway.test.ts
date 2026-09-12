@@ -209,3 +209,22 @@ describe("CodexModelCatalog", () => {
     expect(snapshot.models.map((model) => model.id)).toEqual(["gpt-5.6-luna"]);
   });
 });
+
+test("an outdated Codex client is not classified as an inaccessible model", async () => {
+ const gateway = new CodexCliModelGateway({ codexHome: "/tmp/codex-test", runner: { async run() { return {exitCode: 1, stdout: "", stderr: "warning: Model metadata for gpt-6-astra not found.\nERROR: The model requires a newer version of Codex. Please upgrade to the latest app or CLI and try again."}; } } });
+ await expect(gateway.invokeStructured(request)).rejects.toMatchObject({code: "AI_PROVIDER_CLIENT_OUTDATED"});
+});
+
+test("Codex receives compatible nested URL schemas while local validation still rejects invalid URLs", async () => {
+  const { z } = await import("zod");
+  const schema = z.object({ evidence: z.array(z.object({ url: z.url().nullable() })) });
+  const original = z.toJSONSchema(schema);
+  const gateway = new CodexCliModelGateway({ codexHome: "/tmp/codex-test", runner: { async run(input) {
+    const path = input.command[input.command.indexOf("--output-schema") + 1]!;
+    const transmitted = await Bun.file(path).json();
+    expect(transmitted.properties.evidence.items.properties.url.anyOf[0].format).toBeUndefined();
+    expect(original).toMatchObject({ properties: { evidence: { items: { properties: { url: { anyOf: [{ type: "string", format: "uri" }, { type: "null" }] } } } } } });
+    return { exitCode: 0, stdout: JSON.stringify({ evidence: [{ url: "not-a-url" }] }), stderr: "" };
+  } } });
+  await expect(gateway.invokeStructured({ ...request, outputSchema: original, parse: value => schema.parse(value) })).rejects.toMatchObject({ code: "AI_PROVIDER_OUTPUT_INVALID" });
+});

@@ -146,7 +146,7 @@ export class PostgresMcpOAuthStore implements McpOAuthStore {
         .where(and(eq(mcpOauthClients.clientId, input.clientId), isNull(mcpOauthClients.revokedAt)))
         .for("update")
         .limit(1);
-      if (!client || client.userId !== current.userId || client.workspaceId !== current.workspaceId) return { status: "invalid" };
+      if (!client || (client.userId !== null && (client.userId !== current.userId || client.workspaceId !== current.workspaceId))) return { status: "invalid" };
 
       const [membership] = await tx.select({ role: workspaceMembers.role })
         .from(workspaceMembers)

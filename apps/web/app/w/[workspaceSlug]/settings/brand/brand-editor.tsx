@@ -32,6 +32,7 @@ export function BrandEditor({ workspaceSlug, initial }: { workspaceSlug: string;
     if (!file) { setError("Sélectionnez un logo PNG, JPEG ou WebP."); return; }
     setPending("logo"); setNotice(null); setError(null);
     try {
+      await updateWorkspaceBrandAction(workspaceSlug, brand);
       const data = new FormData(); data.set("logo", file);
       const updated = await importWorkspaceBrandLogoAction(workspaceSlug, data);
       setBrand(updated.snapshot);
@@ -52,6 +53,7 @@ export function BrandEditor({ workspaceSlug, initial }: { workspaceSlug: string;
   async function generateDirection() {
     setPending("direction"); setNotice(null); setError(null);
     try {
+      await updateWorkspaceBrandAction(workspaceSlug, brand);
       const designed = await generateWorkspaceBrandDirectionAction(workspaceSlug, {
         landingPageUrl: brand.websiteUrl,
         description: usableDescription(brand.brandDescription),
@@ -73,7 +75,7 @@ export function BrandEditor({ workspaceSlug, initial }: { workspaceSlug: string;
   }
 
   return <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.72fr)]">
-    <div className="space-y-6">
+    <fieldset className="min-w-0 space-y-6" disabled={Boolean(pending)}>
       <section className="panel p-5">
         <div className="flex items-start justify-between gap-4"><div><h2 className="font-semibold text-ink">Fondations</h2><p className="mt-1 text-xs leading-5 text-muted">Donnez à Noosphere votre site, votre logo ou quelques mots. L’agent compose l’identité à partir des signaux disponibles.</p></div><span className="badge badge-success"><Check size={12} /> Inbound + Outbound</span></div>
         <div className="mt-5 grid gap-4 sm:grid-cols-2">
@@ -111,7 +113,7 @@ export function BrandEditor({ workspaceSlug, initial }: { workspaceSlug: string;
       {notice ? <p className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800" role="status">{notice}</p> : null}
       {error ? <p className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-danger" role="alert">{error}</p> : null}
       <button className="button button-primary w-full sm:w-auto" disabled={Boolean(pending)} onClick={save} type="button">{pending === "save" ? <LoaderCircle className="animate-spin" size={15} /> : <Save size={15} />} Enregistrer l’identité</button>
-    </div>
+    </fieldset>
 
     <aside className="lg:sticky lg:top-6 lg:self-start"><div className="panel overflow-hidden"><div className="panel-header"><div><h2 className="font-semibold">Aperçu</h2><p className="mt-1 text-xs text-muted">Une image LinkedIn 4:5</p></div><span className="badge">Automatique</span></div><div className="p-4"><div className="aspect-[4/5] overflow-hidden rounded-xl p-7 shadow-sm" style={{ backgroundColor: brand.colors.primary, color: brand.colors.background }}><div className="flex items-start justify-between gap-4"><strong className="text-xs uppercase tracking-[0.2em]">{brand.brandName}</strong>{brand.logo ? <span className="grid h-12 w-20 place-items-center rounded-lg bg-white/95 p-2"><img alt="" className="max-h-full max-w-full object-contain" src={brand.logo.previewDataUrl} /></span> : null}</div><div className="mt-20"><span className="block h-1.5 w-16 rounded-full" style={{ backgroundColor: brand.colors.accent }} /><h3 className="mt-6 text-3xl font-black leading-tight">Une idée forte, immédiatement reconnaissable.</h3><p className="mt-5 text-sm leading-6 opacity-80">Noosphere applique votre identité sans vous demander de redesigner chaque contenu.</p></div><p className="mt-20 border-t border-white/20 pt-5 text-xs font-semibold">{brand.tagline ?? brand.brandName}</p></div></div></div><p className="mt-3 px-2 text-xs leading-5 text-muted">Le logo complet est utilisé dans les images et chaque page des carrousels. La voix guide aussi les messages et les réponses.</p></aside>
   </div>;

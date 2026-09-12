@@ -1,6 +1,8 @@
 import { ChatOpenAI } from "@langchain/openai";
 import { z } from "zod";
 import type { EvaluationExecutor } from "@outbound/application/ai/evaluation-executor";
+import { resolveEvaluationModelRoute } from "@outbound/application/ai/evaluation-model-route";
+import type { WorkspaceAiModelPolicyReader } from "@outbound/application/workspaces/workspace-ai-settings";
 import type { EvaluationOutput } from "@outbound/domain/ai/evaluation";
 import {
   buildChatModelFields,
@@ -27,6 +29,7 @@ export class LangChainEvaluationExecutor implements EvaluationExecutor {
   constructor(
     environment: Readonly<Record<string, string | undefined>> = process.env,
     private readonly routedModel?: WorkspaceStructuredModel,
+    private readonly policies?: WorkspaceAiModelPolicyReader,
   ) {
     this.#configuration = resolveResearchModelConfigurationFromEnvironment(environment);
     this.#inputRate = optionalNonNegativeNumber(environment.KIMI_EVALUATION_INPUT_USD_PER_MILLION);
@@ -46,12 +49,13 @@ export class LangChainEvaluationExecutor implements EvaluationExecutor {
       "knowledgeClaimIds must contain only identifiers explicitly present in the case input; otherwise return an empty array.",
     ].join("\n");
     if (this.routedModel) {
-      const provider = normalizeProvider(input.provider);
+      const route = resolveEvaluationModelRoute(await this.policies?.find(input.workspaceId), input);
+      const provider = route.provider;
       const response = await this.routedModel.invoke({
         workspaceId: input.workspaceId,
         capability: "evaluation",
         requestKey: `evaluation:${new Bun.CryptoHasher("sha256").update(JSON.stringify(input)).digest("hex")}`,
-        explicitRoutes: [{ provider, model: input.model, reasoningEffort: "low" }],
+        explicitRoutes: [route],
         fallbackRoutes: [],
         systemPrompt,
         payload: input.caseInput,
@@ -70,6 +74,7 @@ export class LangChainEvaluationExecutor implements EvaluationExecutor {
             )
           : null,
         latencyMs: response.metadata.latencyMs,
+        route,
       };
     }
     const model = new ChatOpenAI(buildChatModelFields(this.#configuration, input.model, "low"));
@@ -88,12 +93,6 @@ export class LangChainEvaluationExecutor implements EvaluationExecutor {
       latencyMs: Math.max(0, Math.round(performance.now() - startedAt)),
     };
   }
-}
-
-function normalizeProvider(value: string): "kimi-code" | "codex-cli" | "openai-api" {
-  if (value === "kimi-code" || value === "codex-cli" || value === "openai-api") return value;
-  if (value === "openai") return "openai-api";
-  throw new Error("EVALUATION_PROVIDER_NOT_CONFIGURED");
 }
 
 function optionalNonNegativeNumber(value: string | undefined): number | null {

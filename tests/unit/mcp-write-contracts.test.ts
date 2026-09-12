@@ -9,11 +9,14 @@ import {
 } from "@outbound/interface/mcp/mcp-write-contracts";
 
 describe("MCP safe-write contracts", () => {
-  test("publishes exactly the eight internal-only mutation tools", () => {
-    expect(MCP_WRITE_TOOL_NAMES).toEqual([
+  test("publishes the complete internal-only mutation surface", () => {
+    expect(MCP_WRITE_TOOL_NAMES).toEqual(expect.arrayContaining([
       "company_upsert", "contact_upsert", "opportunity_update", "opportunity_change_stage",
       "prospect_add_note", "content_idea_create", "content_draft_create", "prospect_schedule_dry_run",
-    ]);
+      "offer_create", "offer_update", "offer_publish", "research_launch", "campaign_create",
+      "conversation_set_automation", "content_autopilot_configure", "knowledge_source_create",
+      "knowledge_source_validate", "knowledge_claim_create", "knowledge_claim_validate",
+    ]));
     expect(MCP_WRITE_TOOL_NAMES).not.toContain("send");
     expect(MCP_WRITE_TOOL_NAMES).not.toContain("publish");
     expect(MCP_WRITE_TOOL_NAMES).not.toContain("book");

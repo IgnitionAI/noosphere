@@ -28,6 +28,16 @@ describe("F-009 HTTP routes", () => {
     expect((await backend.findById(workspaceId, body.id))?.snapshot.workspaceId).toBe(workspaceId);
   });
 
+  test("a draft stays editable when AI is unavailable and start explains the prerequisite", async () => {
+    const harness = createHarness(new FixtureAgents(), async () => false);
+    const created = await (await createRun(harness.handle)).json() as { id: string };
+    const response = await harness.handle(new Request(`http://localhost/api/v1/product-research-runs/${created.id}/actions/start`, { method: "POST" }));
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: "AI_SETUP_REQUIRED" });
+    const detail = await harness.handle(new Request(`http://localhost/api/v1/product-research-runs/${created.id}`));
+    expect(await detail.json()).toMatchObject({ status: "draft" });
+  });
+
   test("an operator starts a run and a viewer reads its progress", async () => {
     const harness = createHarness();
     const created = (await (await createRun(harness.handle)).json()) as { id: string };
@@ -513,7 +523,7 @@ describe("F-009 HTTP routes", () => {
   });
 });
 
-function createHarness(agents: ResearchAgentExecutor = new FixtureAgents()) {
+function createHarness(agents: ResearchAgentExecutor = new FixtureAgents(), aiAvailable?: (workspaceId: string) => Promise<boolean>) {
   const backend = new InMemoryResearchBackend();
   const workspaceId = crypto.randomUUID();
   const context = {
@@ -526,6 +536,7 @@ function createHarness(agents: ResearchAgentExecutor = new FixtureAgents()) {
     backend,
     new CryptoIdGenerator(),
     new SystemClock(),
+    aiAvailable,
   );
   const handle = createProductResearchHttpHandler({
     application,

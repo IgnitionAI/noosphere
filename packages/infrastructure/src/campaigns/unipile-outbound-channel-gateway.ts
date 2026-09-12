@@ -44,6 +44,7 @@ export class UnipileOutboundChannelGateway implements OutboundChannelGateway {
 
   async #startChat(request: OutboundSendRequest) {
     if (request.conversationId) {
+      if (request.channel === "linkedin") await this.#requireLinkedinThreadRecipient(request);
       const body = new FormData();
       body.set("account_id", request.accountId);
       body.set("text", request.body);
@@ -83,6 +84,30 @@ export class UnipileOutboundChannelGateway implements OutboundChannelGateway {
     }
   }
 
+  async #requireLinkedinThreadRecipient(request: OutboundSendRequest): Promise<void> {
+    const mismatch = () => new OutboundDeliveryError("LINKEDIN_THREAD_RECIPIENT_MISMATCH", "The thread must belong to the selected account and CRM recipient", "not_sent", false);
+    const publicId = /^(?:https?:\/\/)?(?:www\.)?linkedin\.com\/in\/([^/?#\s]+)\/?$/i.exec(request.recipient.normalizedValue)?.[1];
+    if (!publicId) throw mismatch();
+    try {
+      const profile = record(await this.#request(`/api/v1/users/${encodeURIComponent(publicId)}?account_id=${encodeURIComponent(request.accountId)}`, { method: "GET" }));
+      const providerId = typeof profile.provider_id === "string" ? profile.provider_id : null;
+      if (!providerId || request.recipient.providerUserId && request.recipient.providerUserId !== providerId) throw mismatch();
+      const path = `/api/v1/chats/${encodeURIComponent(request.conversationId!)}`;
+      const chat = record(await this.#request(path, { method: "GET" }));
+      if (chat.account_id !== request.accountId) throw mismatch();
+      const page = record(await this.#request(`${path}/attendees`, { method: "GET" }));
+      if (!Array.isArray(page.items) || page.cursor) throw mismatch();
+      const attendees = page.items.map(record);
+      if (attendees.some(attendee => typeof attendee.is_self !== "boolean")) throw mismatch();
+      const external = attendees.filter(attendee => !attendee.is_self);
+      if (external.length !== 1 || external[0]!.provider_id !== providerId) throw mismatch();
+    } catch (error) {
+      if (error instanceof OutboundDeliveryError && error.code === "LINKEDIN_THREAD_RECIPIENT_MISMATCH") throw error;
+      // These are read-only preflights: no message mutation has been attempted.
+      throw new OutboundDeliveryError("LINKEDIN_RECIPIENT_VERIFICATION_FAILED", "Could not verify the thread recipient", "not_sent", error instanceof OutboundDeliveryError ? error.retryable : true);
+    }
+  }
+
   async #requireLinkedinRelationship(request: OutboundSendRequest): Promise<void> {
     if (!request.recipient.providerUserId) {
       throw new OutboundDeliveryError(
@@ -113,6 +138,19 @@ export class UnipileOutboundChannelGateway implements OutboundChannelGateway {
         false,
       );
     }
+    let replyTo = request.replyToProviderMessageId;
+    if (request.replyToUnipileMessageId) {
+      let original: Record<string, unknown>;
+      try {
+        original = record(await this.#request(`/api/v1/emails/${encodeURIComponent(request.replyToUnipileMessageId)}`, { method: "GET" }));
+      } catch (error) {
+        throw new OutboundDeliveryError("EMAIL_REPLY_ID_VERIFICATION_FAILED", "Could not resolve the original email identity", "not_sent", error instanceof OutboundDeliveryError ? error.retryable : true);
+      }
+      if (original.id !== request.replyToUnipileMessageId || original.account_id !== request.accountId || typeof original.provider_id !== "string" || !original.provider_id.trim() || replyTo && replyTo !== original.provider_id) {
+        throw new OutboundDeliveryError("EMAIL_REPLY_ID_MISMATCH", "The original email must belong to the selected account", "not_sent", false);
+      }
+      replyTo = original.provider_id;
+    }
     const response = await this.#request("/api/v1/emails", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -125,8 +163,8 @@ export class UnipileOutboundChannelGateway implements OutboundChannelGateway {
           { name: "Content-Type", value: "text/plain; charset=utf-8" },
           { name: "X-Ignition-Outbound-Action", value: request.idempotencyKey },
         ],
-        ...(request.replyToProviderMessageId
-          ? { reply_to: request.replyToProviderMessageId }
+        ...(replyTo
+          ? { reply_to: replyTo }
           : {}),
       }),
     });
@@ -209,13 +247,18 @@ function isConnectionEstablishmentFailure(error: unknown): boolean {
 
 function responseIdentity(value: unknown): { providerRequestId: string; conversationId: string | null } {
   const body = value && typeof value === "object" ? value as Record<string, unknown> : {};
-  const requestId = [body.id, body.provider_id, body.message_id, body.chat_id]
+  const requestId = [body.id, body.provider_id, body.message_id, body.invitation_id]
     .find((item): item is string => typeof item === "string" && item.length > 0)
-    ?? crypto.randomUUID();
+    ?? null;
+  if (!requestId) throw new OutboundDeliveryError("UNIPILE_RESPONSE_ID_MISSING", "The provider response did not confirm a message or invitation identity", "unknown", false);
   const conversationId = [body.chat_id, body.thread_id]
     .find((item): item is string => typeof item === "string" && item.length > 0)
     ?? null;
   return { providerRequestId: requestId, conversationId };
+}
+
+function record(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
 function whatsappAttendee(value: string): string | null {

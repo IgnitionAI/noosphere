@@ -1,7 +1,7 @@
 [project]
 name = "crawler-service"
 version = "0.1.0"
-description = "Noosphere Crawl4AI/SearXNG crawler microservice"
+description = "Noosphere Playwright/SearXNG crawler microservice"
 license = "AGPL-3.0-only"
 requires-python = ">=3.12"
 dependencies = [
@@ -9,7 +9,8 @@ dependencies = [
     "uvicorn[standard]>=0.32.0",
     "pydantic>=2.10.0",
     "pydantic-settings>=2.6.0",
-    "crawl4ai>=0.9.2,<1.0.0",
+    "beautifulsoup4>=4.14.3,<5",
+    "markdownify>=1.2.2,<2",
     "playwright>=1.49.0",
     "sse-starlette>=2.1.0",
     "httpx>=0.28.0",

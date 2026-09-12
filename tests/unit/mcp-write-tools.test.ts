@@ -17,6 +17,28 @@ const baseCapabilities = (): RuntimeCapabilities => ({
 });
 
 describe("MCP safe-write tools", () => {
+  test("advertises deferred provider effects and replacement of automation settings", async () => {
+    const instance = createMcpTransport({ capabilities: { ...baseCapabilities(), mcpWrite: { execute: async () => { throw new Error("discovery must not execute"); } } }, allowedHosts: ["example.test"], authorize: async () => context });
+    const client = new Client({ name: "mcp-write-annotations", version: "1.0.0" });
+    const transport = new StreamableHTTPClientTransport(new URL("https://example.test/mcp"), { fetch: async (input, init) => instance.handle(input instanceof Request ? input : new Request(input, init)) });
+    await client.connect(transport);
+    try {
+      const { tools } = await client.listTools();
+      for (const name of ["research_launch", "content_draft_create", "conversation_set_automation", "content_autopilot_configure"]) {
+        expect(tools.find(tool => tool.name === name)?.annotations).toMatchObject({ openWorldHint: true, readOnlyHint: false, idempotentHint: true });
+      }
+      for (const name of ["conversation_set_automation", "content_autopilot_configure"]) {
+        expect(tools.find(tool => tool.name === name)?.annotations?.destructiveHint).toBe(true);
+      }
+      for (const name of ["research_launch", "content_draft_create", "offer_create"]) {
+        expect(tools.find(tool => tool.name === name)?.annotations?.destructiveHint).toBe(false);
+      }
+      for (const name of ["offer_create", "prospect_schedule_dry_run", "knowledge_source_create"]) {
+        expect(tools.find(tool => tool.name === name)?.annotations?.openWorldHint).toBe(false);
+      }
+    } finally { await client.close(); }
+  });
+
   test("registers internal writes and forwards canonical command", async () => {
     let received: unknown;
     const writes: McpWriteCapabilities = { execute: async (_context, command) => { received = command; return { id: crypto.randomUUID(), version: 1, state: "applied", operation: command.operation, correlationId: crypto.randomUUID() }; } };
@@ -30,6 +52,18 @@ describe("MCP safe-write tools", () => {
     expect(result.structuredContent).toMatchObject({ state: "applied", operation: "company_upsert" });
     expect(received).toMatchObject({ operation: "company_upsert", requestKey });
     await client.close();
+  });
+
+  test("explains missing instance AI to MCP clients", async () => {
+    const instance = createMcpTransport({ capabilities: { ...baseCapabilities(), mcpWrite: { execute: async () => { throw new Error("AI_SETUP_REQUIRED"); } } }, allowedHosts: ["example.test"], authorize: async () => context });
+    const client = new Client({ name: "mcp-ai-setup", version: "1.0.0" });
+    const transport = new StreamableHTTPClientTransport(new URL("https://example.test/mcp"), { fetch: async (input, init) => instance.handle(input instanceof Request ? input : new Request(input, init)) });
+    await client.connect(transport);
+    try {
+      const result = await client.callTool({ name: "content_draft_create", arguments: { requestKey: crypto.randomUUID(), ideaId: crypto.randomUUID(), body: "Prepare an evidence-backed draft" } });
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toMatchObject({ error: "AI_SETUP_REQUIRED", setupUrl: "/settings/instance/ai" });
+    } finally { await client.close(); }
   });
 
   test("denies viewer writes", async () => {

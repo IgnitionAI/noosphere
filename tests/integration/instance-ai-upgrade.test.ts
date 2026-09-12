@@ -1,0 +1,65 @@
+import { expect, test } from "bun:test";
+import { copyFile, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { migrate } from "drizzle-orm/postgres-js/migrator";
+import { createDatabase } from "@outbound/infrastructure/database/client";
+import { registerRuntimeAiDefaults } from "@outbound/infrastructure/ai/register-runtime-ai-defaults";
+import { PostgresTaskAiPolicyReader } from "@outbound/infrastructure/ai/postgres-task-ai-policy-reader";
+import { bootstrapInstanceAdministrator } from "../../scripts/bootstrap-owner";
+
+const url = process.env.TEST_DATABASE_URL;
+(url ? test : test.skip)("upgrades the pre-instance schema without promoting users or altering retained work", async () => {
+  const name = `noosphere_upgrade_test_${crypto.randomUUID().replaceAll("-", "")}`;
+  const target = new URL(url!), adminUrl = new URL(url!);
+  target.pathname = `/${name}`;
+  adminUrl.pathname = "/postgres";
+  const admin = createDatabase(adminUrl.href);
+  let database: ReturnType<typeof createDatabase> | undefined;
+  let created = false;
+  try {
+    await admin.client.unsafe(`create database "${name}"`);
+    created = true;
+    database = createDatabase(target.href);
+    const folder = `${import.meta.dir}/../../packages/infrastructure/migrations`;
+    const journal = JSON.parse(await readFile(join(folder, "meta/_journal.json"), "utf8"));
+    const oldJournal = { ...journal, entries: journal.entries.filter((entry: { idx: number }) => entry.idx < 107) };
+    const legacyFolder = await mkdtemp(join(tmpdir(), "noosphere-upgrade-migrations-"));
+    await mkdir(join(legacyFolder, "meta"));
+    await writeFile(join(legacyFolder, "meta/_journal.json"), JSON.stringify(oldJournal));
+    for (const entry of oldJournal.entries) await copyFile(join(folder, `${entry.tag}.sql`), join(legacyFolder, `${entry.tag}.sql`));
+    await migrate(database.db, { migrationsFolder: legacyFolder });
+    const workspaceId = crypto.randomUUID(), jobId = crypto.randomUUID(), runId = crypto.randomUUID();
+    const firstUser = crypto.randomUUID(), designatedUser = crypto.randomUUID();
+    await database.client`insert into auth_users (id, name, email) values (${firstUser}, 'Earlier user', ${`${firstUser}@example.com`}), (${designatedUser}, 'Designated owner', ${`${designatedUser}@example.com`})`;
+    await database.client`insert into workspaces (id, name, slug) values (${workspaceId}, 'Retained workspace', ${workspaceId})`;
+    await database.client`insert into workspace_members (workspace_id, user_id, role, status) values (${workspaceId}, ${firstUser}, 'owner', 'active'), (${workspaceId}, ${designatedUser}, 'admin', 'active')`;
+    await database.client`insert into workspace_ai_settings (workspace_id, research_models, synthesis_models, updated_by) values (${workspaceId}, '["retained-principal"]', '["retained-executor"]', ${firstUser})`;
+    await database.client`insert into product_research_runs (id, workspace_id, brief, status, completed_stages, created_at, updated_at) values (${runId}, ${workspaceId}, '{"productName":"Retained brief"}', 'paused', '["product_truth"]', now(), now())`;
+    await database.client`insert into jobs (id, workspace_id, type, payload, status, attempts, max_attempts, idempotency_key, correlation_id, available_at) values (${jobId}, ${workspaceId}, 'research.stage.execute', ${database.client.json({ runId, stage: "problem_mapping" })}, 'retry', 2, 5, ${jobId}, ${runId}, now())`;
+    const [before] = await database.client`select status, completed_stages, brief, updated_at from product_research_runs where id = ${runId}`;
+    await migrate(database.db, { migrationsFolder: folder });
+    expect(await database.client`select * from instance_administrators`).toHaveLength(0);
+    const policy = { researchModels: ["environment"], synthesisModels: ["environment"], defaultRoutes: [{ provider: "kimi-code" as const, model: "environment", reasoningEffort: "low" as const }], capabilityRoutes: {} };
+    await registerRuntimeAiDefaults(database.client, policy);
+    const captured = await new PostgresTaskAiPolicyReader(database.client).find(jobId, workspaceId);
+    expect(captured?.researchTierRoutes?.principal[0]?.model).toBe("retained-principal");
+    expect(captured?.researchTierRoutes?.executor[0]?.model).toBe("retained-executor");
+    const [after] = await database.client`select status, completed_stages, brief, updated_at from product_research_runs where id = ${runId}`;
+    expect(after).toEqual(before);
+    const [job] = await database.client`select status, attempts, payload from jobs where id = ${jobId}`;
+    expect(job).toMatchObject({ status: "retry", attempts: 2, payload: { runId, stage: "problem_mapping" } });
+    const owner = { baseUrl: "http://localhost:3301", secret: "test-upgrade-secret-at-least-32-characters", email: `${designatedUser}@example.com`, name: "Designated owner", password: "upgrade-test-password", workspaceSlug: "unused", workspaceName: "Unused" };
+    await bootstrapInstanceAdministrator(database.db, owner);
+    await bootstrapInstanceAdministrator(database.db, owner);
+    expect([...await database.client`select user_id from instance_administrators`]).toEqual([{ user_id: designatedUser }]);
+    expect([...await database.client`select id from workspaces`]).toEqual([{ id: workspaceId }]);
+    await migrate(database.db, { migrationsFolder: folder });
+    await registerRuntimeAiDefaults(database.client, { ...policy, defaultRoutes: [{ ...policy.defaultRoutes[0]!, model: "future" }] });
+    expect(await new PostgresTaskAiPolicyReader(database.client).find(jobId, workspaceId)).toEqual(captured);
+  } finally {
+    await database?.close();
+    if (created) await admin.client.unsafe(`drop database "${name}"`);
+    await admin.close();
+  }
+}, 30_000);

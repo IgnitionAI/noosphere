@@ -50,6 +50,7 @@ export const productResearchBriefSchema = z
     researchObjective: z
       .enum(["qualified_conversations", "fast_revenue", "strategic_market"])
       .optional(),
+    campaignActivationMode: z.literal("manual").optional(),
     researchVersion: z.union([z.literal(1), z.literal(2), z.literal(3)]).default(3),
   })
   .strict()

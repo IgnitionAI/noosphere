@@ -1,3 +1,4 @@
+import { AiTaskPauseError } from "@outbound/application/ai/ai-task-pause";
 import { and, asc, count, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type {
   ProspectDecisionAgent,
@@ -111,6 +112,7 @@ export class ProspectDecisionJobProcessor {
       await this.#apply({ decision, state, proposal, policy });
       await this.queue.acknowledge(job.id, job.lockedBy, this.clock.now());
     } catch (error) {
+      if (error instanceof AiTaskPauseError) throw error;
       const message = error instanceof Error ? error.message : String(error);
       const outcome = await this.queue.retry({
         jobId: job.id,
