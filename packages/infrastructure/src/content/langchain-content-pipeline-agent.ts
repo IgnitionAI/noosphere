@@ -106,7 +106,7 @@ export class LangChainContentPipelineAgent implements ContentPipelineAgent {
       provider,
       model,
       promptVersion: role === "writer"
-        ? "noosphere-content-writer-v12"
+        ? "noosphere-content-writer-v13"
         : role === "critic" ? "noosphere-content-critic-v10" : role === "audit" ? "noosphere-content-audit-v6" : "noosphere-content-brief-v8",
       shadow: false,
       inputHash: new Bun.CryptoHasher("sha256").update(JSON.stringify(original)).digest("hex"),
@@ -210,6 +210,7 @@ function pipelineModelSpec(role: PipelineRole, context: unknown) {
       "For linkedin_document, design every slide deliberately. Slide 1 uses layout cover, the last uses closing. Across the middle slides use at least two different layouts among insight, checklist, framework, comparison and process. Never output a monotonous sequence of numbered paragraph slides.",
       "Use kicker to orient the reader, callout for one memorable sentence, and 2-4 structured items for checklist, framework, comparison or process. Each item needs a short label and one concrete sentence. Keep each slide focused on one job and favor visual hierarchy over filling space.",
       "All factual statements and numbers shown in the media plan are public copy and obey the same evidence ledger as body.",
+      "If validationFeedback contains CONTENT_DRAFT_TOO_LONG, use the measured body length and limit to rewrite more concisely. Remove repeated explanations and unnecessary implementation detail, preserving the useful point and source attribution. Never cut a sentence or a URL; synchronize every ledger with the revised copy.",
       "If validationFeedback contains CONTENT_DRAFT_UNSOURCED_NUMBER, remove every number absent from evidence or add the exact sourced sentence to factualClaims.",
       "If validationFeedback contains CONTENT_DRAFT_CLAIM_NOT_IN_BODY, make each claim statement an exact excerpt of body.",
       "If validationFeedback contains CONTENT_DRAFT_UNRESOLVED_CLAIM, use only evidence keys present in the supplied context.",

@@ -3,6 +3,8 @@ import type { LinkedinContentFormat } from "@outbound/domain/content/content-bra
 export const contentGenerationStages = ["brief", "writer", "audit", "critic", "completed"] as const;
 export type ContentGenerationStage = (typeof contentGenerationStages)[number];
 
+export const MAX_CONTENT_BODY_LENGTH = 1_500;
+
 export const CONTENT_EDITORIAL_POLICY_VERSION = "linkedin-editorial-v4";
 
 export const editorialQualityCriteria = ["audienceRelevance", "readerValue", "coherence", "sourceAttribution", "ctaTruthfulness", "brandVoice", "distinctness"] as const;
@@ -266,7 +268,7 @@ export function evaluateContentReadiness(input: {
   if (internalAuditPhrases.filter((phrase) => normalize(input.draft.body).includes(normalize(phrase))).length >= 2) {
     blockers.add("audit_language");
   }
-  if (input.draft.body.trim().length > 1_500) blockers.add("too_long");
+  if (input.draft.body.trim().length > MAX_CONTENT_BODY_LENGTH) blockers.add("too_long");
   // A title quotation or a diagnostic checklist is not a competing CTA.
   // Editorial critique still checks whether the list supplies genuine reader value.
   const readerQuestions = input.draft.body

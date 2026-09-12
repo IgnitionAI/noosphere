@@ -15,7 +15,7 @@ import type {
   ContentGenerationStage,
   ContentGenerationStatus,
 } from "@outbound/domain/content/content-asset";
-import { assertGroundedContentDraft, assertMediaPlanMatchesBrief, evaluateContentReadiness } from "@outbound/domain/content/content-asset";
+import { MAX_CONTENT_BODY_LENGTH, assertGroundedContentDraft, assertMediaPlanMatchesBrief, evaluateContentReadiness } from "@outbound/domain/content/content-asset";
 
 export const CONTENT_GENERATION_JOB_TYPE = "content.asset.generate";
 export const CONTENT_GENERATION_JOB_PRIORITY = 60;
@@ -267,13 +267,16 @@ async function writeGroundedDraft(
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     const draft = await agent.write({ ...input, ...(candidate ? { draft: candidate } : {}), ...(validationFeedback.length ? { validationFeedback } : {}) });
     try {
+      if (draft.body.trim().length > MAX_CONTENT_BODY_LENGTH) throw new Error("CONTENT_DRAFT_TOO_LONG");
       assertGroundedContentDraft(draft, evidenceKeys);
       assertMediaPlanMatchesBrief(input.brief, draft);
       return draft;
     } catch (error) {
       if (!isRepairableDraftError(error) || attempt === 2) throw error;
       candidate = draft;
-      validationFeedback = [...initialValidationFeedback, error.message];
+      validationFeedback = [...initialValidationFeedback, error.message === "CONTENT_DRAFT_TOO_LONG"
+        ? `${error.message}: body has ${draft.body.trim().length} characters; maximum ${MAX_CONTENT_BODY_LENGTH}. Rewrite concisely while retaining the explanation and source attribution. Do not truncate. Resynchronize the claim ledger with the rewritten public copy.`
+        : error.message];
     }
   }
   throw new Error("CONTENT_DRAFT_REPAIR_EXHAUSTED");
@@ -315,6 +318,7 @@ function repairableCritiqueFeedback(
 
 function isRepairableDraftError(error: unknown): error is Error {
   return error instanceof Error && [
+    "CONTENT_DRAFT_TOO_LONG",
     "CONTENT_DRAFT_UNRESOLVED_CLAIM",
     "CONTENT_DRAFT_CLAIM_NOT_IN_BODY",
     "CONTENT_DRAFT_UNSOURCED_NUMBER",

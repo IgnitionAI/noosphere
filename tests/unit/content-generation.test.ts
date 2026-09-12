@@ -246,6 +246,32 @@ describe("CNT-101 grounded content pipeline", () => {
     expect(calls).toEqual(["start", "draft_saved", "audit", "audit_saved", "critic", "ready", "ack"]);
   });
 
+  test.each([false, true])("checks writer length before persistence and audit (persistent: %s)", async persistent => {
+    const context = pipelineContext("writer");
+    const oversized = {...draft(), body: draft().body.padEnd(1581, "x")};
+    const inputs: any[] = [], saved: any[] = [], audited: any[] = [];
+    const repository = {
+      async loadContext() {return context;}, async startRun() {},
+      async saveDraft(input: any) {saved.push(input.draft);},
+      async saveAudit() {}, async completeRun() {}, async failRun() {},
+    } as unknown as ContentGenerationRepository;
+    const processor = new ContentGenerationJobProcessor(repository, {
+      async buildBrief() {return brief();},
+      async write(input) {inputs.push(input); return inputs.length === 1 || persistent ? oversized : draft();},
+      async audit(input) {audited.push(input.draft); return audit();},
+      async critique() {return critique();},
+    }, {async acknowledge() {}} as unknown as JobQueue);
+    const processing = processor.process(job(context.run.workspaceId, context.run.id));
+    if (persistent) await expect(processing).rejects.toThrow("CONTENT_DRAFT_TOO_LONG");
+    else await processing;
+    expect(inputs).toHaveLength(2);
+    expect(inputs[1].draft).toEqual(oversized);
+    expect(inputs[1].validationFeedback.join(" ")).toContain("1581");
+    expect(inputs[1].validationFeedback.join(" ")).toContain("1500");
+    expect(saved).toEqual(persistent ? [] : [draft()]);
+    expect(audited).toEqual(persistent ? [] : [draft()]);
+  });
+
   test("resumes from the audit checkpoint and acknowledges only after an immutable version is finalized", async () => {
     const calls: string[] = [];
     const context = pipelineContext("audit");
