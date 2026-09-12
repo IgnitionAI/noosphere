@@ -199,6 +199,7 @@ class CrawlPagesRequest(BaseModel):
     )
     correlationId: str | None = Field(default=None, max_length=200)
     idempotencyKey: str | None = Field(default=None, min_length=8, max_length=500)
+    retryFailed: bool = False
 
 
 class CrawlPagesStartResponse(BaseModel):

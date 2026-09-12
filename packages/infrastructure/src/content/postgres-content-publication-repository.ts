@@ -302,7 +302,7 @@ export class PostgresContentPublicationRepository implements ContentPublicationR
       if (account.providerAccountId !== input.currentAccountId) throw new Error("CONTENT_PUBLICATION_ACCOUNT_CHANGED");
       if (policy.policyVersion !== "linkedin-publishing-v1" || policy.network !== "linkedin" || policy.claimsGate !== "passed") throw new Error("CONTENT_PUBLICATION_POLICY_INVALID");
 
-      const version = (await tx.select({ ready: contentAssetVersions.ready, body: contentAssetVersions.body, assetType: contentAssets.type, assetStatus: contentAssets.status, strategyVersionId: contentIdeas.strategyVersionId, strategyStatus: editorialStrategies.status, deletedAt: editorialStrategies.deletedAt, strategySnapshot: editorialStrategyVersions.snapshot })
+      const version = (await tx.select({ readiness: contentAssetVersions.readiness, ready: contentAssetVersions.ready, body: contentAssetVersions.body, assetType: contentAssets.type, assetStatus: contentAssets.status, strategyVersionId: contentIdeas.strategyVersionId, strategyStatus: editorialStrategies.status, deletedAt: editorialStrategies.deletedAt, strategySnapshot: editorialStrategyVersions.snapshot })
         .from(contentAssetVersions)
         .innerJoin(contentAssets, and(eq(contentAssets.workspaceId, contentAssetVersions.workspaceId), eq(contentAssets.id, contentAssetVersions.assetId)))
         .innerJoin(contentIdeas, and(eq(contentIdeas.workspaceId, contentAssets.workspaceId), eq(contentIdeas.id, contentAssets.ideaId)))
@@ -310,6 +310,7 @@ export class PostgresContentPublicationRepository implements ContentPublicationR
         .innerJoin(editorialStrategies, and(eq(editorialStrategies.workspaceId, editorialStrategyVersions.workspaceId), eq(editorialStrategies.id, editorialStrategyVersions.strategyId)))
         .where(and(eq(contentAssetVersions.workspaceId, input.workspaceId), eq(contentAssetVersions.id, row.assetVersionId))).limit(1))[0];
       if (!version || !version.ready || version.assetStatus !== "ready") throw new Error("CONTENT_PUBLICATION_ASSET_NO_LONGER_READY");
+      if ((version.readiness as { policyVersion?: unknown }).policyVersion !== CONTENT_EDITORIAL_POLICY_VERSION) throw new Error("CONTENT_ASSET_EDITORIAL_POLICY_OUTDATED");
       if (version.strategyStatus !== "active" || version.deletedAt || version.strategyVersionId !== policy.strategyVersionId) throw new Error("CONTENT_PUBLICATION_STRATEGY_INACTIVE");
       if (version.body !== content.body || sha256(version.body) !== content.contentHash || content.assetVersionId !== row.assetVersionId) throw new Error("CONTENT_PUBLICATION_SNAPSHOT_MISMATCH");
       if (version.assetType !== content.format) throw new Error("CONTENT_PUBLICATION_SNAPSHOT_MISMATCH");

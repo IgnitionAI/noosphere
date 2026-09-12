@@ -112,6 +112,7 @@ export class CrawlerClient {
     urls: readonly string[];
     correlationId: string;
     requestKey?: string;
+    retryFailed?: boolean;
     signal?: AbortSignal;
   }): Promise<readonly CrawledPage[]> {
     return this.#withPageReadSlot(input.signal, async () => {
@@ -122,6 +123,7 @@ export class CrawlerClient {
           includeImages: false,
           correlationId: input.correlationId,
           ...(input.requestKey ? { idempotencyKey: input.requestKey } : {}),
+          ...(input.retryFailed ? { retryFailed: true } : {}),
         }),
         ...(input.signal ? { signal: input.signal } : {}),
       });

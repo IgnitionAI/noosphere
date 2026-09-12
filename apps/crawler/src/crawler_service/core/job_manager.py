@@ -33,6 +33,7 @@ class CrawlJob:
     include_images: bool
     exclude_patterns: list[str]
     include_patterns: list[str]
+    retry_count: int = 0
     status: JobStatus = JobStatus.PENDING
     pages_completed: int = 0
     pages_total: int | None = None
@@ -88,16 +89,16 @@ class JobManager:
         exclude_patterns: list[str] | None = None,
         include_patterns: list[str] | None = None,
         idempotency_key: str | None = None,
+        retry_failed: bool = False,
     ) -> CrawlJob:
         """Create a new crawl job."""
-        if idempotency_key:
-            existing_id = self._idempotency_keys.get(idempotency_key)
-            existing = self._jobs.get(existing_id) if existing_id else None
-            if existing:
-                return existing
+        previous = self.get_job_by_idempotency_key(idempotency_key) if idempotency_key else None
+        if previous and not (retry_failed and self.can_retry_failed(previous)):
+            return previous
         job_id = str(uuid.uuid4())
         job = CrawlJob(
             id=job_id,
+            retry_count=previous.retry_count + 1 if previous else 0,
             url=url,
             limit=limit,
             max_depth=max_depth,
@@ -111,6 +112,17 @@ class JobManager:
         if idempotency_key:
             self._idempotency_keys[idempotency_key] = job_id
         return job
+
+    @staticmethod
+    def can_retry_failed(job: CrawlJob) -> bool:
+        """Allow two retries only after a confirmed failure, never after cancellation."""
+        if job.retry_count >= 2:
+            return False
+        return job.status == JobStatus.FAILED or (
+            job.status == JobStatus.COMPLETED
+            and job.result is not None
+            and not any(page.markdown.strip() for page in job.result.data)
+        )
 
     def get_job_by_idempotency_key(self, key: str) -> CrawlJob | None:
         """Return the current in-memory job for an idempotent request."""

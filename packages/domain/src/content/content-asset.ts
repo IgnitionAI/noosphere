@@ -3,7 +3,14 @@ import type { LinkedinContentFormat } from "@outbound/domain/content/content-bra
 export const contentGenerationStages = ["brief", "writer", "audit", "critic", "completed"] as const;
 export type ContentGenerationStage = (typeof contentGenerationStages)[number];
 
-export const CONTENT_EDITORIAL_POLICY_VERSION = "linkedin-editorial-v2";
+export const CONTENT_EDITORIAL_POLICY_VERSION = "linkedin-editorial-v3";
+
+export const editorialQualityCriteria = ["audienceRelevance", "readerValue", "coherence", "sourceAttribution", "ctaTruthfulness", "brandVoice", "distinctness"] as const;
+export type ContentQualityAssessment = Readonly<Record<(typeof editorialQualityCriteria)[number], {
+  readonly verdict: "pass" | "revise";
+  readonly reason: string;
+  readonly excerpts: readonly string[];
+}>>;
 
 export type ContentGenerationStatus = "queued" | "running" | "ready" | "blocked" | "failed";
 
@@ -53,11 +60,18 @@ export interface ContentDraftSnapshot {
     readonly sourceKeys: readonly string[];
   }[];
   readonly opinionStatements: readonly string[];
+  /** Explicitly labelled invented inputs; independent audit is required before readiness. */
+  readonly illustrativeScenarios?: readonly string[] | undefined;
   /** Optional only for backward-compatible stored V1 text drafts. New drafts always provide it. */
   readonly mediaPlan?: ContentMediaPlan;
 }
 
 export interface ContentEvidenceAudit {
+  readonly reviewedScenarios?: readonly {
+    readonly statement: string;
+    readonly verdict: "hypothetical" | "misleading";
+    readonly reason: string;
+  }[] | undefined;
   readonly reviewedClaims: readonly {
     readonly statement: string;
     readonly sourceKeys: readonly string[];
@@ -69,6 +83,8 @@ export interface ContentEvidenceAudit {
 }
 
 export interface ContentEditorialCritique {
+  /** Absent only on historical snapshots, which require reassessment before reuse. */
+  readonly qualityAssessment?: ContentQualityAssessment | undefined;
   readonly genericPhrases: readonly string[];
   readonly repeatedConcepts: readonly string[];
   readonly callToActionAligned: boolean;
@@ -121,7 +137,13 @@ export function assertGroundedContentDraft(
     }
   }
 
-  const bodyNumbers = numberTokens(publicText);
+  let factualText = contentPublicText(draft, true);
+  for (const scenario of draft.illustrativeScenarios ?? []) {
+    if (!/^(?:Exemple fictif|Scénario fictif|Hypothetical example)\s*:/i.test(scenario)
+      || !publicText.includes(scenario)) throw new Error("CONTENT_DRAFT_SCENARIO_INVALID");
+    factualText = factualText.split(scenario).join("");
+  }
+  const bodyNumbers = numberTokens(factualText);
   const groundedNumbers = new Set(draft.factualClaims.flatMap((claim) => numberTokens(claim.statement)));
   if (bodyNumbers.some((token) => !groundedNumbers.has(token))) {
     throw new Error("CONTENT_DRAFT_UNSOURCED_NUMBER");
@@ -162,15 +184,18 @@ export function assertMediaPlanMatchesBrief(brief: ContentBriefSnapshot, draft: 
   }
 }
 
-function contentPublicText(draft: ContentDraftSnapshot): string {
+function contentPublicText(draft: ContentDraftSnapshot, omitStructuralNumbers = false): string {
   const plan = normalizedMediaPlan(draft);
+  const slideTitles = omitStructuralNumbers
+    ? stripOrderedListMarkers(plan.slides.map((slide) => slide.title))
+    : plan.slides.map((slide) => slide.title);
   return [
     draft.body,
     plan.title,
     plan.subtitle,
-    ...plan.slides.flatMap((slide) => [
+    ...plan.slides.flatMap((slide, index) => [
       slide.kicker,
-      slide.title,
+      slideTitles[index],
       slide.body,
       slide.callout,
       ...(slide.items ?? []).flatMap((item) => [item.label, item.text]),
@@ -188,6 +213,31 @@ export function evaluateContentReadiness(input: {
 }): { readonly ready: boolean; readonly blockers: readonly string[] } {
   assertGroundedContentDraft(input.draft, input.availableEvidenceKeys);
   const blockers = new Set<string>();
+  const assessment = input.critique.qualityAssessment;
+  if (!assessment) blockers.add("editorial_assessment_missing");
+  else {
+    const publicText = contentPublicText(input.draft);
+    for (const criterion of editorialQualityCriteria) {
+      const review = assessment[criterion];
+      if (!review || !["pass", "revise"].includes(review.verdict)
+        || typeof review.reason !== "string" || review.reason.trim().length < 20
+        || !Array.isArray(review.excerpts) || review.excerpts.length === 0
+        || review.excerpts.some((excerpt) => typeof excerpt !== "string" || excerpt.trim().length < 12 || !publicText.includes(excerpt))) {
+        blockers.add("editorial_assessment_invalid");
+      }
+      if (review?.verdict === "revise") blockers.add(`editorial_${criterion}`);
+    }
+  }
+  const declaredScenarios = new Set(input.draft.illustrativeScenarios ?? []);
+  for (const reviewed of input.audit.reviewedScenarios ?? []) {
+    if (reviewed.verdict === "misleading") blockers.add("misleading_scenario");
+    if (!declaredScenarios.has(reviewed.statement) || reviewed.reason.trim().length < 20) blockers.add("scenario_audit_invalid");
+  }
+  for (const scenario of input.draft.illustrativeScenarios ?? []) {
+    const reviewed = input.audit.reviewedScenarios?.filter((item) => item.statement === scenario) ?? [];
+    if (!reviewed.length) blockers.add("unaudited_scenario");
+    if (reviewed.some((item) => item.verdict !== "hypothetical" || item.reason.trim().length < 20)) blockers.add("misleading_scenario");
+  }
   const available = new Set(input.availableEvidenceKeys);
 
   for (const claim of input.draft.factualClaims) {
@@ -210,7 +260,14 @@ export function evaluateContentReadiness(input: {
     blockers.add("audit_language");
   }
   if (input.draft.body.trim().length > 1_500) blockers.add("too_long");
-  if ((input.draft.body.match(/\?/g) ?? []).length > 1) blockers.add("multiple_questions");
+  // A title quotation or a diagnostic checklist is not a competing CTA.
+  // Editorial critique still checks whether the list supplies genuine reader value.
+  const readerQuestions = input.draft.body
+    .replace(/«[^»]*»/g, "")
+    .split("\n")
+    .filter((line) => !/^[ \t]*\d{1,2}[.)][ \t]+/.test(line))
+    .join("\n");
+  if ((readerQuestions.match(/\?/g) ?? []).length > 1) blockers.add("multiple_questions");
   if (
     input.critique.repeatedConcepts.length > 0
     || !input.critique.distinctFromHistory
@@ -234,7 +291,28 @@ function reviewedClaimCoversDraftClaim(
 }
 
 function numberTokens(value: string): readonly string[] {
-  return [...value.matchAll(/\b\d+(?:[.,]\d+)?(?:\s?%|\s?[kKmM€$])?\b/g)].map((match) => match[0]!.replace(/\s/g, "").toLowerCase());
+  // Citation addresses and ordered-list markers describe the document's structure,
+  // not a measured outcome. Numbers inside each list item still require evidence.
+  const prose = stripOrderedListMarkers(value.replace(/https?:\/\/[^\s<>()[\]{}]+/g, "").split("\n")).join("\n");
+  return [...prose.matchAll(/\b\d+(?:[.,]\d+)?(?:\s?%|\s?[kKmM€$])?\b/g)].map((match) => match[0]!.replace(/\s/g, "").toLowerCase());
+}
+
+function stripOrderedListMarkers(values: readonly string[]): readonly string[] {
+  const lines = [...values];
+  for (let start = 0; start < lines.length; start++) {
+    if (!/^[ \t]*1[.)][ \t]+/.test(lines[start]!)) continue;
+    const indices = [start];
+    for (let next = start + 1; next < lines.length; next++) {
+      if (!lines[next]!.trim()) continue;
+      const marker = lines[next]!.match(/^[ \t]*(\d{1,2})[.)][ \t]+/);
+      if (!marker || Number(marker[1]) !== indices.length + 1) break;
+      indices.push(next);
+    }
+    if (indices.length < 2) continue;
+    for (const index of indices) lines[index] = lines[index]!.replace(/^[ \t]*\d{1,2}[.)][ \t]+/, "");
+    start = indices[indices.length - 1]!;
+  }
+  return lines;
 }
 
 function substantiallySimilar(left: string, right: string): boolean {

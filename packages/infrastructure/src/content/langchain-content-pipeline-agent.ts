@@ -1,3 +1,4 @@
+import { editorialPlaybook } from "@outbound/infrastructure/content/content-editorial-playbook";
 import { ChatOpenAI } from "@langchain/openai";
 import { tool } from "@langchain/core/tools";
 import type { ZodType } from "zod";
@@ -8,7 +9,7 @@ import type { AiCapability, ModelRoute } from "@outbound/application/ai/model-ga
 import {
   contentBriefSnapshotSchema,
   contentDraftSnapshotSchema,
-  contentEditorialCritiqueSchema,
+  currentContentEditorialCritiqueSchema,
   contentEvidenceAuditSchema,
 } from "@outbound/contracts/content";
 import {
@@ -50,7 +51,7 @@ export class LangChainContentPipelineAgent implements ContentPipelineAgent {
   }
 
   async critique(input: Parameters<ContentPipelineAgent["critique"]>[0]) {
-    return contentEditorialCritiqueSchema.parse(await this.invoke("critic", input.run.workspaceId, input.run.id, boundedContext(input), input));
+    return currentContentEditorialCritiqueSchema.parse(await this.invoke("critic", input.run.workspaceId, input.run.id, boundedContext(input), input));
   }
 
   private async invoke(role: PipelineRole, workspaceId: string, runId: string, context: unknown, original: unknown): Promise<unknown> {
@@ -94,8 +95,8 @@ export class LangChainContentPipelineAgent implements ContentPipelineAgent {
       provider,
       model,
       promptVersion: role === "writer"
-        ? "noosphere-content-writer-v4"
-        : role === "critic" ? "noosphere-content-critic-v3" : `noosphere-content-${role}-v2`,
+        ? "noosphere-content-writer-v8"
+        : role === "critic" ? "noosphere-content-critic-v6" : role === "audit" ? "noosphere-content-audit-v6" : "noosphere-content-brief-v5",
       shadow: false,
       inputHash: new Bun.CryptoHasher("sha256").update(JSON.stringify(original)).digest("hex"),
       output,
@@ -130,6 +131,7 @@ function boundedContext(input: Partial<ContentGenerationContext> & Record<string
     run: input.run ? { id: input.run.id, instruction: input.run.instruction } : null,
     idea: input.idea,
     strategy: input.strategy,
+    businessContext: input.businessContext,
     brandKit: input.brandKit,
     evidence: input.evidence,
     brief: input.brief,
@@ -153,6 +155,7 @@ function pipelineModelSpec(role: PipelineRole, context: unknown) {
     schema: contentBriefSnapshotSchema,
     system: [
       "You are Noosphere's bounded LinkedIn brief writer.",
+      ...editorialPlaybook.brief,
       "Turn the supplied idea into one precise brief. Use only exact evidence keys and authorized claim IDs from the input.",
       "The problem, angle and objective must be specific to the offer and audience. Choose only a CTA from the strategy, or null.",
       "Choose exactly one format enabled by brandKit. Use its weeklyMix and recentFormats to favor the most underrepresented enabled format, while matching the idea: linkedin_text for nuance, linkedin_image for one memorable point, linkedin_document for a 3-9 page educational carousel, linkedin_video for a 12-60 second motion story.",
@@ -168,9 +171,10 @@ function pipelineModelSpec(role: PipelineRole, context: unknown) {
     schema: contentDraftSnapshotSchema,
     system: [
       "You are Noosphere's principal LinkedIn writer. Write in French unless the strategy explicitly uses another language.",
+      ...editorialPlaybook.writer,
       "Use the complete offer context, audience, idea, brief, real evidence and recent posts. The post must be specific enough that it cannot be swapped into another company.",
       "Open with a concrete tension, observation or consequence. Never use empty thought-leadership hooks, fabricated urgency or generic B2B advice.",
-      "Write one focused idea. Prefer 500 to 1100 characters and never exceed 1500 characters. When evidence is thin, write a shorter post instead of padding it with inferred mechanisms, outcomes or process claims. Use one CTA and at most one question in the complete body.",
+      "Write one focused idea. Prefer 500 to 1100 characters and never exceed 1500 characters. When evidence is thin, write a shorter post instead of padding it with inferred mechanisms, outcomes or process claims. Use one reader CTA. A numbered diagnostic checklist may contain questions that help apply the method; a question mark in a quoted source title is not a reader CTA.",
       "The evidence ledger is internal metadata, not reader-facing copy. Never narrate source keys, claim status, audit mechanics or proof bookkeeping in body.",
       "Avoid defensive phrases such as 'ce qui est documenté', 'la seule affirmation factuelle', 'notre analyse', 'registre de preuves' or repeated warranty disclaimers. State the useful point naturally; if one caveat is genuinely necessary, say it once and briefly.",
       "Use recentBodies to choose a genuinely different problem, mechanism and takeaway. A paraphrase of a recent post is not distinct.",
@@ -183,7 +187,7 @@ function pipelineModelSpec(role: PipelineRole, context: unknown) {
       "If validationFeedback contains CONTENT_DRAFT_UNSOURCED_NUMBER, remove every number absent from evidence or add the exact sourced sentence to factualClaims.",
       "If validationFeedback contains CONTENT_DRAFT_CLAIM_NOT_IN_BODY, make each claim statement an exact excerpt of body.",
       "If validationFeedback contains CONTENT_DRAFT_UNRESOLVED_CLAIM, use only evidence keys present in the supplied context.",
-      "If validationFeedback contains CONTENT_AUDIT_UNGROUNDED_STATEMENT, either add the exact factual sentence to factualClaims only when supplied evidence directly proves it, or delete it. An opinion label such as 'mon analyse' never makes an unsupported product mechanism, outcome or process acceptable. Prefer a materially shorter post to a softened unsupported claim.",
+      "If validationFeedback contains CONTENT_AUDIT_UNGROUNDED_STATEMENT, either add the exact factual sentence to factualClaims only when supplied evidence directly proves it. Otherwise replace the unsupported premise with an explicitly hypothetical worked example that demonstrates a proposed decision without claiming real effectiveness, or remove the premise while preserving the useful explanation. An opinion label such as 'mon analyse' never makes an unsupported product mechanism, outcome or process acceptable. Do not soften a factual claim into an implied claim, and do not substitute a disclaimer for reader value.",
       "If validationFeedback contains CONTENT_AUDIT_UNSUPPORTED_CLAIM, remove or narrow the claim to the exact supplied evidence. Never override or argue with the auditor.",
       "If validationFeedback contains CONTENT_AUDIT_FORBIDDEN_TOPIC, remove the matching passage and every unsupported implication of that topic. Never replace it with a disclaimer or meta-commentary.",
       "If validationFeedback contains CONTENT_CRITIQUE_BLOCKER or CONTENT_READINESS_BLOCKER, rewrite the complete post to remove every named issue. Apply the feedback directly; never mention, defend or quote the critique in reader-facing copy.",
@@ -198,6 +202,7 @@ function pipelineModelSpec(role: PipelineRole, context: unknown) {
     schema: contentEvidenceAuditSchema,
     system: [
       "You are Noosphere's bounded evidence auditor, independent from the writer.",
+      ...editorialPlaybook.audit,
       "Inspect the full draft sentence by sentence. Review every factual claim, number, capability and outcome against the exact supplied evidence excerpts.",
       "The media plan is public content too. Audit its title, subtitle, slides and scenes with the same strictness as body.",
       "A source key is not enough: mark unsupported when its excerpt does not prove the wording. Never repair, rewrite or excuse a claim.",
@@ -210,11 +215,12 @@ function pipelineModelSpec(role: PipelineRole, context: unknown) {
   return {
     name: "submit_editorial_critique",
     description: "Submit the independent final anti-generic editorial critique.",
-    schema: contentEditorialCritiqueSchema,
+    schema: currentContentEditorialCritiqueSchema,
     system: [
       "You are Noosphere's principal editorial critic, independent from the writer.",
+      ...editorialPlaybook.critic,
       "Reject interchangeable hooks, vague claims, fake intimacy, manufactured urgency, repetition of recent posts and CTA unrelated to the offer or objective.",
-      "Reject body longer than 1500 characters, more than one question, more than one CTA, or copy that explains internal evidence, audit, claim-ledger or source-validation mechanics to the reader.",
+      "Reject body longer than 1500 characters, competing reader CTAs, or copy that explains internal evidence, audit, claim-ledger or source-validation mechanics to the reader.",
       "Reject a media plan that merely repeats the body, is unreadably dense, has a generic title, or does not create a coherent image, carousel or short video for the selected format.",
       "For a linkedin_document, reject a monotonous stack of title-and-paragraph slides. Require a cover, a closing, at least two distinct middle layouts, and at least one structured slide using 2-4 meaningful items. Reject decorative layout changes that do not improve comprehension.",
       "Reject bureaucratic or defensive wording such as repeated provenance labels, 'la seule affirmation factuelle', 'notre analyse' or warranty disclaimers when a direct natural sentence would carry the same grounded meaning.",
@@ -233,7 +239,7 @@ async function invokeTool(input: {
   readonly fields: ConstructorParameters<typeof ChatOpenAI>[0];
   readonly name: string;
   readonly description: string;
-  readonly schema: typeof contentBriefSnapshotSchema | typeof contentDraftSnapshotSchema | typeof contentEvidenceAuditSchema | typeof contentEditorialCritiqueSchema;
+  readonly schema: typeof contentBriefSnapshotSchema | typeof contentDraftSnapshotSchema | typeof contentEvidenceAuditSchema | typeof currentContentEditorialCritiqueSchema;
   readonly system: string;
   readonly context: unknown;
 }) {

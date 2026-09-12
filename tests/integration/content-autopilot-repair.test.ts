@@ -183,7 +183,7 @@ databaseDescribe("AUT-101 bounded automatic editorial repair", () => {
     expect(await reconciler.reconcile()).toBe(1);
     expect(await autopilot.listRepairCandidates({ workspaceId, strategyVersionId, limit: 10 })).toEqual([]);
 
-    const firstRepair = await generation.findRequest({ workspaceId, operation: "asset.improve", requestKey: `autopilot:repair:${initial.assetId}:linkedin-editorial-v2:v1` });
+    const firstRepair = await generation.findRequest({ workspaceId, operation: "asset.improve", requestKey: `autopilot:repair:${initial.assetId}:linkedin-editorial-v3:v1` });
     expect(firstRepair?.instruction).toContain("ungrounded_statement");
     await completeBlocked(firstRepair!.id, new Date(now.getTime() + 1_000));
     expect(await autopilot.listRepairCandidates({ workspaceId, strategyVersionId, limit: 10 })).toEqual([
@@ -191,7 +191,7 @@ databaseDescribe("AUT-101 bounded automatic editorial repair", () => {
     ]);
 
     expect(await reconciler.reconcile()).toBe(1);
-    const secondRepair = await generation.findRequest({ workspaceId, operation: "asset.improve", requestKey: `autopilot:repair:${initial.assetId}:linkedin-editorial-v2:v2` });
+    const secondRepair = await generation.findRequest({ workspaceId, operation: "asset.improve", requestKey: `autopilot:repair:${initial.assetId}:linkedin-editorial-v3:v2` });
     await completeBlocked(secondRepair!.id, new Date(now.getTime() + 2_000));
     expect(await reconciler.reconcile()).toBe(0);
     expect(await autopilot.listRepairCandidates({ workspaceId, strategyVersionId, limit: 10 })).toEqual([]);

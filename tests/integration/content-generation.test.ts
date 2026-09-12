@@ -147,6 +147,18 @@ databaseDescribe("CNT-101 durable content generation", () => {
     expect(generationJobs[0]?.count).toBe(1);
     expect(generationJobs[0]?.priority).toBe(60);
     const context = await repository.loadContext({ workspaceId, runId: first.id });
+    expect(context.businessContext).toMatchObject({
+      offer: { versionId: offerVersionId, name: "Noosphere", valueProposition: "Relier contenu et revenu" },
+      icp: { versionId: icpVersionId },
+    });
+    // A later offer publication must not rewrite the context of this strategy/run.
+    await database.db.insert(offerVersions).values({
+      id: crypto.randomUUID(), workspaceId, offerId, version: 2, name: "Different offer",
+      category: "saas", valueProposition: "Different promise", targetAudience: "Different buyers",
+      publishedBy: userId, publishedAt: new Date(now.getTime() + 60_000),
+    });
+    expect((await repository.loadContext({ workspaceId, runId: first.id })).businessContext).toEqual(context.businessContext);
+    await expect(repository.loadContext({ workspaceId: otherWorkspaceId, runId: first.id })).rejects.toThrow("CONTENT_GENERATION_RUN_NOT_FOUND");
     const sourceKey = context.evidence[0]!.key;
     const brief = { objective: "explain" as const, audience: "Équipes juridiques", problem: "Les preuves sont dispersées dans les dossiers juridiques.", angle: "Relier une recherche documentaire à une décision commerciale.", format: "linkedin_text" as const, evidenceKeys: [sourceKey], allowedClaimIds: [claimId], callToAction: "Comment vérifiez-vous vos preuves ?", constraints: ["Aucun fait sans preuve"] };
     const draft = { hook: "Une clause introuvable coûte plus qu’une recherche.", body: "Une clause introuvable coûte plus qu’une recherche. Les équipes juridiques ont besoin d’une preuve résoluble avant de décider. Noosphere relie le contenu aux conversations.", callToAction: "Comment vérifiez-vous vos preuves ?", factualClaims: [{ statement: "Noosphere relie le contenu aux conversations.", sourceKeys: [sourceKey] }], opinionStatements: ["Une clause introuvable coûte plus qu’une recherche."] };
@@ -166,10 +178,17 @@ databaseDescribe("CNT-101 durable content generation", () => {
     expect(await repository.findRun({ workspaceId: otherWorkspaceId, runId: first.id })).toBeNull();
 
     const autopilotRepository = new PostgresContentAutopilotRepository(database.db);
+    expect(await autopilotRepository.get({ workspaceId })).toMatchObject({ readyAssets: 1, blockedAssets: 0 });
     await database.client`alter table content_asset_versions disable trigger content_asset_versions_immutable_trg`;
     await database.client`update content_asset_versions set readiness = readiness - 'policyVersion' where workspace_id = ${workspaceId} and id = ${asset!.latest!.id}`;
     await database.client`alter table content_asset_versions enable trigger content_asset_versions_immutable_trg`;
     try {
+      expect(await autopilotRepository.get({ workspaceId })).toMatchObject({ readyAssets: 0, blockedAssets: 1 });
+      const legacySummary = await operationalViews.getSummary(workspaceId);
+      expect(legacySummary.nextOutcomes.some((item) => item.id === `content:${asset!.id}`)).toBe(false);
+      const legacyActivity = await operationalViews.getActivity({ workspaceId, lens: "inbound" });
+      expect(legacyActivity.items).toContainEqual(expect.objectContaining({ id: `content-asset:${asset!.id}`, status: "attention" }));
+      expect((await repository.findAssetByIdea({ workspaceId, ideaId }))?.latest?.readiness).toMatchObject({ ready: false, blockers: ["editorial_policy_outdated"] });
       expect(await autopilotRepository.listRepairCandidates({ workspaceId, strategyVersionId, limit: 10 })).toContainEqual({
         assetId: asset!.id,
         attempt: 1,
@@ -186,7 +205,7 @@ databaseDescribe("CNT-101 durable content generation", () => {
       })).rejects.toThrow("CONTENT_ASSET_EDITORIAL_POLICY_OUTDATED");
     } finally {
       await database.client`alter table content_asset_versions disable trigger content_asset_versions_immutable_trg`;
-      await database.client`update content_asset_versions set readiness = jsonb_set(readiness, '{policyVersion}', to_jsonb(${'linkedin-editorial-v2'}::text), true) where workspace_id = ${workspaceId} and id = ${asset!.latest!.id}`;
+      await database.client`update content_asset_versions set readiness = jsonb_set(readiness, '{policyVersion}', to_jsonb(${'linkedin-editorial-v3'}::text), true) where workspace_id = ${workspaceId} and id = ${asset!.latest!.id}`;
       await database.client`alter table content_asset_versions enable trigger content_asset_versions_immutable_trg`;
     }
     const autopilotClock = { now: () => now };
@@ -305,6 +324,19 @@ databaseDescribe("CNT-101 durable content generation", () => {
     await repository.saveAudit({ workspaceId, runId: afterRollback.id, audit, now });
     await repository.completeRun({ workspaceId, runId: afterRollback.id, critique, readiness: { ready: true, blockers: [] }, now: new Date(now.getTime() + 6_000) });
     expect((await repository.findAssetByIdea({ workspaceId, ideaId }))?.latestVersion).toBe(newestAsset!.latestVersion + 1);
+
+    // Simulate a publication queued before a policy upgrade, retaining its immutable snapshot.
+    await database.client`alter table content_asset_versions disable trigger content_asset_versions_immutable_trg`;
+    await database.client`update content_asset_versions set readiness = jsonb_set(readiness, '{policyVersion}', '"linkedin-editorial-v2"'::jsonb) where workspace_id = ${workspaceId} and id = ${scheduled.assetVersionId}`;
+    await database.client`alter table content_asset_versions enable trigger content_asset_versions_immutable_trg`;
+    try {
+      await expect(publicationRepository.claimExecution({ workspaceId, publicationId: scheduled.id, currentAccountId: "linkedin-account-fixture", executionToken: crypto.randomUUID(), now: new Date(now.getTime() + 2_000) })).rejects.toThrow("CONTENT_ASSET_EDITORIAL_POLICY_OUTDATED");
+      expect((await publicationRepository.find({ workspaceId, publicationId: scheduled.id }))?.status).toBe("scheduled");
+    } finally {
+      await database.client`alter table content_asset_versions disable trigger content_asset_versions_immutable_trg`;
+      await database.client`update content_asset_versions set readiness = jsonb_set(readiness, '{policyVersion}', '"linkedin-editorial-v3"'::jsonb) where workspace_id = ${workspaceId} and id = ${scheduled.assetVersionId}`;
+      await database.client`alter table content_asset_versions enable trigger content_asset_versions_immutable_trg`;
+    }
 
     const execution = await publicationRepository.claimExecution({ workspaceId, publicationId: scheduled.id, currentAccountId: "linkedin-account-fixture", executionToken: crypto.randomUUID(), now: new Date(now.getTime() + 2_000) });
     expect(execution.text).toBe(draft.body);

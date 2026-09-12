@@ -34,6 +34,12 @@ RUN apt-get update \
 COPY --from=codex-cli /usr/local/lib/node_modules/@openai /usr/local/lib/node_modules/@openai
 RUN ln -s /usr/local/lib/node_modules/@openai/codex/bin/codex.js /usr/local/bin/codex
 
+# Bundled JavaScript does not include sharp's native addon or libvips.
+# Keep the AMD64 runtime packages so SVG text uses system fonts, rather than
+# silently falling back to WebAssembly and producing blank text layers.
+COPY --from=build /app/node_modules/@img/sharp-linux-x64 ./node_modules/@img/sharp-linux-x64
+COPY --from=build /app/node_modules/@img/sharp-libvips-linux-x64 ./node_modules/@img/sharp-libvips-linux-x64
+
 COPY --from=build /app/dist/backend ./dist/backend
 COPY --from=build /app/dist/migrate ./dist/migrate
 COPY --from=build /app/dist/bootstrap ./dist/bootstrap

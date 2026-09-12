@@ -4,6 +4,7 @@ import type { JobQueue, LeasedJob } from "@outbound/application/jobs/job-queue";
 import type { EditorialStrategySnapshot } from "@outbound/domain/content/editorial-strategy";
 import type { ContentBrandKitSnapshot, LinkedinContentFormat } from "@outbound/domain/content/content-brand-kit";
 import { selectNextContentFormat } from "@outbound/domain/content/content-brand-kit";
+import type { EditorialStrategyGrounding } from "@outbound/application/content/editorial-strategy";
 import type { StoredContentMedia } from "@outbound/application/content/content-media";
 import { ContentMediaProducer } from "@outbound/application/content/content-media";
 import type { ContentIdeaEvidence, ContentIdeaView } from "@outbound/application/content/content-ideas";
@@ -44,7 +45,7 @@ export interface ContentAssetVersionView {
   readonly draft: ContentDraftSnapshot;
   readonly audit: ContentEvidenceAudit;
   readonly critique: ContentEditorialCritique;
-  readonly readiness: { readonly ready: boolean; readonly blockers: readonly string[] };
+  readonly readiness: { readonly policyVersion?: string; readonly ready: boolean; readonly blockers: readonly string[] };
   readonly media: StoredContentMedia | null;
   readonly createdAt: Date;
 }
@@ -64,6 +65,11 @@ export interface ContentAssetView {
 }
 
 export interface ContentGenerationContext {
+  /** Source versions pinned by the editorial strategy, never the latest mutable offer. */
+  readonly businessContext?: {
+    readonly offer: Pick<EditorialStrategyGrounding["offer"], "versionId" | "name" | "category" | "valueProposition" | "targetAudience" | "constraints" | "objections">;
+    readonly icp: Pick<EditorialStrategyGrounding["icp"], "versionId" | "name" | "problems" | "buyingCommittee" | "exclusions" | "criteria">;
+  };
   readonly run: ContentGenerationRunView;
   readonly idea: ContentIdeaView;
   readonly strategy: EditorialStrategySnapshot;
@@ -95,14 +101,14 @@ export interface ContentGenerationRepository {
 }
 
 export interface ContentPipelineAgent {
-  buildBrief(input: Pick<ContentGenerationContext, "run" | "idea" | "strategy" | "brandKit" | "evidence" | "recentFormats">): Promise<ContentBriefSnapshot>;
-  write(input: Pick<ContentGenerationContext, "run" | "idea" | "strategy" | "brandKit" | "evidence" | "recentBodies"> & {
+  buildBrief(input: Pick<ContentGenerationContext, "businessContext" | "run" | "idea" | "strategy" | "brandKit" | "evidence" | "recentFormats">): Promise<ContentBriefSnapshot>;
+  write(input: Pick<ContentGenerationContext, "businessContext" | "run" | "idea" | "strategy" | "brandKit" | "evidence" | "recentBodies"> & {
     readonly brief: ContentBriefSnapshot;
     readonly draft?: ContentDraftSnapshot | null;
     readonly validationFeedback?: readonly string[];
   }): Promise<ContentDraftSnapshot>;
-  audit(input: Pick<ContentGenerationContext, "run" | "strategy" | "evidence"> & { readonly brief: ContentBriefSnapshot; readonly draft: ContentDraftSnapshot }): Promise<ContentEvidenceAudit>;
-  critique(input: Pick<ContentGenerationContext, "run" | "idea" | "strategy" | "recentBodies"> & { readonly brief: ContentBriefSnapshot; readonly draft: ContentDraftSnapshot; readonly audit: ContentEvidenceAudit }): Promise<ContentEditorialCritique>;
+  audit(input: Pick<ContentGenerationContext, "businessContext" | "run" | "strategy" | "evidence"> & { readonly brief: ContentBriefSnapshot; readonly draft: ContentDraftSnapshot }): Promise<ContentEvidenceAudit>;
+  critique(input: Pick<ContentGenerationContext, "businessContext" | "run" | "idea" | "strategy" | "recentBodies"> & { readonly brief: ContentBriefSnapshot; readonly draft: ContentDraftSnapshot; readonly audit: ContentEvidenceAudit }): Promise<ContentEditorialCritique>;
 }
 
 export class ContentGenerationApplication {
@@ -255,7 +261,7 @@ async function writeGroundedDraft(
       return draft;
     } catch (error) {
       if (!isRepairableDraftError(error) || attempt === 2) throw error;
-      validationFeedback = [error.message];
+      validationFeedback = [...initialValidationFeedback, error.message];
     }
   }
   throw new Error("CONTENT_DRAFT_REPAIR_EXHAUSTED");
@@ -263,6 +269,7 @@ async function writeGroundedDraft(
 
 function repairableAuditFeedback(audit: ContentEvidenceAudit): readonly string[] {
   const feedback = [
+    ...(audit.reviewedScenarios ?? []).filter((item) => item.verdict === "misleading").map((item) => `CONTENT_AUDIT_MISLEADING_SCENARIO: ${item.statement} — ${item.reason}`),
     ...audit.forbiddenTopicMatches.map((topic) => `CONTENT_AUDIT_FORBIDDEN_TOPIC: ${topic}`),
     ...audit.ungroundedStatements.map((statement) => `CONTENT_AUDIT_UNGROUNDED_STATEMENT: ${statement}`),
     ...audit.reviewedClaims
@@ -280,6 +287,9 @@ function repairableCritiqueFeedback(
   const evidenceBlockers = new Set(["unaudited_claim", "unsupported_claim", "ungrounded_statement", "forbidden_topic"]);
   if (readiness.blockers.some((blocker) => evidenceBlockers.has(blocker))) return [];
   const feedback = [
+    ...Object.entries(critique.qualityAssessment ?? {})
+      .filter(([, review]) => review.verdict === "revise")
+      .map(([criterion, review]) => `CONTENT_CRITIQUE_BLOCKER [${criterion}]: ${review.reason}`),
     ...critique.issues
       .filter((issue) => issue.severity === "blocker")
       .map((issue) => `CONTENT_CRITIQUE_BLOCKER [${issue.code}]: ${issue.message}`),
@@ -295,6 +305,7 @@ function isRepairableDraftError(error: unknown): error is Error {
     "CONTENT_DRAFT_UNRESOLVED_CLAIM",
     "CONTENT_DRAFT_CLAIM_NOT_IN_BODY",
     "CONTENT_DRAFT_UNSOURCED_NUMBER",
+    "CONTENT_DRAFT_SCENARIO_INVALID",
     "CONTENT_MEDIA_FORMAT_MISMATCH",
     "CONTENT_MEDIA_PLAN_INVALID",
   ].includes(error.message);
