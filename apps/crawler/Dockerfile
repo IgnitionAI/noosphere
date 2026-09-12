@@ -67,8 +67,7 @@ ENV PYTHONPATH="/app/src"
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 # Install the browser in a shared immutable path, then run the service as a
-# dedicated unprivileged user. Crawl4AI keeps its writable cache in that
-# user's home directory.
+# dedicated unprivileged user.
 RUN playwright install chromium \
     && useradd --create-home --shell /usr/sbin/nologin crawler \
     && chown -R crawler:crawler /app /ms-playwright
