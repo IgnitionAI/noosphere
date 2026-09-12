@@ -191,7 +191,7 @@ umask 077
   printf 'BETTER_AUTH_URL=https://%s\n' "$PUBLIC_HOST"
   printf 'BETTER_AUTH_TRUSTED_ORIGINS=https://%s\n' "$PUBLIC_HOST"
   printf 'PUBLIC_WEBHOOK_BASE_URL=https://%s\n' "$PUBLIC_HOST"
-  printf 'MCP_ALLOWED_HOSTS=%q\n' "$PUBLIC_HOST"
+  printf 'MCP_ALLOWED_HOSTS=%q\n' "$PUBLIC_HOST,api:3001"
   printf 'MCP_ALLOWED_ORIGINS=https://%s\n' "$PUBLIC_HOST"
   printf 'MCP_DEV_AUTH_ENABLED=false\nMCP_DEV_AUTH_TOKEN=\nMCP_DEV_USER_ID=\nMCP_DEV_WORKSPACE_ID=\nMCP_DEV_CLIENT_ID=\nMCP_DEV_ROLE=\nMCP_DEV_SCOPES=\nMCP_DEV_AUDIENCE=\n'
   printf '\nPOSTGRES_DB=ignition_outbound\nPOSTGRES_USER=postgres\n'
