@@ -12,6 +12,7 @@ RUN mkdir -p dist/backend dist/migrate dist/media-canary dist/mcp-smoke dist/cod
   && bun build apps/api/src/index.ts apps/worker/src/index.ts --target bun --outdir dist/backend \
   && bun build packages/infrastructure/src/database/migrate.ts --target bun --outdir dist/migrate \
   && bun build packages/infrastructure/src/documents/document-extractor-process.ts --target bun --outfile dist/document-extractor/document-extractor-process.js \
+  && bun build scripts/bootstrap-owner.ts --target bun --outfile dist/bootstrap/bootstrap-owner.js \
   && bun build scripts/instance-codex-login.ts --target bun --outfile dist/codex-login/instance-codex-login.js \
   && bun build scripts/verify-content-media-runtime.ts --target bun --outdir dist/media-canary \
   && bun build scripts/prepare-mcp-production-smoke.ts --target bun --outfile dist/mcp-smoke/prepare-mcp-production-smoke.js
@@ -35,6 +36,7 @@ RUN ln -s /usr/local/lib/node_modules/@openai/codex/bin/codex.js /usr/local/bin/
 
 COPY --from=build /app/dist/backend ./dist/backend
 COPY --from=build /app/dist/migrate ./dist/migrate
+COPY --from=build /app/dist/bootstrap ./dist/bootstrap
 COPY --from=build /app/dist/media-canary ./dist/media-canary
 COPY --from=build /app/dist/mcp-smoke ./dist/mcp-smoke
 COPY --from=build /app/dist/codex-login ./dist/codex-login

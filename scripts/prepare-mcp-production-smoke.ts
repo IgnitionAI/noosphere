@@ -160,9 +160,14 @@ export function createMcpSmokeSeedPlan(input: McpSmokeSeedPlanInput): McpSmokeSe
   };
 }
 
+/** Match the server URL serialization, including HTTPS default-port normalization. */
+function resolveMcpSmokeResource(host: string, httpsPort: number): string {
+  return new URL(`https://${host}:${httpsPort}/mcp`).href;
+}
+
 /** Serialize only smoke inputs. Database credentials are deliberately absent. */
 export function formatMcpSmokeEnvironmentFile(plan: McpSmokeSeedPlan, host = "mcp-smoke.localhost", httpsPort = 18443): string {
-  const endpoint = `https://${host}:${httpsPort}/mcp`;
+  const endpoint = resolveMcpSmokeResource(host, httpsPort);
   const identities = plan.identities.map(({ clientId: _clientId, ...identity }) => identity);
   const fixtureIds = resolveMcpSmokeFixtureIds(plan.fixtureKey);
   return [
@@ -296,7 +301,7 @@ export async function revokeMcpProductionSmoke(databaseUrl: string, fixtureKey: 
       for (const slug of slugs) {
         const rows = await tx`select id from workspaces where slug = ${slug}` as Array<{ readonly id: string }>;
         for (const row of rows) {
-          await tx`update workspace_members set status = 'inactive' where workspace_id = ${row.id}`;
+          await tx`update workspace_members set status = 'disabled' where workspace_id = ${row.id}`;
           await tx`update mcp_oauth_clients set revoked_at = coalesce(revoked_at, now()) where workspace_id = ${row.id}`;
           await tx`update mcp_oauth_access_tokens set revoked_at = coalesce(revoked_at, now()) where workspace_id = ${row.id}`;
         }
@@ -355,14 +360,14 @@ async function readFixtureState(tx: any, plan: McpSmokeSeedPlan, input: McpSmoke
     const clients = await tx`select id, allowed_scopes from mcp_oauth_clients where id = ${clientId} and client_id = ${identity.clientId} and workspace_id = ${identity.workspaceId}` as Array<{ readonly id: string; readonly allowed_scopes: unknown }>;
     const access = await tx`select token_hash, scopes, audience from mcp_oauth_access_tokens where id = ${accessId} and client_id = ${identity.clientId} and user_id = ${userId} and workspace_id = ${identity.workspaceId} and revoked_at is null` as Array<{ readonly token_hash: string; readonly scopes: unknown; readonly audience: string }>;
     if (users.length !== 1 || members.length !== 1 || clients.length !== 1 || access.length !== 1) return "partial";
-    if (!sameScopes(clients[0]!.allowed_scopes, identity.scopes) || !sameScopes(access[0]!.scopes, identity.scopes) || access[0]!.audience !== `https://${input.host}:${input.httpsPort}/mcp`) return "mismatch";
+    if (!sameScopes(clients[0]!.allowed_scopes, identity.scopes) || !sameScopes(access[0]!.scopes, identity.scopes) || access[0]!.audience !== resolveMcpSmokeResource(input.host, input.httpsPort)) return "mismatch";
     if (input.tokens && access[0]!.token_hash !== hashToken(input.tokens[identity.name])) return "mismatch";
   }
 
   const revoked = plan.identities[2]!;
   const revokedRows = await tx`select token_hash, family_id, revoked_at, scopes, audience from mcp_oauth_access_tokens where id = ${resolveMcpSmokeFixtureIds(plan.fixtureKey).revoked.accessTokenId} and client_id = ${revoked.clientId} and workspace_id = ${revoked.workspaceId}` as Array<{ readonly token_hash: string; readonly family_id: string; readonly revoked_at: Date | null; readonly scopes: unknown; readonly audience: string }>;
   if (revokedRows.length !== 1 || revokedRows[0]!.family_id !== resolveMcpSmokeFixtureIds(plan.fixtureKey).revoked.familyId || revokedRows[0]!.revoked_at === null) return "partial";
-  if (!sameScopes(revokedRows[0]!.scopes, revoked.scopes) || revokedRows[0]!.audience !== `https://${input.host}:${input.httpsPort}/mcp`) return "mismatch";
+  if (!sameScopes(revokedRows[0]!.scopes, revoked.scopes) || revokedRows[0]!.audience !== resolveMcpSmokeResource(input.host, input.httpsPort)) return "mismatch";
   if (input.tokens && revokedRows[0]!.token_hash !== hashToken(input.tokens.revoked)) return "mismatch";
 
   const foreignProposal = await tx`select id, approval_item_id from mcp_effect_proposals where id = ${plan.foreignProposalId} and workspace_id = ${plan.workspaceIds[0]}` as Array<{ readonly id: string; readonly approval_item_id: string | null }>;
@@ -512,14 +517,14 @@ async function insertFixtureRows(tx: any, plan: McpSmokeSeedPlan, input: McpSmok
   for (const identity of plan.identities) {
     const email = `${identity.name}-${plan.fixtureKey}@mcp-smoke.invalid`;
     const allowedScopes = identity.scopes;
-    const accessAudience = `https://${input.host}:${input.httpsPort}/mcp`;
+    const accessAudience = resolveMcpSmokeResource(input.host, input.httpsPort);
     await tx`insert into auth_users (id, name, email, email_verified) values (${stableUuid(`${plan.fixtureKey}:user:${identity.name}`)}, ${`MCP smoke ${identity.name}`}, ${email}, true)`;
     await tx`insert into workspace_members (workspace_id, user_id, role, status) values (${identity.workspaceId}, ${stableUuid(`${plan.fixtureKey}:user:${identity.name}`)}, ${identity.role}, 'active')`;
     await tx`insert into mcp_oauth_clients (id, client_id, client_name, redirect_uris, user_id, workspace_id, workspace_slug, allowed_scopes) values (${stableUuid(`${plan.fixtureKey}:client:${identity.name}`)}, ${identity.clientId}, ${`MCP smoke ${identity.name}`}, ${tx.json(EMPTY_REDIRECT_URIS as never)}, ${stableUuid(`${plan.fixtureKey}:user:${identity.name}`)}, ${identity.workspaceId}, ${plan.workspaceSlugs[identity.workspaceId === plan.workspaceIds[0] ? 0 : 1]}, ${tx.json(allowedScopes as never)})`;
     await tx`insert into mcp_oauth_access_tokens (id, token_hash, family_id, client_id, user_id, workspace_id, scopes, audience, expires_at, revoked_at) values (${stableUuid(`${plan.fixtureKey}:access:${identity.name}`)}, ${hashToken(identity.token)}, ${stableUuid(`${plan.fixtureKey}:family:${identity.name}`)}, ${identity.clientId}, ${stableUuid(`${plan.fixtureKey}:user:${identity.name}`)}, ${identity.workspaceId}, ${tx.json(allowedScopes as never)}, ${accessAudience}, ${new Date(now.getTime() + 3_600_000)}, null)`;
   }
   const revoked = plan.identities[2]!;
-  const revokedAudience = `https://${input.host}:${input.httpsPort}/mcp`;
+  const revokedAudience = resolveMcpSmokeResource(input.host, input.httpsPort);
   await tx`insert into mcp_oauth_access_tokens (id, token_hash, family_id, client_id, user_id, workspace_id, scopes, audience, expires_at, revoked_at) values (${resolveMcpSmokeFixtureIds(plan.fixtureKey).revoked.accessTokenId}, ${hashToken(plan.revokedToken)}, ${resolveMcpSmokeFixtureIds(plan.fixtureKey).revoked.familyId}, ${revoked.clientId}, ${stableUuid(`${plan.fixtureKey}:user:viewer`)}, ${revoked.workspaceId}, ${tx.json(revoked.scopes as never)}, ${revokedAudience}, ${new Date(now.getTime() + 3_600_000)}, ${now})`;
   const fixtureIds = resolveMcpSmokeFixtureIds(plan.fixtureKey);
   await insertContentSourceFixture(tx, plan, plan.workspaceIds[0], fixtureIds.content.foreign.assetId, now, 0);
@@ -576,8 +581,12 @@ async function insertContentSourceFixture(
   const campaignSchedule = { start: "09:00", end: "17:00", timeZone: "UTC" };
   const strategySnapshot = {
     audience: { name: "Local fixture audience", summary: "Durable MCP smoke fixture", awareness: "problem_aware" },
-    pillars: [{ name: "Proof", promise: "Exercise governed MCP effects", proofTypes: ["fixture"] }],
-    voice: { traits: ["direct"], avoid: ["generic"] },
+    pillars: [
+      { name: "Proof", promise: "Exercise governed MCP effects", proofTypes: ["fixture"] },
+      { name: "Process", promise: "Explain fixture preparation and approval", proofTypes: ["fixture"] },
+      { name: "Safety", promise: "Verify workspace isolation and revocation", proofTypes: ["fixture"] },
+    ],
+    voice: { traits: ["direct", "precise"], avoid: ["generic"] },
     formats: ["linkedin_text"],
     cadence: { postsPerWeek: 1, preferredDays: [1], timezone: "UTC" },
     callsToAction: ["Reply"],
