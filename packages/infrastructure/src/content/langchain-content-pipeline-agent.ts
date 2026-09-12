@@ -54,11 +54,11 @@ export class LangChainContentPipelineAgent implements ContentPipelineAgent {
   }
 
   async critique(input: Parameters<ContentPipelineAgent["critique"]>[0]) {
-    const critique = currentContentEditorialCritiqueSchema.parse(await this.invoke("critic", input.run.workspaceId, input.run.id, boundedContext(input), input));
+    const critique = currentContentEditorialCritiqueSchema.parse(await this.invoke("critic", input.run.workspaceId, input.run.id, critiqueContext(input), input));
     const invalid = invalidEditorialAssessmentCriteria(input.draft, critique);
     if (invalid.length === 0) return critique;
     const repair = {
-      ...boundedContext(input),
+      ...critiqueContext(input),
       currentPublicPassages: contentPublicText(input.draft).split("\n").filter(passage => passage.trim().length >= 12),
       validationFeedback: [`CONTENT_CRITIC_ASSESSMENT_INVALID: ${invalid.join(", ")}. Re-evaluate the unchanged current draft. Every criterion needs a reason of at least 20 characters and at least one exact contiguous public excerpt of at least 12 characters. Select each excerpt by copying one of currentPublicPassages or an exact contiguous part of it. Never paraphrase an excerpt or quote the brief, sources, prior versions or your assessment reasons. Preserve substantive concerns; a technical repair is not a request to approve the post.`],
     };
@@ -106,8 +106,8 @@ export class LangChainContentPipelineAgent implements ContentPipelineAgent {
       provider,
       model,
       promptVersion: role === "writer"
-        ? "noosphere-content-writer-v10"
-        : role === "critic" ? "noosphere-content-critic-v8" : role === "audit" ? "noosphere-content-audit-v6" : "noosphere-content-brief-v7",
+        ? "noosphere-content-writer-v11"
+        : role === "critic" ? "noosphere-content-critic-v9" : role === "audit" ? "noosphere-content-audit-v6" : "noosphere-content-brief-v8",
       shadow: false,
       inputHash: new Bun.CryptoHasher("sha256").update(JSON.stringify(original)).digest("hex"),
       output,
@@ -152,6 +152,17 @@ function boundedContext(input: Partial<ContentGenerationContext> & Record<string
     validationFeedback: input.validationFeedback,
     recentBodies: input.recentBodies?.slice(0, 12),
     recentFormats: input.recentFormats?.slice(0, 14),
+  };
+}
+
+function critiqueContext(input: Parameters<ContentPipelineAgent["critique"]>[0]) {
+  return {
+    strategy: input.strategy,
+    businessContext: input.businessContext,
+    brandKit: input.brandKit,
+    evidence: input.evidence,
+    draft: input.draft,
+    recentBodies: input.recentBodies.slice(0, 12),
   };
 }
 

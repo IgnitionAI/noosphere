@@ -84,10 +84,10 @@ describe("LangChainContentPipelineAgent", () => {
       { role: "critic", model: "k3", effort: "max" },
     ]);
     expect(recorded.map(({ purpose, model, promptVersion, contentGenerationRunId }) => ({ purpose, model, promptVersion, contentGenerationRunId }))).toEqual([
-      { purpose: "content_brief", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-brief-v7", contentGenerationRunId: context.run.id },
-      { purpose: "content_writer", model: "k3", promptVersion: "noosphere-content-writer-v10", contentGenerationRunId: context.run.id },
+      { purpose: "content_brief", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-brief-v8", contentGenerationRunId: context.run.id },
+      { purpose: "content_writer", model: "k3", promptVersion: "noosphere-content-writer-v11", contentGenerationRunId: context.run.id },
       { purpose: "content_audit", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-audit-v6", contentGenerationRunId: context.run.id },
-      { purpose: "content_critic", model: "k3", promptVersion: "noosphere-content-critic-v8", contentGenerationRunId: context.run.id },
+      { purpose: "content_critic", model: "k3", promptVersion: "noosphere-content-critic-v9", contentGenerationRunId: context.run.id },
     ]);
   });
 });
@@ -123,6 +123,10 @@ test("repairs stale critic citations against the same draft without invoking the
   const result = await agent.critique({ ...context, brief: brief(), draft: currentDraft, audit: audit() });
   expect(calls.map(call => call.role)).toEqual(["critic", "critic"]);
   expect(calls[1]!.context).not.toHaveProperty("rejectedAssessment");
+  for (const call of calls) {
+    expect(call.context).not.toHaveProperty("audit");
+    expect(call.context).not.toHaveProperty("brief");
+  }
   expect(calls[1]!.context).toMatchObject({ currentPublicPassages: expect.arrayContaining([currentDraft.body]), draft: currentDraft, validationFeedback: [expect.stringContaining("brandVoice")] });
   expect(result.qualityAssessment?.brandVoice.excerpts).toEqual(["Noosphere relie le contenu aux conversations."]);
 });
@@ -135,4 +139,20 @@ test("bounds citation repair to one retry and preserves an invalid result for th
   const result = await agent.critique({ ...pipelineContext(), brief: brief(), draft: draft(), audit: audit() });
   expect(calls).toBe(2);
   expect(result.qualityAssessment?.coherence.excerpts).toEqual([...invalid.qualityAssessment.coherence.excerpts]);
+});
+
+
+test("judges current public work without upstream approval or internal brief instructions", async () => {
+  const context = { ...pipelineContext(), brief: brief(), draft: draft(), audit: audit() };
+  const calls: Array<{ role: string; context: unknown }> = [];
+  const agent = new LangChainContentPipelineAgent({}, undefined, undefined, async input => {
+    calls.push(input);
+    return input.role === "critic" ? critique() : draft();
+  });
+  await agent.critique(context);
+  await agent.write(context);
+  const payload = calls[0]!.context;
+  for (const field of ["audit", "brief", "idea", "run", "validationFeedback"]) expect(payload).not.toHaveProperty(field);
+  expect(payload).toMatchObject({draft: context.draft, evidence: context.evidence, strategy: context.strategy, brandKit: context.brandKit, recentBodies: []});
+  expect(calls[1]!.context).toMatchObject({brief: context.brief, audit: context.audit});
 });

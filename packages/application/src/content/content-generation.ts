@@ -107,7 +107,7 @@ export interface ContentPipelineAgent {
     readonly validationFeedback?: readonly string[];
   }): Promise<ContentDraftSnapshot>;
   audit(input: Pick<ContentGenerationContext, "businessContext" | "run" | "strategy" | "evidence"> & { readonly brief: ContentBriefSnapshot; readonly draft: ContentDraftSnapshot }): Promise<ContentEvidenceAudit>;
-  critique(input: Pick<ContentGenerationContext, "businessContext" | "run" | "idea" | "strategy" | "recentBodies"> & { readonly brief: ContentBriefSnapshot; readonly draft: ContentDraftSnapshot; readonly audit: ContentEvidenceAudit }): Promise<ContentEditorialCritique>;
+  critique(input: Pick<ContentGenerationContext, "businessContext" | "run" | "idea" | "strategy" | "brandKit" | "evidence" | "recentBodies"> & { readonly brief: ContentBriefSnapshot; readonly draft: ContentDraftSnapshot; readonly audit: ContentEvidenceAudit }): Promise<ContentEditorialCritique>;
 }
 
 export class ContentGenerationApplication {

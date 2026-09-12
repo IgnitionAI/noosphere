@@ -2,13 +2,13 @@
 export const editorialPlaybook = {
   brief: [
     'Use businessContext.offer and businessContext.icp: identify one reader problem and the decision this post helps make. A strategy summary alone is not the offer.',
-    'Make the angle a worked reader decision: identify a concrete situation, what the reader should inspect, and how alternative observations change their next action. A list of categories without an application example is an incomplete brief.',
-    'Choose an angle that yields a useful diagnostic, explained tradeoff, worked example or actionable method. A quotation or summary of a source alone is not reader value.',
+    'Choose the treatment supported by the material and the reader: an explained distinction, a sourced observation with a bounded implication, a tradeoff, or a worked method. State what the reader will understand or decide. Do not turn every topic into a diagnostic or require a fictional story for an already clear distinction.',
+    'Write angle as one complete concise sentence under 500 characters; put supporting steps in constraints rather than truncating a plan. Narrow an over-broad research idea to one supported point. The brief must explain why this point matters to this audience; copying the source table of contents is not an angle.',
     'A CTA in the strategy is a suggestion, not proof that a grid, guide, demo, audit or other promised deliverable exists. With no verified resource, use a relevant question or no CTA.',
   ],
   writer: [
     'Deliver the value in the post itself before requesting anything from the reader: explain a specific decision, show a useful example or offer an actionable check with its limits.',
-    'Use the source as support for reasoning, not as the substance of a quotation collage. When referring to a guide, study or report, identify its title or author and give its supplied canonical URL when available. Never invent attribution.',
+    'Explain source findings faithfully in your own words and retain their scope. The claim ledger must copy your public wording, not force you to quote the source. Use a direct quotation only when its wording itself matters. Never end a quotation by announcing an example, code block or list you do not show. When referring to a guide, study or report, identify its title or author and give its supplied canonical URL when available. Never invent attribution.',
     'You may propose a method or a clearly labelled hypothetical example without pretending it is a measured result or personal experience. Do not invent customers, results, stories or product capabilities.',
     'Do not promise a resource merely because strategy.callsToAction suggests it. Unless supplied evidence proves its existence and availability, use a question grounded in the post or null.',
     'For proposed methods, demonstrate the operation on a compact explicitly fictional example instead of claiming that the method improves, guarantees or enables a result. Show the input, the observation and the proposed next step. Keep source findings separate from your proposal; a source about the same topic does not validate your method.',
@@ -24,9 +24,9 @@ export const editorialPlaybook = {
   ],
   critic: [
     'Complete qualityAssessment for all seven criteria. For each, give pass or revise, a specific reason, and exact excerpts from the current body or current media copy only. Compare historical posts in reason; never copy historical passages into excerpts. Missing qualities can be explained against the closest relevant passage. Do not invent excerpts.',
-    'audienceRelevance: does this address a concrete problem or decision of businessContext.icp and fit the actual offer scope?',
+    'audienceRelevance: does this address a concrete problem or decision of businessContext.icp and fit the actual offer scope? Evaluate the required technical knowledge, not just the topic label. For a managerial reader, reject implementation identifiers or code that occupy the explanation without helping their decision. For a technical reader, retain details that let them act.',
     'readerValue: what can the reader understand, decide or do after reading? Reject mere source summaries, quotation collages or generic recommendations without explanation. A useful short method can pass; length is not value.',
-    'coherence: does the opening lead through a clear explanation to the takeaway? Reject unexplained jumps between prompting, governance, deployment or other adjacent topics.',
+    'coherence: does the opening lead through a clear explanation to the takeaway? Reject unexplained jumps between adjacent topics, unfinished sentences, and quotations that announce an absent example or procedure. Judge the public reading promise; do not impose a worked diagnostic on an explained distinction or require all branches of an over-broad brief.',
     'sourceAttribution: can the reader identify a cited guide, study or quotation? Reject anonymous references such as a guide with no identifiable source. Pure proposed advice without external claims can pass; explain why.',
     'ctaTruthfulness: is there one proportionate, honest reader CTA, without competing requests? Diagnostic questions within a useful method and question marks in source titles are not separate CTAs. Reject a promised grid, report or other resource without evidence of availability, even if it was suggested by the strategy. An appropriate question or no CTA can pass.',
     'brandVoice: is the public copy natural and consistent with the supplied identity, without invented experience, fake intimacy, audit narration or interchangeable promotional language?',
