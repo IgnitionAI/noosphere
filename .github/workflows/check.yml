@@ -153,7 +153,7 @@ jobs:
         env:
           E2E_WEB_MODE: production
         run: |
-          bunx next build apps/web
+          bun run build:web
           bun scripts/run-e2e-tests.ts tests/e2e/inbound-start.spec.ts --project desktop-1440
 
       - name: Audit Bun production dependencies
