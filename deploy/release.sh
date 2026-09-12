@@ -16,6 +16,8 @@ set -a
 # shellcheck disable=SC1090
 source "$ENV_FILE"
 set +a
+# A requested release takes precedence over the last successful version in .env.
+if [[ -n "${1:-}" ]]; then export APP_VERSION="$1"; fi
 # shellcheck disable=SC1091
 source deploy/lib/images.sh
 
@@ -259,9 +261,9 @@ fi
 "${compose[@]}" up -d --no-build --wait --remove-orphans api web worker decision-worker setter-worker memory-worker proxy
 
 ENV_FILE="$ENV_FILE" bash deploy/healthcheck.sh
-write_release_manifest "$MANIFEST_FILE"
-printf '%s\n' "$APP_VERSION" > "$LEGACY_VERSION_FILE"
-chmod 600 "$LEGACY_VERSION_FILE"
+candidate="$(mktemp "$STATE_DIR/release-candidate.XXXXXX")"
+write_release_manifest "$candidate"
+python3 deploy/publish-release.py "$ENV_FILE" "$candidate" "$MANIFEST_FILE" "$LEGACY_VERSION_FILE"
 trap - ERR
 
 echo "Noosphere $APP_VERSION is healthy at ${PUBLIC_WEBHOOK_BASE_URL:-the configured public URL}"

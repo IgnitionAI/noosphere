@@ -71,6 +71,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.16.2
+          terraform_wrapper: false
+
+      - name: Validate infrastructure configuration
+        run: |
+          terraform -chdir=infra/terraform/netcup fmt -check
+          terraform -chdir=infra/terraform/netcup init -backend=false -input=false -lockfile=readonly
+          terraform -chdir=infra/terraform/netcup validate
+          APP_ENV_FILE=deploy/.env.production.example docker compose --env-file deploy/.env.production.example -f compose.infrastructure.yml -f compose.production.yml config --quiet
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
