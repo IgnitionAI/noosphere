@@ -184,7 +184,7 @@ export function assertMediaPlanMatchesBrief(brief: ContentBriefSnapshot, draft: 
   }
 }
 
-function contentPublicText(draft: ContentDraftSnapshot, omitStructuralNumbers = false): string {
+export function contentPublicText(draft: ContentDraftSnapshot, omitStructuralNumbers = false): string {
   const plan = normalizedMediaPlan(draft);
   const slideTitles = omitStructuralNumbers
     ? stripOrderedListMarkers(plan.slides.map((slide) => slide.title))
@@ -206,6 +206,18 @@ function contentPublicText(draft: ContentDraftSnapshot, omitStructuralNumbers = 
   ].filter((value): value is string => Boolean(value)).join("\n");
 }
 
+/** A review must cite the exact current public copy, not an earlier draft or its brief. */
+export function invalidEditorialAssessmentCriteria(draft: ContentDraftSnapshot, critique: ContentEditorialCritique): readonly (typeof editorialQualityCriteria)[number][] {
+  const publicText = contentPublicText(draft);
+  return editorialQualityCriteria.filter(criterion => {
+    const review = critique.qualityAssessment?.[criterion];
+    return !review || !["pass", "revise"].includes(review.verdict)
+      || typeof review.reason !== "string" || review.reason.trim().length < 20
+      || !Array.isArray(review.excerpts) || review.excerpts.length === 0
+      || review.excerpts.some(excerpt => typeof excerpt !== "string" || excerpt.trim().length < 12 || !publicText.includes(excerpt));
+  });
+}
+
 export function evaluateContentReadiness(input: {
   readonly draft: ContentDraftSnapshot;
   readonly audit: ContentEvidenceAudit;
@@ -218,16 +230,9 @@ export function evaluateContentReadiness(input: {
   const assessment = input.critique.qualityAssessment;
   if (!assessment) blockers.add("editorial_assessment_missing");
   else {
-    const publicText = contentPublicText(input.draft);
+    if (invalidEditorialAssessmentCriteria(input.draft, input.critique).length) blockers.add("editorial_assessment_invalid");
     for (const criterion of editorialQualityCriteria) {
-      const review = assessment[criterion];
-      if (!review || !["pass", "revise"].includes(review.verdict)
-        || typeof review.reason !== "string" || review.reason.trim().length < 20
-        || !Array.isArray(review.excerpts) || review.excerpts.length === 0
-        || review.excerpts.some((excerpt) => typeof excerpt !== "string" || excerpt.trim().length < 12 || !publicText.includes(excerpt))) {
-        blockers.add("editorial_assessment_invalid");
-      }
-      if (review?.verdict === "revise") blockers.add(`editorial_${criterion}`);
+      if (assessment[criterion]?.verdict === "revise") blockers.add(`editorial_${criterion}`);
     }
   }
   const declaredScenarios = new Set(input.draft.illustrativeScenarios ?? []);

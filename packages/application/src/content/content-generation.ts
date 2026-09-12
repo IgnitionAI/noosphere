@@ -299,6 +299,7 @@ function repairableCritiqueFeedback(
   readiness: { readonly ready: boolean; readonly blockers: readonly string[] },
 ): readonly string[] {
   if (readiness.ready) return [];
+  if (readiness.blockers.some(blocker => ["editorial_assessment_missing", "editorial_assessment_invalid"].includes(blocker))) return [];
   const evidenceBlockers = new Set(["unaudited_claim", "unsupported_claim", "ungrounded_statement", "forbidden_topic"]);
   if (readiness.blockers.some((blocker) => evidenceBlockers.has(blocker))) return [];
   const feedback = [

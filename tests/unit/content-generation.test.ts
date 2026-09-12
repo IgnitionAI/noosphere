@@ -528,3 +528,20 @@ test("quota pause preserves the writing checkpoint even on the last processing a
   expect(failed).toBe(0);
   expect(context.run.stage).toBe("writer");
 });
+
+test("an invalid critic assessment blocks without rewriting the post to match invented citations", async () => {
+  const context = pipelineContext("audit");
+  let result: unknown;
+  const repository = {
+    async loadContext() { return context; }, async startRun() {}, async saveAudit() {}, async failRun() {},
+    async completeRun(input: unknown) { result = input; },
+  } as unknown as ContentGenerationRepository;
+  const processor = new ContentGenerationJobProcessor(repository, {
+    async buildBrief() { throw new Error("must not rebuild"); },
+    async write() { throw new Error("must not rewrite due to a critic citation error"); },
+    async audit() { return audit(); },
+    async critique() { return { ...critique(), qualityAssessment: { ...critique().qualityAssessment, brandVoice: { verdict: "revise" as const, reason: "A prior draft contains inappropriate language requiring changes.", excerpts: ["This passage is absent from the current post."] } } }; },
+  }, { async acknowledge() {} } as unknown as JobQueue);
+  await processor.process(job(context.run.workspaceId, context.run.id));
+  expect(result).toMatchObject({ readiness: { ready: false, blockers: expect.arrayContaining(["editorial_assessment_invalid"]) } });
+});

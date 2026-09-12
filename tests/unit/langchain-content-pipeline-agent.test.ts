@@ -87,7 +87,7 @@ describe("LangChainContentPipelineAgent", () => {
       { purpose: "content_brief", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-brief-v6", contentGenerationRunId: context.run.id },
       { purpose: "content_writer", model: "k3", promptVersion: "noosphere-content-writer-v9", contentGenerationRunId: context.run.id },
       { purpose: "content_audit", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-audit-v6", contentGenerationRunId: context.run.id },
-      { purpose: "content_critic", model: "k3", promptVersion: "noosphere-content-critic-v7", contentGenerationRunId: context.run.id },
+      { purpose: "content_critic", model: "k3", promptVersion: "noosphere-content-critic-v8", contentGenerationRunId: context.run.id },
     ]);
   });
 });
@@ -109,3 +109,30 @@ function brief() { return { objective: "explain" as const, audience: "Équipes j
 function draft() { return { hook: "Une clause introuvable coûte plus qu’une recherche.", body: "Une clause introuvable coûte plus qu’une recherche. Les équipes juridiques ont besoin d’une preuve résoluble avant de décider. Noosphere relie le contenu aux conversations.", callToAction: "Comment vérifiez-vous vos preuves ?", factualClaims: [{ statement: "Noosphere relie le contenu aux conversations.", sourceKeys: ["proof:1"] }], opinionStatements: ["Une clause introuvable coûte plus qu’une recherche."] }; }
 function audit() { return { reviewedClaims: [{ statement: "Noosphere relie le contenu aux conversations.", sourceKeys: ["proof:1"], verdict: "supported" as const, reason: "La source le dit explicitement." }], ungroundedStatements: [], forbiddenTopicMatches: [] }; }
 function critique() { return { qualityAssessment: Object.fromEntries(editorialQualityCriteria.map((key) => [key, { verdict: "pass", reason: "Fixture assessment for the content pipeline orchestration test.", excerpts: ["Noosphere relie le contenu aux conversations."] }])) as unknown as ContentQualityAssessment, genericPhrases: [], repeatedConcepts: [], callToActionAligned: true, distinctFromHistory: true, issues: [], summary: "Texte spécifique, étayé et aligné." }; }
+
+test("repairs stale critic citations against the same draft without invoking the writer", async () => {
+  const context = pipelineContext();
+  const currentDraft = draft();
+  const calls: Array<{ role: string; context: unknown }> = [];
+  const invalid = critique();
+  invalid.qualityAssessment = { ...invalid.qualityAssessment, brandVoice: { verdict: "pass", reason: "The old version supposedly uses an appropriate voice.", excerpts: ["This excerpt belonged to a previous draft and is absent here."] } };
+  const agent = new LangChainContentPipelineAgent({}, undefined, undefined, async input => {
+    calls.push(input);
+    return calls.length === 1 ? invalid : critique();
+  });
+  const result = await agent.critique({ ...context, brief: brief(), draft: currentDraft, audit: audit() });
+  expect(calls.map(call => call.role)).toEqual(["critic", "critic"]);
+  expect(calls[1]!.context).not.toHaveProperty("rejectedAssessment");
+  expect(calls[1]!.context).toMatchObject({ currentPublicPassages: expect.arrayContaining([currentDraft.body]), draft: currentDraft, validationFeedback: [expect.stringContaining("brandVoice")] });
+  expect(result.qualityAssessment?.brandVoice.excerpts).toEqual(["Noosphere relie le contenu aux conversations."]);
+});
+
+test("bounds citation repair to one retry and preserves an invalid result for the readiness gate", async () => {
+  const invalid = critique();
+  invalid.qualityAssessment = { ...invalid.qualityAssessment, coherence: { verdict: "pass", reason: "A mistaken review refers to nonexistent text.", excerpts: ["This nonexistent passage must never become approval."] } };
+  let calls = 0;
+  const agent = new LangChainContentPipelineAgent({}, undefined, undefined, async () => { calls++; return invalid; });
+  const result = await agent.critique({ ...pipelineContext(), brief: brief(), draft: draft(), audit: audit() });
+  expect(calls).toBe(2);
+  expect(result.qualityAssessment?.coherence.excerpts).toEqual([...invalid.qualityAssessment.coherence.excerpts]);
+});

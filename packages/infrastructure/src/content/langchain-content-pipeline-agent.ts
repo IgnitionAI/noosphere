@@ -1,3 +1,4 @@
+import { contentPublicText, invalidEditorialAssessmentCriteria } from "@outbound/domain/content/content-asset";
 import { editorialPlaybook } from "@outbound/infrastructure/content/content-editorial-playbook";
 import { contentRuntimeSkills } from "@outbound/infrastructure/content/content-runtime-skills";
 import { selectNextContentFormat } from "@outbound/domain/content/content-brand-kit";
@@ -53,10 +54,18 @@ export class LangChainContentPipelineAgent implements ContentPipelineAgent {
   }
 
   async critique(input: Parameters<ContentPipelineAgent["critique"]>[0]) {
-    return currentContentEditorialCritiqueSchema.parse(await this.invoke("critic", input.run.workspaceId, input.run.id, boundedContext(input), input));
+    const critique = currentContentEditorialCritiqueSchema.parse(await this.invoke("critic", input.run.workspaceId, input.run.id, boundedContext(input), input));
+    const invalid = invalidEditorialAssessmentCriteria(input.draft, critique);
+    if (invalid.length === 0) return critique;
+    const repair = {
+      ...boundedContext(input),
+      currentPublicPassages: contentPublicText(input.draft).split("\n").filter(passage => passage.trim().length >= 12),
+      validationFeedback: [`CONTENT_CRITIC_ASSESSMENT_INVALID: ${invalid.join(", ")}. Re-evaluate the unchanged current draft. Every criterion needs a reason of at least 20 characters and at least one exact contiguous public excerpt of at least 12 characters. Select each excerpt by copying one of currentPublicPassages or an exact contiguous part of it. Never paraphrase an excerpt or quote the brief, sources, prior versions or your assessment reasons. Preserve substantive concerns; a technical repair is not a request to approve the post.`],
+    };
+    return currentContentEditorialCritiqueSchema.parse(await this.invoke("critic", input.run.workspaceId, input.run.id, repair, repair, "assessment-repair"));
   }
 
-  private async invoke(role: PipelineRole, workspaceId: string, runId: string, context: unknown, original: unknown): Promise<unknown> {
+  private async invoke(role: PipelineRole, workspaceId: string, runId: string, context: unknown, original: unknown, requestSuffix?: string): Promise<unknown> {
     const startedAt = performance.now();
     const principalRole = role === "writer" || role === "critic";
     let provider: string;
@@ -67,7 +76,7 @@ export class LangChainContentPipelineAgent implements ContentPipelineAgent {
       const result = await this.routedModel.invoke({
         workspaceId,
         capability: pipelineCapability(role),
-        requestKey: `content-${role}:${runId}`,
+        requestKey: `content-${role}:${runId}${requestSuffix ? `:${requestSuffix}` : ""}`,
         fallbackRoutes: this.fallbackRoutes(principalRole),
         systemPrompt: spec.system,
         payload: spec.context,
@@ -98,7 +107,7 @@ export class LangChainContentPipelineAgent implements ContentPipelineAgent {
       model,
       promptVersion: role === "writer"
         ? "noosphere-content-writer-v9"
-        : role === "critic" ? "noosphere-content-critic-v7" : role === "audit" ? "noosphere-content-audit-v6" : "noosphere-content-brief-v6",
+        : role === "critic" ? "noosphere-content-critic-v8" : role === "audit" ? "noosphere-content-audit-v6" : "noosphere-content-brief-v6",
       shadow: false,
       inputHash: new Bun.CryptoHasher("sha256").update(JSON.stringify(original)).digest("hex"),
       output,
@@ -236,6 +245,7 @@ function pipelineModelSpec(role: PipelineRole, context: unknown) {
       "Compare the problem, mechanism and takeaway with recentBodies. Set distinctFromHistory to false for a semantic paraphrase even when the exact words differ.",
       "The hook field is metadata copied from the opening of the complete body. Its exact presence at the start of body is required by contract and is not repetition; only flag repeated wording that occurs again later inside body.",
       "Populate repeatedConcepts only for excessive or detrimental repetition that must block readiness. A necessary central term used coherently across the post is not a repeatedConcept, even when it appears several times.",
+      "If validationFeedback reports CONTENT_CRITIC_ASSESSMENT_INVALID, correct your assessment of the unchanged draft using its exact current public copy. Rejected citations are not evidence. Preserve every substantive concern; do not approve merely to satisfy the output contract.",
       "A blocker means the draft must not become ready. Never rewrite the draft and never weaken an evidence audit.",
       "Be demanding but concrete. Advice is allowed only for non-blocking polish. Do not schedule or publish.",
       "Call submit_editorial_critique exactly once.",
