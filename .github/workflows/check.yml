@@ -149,6 +149,13 @@ jobs:
           chmod +x "$CODEX_BINARY_PATH"
           bun run test:e2e
 
+      - name: Verify Inbound actions in production mode
+        env:
+          E2E_WEB_MODE: production
+        run: |
+          bunx next build apps/web
+          bun scripts/run-e2e-tests.ts tests/e2e/inbound-start.spec.ts --project desktop-1440
+
       - name: Audit Bun production dependencies
         if: ${{ !cancelled() }}
         run: bun audit --audit-level high

@@ -10,7 +10,7 @@ const childEnvironment = {
 
 const processes = [
   { name: "api", process: Bun.spawn(["bun", "apps/api/src/index.ts"], { cwd: import.meta.dir + "/..", env: childEnvironment, stdout: "inherit", stderr: "inherit" }) },
-  { name: "web", process: Bun.spawn(["bunx", "next", "dev", "apps/web", "--port", webPort], { cwd: import.meta.dir + "/..", env: childEnvironment, stdout: "inherit", stderr: "inherit" }) },
+  { name: "web", process: Bun.spawn(["bunx", "next", process.env.E2E_WEB_MODE === "production" ? "start" : "dev", "apps/web", "--port", webPort], { cwd: import.meta.dir + "/..", env: childEnvironment, stdout: "inherit", stderr: "inherit" }) },
 ];
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {

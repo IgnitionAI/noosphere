@@ -522,7 +522,9 @@ export class PostgresOperationalViews {
         state: strategies.length ? (failed ? "attention" : running ? "active" : strategies[0]!.status === "active" ? "idle" : "attention") : "not_configured",
         quality: failed ? "partial" : "fresh",
         headline: strategies.length
-          ? schedule[0] && !schedule[0].enabled
+          ? !strategies.some((strategy) => strategy.status === "active" && strategy.currentVersion > 0)
+            ? "Votre stratégie est préparée : validez-la avant de démarrer l’Inbound."
+            : schedule[0] && !schedule[0].enabled
             ? "L’Inbound est en pause : aucune nouvelle recherche ni publication automatique ne sera lancée."
             : running
               ? "Noosphere recherche, rédige ou publie actuellement un contenu LinkedIn."
