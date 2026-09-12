@@ -298,7 +298,7 @@ async def crawl_selected_pages(request: CrawlPagesRequest):
     urls = [str(u) for u in request.urls]
     if request.idempotencyKey:
         existing = job_manager.get_job_by_idempotency_key(request.idempotencyKey)
-        if existing:
+        if existing and not (request.retryFailed and job_manager.can_retry_failed(existing)):
             return CrawlPagesStartResponse(
                 success=True,
                 id=existing.id,
@@ -333,10 +333,17 @@ async def crawl_selected_pages(request: CrawlPagesRequest):
         exclude_patterns=[],
         include_patterns=[],
         idempotency_key=request.idempotencyKey,
+        retry_failed=request.retryFailed,
     )
 
     # Start the job
-    await job_manager.start_job(job.id)
+    if not await job_manager.start_job(job.id):
+        # Another request may have created the same keyed job while we awaited a slot.
+        job_manager.release_slot()
+        return CrawlPagesStartResponse(
+            success=True, id=job.id, urlCount=len(urls),
+            message="Existing idempotent crawl job returned",
+        )
 
     # Create background task for selective crawl
     async def run_selective_crawl():

@@ -1,3 +1,4 @@
+import { effectiveContentAssetStatus } from "@outbound/infrastructure/content/content-asset-readiness-query";
 import { and, count, desc, eq, gt, gte, inArray, lte, or, sql } from "drizzle-orm";
 import type {
   ActivityWorkspacePage,
@@ -162,17 +163,17 @@ export class PostgresOperationalViews {
       this.database.select({
         id: contentAssets.id,
         ideaId: contentAssets.ideaId,
-        status: contentAssets.status,
+        status: effectiveContentAssetStatus(),
         updatedAt: contentAssets.updatedAt,
       }).from(contentAssets).where(eq(contentAssets.workspaceId, workspaceId)).orderBy(desc(contentAssets.updatedAt)).limit(1),
       this.database.select({
         id: contentAssets.id,
         ideaId: contentAssets.ideaId,
-        status: contentAssets.status,
+        status: effectiveContentAssetStatus(),
         updatedAt: contentAssets.updatedAt,
       }).from(contentAssets).where(and(
         eq(contentAssets.workspaceId, workspaceId),
-        eq(contentAssets.status, "ready"),
+        sql`${effectiveContentAssetStatus()} = 'ready'`,
       )).orderBy(desc(contentAssets.updatedAt)).limit(1),
       this.database.select({
         id: contentPublications.id,
@@ -378,8 +379,8 @@ export class PostgresOperationalViews {
           nextRunAt: contentIdeaSchedules.nextRunAt,
         }).from(contentIdeaSchedules).where(eq(contentIdeaSchedules.workspaceId, input.workspaceId)).limit(1),
         this.database.select({ value: count() }).from(contentAssets).where(eq(contentAssets.workspaceId, input.workspaceId)),
-        this.database.select({ value: count() }).from(contentAssets).where(and(eq(contentAssets.workspaceId, input.workspaceId), eq(contentAssets.status, "ready"))),
-        this.database.select({ id: contentAssets.id, ideaId: contentAssets.ideaId, status: contentAssets.status, latestVersion: contentAssets.latestVersion, angle: contentIdeas.angle, updatedAt: contentAssets.updatedAt }).from(contentAssets).innerJoin(contentIdeas, and(eq(contentIdeas.workspaceId, contentAssets.workspaceId), eq(contentIdeas.id, contentAssets.ideaId))).where(eq(contentAssets.workspaceId, input.workspaceId)).orderBy(desc(contentAssets.updatedAt)).limit(limit),
+        this.database.select({ value: count() }).from(contentAssets).where(and(eq(contentAssets.workspaceId, input.workspaceId), sql`${effectiveContentAssetStatus()} = 'ready'`)),
+        this.database.select({ id: contentAssets.id, ideaId: contentAssets.ideaId, status: effectiveContentAssetStatus(), latestVersion: contentAssets.latestVersion, angle: contentIdeas.angle, updatedAt: contentAssets.updatedAt }).from(contentAssets).innerJoin(contentIdeas, and(eq(contentIdeas.workspaceId, contentAssets.workspaceId), eq(contentIdeas.id, contentAssets.ideaId))).where(eq(contentAssets.workspaceId, input.workspaceId)).orderBy(desc(contentAssets.updatedAt)).limit(limit),
         this.database.select({ id: contentGenerationRuns.id, ideaId: contentGenerationRuns.ideaId, status: contentGenerationRuns.status, stage: contentGenerationRuns.stage, angle: contentIdeas.angle, updatedAt: contentGenerationRuns.updatedAt }).from(contentGenerationRuns).innerJoin(contentIdeas, and(eq(contentIdeas.workspaceId, contentGenerationRuns.workspaceId), eq(contentIdeas.id, contentGenerationRuns.ideaId))).where(and(eq(contentGenerationRuns.workspaceId, input.workspaceId), sql`${contentGenerationRuns.status} in ('queued', 'running', 'blocked', 'failed')`)).orderBy(desc(contentGenerationRuns.updatedAt)).limit(limit),
         this.database.select({ value: count() }).from(contentPublications).where(eq(contentPublications.workspaceId, input.workspaceId)),
         this.database.select({ id: contentPublications.id, status: contentPublications.status, scheduledFor: contentPublications.scheduledFor, attempts: contentPublications.attempts, maxAttempts: contentPublications.maxAttempts, lastErrorCode: contentPublications.lastErrorCode, updatedAt: contentPublications.updatedAt }).from(contentPublications).where(eq(contentPublications.workspaceId, input.workspaceId)).orderBy(desc(contentPublications.updatedAt)).limit(limit),
@@ -469,7 +470,7 @@ export class PostgresOperationalViews {
           source: "inbound" as const,
           status: asset.status === "blocked" ? "attention" as const : asset.status === "ready" ? "completed" as const : "pending" as const,
           title: asset.angle,
-          detail: asset.status === "ready" ? `Contenu v${asset.latestVersion} sourcé et critiqué · prêt sans être publié` : asset.status === "blocked" ? "Contenu bloqué par l’audit ou la critique" : "Brouillon éditorial en préparation",
+          detail: asset.status === "ready" ? `Contenu v${asset.latestVersion} sourcé et critiqué · prêt sans être publié` : asset.status === "blocked" ? "Contenu à réévaluer ou bloqué par l’audit ou la critique" : "Brouillon éditorial en préparation",
           occurredAt: asset.updatedAt,
           href: `/content/ideas/${asset.ideaId}`,
           correlationId: null,

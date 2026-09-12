@@ -31,6 +31,21 @@ try {
     throw new Error("CONTENT_MEDIA_CANARY_IMAGE_INVALID");
   }
 
+  // Same layout and same-length titles: only actual text pixels may differ.
+  const titlePixels: string[] = [];
+  for (const title of ["MMMMMM", "WWWWWW"]) {
+    const card = await renderer.render({
+      format: "linkedin_image",
+      plan: { format: "linkedin_image", visualTone: "editorial", title, subtitle: "Texte de contrôle", altText: "Contrôle du rendu typographique", slides: [], scenes: [] },
+      body: "Texte de contrôle",
+      brandKit: DEFAULT_CONTENT_BRAND_KIT,
+      outputDirectory: join(root, `text-${title}`),
+    });
+    const pixels = await sharp(card.bytes).extract({ left: 88, top: 230, width: 800, height: 150 }).raw().toBuffer();
+    titlePixels.push(new Bun.CryptoHasher("sha256").update(pixels).digest("hex"));
+  }
+  if (titlePixels[0] === titlePixels[1]) throw new Error("CONTENT_MEDIA_CANARY_TEXT_MISSING");
+
   const document = await renderer.render({
     format: "linkedin_document",
     plan: {
@@ -78,6 +93,7 @@ try {
   const storageVerified = await verifyStorageWhenConfigured(image.bytes);
   console.info(JSON.stringify({
     event: "content_media_runtime_verified",
+    textRendering: "verified",
     image: { width: image.width, height: image.height, bytes: image.bytes.byteLength },
     document: { pages: document.pageCount, bytes: document.bytes.byteLength },
     video: { durationSeconds: video.durationSeconds, bytes: video.bytes.byteLength },

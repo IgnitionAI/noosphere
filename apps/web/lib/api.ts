@@ -216,6 +216,7 @@ export interface ContentAssetVersion {
     readonly forbiddenTopicMatches: readonly string[];
   };
   readonly critique: {
+    readonly qualityAssessment?: Readonly<Record<"audienceRelevance" | "readerValue" | "coherence" | "sourceAttribution" | "ctaTruthfulness" | "brandVoice" | "distinctness", { readonly verdict: "pass" | "revise"; readonly reason: string; readonly excerpts: readonly string[] }>>;
     readonly genericPhrases: readonly string[];
     readonly repeatedConcepts: readonly string[];
     readonly callToActionAligned: boolean;
@@ -223,7 +224,7 @@ export interface ContentAssetVersion {
     readonly issues: readonly { readonly severity: "advice" | "blocker"; readonly code: string; readonly message: string }[];
     readonly summary: string;
   };
-  readonly readiness: { readonly ready: boolean; readonly blockers: readonly string[] };
+  readonly readiness: { readonly policyVersion?: string; readonly ready: boolean; readonly blockers: readonly string[] };
   readonly media: ContentMedia | null;
   readonly createdAt: string;
 }

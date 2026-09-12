@@ -1,3 +1,4 @@
+import { effectiveContentAssetStatus } from "./content-asset-readiness-query";
 import { and, asc, count, desc, eq, exists, gte, inArray, isNull, like, lte, notExists, or, sql } from "drizzle-orm";
 import type {
   ContentAutopilotCadence,
@@ -362,7 +363,9 @@ export class PostgresContentAutopilotRepository implements ContentAutopilotRepos
   }
 
   private async countAssets(workspaceId: string, status: "ready" | "blocked"): Promise<number> {
-    const row = (await this.database.select({ value: count() }).from(contentAssets).where(and(eq(contentAssets.workspaceId, workspaceId), eq(contentAssets.status, status))))[0];
+    const row = (await this.database.select({ value: count() }).from(contentAssets).where(and(
+      eq(contentAssets.workspaceId, workspaceId), sql`${effectiveContentAssetStatus()} = ${status}`,
+    )))[0];
     return row?.value ?? 0;
   }
 

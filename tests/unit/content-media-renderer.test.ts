@@ -9,7 +9,7 @@ describe("DeterministicContentMediaRenderer", () => {
     const renderer = new DeterministicContentMediaRenderer();
     const result = await renderer.render({
       format: "linkedin_image",
-      plan: { format: "linkedin_image", visualTone: "editorial", title: "Une idée doit rester lisible", subtitle: "Le visuel soutient le post au lieu de le recopier.", altText: "Carte éditoriale Noosphere", slides: [], scenes: [] },
+      plan: { format: "linkedin_image", visualTone: "editorial", title: "Une idée doit rester lisible", subtitle: "Le visuel soutient le post au lieu de le recopier.", altText: "Un schéma détaillé de trois contrôles qui ne sont pas dessinés", slides: [], scenes: [] },
       body: "Texte source",
       brandKit: DEFAULT_CONTENT_BRAND_KIT,
       outputDirectory: `/tmp/noosphere-image-test-${crypto.randomUUID()}`,
@@ -18,6 +18,21 @@ describe("DeterministicContentMediaRenderer", () => {
     expect(result.mimeType).toBe("image/png");
     expect(metadata.width).toBe(1080);
     expect(metadata.height).toBe(1350);
+    expect(result.altText).toContain("Une idée doit rester lisible");
+    expect(result.altText).toContain("Le visuel soutient le post au lieu de le recopier.");
+    expect(result.altText).not.toContain("trois contrôles");
+  });
+
+  test("alternative text describes the displayed copy rather than a clipped suffix", async () => {
+    const result = await new DeterministicContentMediaRenderer().render({
+      format: "linkedin_image",
+      plan: { format: "linkedin_image", visualTone: "editorial", title: "Une décision", subtitle: "Un contenu volontairement long pour vérifier les limites du cadre et conserver uniquement les lignes effectivement affichées. ".repeat(4) + "SUFFIXE_ABSENT_DU_VISUEL", altText: "Un schéma imaginaire", slides: [], scenes: [] },
+      body: "Texte",
+      brandKit: DEFAULT_CONTENT_BRAND_KIT,
+      outputDirectory: `/tmp/noosphere-image-alt-test-${crypto.randomUUID()}`,
+    });
+    expect(result.altText).toContain("Un contenu volontairement long");
+    expect(result.altText).not.toContain("SUFFIXE_ABSENT_DU_VISUEL");
   });
 
   test("keeps the four image art directions visually distinct", async () => {
