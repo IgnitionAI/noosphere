@@ -32,7 +32,13 @@ export class DeterministicContentMediaRenderer implements ContentMediaRenderer {
           items: [],
           ...(input.logoBytes ? { logoBytes: input.logoBytes } : {}),
         });
-        return mediaResult(bytes, "image/png", "linkedin-image.png", { renderer: "sharp-svg-v3", cards: 1, logo: Boolean(input.logoBytes) }, 1);
+        const visibleText = insightTextLines({ title: input.plan.title!, body: input.plan.subtitle ?? excerpt(input.body, 180), callout: null });
+        return {
+          ...mediaResult(bytes, "image/png", "linkedin-image.png", { renderer: "sharp-svg-v3", cards: 1, logo: Boolean(input.logoBytes) }, 1),
+          // The layout contains text, not arbitrary diagrams imagined by the writer.
+          altText: [input.brandKit.brandName, visibleText.title.join(" "), visibleText.focus.join(" "), input.brandKit.tagline]
+            .filter(Boolean).join(". "),
+        };
       }
       if (input.format === "linkedin_document") return await this.#renderDocument(input.plan, input.brandKit, input.logoBytes);
       return await this.#renderVideo(input.plan, input.brandKit, input.outputDirectory, input.logoBytes);
@@ -245,12 +251,17 @@ function renderCover(input: Parameters<typeof renderLayoutContent>[0]): string {
     <text x="88" y="1110" font-family="${input.fontFamily}" font-size="21" font-weight="760" letter-spacing="2.2" fill="${input.accent}">FAIRE DÉFILER →</text>`;
 }
 
+function insightTextLines(input: { readonly title: string; readonly body: string; readonly callout: string | null }) {
+  return {
+    title: wrap(input.title, 24, 4),
+    focus: wrap(input.callout ?? input.body, 29, 5),
+    body: wrap(input.body, 45, 3),
+  };
+}
+
 function renderInsight(input: Parameters<typeof renderLayoutContent>[0]): string {
-  const title = wrap(input.input.title, 24, 4);
-  const focus = input.input.callout ?? input.input.body;
-  const focusLines = wrap(focus, 29, 5);
+  const { title, focus: focusLines, body } = insightTextLines(input.input);
   const showBody = Boolean(input.input.callout);
-  const body = wrap(input.input.body, 45, 3);
   return `
     ${renderKicker(input, 205)}
     <text x="88" y="290" font-family="${input.fontFamily}" font-size="62" font-weight="790" fill="${input.text}">${tspans(title, 290, 68)}</text>

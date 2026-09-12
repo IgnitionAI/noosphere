@@ -27,6 +27,7 @@ describe("Noosphere content media producer", () => {
             pageCount: 1,
             durationSeconds: null,
             manifest: { renderer: "fixture" },
+            altText: "Texte réellement dessiné",
           };
         },
       },
@@ -45,6 +46,7 @@ describe("Noosphere content media producer", () => {
     const checksum = new Bun.CryptoHasher("sha256").update(renderedBytes).digest("hex");
     expect(media).toMatchObject({
       kind: "image",
+      altText: "Texte réellement dessiné",
       objectKey: `workspace-fixture/content-media/run-fixture/${checksum}.png`,
       checksumSha256: checksum,
       sizeBytes: renderedBytes.byteLength,

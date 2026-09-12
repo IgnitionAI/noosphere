@@ -50,6 +50,7 @@ export interface ContentMediaRenderer {
     readonly pageCount: number | null;
     readonly durationSeconds: number | null;
     readonly manifest: Record<string, unknown>;
+    readonly altText?: string;
   }>;
 }
 
@@ -133,7 +134,7 @@ export class ContentMediaProducer {
       height: rendered.height,
       pageCount: rendered.pageCount,
       durationSeconds: rendered.durationSeconds,
-      altText: plan.altText,
+      altText: rendered.altText ?? plan.altText,
       renderManifest: rendered.manifest,
       provenance,
     };

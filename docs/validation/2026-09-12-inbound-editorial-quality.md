@@ -31,6 +31,7 @@ scenario: the general auditor and critic still make semantic judgments.
 | Local AMD64 backend image scan | No HIGH/CRITICAL fixed findings reported by pinned release scanner |
 | Runtime rendering | PNG, PDF and video pass; different same-layout titles yield different decoded text pixels |
 | Actual configured Luna | Original weak posts rejected; one text, one image plan and one six-page carousel accepted after bounded repair |
+| Unrelated-offer Luna cases | Maintenance and training fixture offers produce useful, distinct reader methods after bounded repair; controlled product facts, not live customer proof |
 | Negative Luna cases | Invented customer gains and an unavailable-resource CTA rejected for relevant reasons |
 | Independent review | No remaining verified blocker in reviewed diff; multiline-heading numeric bypass found and fixed with regression |
 
@@ -48,6 +49,10 @@ this. The image-release workflow now checks text pixels before push. This check
 catches the observed omission, but human visual review remains necessary for layout,
 overflow, contrast and each actual generated document.
 
+The image alternative text now derives from the same displayed lines as the card,
+including truncation, rather than describing an imagined diagram. Dedicated media
+tests cover renderer-to-storage propagation and a suffix outside the visible area.
+
 The six-page actual carousel was reviewed visually; the subsequent contrast-only
 render was checked on a representative interior page. Private full prompts, source
 excerpts, output attempts, trace timings and rendered artifacts are retained outside
@@ -57,8 +62,8 @@ written to production object storage.
 
 ## Remaining acceptance work
 
-- Evaluate additional unrelated offers and content angles; one RAG/support case is
-  insufficient to claim general content quality or business impact.
+- Continue evaluating quality across real customer offers; three controlled contexts
+  do not establish general editorial quality or business impact.
 - Execute CI and final release-image checks against the exact release commit.
 - Deploy the reviewed candidate with existing publication pause preserved, then
   verify authenticated UI/MCP state and rendered media on that deployment.
