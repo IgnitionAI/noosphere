@@ -301,7 +301,7 @@ export async function revokeMcpProductionSmoke(databaseUrl: string, fixtureKey: 
       for (const slug of slugs) {
         const rows = await tx`select id from workspaces where slug = ${slug}` as Array<{ readonly id: string }>;
         for (const row of rows) {
-          await tx`update workspace_members set status = 'inactive' where workspace_id = ${row.id}`;
+          await tx`update workspace_members set status = 'disabled' where workspace_id = ${row.id}`;
           await tx`update mcp_oauth_clients set revoked_at = coalesce(revoked_at, now()) where workspace_id = ${row.id}`;
           await tx`update mcp_oauth_access_tokens set revoked_at = coalesce(revoked_at, now()) where workspace_id = ${row.id}`;
         }
@@ -581,8 +581,12 @@ async function insertContentSourceFixture(
   const campaignSchedule = { start: "09:00", end: "17:00", timeZone: "UTC" };
   const strategySnapshot = {
     audience: { name: "Local fixture audience", summary: "Durable MCP smoke fixture", awareness: "problem_aware" },
-    pillars: [{ name: "Proof", promise: "Exercise governed MCP effects", proofTypes: ["fixture"] }],
-    voice: { traits: ["direct"], avoid: ["generic"] },
+    pillars: [
+      { name: "Proof", promise: "Exercise governed MCP effects", proofTypes: ["fixture"] },
+      { name: "Process", promise: "Explain fixture preparation and approval", proofTypes: ["fixture"] },
+      { name: "Safety", promise: "Verify workspace isolation and revocation", proofTypes: ["fixture"] },
+    ],
+    voice: { traits: ["direct", "precise"], avoid: ["generic"] },
     formats: ["linkedin_text"],
     cadence: { postsPerWeek: 1, preferredDays: [1], timezone: "UTC" },
     callsToAction: ["Reply"],
