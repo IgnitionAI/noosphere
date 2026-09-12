@@ -99,7 +99,7 @@ import { ProspectDecisionJobProcessor } from "@outbound/infrastructure/campaigns
 import { LangChainProspectDecisionAgent } from "@outbound/infrastructure/campaigns/langchain-prospect-decision-agent";
 import { ContentIdeaDiscoveryJobProcessor } from "@outbound/application/content/content-ideas";
 import { PostgresContentIdeaRepository } from "@outbound/infrastructure/content/postgres-content-idea-repository";
-import { CrawlerContentIdeaSource } from "@outbound/infrastructure/content/crawler-content-idea-source";
+import { WorkspaceContentIdeaSource } from "@outbound/infrastructure/content/workspace-content-idea-source";
 import { LangChainContentIdeaGenerator } from "@outbound/infrastructure/content/langchain-content-idea-generator";
 import { DailyContentIdeaScheduler } from "@outbound/infrastructure/content/daily-content-idea-scheduler";
 import { ContentGenerationJobProcessor } from "@outbound/application/content/content-generation";
@@ -419,7 +419,7 @@ const dailyProspectingScheduler = new DailyProspectingScheduler(database.db, clo
 const contentIdeaRepository = new PostgresContentIdeaRepository(database.db);
 const contentIdeaDiscoveryProcessor = new ContentIdeaDiscoveryJobProcessor(
   contentIdeaRepository,
-  new CrawlerContentIdeaSource(discoveryCrawler),
+  new WorkspaceContentIdeaSource(discoveryCrawler, workspaceAiSettings, instanceAiRepository, aiRunRecorder),
   new LangChainContentIdeaGenerator(process.env, workspaceAiSettings, aiRunRecorder, undefined, workspaceStructuredModel),
   queue,
   () => clock.now(),
