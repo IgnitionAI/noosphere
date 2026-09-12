@@ -87,7 +87,7 @@ export class DeterministicContentMediaRenderer implements ContentMediaRenderer {
       height: HEIGHT,
       pageCount: plan.slides.length,
       durationSeconds: null,
-      manifest: { renderer: "pdf-lib-sharp-v5", slides: plan.slides.length, ratio: "4:5", narrativeLayouts: layouts, logo: Boolean(logoBytes) },
+      manifest: { renderer: "pdf-lib-sharp-v6", slides: plan.slides.length, ratio: "4:5", narrativeLayouts: layouts, logo: Boolean(logoBytes) },
     };
   }
 
@@ -140,7 +140,7 @@ export class DeterministicContentMediaRenderer implements ContentMediaRenderer {
       height: HEIGHT,
       pageCount: null,
       durationSeconds,
-      manifest: { renderer: "ffmpeg-motion-graphics-v1", scenes: plan.scenes.length, ratio: "4:5", codec: "h264" },
+      manifest: { renderer: "ffmpeg-motion-graphics-v2", scenes: plan.scenes.length, ratio: "4:5", codec: "h264" },
     };
   }
 }
@@ -211,7 +211,7 @@ function renderChrome(input: {
   readonly progress: number;
 }): string {
   const rail = `<rect x="0" y="0" width="24" height="1350" fill="${input.accent}"/>`;
-  if (input.input.layout === "cover") return `${rail}<circle cx="930" cy="1030" r="310" fill="none" stroke="${input.accent}" stroke-width="54" opacity="0.92"/><circle cx="930" cy="1030" r="210" fill="none" stroke="${input.accent}" stroke-width="3" opacity="0.58"/><path d="M760 160H1010" stroke="${input.accent}" stroke-width="10"/>`;
+  if (input.input.layout === "cover") return `${rail}<path d="M760 160H1010" stroke="${input.accent}" stroke-width="10"/>`;
   if (input.input.layout === "closing") return `<path d="M690 0H1080V390L690 0Z" fill="${input.background}" opacity="0.96"/><circle cx="918" cy="248" r="86" fill="${input.primary}"/><circle cx="918" cy="248" r="52" fill="none" stroke="${input.background}" stroke-width="3" opacity="0.75"/>`;
   const progress = `<rect x="88" y="142" width="904" height="6" rx="3" fill="${input.primary}" opacity="0.12"/><rect x="88" y="142" width="${input.progress}" height="6" rx="3" fill="${input.accent}"/>`;
   if (input.input.layout === "framework") return `${progress}<path d="M760 925h240M880 805v240" stroke="${input.accent}" stroke-width="2" opacity="0.18"/>`;
@@ -363,7 +363,9 @@ function renderProcess(input: Parameters<typeof renderLayoutContent>[0]): string
   let y = introY + (intro.length - 1) * 35 + 70;
   const rows: string[] = [];
   for (const [index, item] of input.input.items.entries()) {
-    const label = layoutWrap(input, item.label, 42, 2);
+    // The step number is already drawn in its badge; preserve it there only once.
+    const prefix = new RegExp(`^${index + 1}(?:[.)]\\s+|\\s+[—–-]\\s+)`);
+    const label = layoutWrap(input, item.label.replace(prefix, ""), 42, 2);
     const text = layoutWrap(input, item.text, 44, 5);
     const textY = y + label.length * 32 + 12;
     const bottom = textY + (text.length - 1) * 34 + 24;
