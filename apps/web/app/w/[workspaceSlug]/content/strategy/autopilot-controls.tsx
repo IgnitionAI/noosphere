@@ -27,10 +27,11 @@ export function AutopilotControls({ workspaceSlug, enabled, localTime, timezone,
     setPending(true);
     setError(null);
     try {
-      await configureAutopilotAction(workspaceSlug, { enabled: nextEnabled, localTime: time, timezone: zone, publicationTimes: postTimes, publicationDays: postDays });
+      const result = await configureAutopilotAction(workspaceSlug, { enabled: nextEnabled, localTime: time, timezone: zone, publicationTimes: postTimes, publicationDays: postDays });
+      if (!result.ok) { setError(result.message); return; }
       router.refresh();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "La configuration n’a pas pu être enregistrée");
+    } catch {
+      setError("La configuration n’a pas pu être enregistrée. Réessayez dans un instant.");
     } finally {
       setPending(false);
     }
