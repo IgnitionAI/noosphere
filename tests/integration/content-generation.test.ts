@@ -178,10 +178,16 @@ databaseDescribe("CNT-101 durable content generation", () => {
     expect(await repository.findRun({ workspaceId: otherWorkspaceId, runId: first.id })).toBeNull();
 
     const autopilotRepository = new PostgresContentAutopilotRepository(database.db);
+    expect(await autopilotRepository.get({ workspaceId })).toMatchObject({ readyAssets: 1, blockedAssets: 0 });
     await database.client`alter table content_asset_versions disable trigger content_asset_versions_immutable_trg`;
     await database.client`update content_asset_versions set readiness = readiness - 'policyVersion' where workspace_id = ${workspaceId} and id = ${asset!.latest!.id}`;
     await database.client`alter table content_asset_versions enable trigger content_asset_versions_immutable_trg`;
     try {
+      expect(await autopilotRepository.get({ workspaceId })).toMatchObject({ readyAssets: 0, blockedAssets: 1 });
+      const legacySummary = await operationalViews.getSummary(workspaceId);
+      expect(legacySummary.nextOutcomes.some((item) => item.id === `content:${asset!.id}`)).toBe(false);
+      const legacyActivity = await operationalViews.getActivity({ workspaceId, lens: "inbound" });
+      expect(legacyActivity.items).toContainEqual(expect.objectContaining({ id: `content-asset:${asset!.id}`, status: "attention" }));
       expect((await repository.findAssetByIdea({ workspaceId, ideaId }))?.latest?.readiness).toMatchObject({ ready: false, blockers: ["editorial_policy_outdated"] });
       expect(await autopilotRepository.listRepairCandidates({ workspaceId, strategyVersionId, limit: 10 })).toContainEqual({
         assetId: asset!.id,

@@ -9,7 +9,10 @@ The generation pipeline receives the offer and ICP versions pinned by its strate
 A shared runtime playbook drives the brief, writer, auditor and critic. Policy v3
 requires seven explicit editorial assessments with reasons and current-copy excerpts.
 Legacy ready versions display a reassessment requirement and cannot execute under
-the new policy. Source discovery reads actual pages; search snippets are insufficient.
+the new policy. MCP autopilot counters, home suggestions and activity use the same
+current-policy readiness rule; a legacy ready record is presented as needing attention
+without mutating its stored snapshot. Integration tests reproduced and corrected the
+previous mismatch across those views. Source discovery reads actual pages; search snippets are insufficient.
 Confirmed failed/empty reads have explicit bounded retries; concurrent retries share
 one replacement job. A second writer attempt retains editorial repair feedback.
 
