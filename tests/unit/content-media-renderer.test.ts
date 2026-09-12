@@ -57,7 +57,7 @@ describe("DeterministicContentMediaRenderer", () => {
       body: "Texte", brandKit: DEFAULT_CONTENT_BRAND_KIT, outputDirectory: `/tmp/noosphere-overlap-${crypto.randomUUID()}`,
     });
     const regular = { title: "Une décision", body: "Une observation précise." };
-    await expect(render([{ ...regular, items: [{ label: "Réserve", text: "Ne pas conclure sans preuve." }] }, regular, regular])).rejects.toThrow("CONTENT_MEDIA_TEXT_OVERFLOW");
+    await expect(render([{ ...regular, items: [{ label: "Réserve", text: "Ne pas conclure sans preuve." }] }, regular, regular])).rejects.toMatchObject({message: "CONTENT_MEDIA_TEXT_OVERFLOW", slideNumber: 1, layout: "cover"});
     await expect(render([regular, regular, { title: "Observation test ".repeat(5).trim(), body: "Une observation claire et utile. ".repeat(5).trim(), callout: "Conserver cette réserve." }])).rejects.toThrow("CONTENT_MEDIA_TEXT_OVERFLOW");
   });
 

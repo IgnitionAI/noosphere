@@ -5,7 +5,7 @@ import type { EditorialStrategySnapshot } from "@outbound/domain/content/editori
 import type { ContentBrandKitSnapshot, LinkedinContentFormat } from "@outbound/domain/content/content-brand-kit";
 import type { ContentBusinessContext } from "@outbound/application/content/editorial-strategy";
 import type { StoredContentMedia } from "@outbound/application/content/content-media";
-import { ContentMediaProducer } from "@outbound/application/content/content-media";
+import { ContentMediaProducer, ContentMediaTextOverflowError } from "@outbound/application/content/content-media";
 import type { ContentIdeaEvidence, ContentIdeaView } from "@outbound/application/content/content-ideas";
 import type {
   ContentBriefSnapshot,
@@ -287,7 +287,9 @@ async function writeGroundedDraft(
       candidate = draft;
       validationFeedback = [...initialValidationFeedback, error.message === "CONTENT_DRAFT_TOO_LONG"
         ? `${error.message}: body has ${draft.body.trim().length} characters; maximum ${MAX_CONTENT_BODY_LENGTH}. Rewrite concisely while retaining the explanation and source attribution. Do not truncate. Resynchronize the claim ledger with the rewritten public copy.`
-        : error.message === "CONTENT_MEDIA_TEXT_OVERFLOW" ? "CONTENT_READINESS_BLOCKER: media_text_overflow" : error.message];
+        : error instanceof ContentMediaTextOverflowError
+          ? `CONTENT_READINESS_BLOCKER: media_text_overflow on slide ${error.slideNumber} (${error.layout}). Shorten or redistribute that page while preserving its complete reasoning and the other pages.`
+          : error.message === "CONTENT_MEDIA_TEXT_OVERFLOW" ? "CONTENT_READINESS_BLOCKER: media_text_overflow" : error.message];
     }
   }
   throw new Error("CONTENT_DRAFT_REPAIR_EXHAUSTED");

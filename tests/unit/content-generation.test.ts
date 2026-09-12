@@ -1,3 +1,4 @@
+import { ContentMediaTextOverflowError } from "@outbound/application/content/content-media";
 import { editorialQualityCriteria, type ContentQualityAssessment } from "@outbound/domain/content/content-asset";
 import { describe, expect, test } from "bun:test";
 import { assertGroundedContentDraft, evaluateContentReadiness } from "@outbound/domain/content/content-asset";
@@ -71,6 +72,20 @@ describe("CNT-101 grounded content pipeline", () => {
     } };
     if (valid) expect(() => assertGroundedContentDraft(candidate, ["proof:1"])).not.toThrow();
     else expect(() => assertGroundedContentDraft(candidate, ["proof:1"])).toThrow("CONTENT_DRAFT_UNSOURCED_NUMBER");
+  });
+
+  test.each([
+    {labels:["1 — Identité","2 — Résultat"],extra:"",valid:true},
+    {labels:["1. Identité","2. Résultat"],extra:"",valid:true},
+    {labels:["1 — Identité","3 — Résultat"],extra:"",valid:false},
+    {labels:["1 — 42% de réussite","2 — Résultat"],extra:"",valid:false},
+    {labels:["1% Identité","2 — Résultat"],extra:"",valid:false},
+    {labels:["1 — Identité","2 — Résultat"],extra:"42% de réussite.",valid:false},
+  ])("separates ordered item labels from factual numbers: %j", ({labels,extra,valid}) => {
+    const candidate={...draft(),mediaPlan:{format:"linkedin_document" as const,visualTone:"editorial" as const,title:"Contrôler",subtitle:null,altText:"Contrôle",scenes:[],
+      slides:[{title:"Une procédure",body:"Examiner les éléments.",items:labels.map(label=>({label,text:extra}))}]}};
+    if(valid)expect(()=>assertGroundedContentDraft(candidate,["proof:1"])).not.toThrow();
+    else expect(()=>assertGroundedContentDraft(candidate,["proof:1"])).toThrow("CONTENT_DRAFT_UNSOURCED_NUMBER");
   });
 
   test("rejects a factual ledger detached from the actual post", () => {
@@ -256,7 +271,7 @@ describe("CNT-101 grounded content pipeline", () => {
     let checks = 0;
     const repository = {async loadContext(){return context;}, async startRun(){},
       async saveDraft(){calls.push("save");},async saveAudit(){},async completeRun(){},async failRun(){}} as unknown as ContentGenerationRepository;
-    const producer = {async checkDraftLayout(){calls.push("layout"); if (++checks === 1 || persistent) throw new Error("CONTENT_MEDIA_TEXT_OVERFLOW");},
+    const producer = {async checkDraftLayout(){calls.push("layout"); if (++checks === 1 || persistent) throw new ContentMediaTextOverflowError(2, "comparison");},
       async produce(){calls.push("store");return {marker:"validated"};}} as unknown as import("@outbound/application/content/content-media").ContentMediaProducer;
     const processor = new ContentGenerationJobProcessor(repository, {
       async buildBrief(){return context.brief;},async write(input){calls.push("write");received.push(input.validationFeedback ?? []);return candidate;},
@@ -265,7 +280,7 @@ describe("CNT-101 grounded content pipeline", () => {
     const processing = processor.process(job(context.run.workspaceId,context.run.id));
     if (persistent) await expect(processing).rejects.toThrow("CONTENT_MEDIA_TEXT_OVERFLOW"); else await processing;
     expect(calls).toEqual(persistent ? ["write","layout","write","layout"] : ["write","layout","write","layout","save","audit","critic","store"]);
-    expect(received[1]!.join(" ")).toContain("media_text_overflow");
+    expect(received[1]!.join(" ")).toContain("media_text_overflow on slide 2 (comparison)");
   });
 
   test.each([false, true])("checks writer length before persistence and audit (persistent: %s)", async persistent => {

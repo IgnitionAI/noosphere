@@ -2,7 +2,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { PDFDocument } from "pdf-lib";
 import sharp from "sharp";
-import type { ContentMediaRenderer } from "@outbound/application/content/content-media";
+import { ContentMediaTextOverflowError, type ContentMediaRenderer } from "@outbound/application/content/content-media";
 import type { ContentBrandKitSnapshot } from "@outbound/domain/content/content-brand-kit";
 import type { ContentMediaPlan } from "@outbound/domain/content/content-asset";
 
@@ -53,7 +53,9 @@ export class DeterministicContentMediaRenderer implements ContentMediaRenderer {
     for (const [index, slide] of plan.slides.entries()) {
       const layout = resolveSlideLayout(slide, index, plan.slides.length);
       layouts.push(layout);
-      const png = await renderCard({
+      let png: Uint8Array;
+      try {
+        png = await renderCard({
         brandKit,
         eyebrow: brandKit.brandName,
         title: slide.title,
@@ -67,7 +69,11 @@ export class DeterministicContentMediaRenderer implements ContentMediaRenderer {
         callout: slide.callout ?? null,
         items: slide.items ?? [],
         ...(logoBytes ? { logoBytes } : {}),
-      });
+        });
+      } catch (error) {
+        if (error instanceof Error && error.message === "CONTENT_MEDIA_TEXT_OVERFLOW") throw new ContentMediaTextOverflowError(index + 1, layout);
+        throw error;
+      }
       const embedded = await pdf.embedPng(png);
       const page = pdf.addPage([WIDTH, HEIGHT]);
       page.drawImage(embedded, { x: 0, y: 0, width: WIDTH, height: HEIGHT });

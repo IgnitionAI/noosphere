@@ -197,13 +197,13 @@ export function contentPublicText(draft: ContentDraftSnapshot, omitStructuralNum
     draft.body,
     plan.title,
     plan.subtitle,
-    ...plan.slides.flatMap((slide, index) => [
-      slideKickers[index],
-      slideTitles[index],
-      slide.body,
-      slide.callout,
-      ...(slide.items ?? []).flatMap((item) => [item.label, item.text]),
-    ]),
+    ...plan.slides.flatMap((slide, index) => {
+      const items = slide.items ?? [];
+      const labels = items.map(item => item.label);
+      const itemLabels = omitStructuralNumbers ? stripOrderedItemLabels(labels) : labels;
+      return [slideKickers[index], slideTitles[index], slide.body, slide.callout,
+        ...items.flatMap((item, itemIndex) => [itemLabels[itemIndex], item.text])];
+    }),
     ...plan.scenes.flatMap((scene) => [scene.title, scene.body]),
   ].filter((value): value is string => Boolean(value)).join("\n");
 }
@@ -325,6 +325,12 @@ function stripSequenceKickers(values: readonly string[]): readonly string[] {
     for (const entry of group) result[entry.index] = label;
   }
   return result;
+}
+
+function stripOrderedItemLabels(values: readonly string[]): readonly string[] {
+  const matches = values.map(value => value.match(/^([1-9]\d?)(?:[.)][ \t]+|[ \t]+[—–-][ \t]+)(.+)$/));
+  if (matches.length < 2 || !matches.every((match, index) => match && Number(match[1]) === index + 1)) return values;
+  return matches.map(match => match![2]!);
 }
 
 function stripOrderedListMarkers(values: readonly string[]): readonly string[] {
