@@ -1,5 +1,8 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import postgres from "postgres";
+import { createDatabase } from "../../packages/infrastructure/src/database/client";
+import { PostgresEditorialStrategyRepository } from "../../packages/infrastructure/src/content/postgres-editorial-strategy-repository";
+import { editorialStrategySnapshotSchema } from "../../packages/contracts/src/content";
 import {
   cleanupMcpProductionSmoke,
   prepareMcpProductionSmoke,
@@ -13,7 +16,11 @@ databaseDescribe("MCP production smoke fixture seeder", () => {
   if (!databaseUrl) return;
   const sql = postgres(databaseUrl, { max: 1, connect_timeout: 10, idle_timeout: 20 });
 
+  const database = createDatabase(databaseUrl);
+  const strategies = new PostgresEditorialStrategyRepository(database.db);
+
   afterAll(async () => {
+    await database.close();
     await sql.end({ timeout: 5 });
   });
 
@@ -33,6 +40,12 @@ databaseDescribe("MCP production smoke fixture seeder", () => {
           revoked: "revoked-token-value",
         },
       });
+      for (const workspaceId of prepared.workspaceIds) {
+        const strategy = await strategies.find(workspaceId);
+        expect(strategy).not.toBeNull();
+        const [version] = await sql`select snapshot from editorial_strategy_versions where workspace_id = ${workspaceId}`;
+        expect(editorialStrategySnapshotSchema.safeParse(version!.snapshot).success).toBe(true);
+      }
       const rows = await sql<{
         readonly intentType: string;
         readonly sourceType: string;
