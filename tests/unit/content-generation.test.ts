@@ -1,3 +1,4 @@
+import { editorialQualityCriteria, type ContentQualityAssessment } from "@outbound/domain/content/content-asset";
 import { describe, expect, test } from "bun:test";
 import { assertGroundedContentDraft, evaluateContentReadiness } from "@outbound/domain/content/content-asset";
 import { ContentGenerationApplication, ContentGenerationJobProcessor, type ContentGenerationRepository } from "@outbound/application/content/content-generation";
@@ -264,7 +265,7 @@ describe("CNT-101 grounded content pipeline", () => {
     expect(calls).toEqual(["start", "audit", "writer_repair", "draft_repaired", "audit", "writer_repair", "draft_repaired", "audit", "audit_saved", "critic", "ready", "ack"]);
   });
 
-  test("repairs a critic-rejected draft, then re-audits it before final readiness", async () => {
+  test.each(["issue", "assessment"] as const)("repairs a critic rejection from %s and re-audits before readiness", async (kind) => {
     const calls: string[] = [];
     const feedback: Array<readonly string[] | undefined> = [];
     const context = pipelineContext("audit");
@@ -286,15 +287,54 @@ describe("CNT-101 grounded content pipeline", () => {
         calls.push("critic");
         criticAttempt += 1;
         return criticAttempt === 1
-          ? { ...critique(), issues: [{ severity: "blocker" as const, code: "META_FRAMING_LABELS", message: "Supprimer le méta-discours et écrire le fait directement." }] }
+          ? kind === "issue"
+            ? { ...critique(), issues: [{ severity: "blocker" as const, code: "META_FRAMING_LABELS", message: "Supprimer le méta-discours et écrire le fait directement." }] }
+            : { ...critique(), qualityAssessment: { ...critique().qualityAssessment, readerValue: { verdict: "revise" as const, reason: "Expliquer une décision concrète que le lecteur peut prendre.", excerpts: ["Noosphere relie le contenu aux conversations."] } } }
           : critique();
       },
     }, queue);
 
     await processor.process(job(context.run.workspaceId, context.run.id));
 
-    expect(feedback).toEqual([["CONTENT_CRITIQUE_BLOCKER [META_FRAMING_LABELS]: Supprimer le méta-discours et écrire le fait directement."]]);
+    expect(feedback).toEqual(kind === "issue"
+      ? [["CONTENT_CRITIQUE_BLOCKER [META_FRAMING_LABELS]: Supprimer le méta-discours et écrire le fait directement."]]
+      : [["CONTENT_CRITIQUE_BLOCKER [readerValue]: Expliquer une décision concrète que le lecteur peut prendre.", "CONTENT_READINESS_BLOCKER: editorial_readerValue"]]);
     expect(calls).toEqual(["start", "audit", "audit_saved", "critic", "writer_repair", "draft_repaired_after_critique", "audit", "audit_saved", "critic", "ready", "ack"]);
+  });
+
+  test("preserves editorial feedback when a repair itself needs deterministic correction", async () => {
+    const calls: string[] = [];
+    const feedback: Array<readonly string[] | undefined> = [];
+    const context = pipelineContext("audit");
+    const repository = {
+      async loadContext() { return context; },
+      async startRun() { calls.push("start"); },
+      async reviseDraftAfterCritique() { calls.push("draft_repaired_after_critique"); },
+      async saveAudit() { calls.push("audit_saved"); },
+      async completeRun(input: { readiness: { ready: boolean } }) { calls.push(input.readiness.ready ? "ready" : "blocked"); },
+      async failRun() {},
+    } as unknown as ContentGenerationRepository;
+    const queue = { async acknowledge() { calls.push("ack"); } } as unknown as JobQueue;
+    let criticAttempt = 0;
+    const processor = new ContentGenerationJobProcessor(repository, {
+      async buildBrief() { throw new Error("brief must not replay"); },
+      async write(input) { calls.push("writer_repair"); feedback.push(input.validationFeedback); return feedback.length === 1 ? { ...draft(), body: draft().body + " Gain de 42%." } : draft(); },
+      async audit() { calls.push("audit"); return audit(); },
+      async critique() {
+        calls.push("critic");
+        criticAttempt += 1;
+        return criticAttempt === 1
+          ? { ...critique(), qualityAssessment: { ...critique().qualityAssessment, readerValue: { verdict: "revise" as const, reason: "Expliquer une décision concrète que le lecteur peut prendre.", excerpts: ["Noosphere relie le contenu aux conversations."] } } }
+          : critique();
+      },
+    }, queue);
+
+    await processor.process(job(context.run.workspaceId, context.run.id));
+
+    expect(feedback).toHaveLength(2);
+    expect(feedback[0]).toContain("CONTENT_CRITIQUE_BLOCKER [readerValue]: Expliquer une décision concrète que le lecteur peut prendre.");
+    expect(feedback[1]).toEqual([...feedback[0]!, "CONTENT_DRAFT_UNSOURCED_NUMBER"]);
+    expect(calls).toContain("ready");
   });
 
   test("repairs a removable forbidden topic before the final critic", async () => {
@@ -333,7 +373,7 @@ describe("CNT-101 grounded content pipeline", () => {
 
 function draft() { return { hook: "Une clause introuvable coûte plus qu’une recherche.", body: "Une clause introuvable coûte plus qu’une recherche. Les équipes juridiques ont besoin d’une preuve résoluble avant de décider. Noosphere relie le contenu aux conversations.", callToAction: "Comment vérifiez-vous vos preuves ?", factualClaims: [{ statement: "Noosphere relie le contenu aux conversations.", sourceKeys: ["proof:1"] }], opinionStatements: ["Une clause introuvable coûte plus qu’une recherche."] }; }
 function audit() { return { reviewedClaims: [{ statement: "Noosphere relie le contenu aux conversations.", sourceKeys: ["proof:1"], verdict: "supported" as const, reason: "La source le dit explicitement." }], ungroundedStatements: [], forbiddenTopicMatches: [] }; }
-function critique() { return { genericPhrases: [], repeatedConcepts: [], callToActionAligned: true, distinctFromHistory: true, issues: [], summary: "Texte spécifique, étayé et aligné." }; }
+function critique() { return { qualityAssessment: Object.fromEntries(editorialQualityCriteria.map((key) => [key, { verdict: "pass", reason: "Fixture assessment for the content pipeline orchestration test.", excerpts: ["Noosphere relie le contenu aux conversations."] }])) as unknown as ContentQualityAssessment, genericPhrases: [], repeatedConcepts: [], callToActionAligned: true, distinctFromHistory: true, issues: [], summary: "Texte spécifique, étayé et aligné." }; }
 function brief() { return { objective: "explain" as const, audience: "Équipes juridiques", problem: "Les preuves sont dispersées dans les dossiers juridiques.", angle: "Relier une recherche documentaire à une décision commerciale.", format: "linkedin_text" as const, evidenceKeys: ["proof:1"], allowedClaimIds: [], callToAction: "Comment vérifiez-vous vos preuves ?", constraints: ["Aucun fait sans preuve"] }; }
 function pipelineContext(stage: "writer" | "audit") { const workspaceId = crypto.randomUUID(); const runId = crypto.randomUUID(); return { run: { id: runId, workspaceId, ideaId: crypto.randomUUID(), assetId: crypto.randomUUID(), assetVersionId: null, status: "running" as const, stage, instruction: null, lastErrorCode: null, lastErrorMessage: null, createdAt: new Date(), completedAt: null }, idea: { id: crypto.randomUUID(), workspaceId, strategyVersionId: crypto.randomUUID(), status: "briefed" as const, angle: "Recherche documentaire prouvée", rationale: "Un angle précis pour les juristes.", audience: "Équipes juridiques", pillar: "Recherche", priority: 90, freshnessUntil: new Date(Date.now() + 60_000), firstSeenAt: new Date(), lastSeenAt: new Date(), sources: [evidence()] }, strategy: { audience: { name: "Équipes juridiques", summary: "Juristes avec des preuves dispersées", awareness: "problem_aware" as const }, pillars: [{ name: "Recherche", promise: "Retrouver les preuves", proofTypes: ["claim"] }, { name: "Sécurité", promise: "Contrôler", proofTypes: ["audit"] }, { name: "Adoption", promise: "Déployer", proofTypes: ["chronologie"] }], voice: { traits: ["direct", "précis"], avoid: ["générique"] }, formats: ["linkedin_text" as const], cadence: { postsPerWeek: 3, preferredDays: [1, 3, 5], timezone: "Europe/Paris" }, callsToAction: ["Comment vérifiez-vous vos preuves ?"], allowedClaimIds: [], forbiddenTopics: [] }, evidence: [evidence()], recentBodies: [], brief: brief(), draft: stage === "audit" ? draft() : null, audit: null, critique: null }; }
 function evidence() { return { key: "proof:1", type: "public_web" as const, sourceRef: "https://example.com", canonicalUrl: "https://example.com", title: "Preuve", excerpt: "Noosphere relie le contenu aux conversations.", contentHash: "proof", collectedAt: new Date() }; }

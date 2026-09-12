@@ -78,6 +78,7 @@ export const contentDraftSnapshotSchema: z.ZodType<ContentDraftSnapshot> = z.obj
     sourceKeys: z.array(z.string().trim().min(1).max(500)).min(1).max(12),
   }).strict()).max(20),
   opinionStatements: z.array(z.string().trim().min(3).max(1_000)).max(20),
+  illustrativeScenarios: z.array(z.string().trim().min(20).max(600)).max(2).optional().default([]),
   mediaPlan: z.object({
     format: linkedinContentFormatSchema,
     visualTone: z.enum(["editorial", "technical", "bold", "minimal"]),
@@ -207,6 +208,11 @@ export const contentBrandDirectionProposalSchema = z.object({
 }).strict();
 
 export const contentEvidenceAuditSchema: z.ZodType<ContentEvidenceAudit> = z.object({
+  reviewedScenarios: z.array(z.object({
+    statement: z.string().trim().min(20).max(600),
+    verdict: z.enum(["hypothetical", "misleading"]),
+    reason: z.string().trim().min(20).max(1_000),
+  }).strict()).max(2).optional().default([]),
   reviewedClaims: z.array(z.object({
     statement: z.string().trim().min(3).max(1_000),
     sourceKeys: z.array(z.string().trim().min(1).max(500)).max(12),
@@ -217,7 +223,23 @@ export const contentEvidenceAuditSchema: z.ZodType<ContentEvidenceAudit> = z.obj
   forbiddenTopicMatches: z.array(z.string().trim().min(2).max(500)).max(20),
 }).strict();
 
-export const contentEditorialCritiqueSchema: z.ZodType<ContentEditorialCritique> = z.object({
+const contentQualityCriterionSchema = z.object({
+  verdict: z.enum(["pass", "revise"]),
+  reason: z.string().trim().min(20).max(1_000),
+  excerpts: z.array(z.string().min(12).max(1_500)).min(1).max(4),
+}).strict();
+export const contentQualityAssessmentSchema = z.object({
+  audienceRelevance: contentQualityCriterionSchema,
+  readerValue: contentQualityCriterionSchema,
+  coherence: contentQualityCriterionSchema,
+  sourceAttribution: contentQualityCriterionSchema,
+  ctaTruthfulness: contentQualityCriterionSchema,
+  brandVoice: contentQualityCriterionSchema,
+  distinctness: contentQualityCriterionSchema,
+}).strict();
+
+export const contentEditorialCritiqueSchema = z.object({
+  qualityAssessment: contentQualityAssessmentSchema.optional(),
   genericPhrases: z.array(z.string().trim().min(2).max(500)).max(20),
   repeatedConcepts: z.array(z.string().trim().min(2).max(500)).max(20),
   callToActionAligned: z.boolean(),
@@ -228,7 +250,12 @@ export const contentEditorialCritiqueSchema: z.ZodType<ContentEditorialCritique>
     message: z.string().trim().min(3).max(1_000),
   }).strict()).max(20),
   summary: z.string().trim().min(3).max(1_500),
-}).strict();
+}).strict() satisfies z.ZodType<ContentEditorialCritique>;
+
+/** Fresh model output requires all dimensions; old stored critiques remain readable. */
+export const currentContentEditorialCritiqueSchema = contentEditorialCritiqueSchema.extend({
+  qualityAssessment: contentQualityAssessmentSchema,
+});
 
 export const contentGenerationRequestSchema = z.object({
   requestKey: z.string().trim().min(8).max(300),

@@ -89,6 +89,12 @@ jobs:
             org.opencontainers.image.title=Noosphere ${{ matrix.name }}
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+      - name: Verify backend media pixels and runtime formats
+        if: matrix.name == 'backend'
+        run: >-
+          docker run --rm --network none --entrypoint bun
+          ${{ steps.image.outputs.version_tag }}
+          /app/dist/media-canary/verify-content-media-runtime.js
       - name: Scan runtime image
         run: >-
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock

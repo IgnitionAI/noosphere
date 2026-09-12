@@ -35,6 +35,8 @@ import {
   contentMediaAssets,
   contentOperationRequests,
   editorialStrategyVersions,
+  offerVersions,
+  icpVersions,
   jobs,
   outboxEvents,
 } from "@outbound/infrastructure/database/schema";
@@ -215,10 +217,12 @@ export class PostgresContentGenerationRepository implements ContentGenerationRep
   }
 
   async loadContext(input: { workspaceId: string; runId: string }): Promise<ContentGenerationContext> {
-    const rows = await this.database.select({ run: contentGenerationRuns, idea: contentIdeas, strategy: editorialStrategyVersions.snapshot })
+    const rows = await this.database.select({ run: contentGenerationRuns, idea: contentIdeas, strategy: editorialStrategyVersions.snapshot, offer: offerVersions, icp: icpVersions })
       .from(contentGenerationRuns)
       .innerJoin(contentIdeas, and(eq(contentIdeas.workspaceId, contentGenerationRuns.workspaceId), eq(contentIdeas.id, contentGenerationRuns.ideaId)))
       .innerJoin(editorialStrategyVersions, and(eq(editorialStrategyVersions.workspaceId, contentGenerationRuns.workspaceId), eq(editorialStrategyVersions.id, contentGenerationRuns.strategyVersionId)))
+      .innerJoin(offerVersions, and(eq(offerVersions.workspaceId, contentGenerationRuns.workspaceId), eq(offerVersions.id, editorialStrategyVersions.offerVersionId)))
+      .innerJoin(icpVersions, and(eq(icpVersions.workspaceId, contentGenerationRuns.workspaceId), eq(icpVersions.id, editorialStrategyVersions.icpVersionId)))
       .where(and(eq(contentGenerationRuns.workspaceId, input.workspaceId), eq(contentGenerationRuns.id, input.runId))).limit(1);
     const current = rows[0];
     if (!current) throw new Error("CONTENT_GENERATION_RUN_NOT_FOUND");
@@ -244,6 +248,17 @@ export class PostgresContentGenerationRepository implements ContentGenerationRep
       run: toRun(current.run),
       idea: toIdea(current.idea, evidence),
       strategy: editorialStrategySnapshotSchema.parse(current.strategy),
+      businessContext: {
+        offer: {
+          versionId: current.offer.id, name: current.offer.name, category: current.offer.category,
+          valueProposition: current.offer.valueProposition, targetAudience: current.offer.targetAudience,
+          constraints: current.offer.constraints, objections: current.offer.objections,
+        },
+        icp: {
+          versionId: current.icp.id, name: current.icp.name, problems: current.icp.problems,
+          buyingCommittee: current.icp.buyingCommittee, exclusions: current.icp.exclusions, criteria: current.icp.criteria,
+        },
+      },
       brandKit: brandKitRow ? contentBrandKitSnapshotSchema.parse(brandKitRow.snapshot) : DEFAULT_CONTENT_BRAND_KIT,
       evidence,
       recentBodies,
@@ -414,11 +429,19 @@ function toEvidence(row: typeof contentIdeaSources.$inferSelect): ContentIdeaEvi
 }
 
 function toVersion(row: typeof contentAssetVersions.$inferSelect, media: typeof contentMediaAssets.$inferSelect | null): ContentAssetVersionView {
-  const readiness = row.readiness as { ready?: unknown; blockers?: unknown };
+  const readiness = row.readiness as { policyVersion?: unknown; ready?: unknown; blockers?: unknown };
+  const outdated = readiness.policyVersion !== CONTENT_EDITORIAL_POLICY_VERSION;
   return {
     id: row.id, assetId: row.assetId, briefId: row.briefId, version: row.version, body: row.body,
     draft: contentDraftSnapshotSchema.parse(row.draft), audit: contentEvidenceAuditSchema.parse(row.audit), critique: contentEditorialCritiqueSchema.parse(row.critique),
-    readiness: { ready: readiness.ready === true, blockers: Array.isArray(readiness.blockers) ? readiness.blockers.filter((item): item is string => typeof item === "string") : [] },
+    readiness: {
+      ...(typeof readiness.policyVersion === "string" ? { policyVersion: readiness.policyVersion } : {}),
+      ready: readiness.ready === true && !outdated,
+      blockers: [...new Set([
+        ...(Array.isArray(readiness.blockers) ? readiness.blockers.filter((item): item is string => typeof item === "string") : []),
+        ...(outdated ? ["editorial_policy_outdated"] : []),
+      ])],
+    },
     media: media ? {
       id: media.id,
       kind: media.kind as ContentAssetVersionView["media"] extends infer M ? M extends { kind: infer K } ? K : never : never,

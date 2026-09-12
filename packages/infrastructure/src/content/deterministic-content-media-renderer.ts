@@ -27,7 +27,7 @@ export class DeterministicContentMediaRenderer implements ContentMediaRenderer {
           total: null,
           variant: "single",
           layout: "insight",
-          kicker: input.plan.visualTone,
+          kicker: null,
           callout: null,
           items: [],
           ...(input.logoBytes ? { logoBytes: input.logoBytes } : {}),
@@ -338,7 +338,7 @@ function renderClosing(input: Parameters<typeof renderLayoutContent>[0]): string
 
 function renderKicker(input: Parameters<typeof renderLayoutContent>[0], y: number): string {
   if (!input.input.kicker) return "";
-  return `<text x="88" y="${y}" font-family="${input.fontFamily}" font-size="20" font-weight="780" letter-spacing="2" fill="${input.accent}">${escapeText(input.input.kicker.toUpperCase())}</text>`;
+  return `<text x="88" y="${y}" font-family="${input.fontFamily}" font-size="20" font-weight="780" letter-spacing="2" fill="${input.text}">${escapeText(input.input.kicker.toUpperCase())}</text>`;
 }
 
 function contentItems(items: readonly CarouselItem[], body: string, maximum: number): readonly CarouselItem[] {

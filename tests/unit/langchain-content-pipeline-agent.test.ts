@@ -1,9 +1,32 @@
+import { editorialQualityCriteria, type ContentQualityAssessment } from "@outbound/domain/content/content-asset";
 import { describe, expect, test } from "bun:test";
 import { LangChainContentPipelineAgent } from "@outbound/infrastructure/content/langchain-content-pipeline-agent";
 import type { ContentGenerationContext } from "@outbound/application/content/content-generation";
 import { DEFAULT_CONTENT_BRAND_KIT } from "@outbound/domain/content/content-brand-kit";
 
 describe("LangChainContentPipelineAgent", () => {
+  test("passes the versioned offer and buyer context to every editorial role", async () => {
+    const businessContext = {
+      offer: { versionId: "offer-v1", name: "Assistant documentaire", category: "software", valueProposition: "Retrouver une procédure autorisée", targetAudience: "Support", constraints: ["Pas de réponse hors périmètre"], objections: [] },
+      icp: { versionId: "icp-v1", name: "Support technique", problems: ["Procédures dispersées"], buyingCommittee: ["Responsable support"], exclusions: [], criteria: {} },
+    };
+    const context = { ...pipelineContext(), businessContext };
+    const payloads: unknown[] = [];
+    const agent = new LangChainContentPipelineAgent(
+      { AI_PROVIDER: "kimi-code", KIMI_CODE_API_KEY: "test-key" }, undefined, undefined,
+      async ({ role, context: payload }) => {
+        payloads.push(payload);
+        return role === "brief" ? brief() : role === "writer" ? draft() : role === "audit" ? audit() : critique();
+      },
+    );
+    const b = await agent.buildBrief(context);
+    const d = await agent.write({ ...context, brief: b });
+    const a = await agent.audit({ ...context, brief: b, draft: d });
+    await agent.critique({ ...context, brief: b, draft: d, audit: a });
+    expect(payloads).toHaveLength(4);
+    for (const payload of payloads) expect(payload).toMatchObject({ businessContext });
+  });
+
   test("reserves K3 max reasoning for writing and critique and records every bounded stage", async () => {
     const invocations: Array<{ role: string; model: unknown; effort: unknown }> = [];
     const recorded: Array<{ purpose: string; model: string; promptVersion: string; contentGenerationRunId?: string }> = [];
@@ -30,10 +53,10 @@ describe("LangChainContentPipelineAgent", () => {
       { role: "critic", model: "k3", effort: "max" },
     ]);
     expect(recorded.map(({ purpose, model, promptVersion, contentGenerationRunId }) => ({ purpose, model, promptVersion, contentGenerationRunId }))).toEqual([
-      { purpose: "content_brief", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-brief-v2", contentGenerationRunId: context.run.id },
-      { purpose: "content_writer", model: "k3", promptVersion: "noosphere-content-writer-v4", contentGenerationRunId: context.run.id },
-      { purpose: "content_audit", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-audit-v2", contentGenerationRunId: context.run.id },
-      { purpose: "content_critic", model: "k3", promptVersion: "noosphere-content-critic-v3", contentGenerationRunId: context.run.id },
+      { purpose: "content_brief", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-brief-v5", contentGenerationRunId: context.run.id },
+      { purpose: "content_writer", model: "k3", promptVersion: "noosphere-content-writer-v8", contentGenerationRunId: context.run.id },
+      { purpose: "content_audit", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-audit-v6", contentGenerationRunId: context.run.id },
+      { purpose: "content_critic", model: "k3", promptVersion: "noosphere-content-critic-v6", contentGenerationRunId: context.run.id },
     ]);
   });
 });
@@ -54,4 +77,4 @@ function evidence(now: Date) { return { key: "proof:1", type: "public_web" as co
 function brief() { return { objective: "explain" as const, audience: "Équipes juridiques", problem: "Les preuves sont dispersées dans les dossiers juridiques.", angle: "Relier une recherche documentaire à une décision commerciale.", format: "linkedin_text" as const, evidenceKeys: ["proof:1"], allowedClaimIds: [], callToAction: "Comment vérifiez-vous vos preuves ?", constraints: ["Aucun fait sans preuve"] }; }
 function draft() { return { hook: "Une clause introuvable coûte plus qu’une recherche.", body: "Une clause introuvable coûte plus qu’une recherche. Les équipes juridiques ont besoin d’une preuve résoluble avant de décider. Noosphere relie le contenu aux conversations.", callToAction: "Comment vérifiez-vous vos preuves ?", factualClaims: [{ statement: "Noosphere relie le contenu aux conversations.", sourceKeys: ["proof:1"] }], opinionStatements: ["Une clause introuvable coûte plus qu’une recherche."] }; }
 function audit() { return { reviewedClaims: [{ statement: "Noosphere relie le contenu aux conversations.", sourceKeys: ["proof:1"], verdict: "supported" as const, reason: "La source le dit explicitement." }], ungroundedStatements: [], forbiddenTopicMatches: [] }; }
-function critique() { return { genericPhrases: [], repeatedConcepts: [], callToActionAligned: true, distinctFromHistory: true, issues: [], summary: "Texte spécifique, étayé et aligné." }; }
+function critique() { return { qualityAssessment: Object.fromEntries(editorialQualityCriteria.map((key) => [key, { verdict: "pass", reason: "Fixture assessment for the content pipeline orchestration test.", excerpts: ["Noosphere relie le contenu aux conversations."] }])) as unknown as ContentQualityAssessment, genericPhrases: [], repeatedConcepts: [], callToActionAligned: true, distinctFromHistory: true, issues: [], summary: "Texte spécifique, étayé et aligné." }; }
