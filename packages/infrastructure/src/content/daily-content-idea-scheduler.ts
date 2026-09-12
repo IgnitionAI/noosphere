@@ -24,24 +24,34 @@ export class DailyContentIdeaScheduler {
     )).limit(limit);
     let scheduled = 0;
     for (const schedule of due) {
-      if (this.aiAvailable && !await this.aiAvailable(schedule.workspaceId, "content_idea")) continue;
-      const date = zonedDateKey(now, schedule.timezone);
-      await this.repository.createDiscovery({
-        workspaceId: schedule.workspaceId,
-        userId: null,
-        requestKey: `daily:${date}`,
-        trigger: "daily",
-        now,
-      });
-      await this.database.update(contentIdeaSchedules).set({
-        lastRunAt: now,
-        nextRunAt: nextDailyOccurrence(now, schedule.localTime, schedule.timezone),
-        updatedAt: now,
-      }).where(and(
-        eq(contentIdeaSchedules.workspaceId, schedule.workspaceId),
-        lte(contentIdeaSchedules.nextRunAt, now),
-      ));
-      scheduled += 1;
+      try {
+        if (this.aiAvailable && !await this.aiAvailable(schedule.workspaceId, "content_idea")) continue;
+        const date = zonedDateKey(now, schedule.timezone);
+        await this.repository.createDiscovery({
+          workspaceId: schedule.workspaceId,
+          userId: null,
+          requestKey: `daily:${date}`,
+          trigger: "daily",
+          now,
+        });
+        await this.database.update(contentIdeaSchedules).set({
+          lastRunAt: now,
+          nextRunAt: nextDailyOccurrence(now, schedule.localTime, schedule.timezone),
+          updatedAt: now,
+        }).where(and(
+          eq(contentIdeaSchedules.workspaceId, schedule.workspaceId),
+          lte(contentIdeaSchedules.nextRunAt, now),
+        ));
+        scheduled += 1;
+      } catch {
+        // A bad strategy or provider refusal belongs to this workspace only.
+        // Leave the due time unchanged so a repaired configuration is retried.
+        console.warn(JSON.stringify({
+          event: "content_idea_schedule_deferred",
+          workspaceId: schedule.workspaceId,
+          errorCode: "CONTENT_IDEA_SCHEDULE_FAILED",
+        }));
+      }
     }
     return scheduled;
   }
