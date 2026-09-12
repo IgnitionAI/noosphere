@@ -311,7 +311,7 @@ function renderComparison(input: Parameters<typeof renderLayoutContent>[0]): str
     const x = index === 0 ? 88 : 550;
     const fill = index === 0 ? input.primary : input.accent;
     const foreground = index === 0 ? input.background : escapeAttribute(bestContrastColor(input.accent, input.primary, input.background));
-    const text = wrap(item.text, 23, 7);
+    const text = wrap(item.text, 19, 7);
     return `<rect x="${x}" y="470" width="442" height="570" rx="34" fill="${fill}"/>
       <text x="${x + 34}" y="535" font-family="${input.fontFamily}" font-size="22" font-weight="790" letter-spacing="2" fill="${foreground}">${escapeText(item.label.toUpperCase())}</text>
       <line x1="${x + 34}" y1="570" x2="${x + 408}" y2="570" stroke="${foreground}" stroke-width="2" opacity="0.24"/>
@@ -361,6 +361,8 @@ function contentItems(items: readonly CarouselItem[], body: string, maximum: num
 function resolveSlideLayout(slide: ContentMediaPlan["slides"][number], index: number, total: number): CarouselLayout {
   if (index === 0) return "cover";
   if (index === total - 1) return "closing";
+  // Structured copy must remain visible even when the writer selects an insight card.
+  if (slide.layout === "insight" && slide.items?.length) return "checklist";
   if (slide.layout && slide.layout !== "auto" && slide.layout !== "cover" && slide.layout !== "closing") return slide.layout;
   const count = slide.items?.length ?? 0;
   if (count === 2) return "comparison";
