@@ -106,8 +106,8 @@ export class LangChainContentPipelineAgent implements ContentPipelineAgent {
       provider,
       model,
       promptVersion: role === "writer"
-        ? "noosphere-content-writer-v14"
-        : role === "critic" ? "noosphere-content-critic-v11" : role === "audit" ? "noosphere-content-audit-v6" : "noosphere-content-brief-v8",
+        ? "noosphere-content-writer-v15"
+        : role === "critic" ? "noosphere-content-critic-v12" : role === "audit" ? "noosphere-content-audit-v6" : "noosphere-content-brief-v8",
       shadow: false,
       inputHash: new Bun.CryptoHasher("sha256").update(JSON.stringify(original)).digest("hex"),
       output,
@@ -206,8 +206,8 @@ function pipelineModelSpec(role: PipelineRole, context: unknown) {
       "Use recentBodies to choose a genuinely different problem, mechanism and takeaway. A paraphrase of a recent post is not distinct.",
       "Every factual statement, number, performance claim or product capability must appear verbatim in factualClaims with exact supplied source keys.",
       "Every factualClaims.statement must also be a verbatim contiguous excerpt of body; never paraphrase the ledger separately.",
-      "Always return mediaPlan. Its format must exactly match brief.format. For linkedin_text, leave title/subtitle/altText null and slides/scenes empty. For linkedin_image, provide a sharp title, optional subtitle and useful alt text. For linkedin_document, provide 5-8 concise slides that form a visual narrative. For linkedin_video, provide 3-8 concise scenes totaling 12-60 seconds. Never copy the whole post into the visual.",
-      "For linkedin_document, design every slide deliberately. Slide 1 uses layout cover, the last uses closing. Across the middle slides use at least two different layouts among insight, checklist, framework, comparison and process. Never output a monotonous sequence of numbered paragraph slides.",
+      "Always return mediaPlan. Its format must exactly match brief.format. For linkedin_text, leave title/subtitle/altText null and slides/scenes empty. For linkedin_image, provide a sharp title, optional subtitle and useful alt text. For linkedin_document, provide 3-9 concise slides that form a visual narrative. Choose the fewest pages that fully explain the point; never add pages merely to repeat it. For linkedin_video, provide 3-8 concise scenes totaling 12-60 seconds. Never copy the whole post into the visual.",
+      "For linkedin_document, design every slide deliberately. Slide 1 uses layout cover, the last uses closing. Choose each middle layout among insight, checklist, framework, comparison and process for its communication job. A short document may have one substantive middle slide. Vary layouts when the reasoning benefits; never add a slide merely to meet a layout quota. Avoid a monotonous sequence of numbered paragraph slides.",
       "Use kicker to orient the reader, callout for one memorable sentence, and 2-4 structured items for checklist, framework, comparison or process. Each item needs a short label and one concrete sentence. Keep each slide focused on one job and favor visual hierarchy over filling space.",
       "All factual statements and numbers shown in the media plan are public copy and obey the same evidence ledger as body.",
       "If validationFeedback contains CONTENT_DRAFT_TOO_LONG, use the measured body length and limit to rewrite more concisely. Remove repeated explanations and unnecessary implementation detail, preserving the useful point and source attribution. Never cut a sentence or a URL; synchronize every ledger with the revised copy.",
@@ -252,7 +252,7 @@ function pipelineModelSpec(role: PipelineRole, context: unknown) {
       "Reject interchangeable hooks, vague claims, fake intimacy, manufactured urgency, repetition of recent posts and CTA unrelated to the offer or objective.",
       "Reject body longer than 1500 characters, competing reader CTAs, or copy that explains internal evidence, audit, claim-ledger or source-validation mechanics to the reader.",
       "Reject a media plan that merely repeats the body, is unreadably dense, has a generic title, or does not create a coherent image, carousel or short video for the selected format.",
-      "For a linkedin_document, reject a monotonous stack of title-and-paragraph slides. Require a cover, a closing, at least two distinct middle layouts, and at least one structured slide using 2-4 meaningful items. Reject decorative layout changes that do not improve comprehension.",
+      "For a linkedin_document, reject a monotonous stack of title-and-paragraph slides. Require a cover, a closing and a substantive middle that delivers the reading promise. One explained comparison or insight can be sufficient; do not demand extra pages or layout diversity for its own sake. Reject repeated pages and decorative layout changes that do not improve comprehension.",
       "Reject bureaucratic or defensive wording such as repeated provenance labels, 'la seule affirmation factuelle', 'notre analyse' or warranty disclaimers when a direct natural sentence would carry the same grounded meaning.",
       "Compare the problem, mechanism and takeaway with recentBodies. Set distinctFromHistory to false for a semantic paraphrase even when the exact words differ.",
       "The hook field is metadata copied from the opening of the complete body. Its exact presence at the start of body is required by contract and is not repetition; only flag repeated wording that occurs again later inside body.",
