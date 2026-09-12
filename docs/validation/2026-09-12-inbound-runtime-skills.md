@@ -84,3 +84,25 @@ The local crawler now treats empty SearXNG responses with unresponsive engines a
 ## Search alternatives checked
 
 Read-only SearXNG requests explicitly naming alternative engines produced either provider errors or irrelevant Bing results (WhatsApp pages for a Microsoft Learn document-permission query). They were not accepted as evidence and no engine configuration was changed. No paid search API credentials are configured in the application. Primary Microsoft Learn URLs were located independently and submitted to the product crawler for a separate reading/generation test; that test cannot establish repaired automatic discovery.
+
+## Independent primary-source generation
+
+The product crawler successfully read both Microsoft Learn pages (document-level access overview and security-filter pattern), retaining bounded 8,000-character excerpts. A new idea/brief/draft generated from those sources used nine Luna calls and 143.727 seconds cumulative model latency. It selected a text post about distinguishing a hidden identity field from result filtering. Final readiness was false: the critic found the promised diagnostic unresolved; the auditor also flagged the statement that a hidden identity field does not prove protected results. This latter judgement needs calibration against the supplied source and the existing rule distinguishing logical caution from empirical claims. No new publication or media was created.
+
+The implementation commits `369218c` and `d700360` were pushed to PR 112, which was converted to draft; auto-merge was absent. Production was not changed. The prior CI result belonged to b629057 and cannot validate these new commits.
+
+## Luna reasoning comparison
+
+A separate experiment reran writing onward on the primary-source brief with Luna medium, without changing persisted settings. `/proc` command inspection confirmed `model_reasoning_effort="medium"`. Five calls took 112.161 seconds cumulative model latency and finished ready. The draft preserves a concrete missing-filter observation, a bounded conclusion, an authorized/unauthorized-identity test and visible Microsoft attribution in French prose. This is a promising single text case, not broad provider/format acceptance or proof of an optimal default. Production reasoning remains unchanged.
+
+The installed Codex CLI exposes native live web search. A private capability probe retains its isolated environment and disables shell/apps/plugins/etc., enabling only web search for a public query. The JSON transformation gateway in production is unchanged. Any discovered URLs must still be validated and read through the crawler before becoming evidence.
+
+## Native web-search capability proof
+
+The first private search-only probe returned an empty array without a web call: JSONL reported that the code-mode host was disabled. The installed CLI includes its host binary. Enabling only `features.code_mode_host=true` alongside `web_search="live"` allowed actual web search while retaining disabled shell, commands, apps, plugins and other tools. A repeat without the experimental `standalone_web_search` flag succeeded in 9.491 seconds on Luna low. Its event log records the exact public query and a native `web_search` action; four Microsoft Learn URLs were returned. No experimental flag is required for this observed path.
+
+This is a private capability probe, not an application integration. The production JSON transformation gateway remains tool-disabled. A production discovery adapter must remain separate from writing/audit, resolve the workspace's authorized route, enforce a deadline and result bound, record failures and model usage, reject private/invalid URLs through the existing crawler protections, and read discovered pages before using them as evidence. Empty output without an actual search must not become successful discovery.
+
+CI run 34719353152 on d700360 completed successfully, including repository checks, PostgreSQL integrations, browser journeys, production-mode Inbound actions and dependency audits. PR 112 remains draft, with its description updated to the full scope and outstanding acceptance work.
+
+The four native-search URLs were then passed through the unchanged `CrawlerContentIdeaSource` reader in a private adapter harness. All four returned nonempty 8,000-character bounded excerpts with canonical URLs and content hashes. The evidence came from actual crawler page reads, not model summaries or search snippets. Private artifacts: `noosphere-native-search-{events.jsonl,result.json}` and `noosphere-native-source-evidence.json`. No database checkpoint, production storage object or publication was written.
