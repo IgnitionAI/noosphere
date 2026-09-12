@@ -253,14 +253,16 @@ async function writeGroundedDraft(
 ): Promise<ContentDraftSnapshot> {
   const evidenceKeys = input.evidence.map((item) => item.key);
   let validationFeedback = initialValidationFeedback;
+  let candidate = input.draft;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
-    const draft = await agent.write({ ...input, ...(validationFeedback.length ? { validationFeedback } : {}) });
+    const draft = await agent.write({ ...input, ...(candidate ? { draft: candidate } : {}), ...(validationFeedback.length ? { validationFeedback } : {}) });
     try {
       assertGroundedContentDraft(draft, evidenceKeys);
       assertMediaPlanMatchesBrief(input.brief, draft);
       return draft;
     } catch (error) {
       if (!isRepairableDraftError(error) || attempt === 2) throw error;
+      candidate = draft;
       validationFeedback = [...initialValidationFeedback, error.message];
     }
   }

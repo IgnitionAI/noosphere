@@ -337,6 +337,34 @@ describe("CNT-101 grounded content pipeline", () => {
     expect(calls).toContain("ready");
   });
 
+  test.each([false, true])("repairs the rejected scenario candidate without checkpointing invalid copy (still invalid: %s)", async (stillInvalid) => {
+    const context = pipelineContext("audit");
+    const invalid = { ...draft(), body: draft().body + " Exemple fictif : le portail est inaccessible.", illustrativeScenarios: ["Exemple fictif : le réseau est inaccessible."] };
+    const repaired = { ...invalid, illustrativeScenarios: ["Exemple fictif : le portail est inaccessible."] };
+    const candidates: unknown[] = [];
+    const saved: unknown[] = [];
+    const feedback: Array<readonly string[] | undefined> = [];
+    let audits = 0;
+    const repository = {
+      async loadContext() { return context; }, async startRun() {},
+      async reviseDraftAfterAudit(input: { draft: unknown }) { saved.push(input.draft); },
+      async saveAudit() {}, async completeRun() {}, async failRun() {},
+    } as unknown as ContentGenerationRepository;
+    const processor = new ContentGenerationJobProcessor(repository, {
+      async buildBrief() { throw new Error("brief must not replay"); },
+      async write(input) { candidates.push(input.draft); feedback.push(input.validationFeedback); return candidates.length === 1 || stillInvalid ? invalid : repaired; },
+      async audit() { audits += 1; return audits === 1 ? { ...audit(), ungroundedStatements: ["Clarifier le scénario."] } : { ...audit(), reviewedScenarios: [{ statement: repaired.illustrativeScenarios[0]!, verdict: "hypothetical" as const, reason: "Entrée fictive sans promesse." }] }; },
+      async critique() { return critique(); },
+    }, { async acknowledge() {} } as unknown as JobQueue);
+    const processing = processor.process(job(context.run.workspaceId, context.run.id));
+    if (stillInvalid) await expect(processing).rejects.toThrow("CONTENT_DRAFT_SCENARIO_INVALID");
+    else await processing;
+    expect(candidates).toEqual([context.draft, invalid]);
+    expect(feedback[1]).toEqual([...feedback[0]!, "CONTENT_DRAFT_SCENARIO_INVALID"]);
+    expect(saved).toEqual(stillInvalid ? [] : [repaired]);
+    expect(audits).toBe(stillInvalid ? 1 : 2);
+  });
+
   test("repairs a removable forbidden topic before the final critic", async () => {
     const calls: string[] = [];
     const feedback: Array<readonly string[] | undefined> = [];
