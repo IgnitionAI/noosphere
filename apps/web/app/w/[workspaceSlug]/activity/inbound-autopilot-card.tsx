@@ -18,6 +18,7 @@ const dayLabels = new Map([
 
 export function InboundAutopilotCard({
   enabled,
+  strategyPublished,
   localTime,
   nextPublicationAt,
   postsPerWeek,
@@ -28,6 +29,7 @@ export function InboundAutopilotCard({
   workspaceSlug,
 }: {
   readonly enabled: boolean;
+  readonly strategyPublished: boolean;
   readonly localTime: string;
   readonly nextPublicationAt: string | null;
   readonly postsPerWeek: number;
@@ -46,10 +48,11 @@ export function InboundAutopilotCard({
     setPending(true);
     setError(null);
     try {
-      await configureAutopilotAction(workspaceSlug, { enabled: true, localTime, timezone, publicationTimes, publicationDays: preferredDays });
+      const result = await configureAutopilotAction(workspaceSlug, { enabled: true, localTime, timezone, publicationTimes, publicationDays: preferredDays });
+      if (!result.ok) { setError(result.message); return; }
       router.refresh();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "L’Inbound n’a pas pu démarrer");
+    } catch {
+      setError("L’Inbound n’a pas pu démarrer. Réessayez dans un instant.");
     } finally {
       setPending(false);
     }
@@ -63,11 +66,13 @@ export function InboundAutopilotCard({
             {enabled ? <CheckCircle2 size={18} /> : <Play size={17} />}
           </span>
           <div>
-            <h2 className="font-semibold text-ink">{enabled ? "Inbound actif" : "Inbound en pause"}</h2>
+            <h2 className="font-semibold text-ink">{enabled ? "Inbound actif" : strategyPublished ? "Inbound en pause" : "Stratégie à valider"}</h2>
             <p className="mt-1 text-sm leading-6 text-muted">
               {enabled
                 ? `Noosphere cherche de nouvelles idées chaque matin à ${localTime}, puis publie ${cadence}.`
-                : "Aucune nouvelle recherche et aucune publication automatique ne seront lancées."}
+                : !strategyPublished
+                  ? "Votre stratégie est préparée. Vérifiez-la et activez-la avant de démarrer l’Inbound."
+                  : "Aucune nouvelle recherche et aucune publication automatique ne seront lancées."}
             </p>
             {enabled ? (
               <p className="mt-1 text-xs font-semibold text-ink">
@@ -86,6 +91,8 @@ export function InboundAutopilotCard({
             <Link className="button button-primary" href={`/w/${workspaceSlug}/content/calendar`}>
               <CalendarDays size={14} /> Voir les posts
             </Link>
+          ) : !strategyPublished ? (
+            <Link className="button button-primary" href={`/w/${workspaceSlug}/content/strategy`}>Valider la stratégie</Link>
           ) : (
             <button className="button button-primary" disabled={pending} onClick={start} type="button">
               <Play size={14} /> {pending ? "Démarrage…" : "Démarrer l’Inbound"}

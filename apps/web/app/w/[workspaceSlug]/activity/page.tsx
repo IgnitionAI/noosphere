@@ -55,6 +55,7 @@ export default async function ActivityPage({
         {inbound ? (
           <InboundAutopilotCard
             enabled={inbound.autopilot.enabled}
+            strategyPublished={inbound.strategy.currentVersion > 0}
             localTime={inbound.autopilot.localTime}
             nextPublicationAt={inbound.autopilot.nextPublicationAt}
             postsPerWeek={inbound.autopilot.postsPerWeek}
