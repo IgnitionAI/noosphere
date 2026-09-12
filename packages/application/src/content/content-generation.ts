@@ -157,7 +157,7 @@ export class ContentGenerationJobProcessor {
       }
       if (stageAtOrBefore(context.run.stage, "writer")) {
         if (!context.brief) throw new Error("CONTENT_BRIEF_CHECKPOINT_MISSING");
-        const draft = await writeGroundedDraft(this.agent, { ...context, brief: context.brief });
+        const draft = await this.#writeGroundedDraft({ ...context, brief: context.brief });
         await this.repository.saveDraft({ workspaceId: job.workspaceId, runId: payload.runId, draft, now: this.now() });
         context = { ...context, draft, run: { ...context.run, stage: "audit" } };
       }
@@ -168,7 +168,7 @@ export class ContentGenerationJobProcessor {
         for (let repairAttempt = 1; repairAttempt <= 2; repairAttempt += 1) {
           const auditFeedback = repairableAuditFeedback(audit);
           if (auditFeedback.length === 0) break;
-          draft = await writeGroundedDraft(this.agent, { ...context, brief: context.brief, draft }, auditFeedback);
+          draft = await this.#writeGroundedDraft({ ...context, brief: context.brief, draft }, auditFeedback);
           await this.repository.reviseDraftAfterAudit({ workspaceId: job.workspaceId, runId: payload.runId, draft, now: this.now() });
           audit = await this.agent.audit({ ...context, brief: context.brief, draft });
         }
@@ -195,13 +195,13 @@ export class ContentGenerationJobProcessor {
           const critiqueFeedback = repairableCritiqueFeedback(critique, readiness);
           if (critiqueFeedback.length === 0) break;
           critiqueFeedbackHistory = [...new Set([...critiqueFeedback, ...critiqueFeedbackHistory])];
-          draft = await writeGroundedDraft(this.agent, { ...context, brief: context.brief, draft }, critiqueFeedbackHistory);
+          draft = await this.#writeGroundedDraft({ ...context, brief: context.brief, draft }, critiqueFeedbackHistory);
           await this.repository.reviseDraftAfterCritique({ workspaceId: job.workspaceId, runId: payload.runId, draft, now: this.now() });
           audit = await this.agent.audit({ ...context, brief: context.brief, draft });
           for (let auditRepairAttempt = 1; auditRepairAttempt <= 2; auditRepairAttempt += 1) {
             const auditFeedback = repairableAuditFeedback(audit);
             if (auditFeedback.length === 0) break;
-            draft = await writeGroundedDraft(this.agent, { ...context, brief: context.brief, draft }, auditFeedback);
+            draft = await this.#writeGroundedDraft({ ...context, brief: context.brief, draft }, auditFeedback);
             await this.repository.reviseDraftAfterAudit({ workspaceId: job.workspaceId, runId: payload.runId, draft, now: this.now() });
             audit = await this.agent.audit({ ...context, brief: context.brief, draft });
           }
@@ -227,6 +227,15 @@ export class ContentGenerationJobProcessor {
       }
       throw error;
     }
+  }
+
+  async #writeGroundedDraft(input: Parameters<ContentPipelineAgent["write"]>[0], feedback: readonly string[] = []) {
+    return writeGroundedDraft(this.agent, input, feedback, async draft => {
+      if (input.brief.format !== "linkedin_document") return;
+      if (!this.mediaProducer) throw new Error("CONTENT_MEDIA_RENDERER_UNAVAILABLE");
+      await this.mediaProducer.checkDraftLayout({workspaceId: input.run.workspaceId, runId: input.run.id,
+        format: input.brief.format, draft, brandKit: input.brandKit});
+    });
   }
 
   async #renderReadyDraft(
@@ -260,6 +269,7 @@ async function writeGroundedDraft(
   agent: ContentPipelineAgent,
   input: Parameters<ContentPipelineAgent["write"]>[0],
   initialValidationFeedback: readonly string[] = [],
+  validateLayout?: (draft: ContentDraftSnapshot) => Promise<void>,
 ): Promise<ContentDraftSnapshot> {
   const evidenceKeys = input.evidence.map((item) => item.key);
   let validationFeedback = initialValidationFeedback;
@@ -270,13 +280,14 @@ async function writeGroundedDraft(
       if (draft.body.trim().length > MAX_CONTENT_BODY_LENGTH) throw new Error("CONTENT_DRAFT_TOO_LONG");
       assertGroundedContentDraft(draft, evidenceKeys);
       assertMediaPlanMatchesBrief(input.brief, draft);
+      await validateLayout?.(draft);
       return draft;
     } catch (error) {
       if (!isRepairableDraftError(error) || attempt === 2) throw error;
       candidate = draft;
       validationFeedback = [...initialValidationFeedback, error.message === "CONTENT_DRAFT_TOO_LONG"
         ? `${error.message}: body has ${draft.body.trim().length} characters; maximum ${MAX_CONTENT_BODY_LENGTH}. Rewrite concisely while retaining the explanation and source attribution. Do not truncate. Resynchronize the claim ledger with the rewritten public copy.`
-        : error.message];
+        : error.message === "CONTENT_MEDIA_TEXT_OVERFLOW" ? "CONTENT_READINESS_BLOCKER: media_text_overflow" : error.message];
     }
   }
   throw new Error("CONTENT_DRAFT_REPAIR_EXHAUSTED");
@@ -319,6 +330,7 @@ function repairableCritiqueFeedback(
 function isRepairableDraftError(error: unknown): error is Error {
   return error instanceof Error && [
     "CONTENT_DRAFT_TOO_LONG",
+    "CONTENT_MEDIA_TEXT_OVERFLOW",
     "CONTENT_DRAFT_UNRESOLVED_CLAIM",
     "CONTENT_DRAFT_CLAIM_NOT_IN_BODY",
     "CONTENT_DRAFT_UNSOURCED_NUMBER",

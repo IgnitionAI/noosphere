@@ -76,6 +76,23 @@ export class ContentMediaProducer {
     private readonly temporaryRoot = "/tmp",
   ) {}
 
+  // Document layout is checked locally before model audits; no generated video or object write occurs here.
+  async checkDraftLayout(input: Parameters<ContentMediaProducer["produce"]>[0]): Promise<void> {
+    if (input.format !== "linkedin_document") return;
+    if (input.draft.mediaPlan?.format !== input.format || !input.draft.mediaPlan.altText) throw new Error("CONTENT_MEDIA_PLAN_INVALID");
+    await this.#renderDeterministic(input, `${this.temporaryRoot.replace(/\/+$/, "")}/noosphere-media-${input.runId}`);
+  }
+
+  async #renderDeterministic(input: Parameters<ContentMediaProducer["produce"]>[0], outputDirectory: string) {
+    const plan = input.draft.mediaPlan;
+    if (input.format === "linkedin_text" || !plan) throw new Error("CONTENT_MEDIA_PLAN_INVALID");
+    const logoBytes = input.brandKit.logo
+      ? await this.storage.get({objectKey: input.brandKit.logo.objectKey, maxBytes: 5 * 1024 * 1024})
+      : undefined;
+    return this.renderer.render({format: input.format, plan, body: input.draft.body,
+      brandKit: input.brandKit, ...(logoBytes ? {logoBytes} : {}), outputDirectory});
+  }
+
   async produce(input: {
     readonly workspaceId: string;
     readonly runId: string;
@@ -105,17 +122,7 @@ export class ContentMediaProducer {
       };
       provenance = { provider: "generative", model: generated.model, promptVersion: generated.promptVersion };
     } else {
-      const logoBytes = input.brandKit.logo
-        ? await this.storage.get({ objectKey: input.brandKit.logo.objectKey, maxBytes: 5 * 1024 * 1024 })
-        : undefined;
-      rendered = await this.renderer.render({
-        format: input.format,
-        plan,
-        body: input.draft.body,
-        brandKit: input.brandKit,
-        ...(logoBytes ? { logoBytes } : {}),
-        outputDirectory,
-      });
+      rendered = await this.#renderDeterministic(input, outputDirectory);
     }
     if (rendered.bytes.byteLength < 1 || rendered.bytes.byteLength > 100 * 1024 * 1024) throw new Error("CONTENT_MEDIA_SIZE_INVALID");
     const checksumSha256 = new Bun.CryptoHasher("sha256").update(rendered.bytes).digest("hex");

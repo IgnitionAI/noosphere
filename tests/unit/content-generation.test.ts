@@ -246,6 +246,28 @@ describe("CNT-101 grounded content pipeline", () => {
     expect(calls).toEqual(["start", "draft_saved", "audit", "audit_saved", "critic", "ready", "ack"]);
   });
 
+  test.each([false, true])("checks document fit before audit or checkpoint (persistent: %s)", async persistent => {
+    const candidate = {...draft(), mediaPlan: {format: "linkedin_document" as const, visualTone: "editorial" as const,
+      title: "Une distinction", subtitle: null, altText: "Un contrôle expliqué", scenes: [],
+      slides: Array.from({length: 3}, () => ({title: "Un contrôle", body: "Examiner les preuves."}))}};
+    const context = {...pipelineContext("writer"), brief: {...brief(), format: "linkedin_document" as const}};
+    const calls: string[] = [];
+    const received: (readonly string[])[] = [];
+    let checks = 0;
+    const repository = {async loadContext(){return context;}, async startRun(){},
+      async saveDraft(){calls.push("save");},async saveAudit(){},async completeRun(){},async failRun(){}} as unknown as ContentGenerationRepository;
+    const producer = {async checkDraftLayout(){calls.push("layout"); if (++checks === 1 || persistent) throw new Error("CONTENT_MEDIA_TEXT_OVERFLOW");},
+      async produce(){calls.push("store");return {marker:"validated"};}} as unknown as import("@outbound/application/content/content-media").ContentMediaProducer;
+    const processor = new ContentGenerationJobProcessor(repository, {
+      async buildBrief(){return context.brief;},async write(input){calls.push("write");received.push(input.validationFeedback ?? []);return candidate;},
+      async audit(){calls.push("audit");return audit();},async critique(){calls.push("critic");return critique();}
+    },{async acknowledge(){}} as unknown as JobQueue,()=>new Date(),producer);
+    const processing = processor.process(job(context.run.workspaceId,context.run.id));
+    if (persistent) await expect(processing).rejects.toThrow("CONTENT_MEDIA_TEXT_OVERFLOW"); else await processing;
+    expect(calls).toEqual(persistent ? ["write","layout","write","layout"] : ["write","layout","write","layout","save","audit","critic","store"]);
+    expect(received[1]!.join(" ")).toContain("media_text_overflow");
+  });
+
   test.each([false, true])("checks writer length before persistence and audit (persistent: %s)", async persistent => {
     const context = pipelineContext("writer");
     const oversized = {...draft(), body: draft().body.padEnd(1581, "x")};
@@ -471,7 +493,7 @@ describe("CNT-101 grounded content pipeline", () => {
       async completeRun(input: typeof completed) { completed = input; }, async failRun() {},
     } as unknown as ContentGenerationRepository;
     let renders = 0;
-    const producer = { async produce() {
+    const producer = { async checkDraftLayout() {}, async produce() {
       calls.push("render"); renders++;
       if (outcome === "storage") throw new Error("STORAGE_UNAVAILABLE");
       if (renders === 1 || outcome === "persistent") throw new Error("CONTENT_MEDIA_TEXT_OVERFLOW");

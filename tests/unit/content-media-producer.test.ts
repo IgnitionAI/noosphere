@@ -99,6 +99,35 @@ describe("Noosphere content media producer", () => {
     expect(renders).toBe(0);
   });
 
+  test.each([false, true])("preflights document rendering without storing rejected or accepted previews (overflow: %s)", async overflow => {
+    let writes = 0, renders = 0;
+    const logo = new Uint8Array([7, 8, 9]);
+    const producer = new ContentMediaProducer({async put(){writes++;},async get(){return logo;}}, {
+      async render(input){
+        renders++;
+        expect(input.logoBytes).toEqual(logo);
+        expect(input.plan.format).toBe("linkedin_document");
+        if (overflow) throw new Error("CONTENT_MEDIA_TEXT_OVERFLOW");
+        return {bytes:new Uint8Array([1]),mimeType:"application/pdf",filename:"preview.pdf",width:1080,height:1350,pageCount:3,durationSeconds:null,manifest:{}};
+      }
+    });
+    const checksum = "a".repeat(64);
+    const input = {workspaceId:"workspace-fixture",runId:"preview-run",format:"linkedin_document" as const,
+      draft:{...imageDraft(),mediaPlan:{...imageDraft().mediaPlan,format:"linkedin_document" as const}},
+      brandKit:{...DEFAULT_CONTENT_BRAND_KIT,logo:{objectKey:`workspace-fixture/brand-assets/${checksum}.png`,mimeType:"image/png" as const,checksumSha256:checksum,width:120,height:80,previewDataUrl:"data:image/png;base64,AQID",sourceFileName:"logo.png"}}};
+    const checking = producer.checkDraftLayout(input);
+    if (overflow) await expect(checking).rejects.toThrow("CONTENT_MEDIA_TEXT_OVERFLOW"); else await checking;
+    expect(renders).toBe(1);
+    expect(writes).toBe(0);
+  });
+
+  test("document preflight does not invoke a generative video provider", async () => {
+    const producer = new ContentMediaProducer({async put(){throw new Error("unexpected storage");},async get(){throw new Error("unexpected logo");}},
+      {async render(){throw new Error("unexpected render");}},
+      {name:"fixture",available(){return true;},async generate(){throw new Error("unexpected paid generation");}});
+    await producer.checkDraftLayout({workspaceId:"workspace-fixture",runId:"video-run",format:"linkedin_video",draft:videoDraft(),brandKit:{...DEFAULT_CONTENT_BRAND_KIT,videoMode:"generative"}});
+  });
+
   test("loads the active workspace logo before rendering branded media", async () => {
     const logo = new Uint8Array([7, 8, 9]);
     const producer = new ContentMediaProducer({
