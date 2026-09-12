@@ -59,8 +59,8 @@ export class LangChainContentPipelineAgent implements ContentPipelineAgent {
     if (invalid.length === 0) return critique;
     const repair = {
       ...critiqueContext(input),
-      currentPublicPassages: publicPassages(input.draft),
-      validationFeedback: [`CONTENT_CRITIC_ASSESSMENT_INVALID: ${invalid.join(", ")}. Re-evaluate the unchanged current draft. Every criterion needs a reason of at least 20 characters and at least one exact contiguous public excerpt of at least 12 characters. Select each excerpt by copying one complete entry from currentPublicPassages. Never paraphrase an excerpt or quote the brief, sources, prior versions or your assessment reasons. Preserve substantive concerns; a technical repair is not a request to approve the post.`],
+      currentPublicPassages: indexedPublicPassages(input.draft),
+      validationFeedback: [`CONTENT_CRITIC_ASSESSMENT_INVALID: ${invalid.join(", ")}. Re-evaluate the unchanged current draft. Every criterion needs a reason of at least 20 characters and at least one passageId selected from currentPublicPassages. Select relevant current passages; never invent an identifier or cite the brief, sources, prior versions or your assessment reasons. Preserve substantive concerns; a technical repair is not a request to approve the post.`],
     };
     return currentContentEditorialCritiqueSchema.parse(await this.invoke("critic", input.run.workspaceId, input.run.id, repair, repair, "assessment-repair"));
   }
@@ -84,7 +84,7 @@ export class LangChainContentPipelineAgent implements ContentPipelineAgent {
         outputDescription: spec.description,
         schema: spec.schema as ZodType<unknown>,
       });
-      output = result.output;
+      output = "decode" in spec ? spec.decode(result.output) : result.output;
       provider = result.metadata.provider;
       model = result.metadata.model;
     } else {
@@ -107,7 +107,7 @@ export class LangChainContentPipelineAgent implements ContentPipelineAgent {
       model,
       promptVersion: role === "writer"
         ? "noosphere-content-writer-v15"
-        : role === "critic" ? "noosphere-content-critic-v13" : role === "audit" ? "noosphere-content-audit-v6" : "noosphere-content-brief-v8",
+        : role === "critic" ? "noosphere-content-critic-v14" : role === "audit" ? "noosphere-content-audit-v6" : "noosphere-content-brief-v8",
       shadow: false,
       inputHash: new Bun.CryptoHasher("sha256").update(JSON.stringify(original)).digest("hex"),
       output,
@@ -162,7 +162,7 @@ function critiqueContext(input: Parameters<ContentPipelineAgent["critique"]>[0])
     brandKit: input.brandKit,
     evidence: input.evidence,
     draft: input.draft,
-    currentPublicPassages: publicPassages(input.draft),
+    currentPublicPassages: indexedPublicPassages(input.draft),
     recentBodies: input.recentBodies.slice(0, 12),
   };
 }
@@ -187,24 +187,39 @@ function publicPassages(draft: Parameters<ContentPipelineAgent["critique"]>[0]["
   return [...new Set(passages)];
 }
 
+function indexedPublicPassages(draft: Parameters<ContentPipelineAgent["critique"]>[0]["draft"]) {
+  return publicPassages(draft).map((text, index) => ({ id: `p${index + 1}`, text }));
+}
+
+const criticPassagesSchema = z.object({ currentPublicPassages: z.array(z.object({
+  id: z.string().regex(/^p[1-9][0-9]*$/), text: z.string().min(12).max(1500),
+})).min(1) });
+
 function criticModelSchema(context: unknown) {
-  const { currentPublicPassages } = z.object({ currentPublicPassages: z.array(z.string().min(12).max(1500)).min(1) }).parse(context);
-  const excerpts = z.array(z.enum(currentPublicPassages as [string, ...string[]])).min(1).max(4);
+  const { currentPublicPassages } = criticPassagesSchema.parse(context);
+  const passageIds = z.array(z.enum(currentPublicPassages.map(p => p.id) as [string, ...string[]])).min(1).max(4);
   const shape = currentContentEditorialCritiqueSchema.shape.qualityAssessment.shape;
+  const criterion = shape.readerValue.omit({ excerpts: true }).extend({ passageIds });
   return currentContentEditorialCritiqueSchema.extend({ qualityAssessment: z.object({
-    audienceRelevance: shape.audienceRelevance.extend({ excerpts }),
-    readerValue: shape.readerValue.extend({ excerpts }),
-    coherence: shape.coherence.extend({ excerpts }),
-    sourceAttribution: shape.sourceAttribution.extend({ excerpts }),
-    ctaTruthfulness: shape.ctaTruthfulness.extend({ excerpts }),
-    brandVoice: shape.brandVoice.extend({ excerpts }),
-    distinctness: shape.distinctness.extend({ excerpts }),
+    audienceRelevance: criterion, readerValue: criterion, coherence: criterion,
+    sourceAttribution: criterion, ctaTruthfulness: criterion, brandVoice: criterion, distinctness: criterion,
   }).strict() });
+}
+
+function decodeCriticOutput(output: unknown, context: unknown) {
+  const result = criticModelSchema(context).parse(output);
+  const passages = new Map(criticPassagesSchema.parse(context).currentPublicPassages.map(p => [p.id, p.text]));
+  return currentContentEditorialCritiqueSchema.parse({ ...result, qualityAssessment: Object.fromEntries(
+    Object.entries(result.qualityAssessment).map(([key, { passageIds, ...criterion }]) => [key, {
+      ...criterion, excerpts: passageIds.map(id => passages.get(id)),
+    }]),
+  ) });
 }
 
 async function invokePipelineModel(input: Parameters<ModelInvoker>[0]) {
   const spec = pipelineModelSpec(input.role, input.context);
-  return invokeTool({ fields: input.fields, ...spec });
+  const output = await invokeTool({ fields: input.fields, ...spec });
+  return "decode" in spec ? spec.decode(output) : output;
 }
 
 function pipelineModelSpec(role: PipelineRole, context: unknown) {
@@ -281,6 +296,7 @@ function pipelineModelSpec(role: PipelineRole, context: unknown) {
     name: "submit_editorial_critique",
     description: "Submit the independent final anti-generic editorial critique.",
     schema: criticModelSchema(context),
+    decode: (output: unknown) => decodeCriticOutput(output, context),
     system: [
       "You are Noosphere's principal editorial critic, independent from the writer.",
       contentRuntimeSkills.guardian,
@@ -296,7 +312,7 @@ function pipelineModelSpec(role: PipelineRole, context: unknown) {
       "If validationFeedback reports CONTENT_CRITIC_ASSESSMENT_INVALID, correct your assessment of the unchanged draft using its exact current public copy. Rejected citations are not evidence. Preserve every substantive concern; do not approve merely to satisfy the output contract.",
       "A blocker means the draft must not become ready. Never rewrite the draft and never weaken an evidence audit.",
       "Be demanding but concrete. Advice is allowed only for non-blocking polish. Do not schedule or publish.",
-      "For each qualityAssessment criterion, select complete exact excerpts from currentPublicPassages, as enumerated in the output schema. Select passages relevant to your reason. Never paraphrase, change capitalization or return only part of a passage. Citation validity is independent of editorial quality: preserve substantive concerns and reject low-value copy.",
+      "For each qualityAssessment criterion, return passageIds selected from currentPublicPassages. The code resolves each ID to its exact public text. Select passages relevant to your reason, never invented IDs or text. Citation validity is independent of editorial quality: preserve substantive concerns and reject low-value copy.",
       "Call submit_editorial_critique exactly once.",
     ].join("\n"),
     context,

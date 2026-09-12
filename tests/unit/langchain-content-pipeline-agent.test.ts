@@ -1,5 +1,6 @@
 import { editorialQualityCriteria, type ContentQualityAssessment } from "@outbound/domain/content/content-asset";
 import { describe, expect, test } from "bun:test";
+import { z } from "zod";
 import { LangChainContentPipelineAgent } from "@outbound/infrastructure/content/langchain-content-pipeline-agent";
 import type { ContentGenerationContext } from "@outbound/application/content/content-generation";
 import { DEFAULT_CONTENT_BRAND_KIT } from "@outbound/domain/content/content-brand-kit";
@@ -14,7 +15,7 @@ describe("LangChainContentPipelineAgent", () => {
         const output = input.capability === "content_brief" ? brief()
           : input.capability === "content_writer" ? draft()
           : input.capability === "content_audit" ? audit() : critique();
-        return { output, metadata: { provider: "codex-cli", model: "gpt-5.6-luna" } };
+        return { output: input.capability === "content_critic" ? modelCritique(input.payload, output as ReturnType<typeof critique>) : output, metadata: { provider: "codex-cli", model: "gpt-5.6-luna" } };
       },
     } as unknown as WorkspaceStructuredModel;
     const context = pipelineContext();
@@ -87,7 +88,7 @@ describe("LangChainContentPipelineAgent", () => {
       { purpose: "content_brief", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-brief-v8", contentGenerationRunId: context.run.id },
       { purpose: "content_writer", model: "k3", promptVersion: "noosphere-content-writer-v15", contentGenerationRunId: context.run.id },
       { purpose: "content_audit", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-audit-v6", contentGenerationRunId: context.run.id },
-      { purpose: "content_critic", model: "k3", promptVersion: "noosphere-content-critic-v13", contentGenerationRunId: context.run.id },
+      { purpose: "content_critic", model: "k3", promptVersion: "noosphere-content-critic-v14", contentGenerationRunId: context.run.id },
     ]);
   });
 });
@@ -127,7 +128,7 @@ test("repairs stale critic citations against the same draft without invoking the
     expect(call.context).not.toHaveProperty("audit");
     expect(call.context).not.toHaveProperty("brief");
   }
-  expect(calls[1]!.context).toMatchObject({ currentPublicPassages: expect.arrayContaining([currentDraft.body]), draft: currentDraft, validationFeedback: [expect.stringContaining("brandVoice")] });
+  expect(calls[1]!.context).toMatchObject({ currentPublicPassages: expect.arrayContaining([expect.objectContaining({ text: currentDraft.body })]), draft: currentDraft, validationFeedback: [expect.stringContaining("brandVoice")] });
   expect(result.qualityAssessment?.brandVoice.excerpts).toEqual(["Noosphere relie le contenu aux conversations."]);
 });
 
@@ -170,13 +171,14 @@ test("constrains model citations to exact current public passages without changi
     candidate.qualityAssessment = Object.fromEntries(editorialQualityCriteria.map(key => [key, {
       verdict: "revise", reason: "Le document répète la distinction sans expliquer une décision nouvelle.", excerpts: [expected],
     }])) as unknown as ContentQualityAssessment;
-    expect(input.schema.safeParse(candidate).success).toBe(true);
-    for (const excerpt of ["un champ masqué ne filtre pas les résultats.", "Cette phrase provient d'une ancienne version."]) {
-      const bad = { ...candidate, qualityAssessment: { ...candidate.qualityAssessment, readerValue: { ...candidate.qualityAssessment.readerValue, excerpts: [excerpt] } } };
+    const wire = modelCritique(input.payload, candidate);
+    expect(input.schema.safeParse(wire).success).toBe(true);
+    for (const id of ["p99999", "un champ masqué ne filtre pas les résultats."]) {
+      const bad = { ...wire, qualityAssessment: { ...wire.qualityAssessment, readerValue: { ...wire.qualityAssessment.readerValue, passageIds: [id] } } };
       expect(input.schema.safeParse(bad).success).toBe(false);
     }
-    expect(input.payload.currentPublicPassages).toContain(expected);
-    return { output: candidate, metadata: { provider: "codex-cli", model: "gpt-5.6-luna" } };
+    expect(input.payload.currentPublicPassages).toContainEqual(expect.objectContaining({ text: expected }));
+    return { output: wire, metadata: { provider: "codex-cli", model: "gpt-5.6-luna" } };
   } } as unknown as WorkspaceStructuredModel;
   const agent = new LangChainContentPipelineAgent({}, undefined, undefined, undefined, routedModel);
   const result = await agent.critique({ ...pipelineContext(), brief: brief(), draft: currentDraft, audit: audit() });
@@ -193,7 +195,16 @@ test("keeps multiline short copy and the end of historical long paragraphs citab
     let calls = 0;
     const routedModel = { async invoke(input: any) {
       calls++;
-      const passages = input.payload.currentPublicPassages as string[];
+      const providerSchema = z.toJSONSchema(input.schema);
+      const checkEnums = (value: unknown): void => {
+        if (!value || typeof value !== "object") return;
+        for (const [key, child] of Object.entries(value)) {
+          if (key === "enum" && Array.isArray(child)) for (const literal of child) expect(String(literal)).not.toContain("\n");
+          else checkEnums(child);
+        }
+      };
+      checkEnums(providerSchema);
+      const passages = (input.payload.currentPublicPassages as Array<{ id: string; text: string }>).map(p => p.text);
       expect(passages.length).toBeGreaterThan(0);
       const ending = body.includes("La décision finale") ? "La décision finale doit rester visible." : "À vérifier.";
       expect(passages.some(passage => passage.includes(ending))).toBe(true);
@@ -206,10 +217,18 @@ test("keeps multiline short copy and the end of historical long paragraphs citab
       candidate.qualityAssessment = Object.fromEntries(editorialQualityCriteria.map(key => [key, {
         verdict: "revise", reason: "Ce passage doit être retravaillé pour démontrer la décision.", excerpts: [passages.at(-1)!],
       }])) as unknown as ContentQualityAssessment;
-      return { output: input.schema.parse(candidate), metadata: { provider: "codex-cli", model: "gpt-5.6-luna" } };
+      return { output: input.schema.parse(modelCritique(input.payload, candidate)), metadata: { provider: "codex-cli", model: "gpt-5.6-luna" } };
     } } as unknown as WorkspaceStructuredModel;
     const agent = new LangChainContentPipelineAgent({}, undefined, undefined, undefined, routedModel);
     await agent.critique({ ...pipelineContext(), brief: brief(), draft: { ...draft(), body, hook: body.split("\n")[0]!, callToAction: null }, audit: audit() });
     expect(calls).toBe(1);
   }
 });
+
+
+function modelCritique(payload: unknown, candidate: ReturnType<typeof critique>) {
+  const passages = (payload as { currentPublicPassages: Array<{ id: string; text: string }> }).currentPublicPassages;
+  return { ...candidate, qualityAssessment: Object.fromEntries(Object.entries(candidate.qualityAssessment).map(([key, { excerpts, ...criterion }]) => [key, {
+    ...criterion, passageIds: excerpts.map(excerpt => passages.find(p => p.text.includes(excerpt))!.id),
+  }])) as Record<string, { verdict: string; reason: string; passageIds: string[] }> };
+}

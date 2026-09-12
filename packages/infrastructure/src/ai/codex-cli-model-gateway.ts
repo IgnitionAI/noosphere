@@ -287,6 +287,9 @@ async function readCodexOutput(outputPath: string, stdout: string): Promise<stri
 
 export function classifyCodexFailure(stderr: string, stdout: string): ModelGatewayError {
   const detail = `${stderr}\n${stdout}`.toLowerCase();
+  if (/invalid schema for response_format|invalid_json_schema/.test(detail)) {
+    return new ModelGatewayError("AI_PROVIDER_OUTPUT_INVALID", "codex-cli", "Codex rejected the structured output schema", false, false);
+  }
   if (
     /(?:you(?:'ve| have) reached your usage limit|usage limit (?:is )?(?:exhausted|reached)|rate_limit_exceeded|quota (?:is )?(?:exhausted|exceeded)|too many requests|insufficient_quota)/.test(detail)
   ) {

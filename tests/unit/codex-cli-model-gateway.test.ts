@@ -126,7 +126,7 @@ describe("CodexCliModelGateway", () => {
     });
 
     await expect(gateway.invokeStructured(request)).rejects.toMatchObject({
-      code: "AI_PROVIDER_INVOCATION_FAILED",
+      code: "AI_PROVIDER_OUTPUT_INVALID",
     });
   });
 
@@ -227,4 +227,17 @@ test("Codex receives compatible nested URL schemas while local validation still 
     return { exitCode: 0, stdout: JSON.stringify({ evidence: [{ url: "not-a-url" }] }), stderr: "" };
   } } });
   await expect(gateway.invokeStructured({ ...request, outputSchema: original, parse: value => schema.parse(value) })).rejects.toMatchObject({ code: "AI_PROVIDER_OUTPUT_INVALID" });
+});
+
+
+test("does not report authentication failure when Codex rejects a structured output schema", async () => {
+  const gateway = new CodexCliModelGateway({ codexHome: "/srv/noosphere/codex", now: () => now,
+    runner: new RecordingRunner({ exitCode: 1,
+      stderr: "Invalid schema for response_format 'codex_output_schema': \\n is not allowed in string literals for structured outputs (strict=true).",
+      stdout: "The supplied article discusses authentication and access controls.",
+    }),
+  });
+  await expect(gateway.invokeStructured(request)).rejects.toMatchObject({
+    code: "AI_PROVIDER_OUTPUT_INVALID", fallbackAllowed: false, retryableOnProvider: false,
+  });
 });
