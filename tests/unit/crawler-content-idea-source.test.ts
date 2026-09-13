@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { CrawlerContentIdeaSource } from "@outbound/infrastructure/content/crawler-content-idea-source";
 
 const url = "https://example.com/support";
@@ -100,4 +100,68 @@ test("empty extracted pages do not turn global budget expiry into a provider fai
     },
   });
   await expect(source.search({ ...query, deadlineAt: new Date(Date.now() + 30) })).rejects.toBeInstanceOf(ContentIdeaSourceDeadlineError);
+});
+
+
+test("an expired discovery budget remains expired when the wall clock has not advanced", async () => {
+  const now = Date.now();
+  const clock = spyOn(Date, "now").mockReturnValue(now);
+  let read = false;
+  try {
+    const source = new CrawlerContentIdeaSource({
+      async search(input) {
+        await new Promise<void>(resolve => input.signal!.addEventListener("abort", () => resolve(), { once: true }));
+        return [searchResult];
+      },
+      async readPages() { read = true; return []; },
+    });
+    await expect(source.search({ ...query, deadlineAt: new Date(now + 20) })).rejects.toThrow("CONTENT_SOURCE_DEADLINE_EXCEEDED");
+    expect(read).toBe(false);
+  } finally { clock.mockRestore(); }
+});
+
+
+test("a shorter search timeout is not classified as expiry of a longer study", async () => {
+  const controller = new AbortController();
+  const timer = spyOn(AbortSignal, "timeout").mockImplementation(() => controller.signal);
+  const providerError = new Error("SEARCH_TIMEOUT");
+  let read = false;
+  try {
+    const source = new CrawlerContentIdeaSource({
+      async search(input) {
+        controller.abort();
+        expect(input.signal!.aborted).toBe(true);
+        throw providerError;
+      },
+      async readPages() { read = true; return []; },
+    });
+    await expect(source.search({ ...query, deadlineAt: new Date(Date.now() + 120_000) })).rejects.toBe(providerError);
+    expect(timer).toHaveBeenCalledWith(30_000);
+    expect(read).toBe(false);
+  } finally { timer.mockRestore(); }
+});
+
+
+test("retains a usable page when another read expires the study budget", async () => {
+  const now = Date.now();
+  const clock = spyOn(Date, "now").mockReturnValue(now);
+  const controllers = new Map<AbortSignal, AbortController>();
+  const timer = spyOn(AbortSignal, "timeout").mockImplementation(() => {
+    const controller = new AbortController();
+    controllers.set(controller.signal, controller);
+    return controller.signal;
+  });
+  try {
+    const source = new CrawlerContentIdeaSource({
+      async search() { return [searchResult, { ...searchResult, url: url + "/slow" }]; },
+      async readPages(input) {
+        if (input.urls[0] === url) return [{ url, title: "Document", markdown, metadata: {} }];
+        controllers.get(input.signal!)!.abort();
+        throw new Error("READ_TIMEOUT");
+      },
+    });
+    const result = await source.search({ ...query, deadlineAt: new Date(now + 20) });
+    expect(result).toHaveLength(1);
+    expect(result[0]?.excerpt).toBe(markdown);
+  } finally { timer.mockRestore(); clock.mockRestore(); }
 });

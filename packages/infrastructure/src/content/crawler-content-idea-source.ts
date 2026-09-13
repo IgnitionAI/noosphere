@@ -10,11 +10,22 @@ export class CrawlerContentIdeaSource implements ContentIdeaSourceDiscovery {
     const runDeadline = input.deadlineAt.getTime();
     if (!Number.isFinite(runDeadline)) throw new Error("CONTENT_SOURCE_DEADLINE_INVALID");
     const deadline = Math.min(runDeadline, Date.now() + 90_000);
-    const checkRunDeadline = () => { if (Date.now() >= runDeadline) throw new ContentIdeaSourceDeadlineError(); };
+    let runBudgetExpired = false;
+    const operationSignal = (maxMs: number): AbortSignal => {
+      const now = Date.now();
+      const signal = AbortSignal.timeout(Math.max(1, Math.min(maxMs, deadline - now)));
+      // Preserve the limiting budget's expiry even if wall-clock time is rounded
+      // or adjusted backwards while the monotonic abort timer is running.
+      if (runDeadline <= deadline && runDeadline - now <= maxMs) {
+        signal.addEventListener("abort", () => { runBudgetExpired = true; }, { once: true });
+      }
+      return signal;
+    };
+    const checkRunDeadline = () => { if (runBudgetExpired || Date.now() >= runDeadline) throw new ContentIdeaSourceDeadlineError(); };
     checkRunDeadline();
     let results;
     try {
-      results = (await this.crawler.search({ query: input.query, limit: Math.min(8, input.limit), correlationId: input.correlationId, searchDepth: "advanced", signal: AbortSignal.timeout(Math.max(1, Math.min(30_000, deadline - Date.now()))) })).slice(0, Math.min(8, input.limit));
+      results = (await this.crawler.search({ query: input.query, limit: Math.min(8, input.limit), correlationId: input.correlationId, searchDepth: "advanced", signal: operationSignal(30_000) })).slice(0, Math.min(8, input.limit));
     } catch (error) {
       checkRunDeadline();
       throw error;
@@ -28,7 +39,7 @@ export class CrawlerContentIdeaSource implements ContentIdeaSourceDiscovery {
     const failures: unknown[] = [];
     let cursor = 0;
     const readNext = async () => {
-      while (cursor < urls.length && Date.now() < deadline) {
+      while (cursor < urls.length && !runBudgetExpired && Date.now() < deadline) {
         const url = urls[cursor++]!;
         try {
           pages.push(...await this.crawler.readPages({
@@ -36,7 +47,7 @@ export class CrawlerContentIdeaSource implements ContentIdeaSourceDiscovery {
             correlationId: `${input.correlationId}:sources`,
             retryFailed: true,
             requestKey: `content-source:${hash(`${input.correlationId}|${url}`)}`,
-            signal: AbortSignal.timeout(Math.max(1, Math.min(40_000, deadline - Date.now()))),
+            signal: operationSignal(40_000),
           }));
         } catch (error) { failures.push(error); }
       }

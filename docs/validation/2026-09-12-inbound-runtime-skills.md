@@ -459,3 +459,14 @@ The exported PNG was inspected: dark navy title and body on a light card, no cli
 Validation caveat: the first full check after the final syntax refinement reported 1,203 passing tests and one failure in the pre-existing 30 ms crawler discovery deadline test (`CONTENT_SOURCE_READ_FAILED` instead of the expected deadline error). The crawler suite then passed independently (8 tests, 27 assertions). This intermittent deadline classification is an unresolved finding; a passing rerun does not establish its cause or fix it.
 
 The full `bun run check` rerun exited 0 after the final refinement. The intermittent crawler finding above remains open.
+
+
+### Preserve an elapsed study budget across clock discrepancies
+
+Follow-up to the intermittent crawler test: a deterministic clock-discrepancy regression now reproduces the same failure class. With `Date.now()` held before the study deadline while the actual abort timer expires, the old implementation proceeds to `readPages` and reports `CONTENT_SOURCE_READ_FAILED`. The original flaky run did not capture clock values, so this reproduces the failing mechanism rather than proving the host clock's exact behavior in that run.
+
+`CrawlerContentIdeaSource` now remembers when an abort timer limited by the study deadline has expired. The flag is local to the request, checked after search and before starting another page read. Signals limited instead by the 30-second search, 40-second page, or 90-second source caps do not mark a longer study as expired. Successful partial evidence is still retained.
+
+The targeted suite passes 11 tests / 35 assertions, including the clock discrepancy (red before fix), preservation of an operation-specific provider error, and successful evidence alongside a globally expired second read. Both independent reviews found no actionable issue. The patch records a triggered study expiry; it does not redesign every source budget around a monotonic clock. No provider settings, production content or deployment changed.
+
+Full `bun run check` exited 0 on the implementation; the subsequently added partial-evidence regression also passed in the targeted suite.
