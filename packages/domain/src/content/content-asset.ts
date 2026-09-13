@@ -317,7 +317,7 @@ function unpublishableMediaReasons(draft: ContentDraftSnapshot): readonly string
   if (slides.some((slide) => substantiallySimilar(slide.body, draft.body))) reasons.push("visual_copies_body");
   const middleLayouts = [...new Set(slides.slice(1, -1).map((slide, index) => inferredSlideLayout(slide, index + 1, slides.length)))];
   const structured = slides.filter((slide) => (slide.items?.length ?? 0) >= 2 && (slide.items?.length ?? 0) <= 4);
-  if (middleLayouts.length < 2 || structured.length < 1) reasons.push("monotone_carousel");
+  if (middleLayouts.length < Math.min(2, slides.length - 2) || structured.length < 1) reasons.push("monotone_carousel");
   if (slides.some((slide) => slideTooDense(slide))) reasons.push("too_dense");
   return reasons;
 }
@@ -347,19 +347,25 @@ function genericVisualTitle(title: string): boolean {
 }
 
 function isSourceParaphrase(body: string, excerpts: readonly string[]): boolean {
-  const combined = excerpts.map((excerpt) => excerpt.trim()).filter(Boolean).join("\n");
-  if (!combined) return false;
-  if (excerpts.some((excerpt) => excerpt.trim().length >= 40 && substantiallySimilar(body, excerpt))) return true;
-  const bodyTokens = meaningfulTokens(body);
-  const sourceTokens = meaningfulTokens(combined);
-  if (bodyTokens.size < 8 || sourceTokens.size === 0) return false;
-  let overlap = 0;
-  for (const token of bodyTokens) if (sourceTokens.has(token)) overlap += 1;
-  return overlap / bodyTokens.size >= 0.72;
+  if (excerpts.some(excerpt => excerpt.trim().length >= 40 && normalize(body) === normalize(excerpt))) return true;
+  const bodyTokens = meaningfulTokenSequence(body);
+  if (bodyTokens.length < 8) return false;
+  // Shared subject vocabulary is not evidence of copied reasoning. Require
+  // ordered phrases, and never join separate excerpts into invented phrases.
+  const sourcePhrases = new Set(excerpts.flatMap(excerpt => {
+    const tokens = meaningfulTokenSequence(excerpt);
+    return tokens.slice(0, -2).map((_, index) => tokens.slice(index, index + 3).join(" "));
+  }));
+  const covered = new Set<number>();
+  for (let index = 0; index <= bodyTokens.length - 3; index += 1) {
+    if (!sourcePhrases.has(bodyTokens.slice(index, index + 3).join(" "))) continue;
+    for (let offset = 0; offset < 3; offset += 1) covered.add(index + offset);
+  }
+  return covered.size / bodyTokens.length >= 0.72;
 }
 
-function meaningfulTokens(value: string): Set<string> {
-  return new Set(lexicalTokens(value).filter((token) => token.length >= 4 && !similarityStopWords.has(token)));
+function meaningfulTokenSequence(value: string): readonly string[] {
+  return lexicalTokens(value).filter(token => token.length >= 4 && !similarityStopWords.has(token));
 }
 
 function splitLongToken(word: string, maxCharacters: number): readonly string[] {
