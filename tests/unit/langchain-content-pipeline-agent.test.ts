@@ -37,6 +37,28 @@ describe("LangChainContentPipelineAgent", () => {
     }
   });
 
+  test("guides complete short posts while preserving oversized drafts for application repair", async () => {
+    let requestedSchema: z.ZodType | undefined;
+    const oversized = { ...draft(), body: "a".repeat(1_501) };
+    const routedModel = {
+      async invoke(input: { schema: z.ZodType }) {
+        requestedSchema = input.schema;
+        return { output: oversized, metadata: { provider: "codex-cli", model: "gpt-5.6-luna" } };
+      },
+    } as unknown as WorkspaceStructuredModel;
+    const agent = new LangChainContentPipelineAgent({}, undefined, undefined, undefined, routedModel);
+    const result = await agent.write({ ...pipelineContext(), brief: brief() });
+    const schema = z.toJSONSchema(requestedSchema!);
+    const body = schema.properties?.body as { description?: string; maxLength?: number };
+    expect(body.description).toContain("500-1100 characters");
+    expect(body.description).toContain("at or below 1500 characters");
+    expect(body.description).toContain("do not cut words or URLs");
+    expect(body.maxLength).toBe(3_000);
+    expect(result.body).toBe(oversized.body);
+    expect(requestedSchema!.safeParse({ ...oversized, body: "a".repeat(3_000) }).success).toBe(true);
+    expect(requestedSchema!.safeParse({ ...oversized, body: "a".repeat(3_001) }).success).toBe(false);
+  });
+
   test("passes the versioned offer and buyer context to every editorial role", async () => {
     const businessContext = {
       offer: { versionId: "offer-v1", name: "Assistant documentaire", category: "software", valueProposition: "Retrouver une procédure autorisée", targetAudience: "Support", constraints: ["Pas de réponse hors périmètre"], objections: [] },
@@ -86,7 +108,7 @@ describe("LangChainContentPipelineAgent", () => {
     ]);
     expect(recorded.map(({ purpose, model, promptVersion, contentGenerationRunId }) => ({ purpose, model, promptVersion, contentGenerationRunId }))).toEqual([
       { purpose: "content_brief", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-brief-v8", contentGenerationRunId: context.run.id },
-      { purpose: "content_writer", model: "k3", promptVersion: "noosphere-content-writer-v17", contentGenerationRunId: context.run.id },
+      { purpose: "content_writer", model: "k3", promptVersion: "noosphere-content-writer-v18", contentGenerationRunId: context.run.id },
       { purpose: "content_audit", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-audit-v6", contentGenerationRunId: context.run.id },
       { purpose: "content_critic", model: "k3", promptVersion: "noosphere-content-critic-v15", contentGenerationRunId: context.run.id },
     ]);

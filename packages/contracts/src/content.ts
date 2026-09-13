@@ -71,7 +71,7 @@ export const contentBriefSnapshotSchema: z.ZodType<ContentBriefSnapshot> = z.obj
 
 export const contentDraftSnapshotSchema: z.ZodType<ContentDraftSnapshot> = z.object({
   hook: z.string().trim().min(5).max(500),
-  body: z.string().trim().min(80).max(3_000),
+  body: z.string().trim().min(80).max(3_000).describe("Complete public LinkedIn post, including the hook, source attribution and CTA. Compose for 500-1100 characters, keeping the complete post at or below 1500 characters. Finish the explanation and all sentences; do not cut words or URLs. The larger schema tolerance is for recovery of invalid drafts, not a writing target."),
   callToAction: z.string().trim().min(2).max(300).nullable(),
   factualClaims: z.array(z.object({
     statement: z.string().trim().min(3).max(1_000),
