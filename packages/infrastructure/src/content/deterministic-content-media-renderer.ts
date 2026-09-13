@@ -73,7 +73,8 @@ export class DeterministicContentMediaRenderer implements ContentMediaRenderer {
         });
       } catch (error) {
         if (error instanceof Error && error.message === "CONTENT_MEDIA_TEXT_OVERFLOW") {
-          overflows.push(new ContentMediaTextOverflowError(index + 1, layout, error instanceof ContentMediaFieldOverflowError ? error.constraint : undefined));
+          const failures = error instanceof ContentMediaLayoutErrors ? error.errors : [error];
+          overflows.push(...failures.map(failure => new ContentMediaTextOverflowError(index + 1, layout, failure instanceof ContentMediaFieldOverflowError ? failure.constraint : undefined)));
           continue;
         }
         throw error;
@@ -229,6 +230,7 @@ function renderChrome(input: {
 
 function renderLayoutContent(input: {
   readonly strictText: boolean;
+  readonly overflowErrors?: Error[];
   readonly input: {
     readonly title: string;
     readonly body: string;
@@ -244,25 +246,27 @@ function renderLayoutContent(input: {
   readonly muted: string;
   readonly fontFamily: string;
 }): string {
+  const errors: Error[] = [];
+  const checkedInput = input.strictText ? { ...input, overflowErrors: errors } : input;
   const layout = input.input.layout;
-  if (layout === "cover") return renderCover(input);
-  if (layout === "closing") return renderClosing(input);
-  if (layout === "checklist") return renderChecklist(input);
-  if (layout === "framework") return renderFramework(input);
-  if (layout === "comparison") return renderComparison(input);
-  if (layout === "process") return renderProcess(input);
-  return renderInsight(input);
+  const render = layout === "cover" ? renderCover : layout === "closing" ? renderClosing
+    : layout === "checklist" ? renderChecklist : layout === "framework" ? renderFramework
+    : layout === "comparison" ? renderComparison : layout === "process" ? renderProcess : renderInsight;
+  const svg = render(checkedInput);
+  // Diagnostic wrapping may shorten temporary lines, but failed content never reaches image rendering.
+  if (errors.length) throw new ContentMediaLayoutErrors(errors);
+  return svg;
 }
 
 function renderCover(input: Parameters<typeof renderLayoutContent>[0]): string {
   const title = layoutWrap(input, input.input.title, 19, 5, "title");
   const body = layoutWrap(input, input.input.body, 34, 4, "body");
-  if (input.strictText && input.input.items.length) throw new Error("CONTENT_MEDIA_TEXT_OVERFLOW");
+  if (input.strictText && input.input.items.length) recordLayoutOverflow(input);
   const kicker = input.input.kicker ?? "DOSSIER PRATIQUE";
   layoutWrap(input, kicker, 24, 1, "kicker");
   const callout = input.input.callout ? layoutWrap(input, input.input.callout, 54, 2, "callout") : [];
   const bodyBottom = 390 + title.length * 84 + (body.length - 1) * 43 + 16;
-  if (input.strictText && bodyBottom > (callout.length ? 985 : 1060)) throw new Error("CONTENT_MEDIA_TEXT_OVERFLOW");
+  if (input.strictText && bodyBottom > (callout.length ? 985 : 1060)) recordLayoutOverflow(input);
   return `
     <rect x="88" y="184" width="${Math.min(700, 72 + kicker.length * 22)}" height="52" rx="26" fill="${input.accent}"/>
     <text x="116" y="218" font-family="${input.fontFamily}" font-size="20" font-weight="780" letter-spacing="1.8" fill="${input.primary}">${escapeText(kicker.toUpperCase())}</text>
@@ -272,19 +276,19 @@ function renderCover(input: Parameters<typeof renderLayoutContent>[0]): string {
     <text x="88" y="1110" font-family="${input.fontFamily}" font-size="21" font-weight="760" letter-spacing="2.2" fill="${input.accent}">FAIRE DÉFILER →</text>`;
 }
 
-function insightTextLines(input: { readonly title: string; readonly body: string; readonly callout: string | null }, strictText = false) {
+function insightTextLines(input: { readonly title: string; readonly body: string; readonly callout: string | null }, strictText = false, overflowErrors?: Error[]) {
   return {
-    title: layoutWrap({ strictText }, input.title, 24, 4, "title"),
-    focus: layoutWrap({ strictText }, input.callout ?? input.body, 29, 5, input.callout ? "callout" : "body"),
-    body: input.callout ? layoutWrap({ strictText }, input.body, 45, 3, "body") : [],
+    title: layoutWrap({ strictText, ...(overflowErrors ? { overflowErrors } : {}) }, input.title, 24, 4, "title"),
+    focus: layoutWrap({ strictText, ...(overflowErrors ? { overflowErrors } : {}) }, input.callout ?? input.body, 29, 5, input.callout ? "callout" : "body"),
+    body: input.callout ? layoutWrap({ strictText, ...(overflowErrors ? { overflowErrors } : {}) }, input.body, 45, 3, "body") : [],
   };
 }
 
 function renderInsight(input: Parameters<typeof renderLayoutContent>[0]): string {
-  const { title, focus: focusLines, body } = insightTextLines(input.input, input.strictText);
+  const { title, focus: focusLines, body } = insightTextLines(input.input, input.strictText, input.overflowErrors);
   const showBody = Boolean(input.input.callout);
   const focusBottom = 410 + title.length * 68 + Math.max(260, 96 + focusLines.length * 52);
-  if (input.strictText && focusBottom > (showBody ? 1010 : 1160)) throw new Error("CONTENT_MEDIA_TEXT_OVERFLOW");
+  if (input.strictText && focusBottom > (showBody ? 1010 : 1160)) recordLayoutOverflow(input);
   return `
     ${renderKicker(input, 205)}
     <text x="88" y="290" font-family="${input.fontFamily}" font-size="62" font-weight="790" fill="${input.text}">${tspans(title, 290, 68)}</text>
@@ -312,13 +316,13 @@ function renderEditorialRows(input: Parameters<typeof renderLayoutContent>[0]): 
     const text = layoutWrap(input, item.text, 52, 5, "items[].text");
     const textY = y + label.length * 30 + 15;
     const bottom = textY + (text.length - 1) * 34 + 24;
-    if (bottom > (callout.length ? 1050 : 1130)) throw new Error("CONTENT_MEDIA_TEXT_OVERFLOW");
+    if (bottom > (callout.length ? 1050 : 1130)) recordLayoutOverflow(input);
     rows.push(`<line x1="88" y1="${y - 36}" x2="992" y2="${y - 36}" stroke="${input.primary}" opacity="0.16"/>
       <text x="88" y="${y}" font-family="${input.fontFamily}" font-size="26" font-weight="760" fill="${input.text}">${tspans(label, y, 30)}</text>
       <text x="88" y="${textY}" font-family="${input.fontFamily}" font-size="28" fill="${input.text}">${tspans(text, textY, 34)}</text>`);
     y = bottom + 30;
   }
-  if (y > (callout.length ? 1080 : 1160)) throw new Error("CONTENT_MEDIA_TEXT_OVERFLOW");
+  if (y > (callout.length ? 1080 : 1160)) recordLayoutOverflow(input);
   return `${renderKicker(input, 205)}<text x="88" y="290" font-family="${input.fontFamily}" font-size="62" font-weight="790" fill="${input.text}">${tspans(title, 290, 68)}</text>
     ${introduction}${rows.join("")}
     ${callout.length ? `<text x="88" y="1100" font-family="${input.fontFamily}" font-size="28" font-weight="700" fill="${input.text}">${tspans(callout, 1100, 35)}</text>` : ""}`;
@@ -336,7 +340,7 @@ function renderFramework(input: Parameters<typeof renderLayoutContent>[0]): stri
       label: layoutWrap(input, item.label, 23, 2, "items[].label"), text: layoutWrap(input, item.text, 24, 5, "items[].text"),
     }));
     const height = Math.max(...row.map((item) => 78 + item.label.length * 28 + item.text.length * 36));
-    if (y + height > (input.input.callout ? 1060 : 1150)) throw new Error("CONTENT_MEDIA_TEXT_OVERFLOW");
+    if (y + height > (input.input.callout ? 1060 : 1150)) recordLayoutOverflow(input);
     row.forEach((item, column) => {
       const x = 88 + column * 464;
       const textY = y + 46 + item.label.length * 28 + 24;
@@ -346,7 +350,7 @@ function renderFramework(input: Parameters<typeof renderLayoutContent>[0]): stri
     });
     y += height + 24;
   }
-  if (y > (input.input.callout ? 1084 : 1174)) throw new Error("CONTENT_MEDIA_TEXT_OVERFLOW");
+  if (y > (input.input.callout ? 1084 : 1174)) recordLayoutOverflow(input);
   return `${renderKicker(input, 205)}<text x="88" y="290" font-family="${input.fontFamily}" font-size="62" font-weight="790" fill="${input.text}">${tspans(title, 290, 68)}</text>
     <text x="88" y="${introY}" font-family="${input.fontFamily}" font-size="28" fill="${input.text}">${tspans(intro, introY, 35)}</text>${cards.join("")}${renderRowCallout(input)}`;
 }
@@ -374,13 +378,13 @@ function renderProcess(input: Parameters<typeof renderLayoutContent>[0]): string
     const text = layoutWrap(input, item.text, 44, 5, "items[].text");
     const textY = y + label.length * 32 + 12;
     const bottom = textY + (text.length - 1) * 34 + 24;
-    if (bottom > (input.input.callout ? 1050 : 1130)) throw new Error("CONTENT_MEDIA_TEXT_OVERFLOW");
+    if (bottom > (input.input.callout ? 1050 : 1130)) recordLayoutOverflow(input);
     rows.push(`<circle cx="124" cy="${y - 8}" r="28" fill="${input.accent}"/><text x="124" y="${y}" text-anchor="middle" font-family="${input.fontFamily}" font-size="24" font-weight="800" fill="${input.primary}">${index + 1}</text>
       <text x="182" y="${y}" font-family="${input.fontFamily}" font-size="27" font-weight="780" fill="${input.text}">${tspans(label, y, 32, 182)}</text>
       <text x="182" y="${textY}" font-family="${input.fontFamily}" font-size="27" fill="${input.text}">${tspans(text, textY, 34, 182)}</text>`);
     y = bottom + 38;
   }
-  if (y > (input.input.callout ? 1088 : 1168)) throw new Error("CONTENT_MEDIA_TEXT_OVERFLOW");
+  if (y > (input.input.callout ? 1088 : 1168)) recordLayoutOverflow(input);
   return `${renderKicker(input, 205)}<text x="88" y="290" font-family="${input.fontFamily}" font-size="62" font-weight="790" fill="${input.text}">${tspans(title, 290, 68)}</text>
     <text x="88" y="${introY}" font-family="${input.fontFamily}" font-size="28" fill="${input.text}">${tspans(intro, introY, 35)}</text>${rows.join("")}${renderRowCallout(input)}`;
 }
@@ -390,14 +394,14 @@ function renderClosing(input: Parameters<typeof renderLayoutContent>[0]): string
   const body = layoutWrap(input, input.input.body, 34, 5, "body");
   const callout = layoutWrap(input, input.input.callout ?? "À vous de décider", 32, 2, "callout");
   const bodyBottom = 360 + title.length * 76 + (body.length - 1) * 43 + 18;
-  if (input.strictText && bodyBottom > 865) throw new Error("CONTENT_MEDIA_TEXT_OVERFLOW");
+  if (input.strictText && bodyBottom > 865) recordLayoutOverflow(input);
   let itemY = bodyBottom + 40;
   const items = input.input.items.map(item => {
     const label = layoutWrap(input, item.label, 40, 2, "items[].label");
     const text = layoutWrap(input, item.text, 48, 3, "items[].text");
     const textY = itemY + label.length * 32;
     const bottom = textY + Math.max(0, text.length - 1) * 34 + 18;
-    if (input.strictText && bottom > 865) throw new Error("CONTENT_MEDIA_TEXT_OVERFLOW");
+    if (input.strictText && bottom > 865) recordLayoutOverflow(input);
     const row = `<text x="88" y="${itemY}" font-family="${input.fontFamily}" font-size="26" font-weight="750" fill="${input.text}">${tspans(label, itemY, 32)}</text>
       <text x="88" y="${textY}" font-family="${input.fontFamily}" font-size="26" fill="${input.text}" opacity="0.85">${tspans(text, textY, 34)}</text>`;
     itemY = bottom + 34;
@@ -430,18 +434,30 @@ function resolveSlideLayout(slide: ContentMediaPlan["slides"][number], index: nu
   return index % 2 === 0 ? "checklist" : "insight";
 }
 
+class ContentMediaLayoutErrors extends Error {
+  constructor(readonly errors: readonly Error[]) {
+    super("CONTENT_MEDIA_TEXT_OVERFLOW");
+  }
+}
+
+function recordLayoutOverflow(input: { readonly overflowErrors?: Error[] }, error = new Error("CONTENT_MEDIA_TEXT_OVERFLOW")) {
+  if (!input.overflowErrors) throw error;
+  input.overflowErrors.push(error);
+}
+
 class ContentMediaFieldOverflowError extends Error {
   constructor(readonly constraint: ContentMediaTextConstraint) {
     super("CONTENT_MEDIA_TEXT_OVERFLOW");
   }
 }
 
-function layoutWrap(input: { readonly strictText: boolean }, value: string, maxCharacters: number, maxLines: number, field: string) {
+function layoutWrap(input: { readonly strictText: boolean; readonly overflowErrors?: Error[] }, value: string, maxCharacters: number, maxLines: number, field: string) {
   if (!input.strictText) return wrapText(value, maxCharacters, maxLines);
   try { return wrapComplete(value, maxCharacters, maxLines); }
   catch (error) {
     if (error instanceof Error && error.message === "CONTENT_MEDIA_TEXT_OVERFLOW") {
-      throw new ContentMediaFieldOverflowError({ field, maxCharactersPerLine: maxCharacters, maxLines, actualCharacters: value.trim().replace(/\s+/g, " ").length });
+      recordLayoutOverflow(input, new ContentMediaFieldOverflowError({ field, maxCharactersPerLine: maxCharacters, maxLines, actualCharacters: value.trim().replace(/\s+/g, " ").length }));
+      return wrapText(value, maxCharacters, maxLines);
     }
     throw error;
   }

@@ -32,6 +32,52 @@ describe("DeterministicContentMediaRenderer", () => {
     ] });
   });
 
+  test("reports both paragraph and callout overflow on the same closing page", async () => {
+    const regular = { title: "Vérifier", body: "Comparer les droits." };
+    await expect(new DeterministicContentMediaRenderer().render({
+      format: "linkedin_document", body: "Texte", brandKit: DEFAULT_CONTENT_BRAND_KIT,
+      outputDirectory: `/tmp/noosphere-page-fields-${crypto.randomUUID()}`,
+      plan: { format: "linkedin_document", visualTone: "editorial", title: "Accès", subtitle: null, altText: "Accès", scenes: [],
+        slides: [regular, regular, { ...regular,
+          body: "Pour un pilote, validez séparément l’identité, les métadonnées de permissions et le filtrage effectif. Microsoft documente cette architecture pour Azure Logic Apps et Azure AI Search.",
+          callout: "L’accès à l’assistant n’est pas la preuve de l’accès à chaque connaissance.",
+        }],
+      },
+    })).rejects.toMatchObject({ message: "CONTENT_MEDIA_TEXT_OVERFLOW", errors: [
+      { slideNumber: 3, layout: "closing", textConstraint: { field: "body", maxCharactersPerLine: 34, maxLines: 5 } },
+      { slideNumber: 3, layout: "closing", textConstraint: { field: "callout", maxCharactersPerLine: 32, maxLines: 2 } },
+    ] });
+  });
+
+  test.each(["cover", "closing", "insight", "checklist", "comparison", "framework", "process"] as const)("collects independent text constraints throughout a %s page", async layout => {
+    const regular = { title: "Vérifier", body: "Comparer les droits." };
+    const overflowing = { title: "Titre ".repeat(50), body: "Explication ".repeat(50), kicker: "Rubrique ".repeat(20), callout: "Conclusion ".repeat(40), layout };
+    const slides = layout === "cover" ? [overflowing, regular, regular]
+      : layout === "closing" ? [regular, regular, overflowing] : [regular, overflowing, regular];
+    const failure = await new DeterministicContentMediaRenderer().render({
+      format: "linkedin_document", body: "Texte", brandKit: DEFAULT_CONTENT_BRAND_KIT,
+      outputDirectory: `/tmp/noosphere-all-field-errors-${crypto.randomUUID()}`,
+      plan: { format: "linkedin_document", visualTone: "editorial", title: "Accès", subtitle: null, altText: "Accès", scenes: [], slides },
+    }).then(() => { throw new Error("Overflowing document must not render"); }, error => error);
+    expect(failure.message).toBe("CONTENT_MEDIA_TEXT_OVERFLOW");
+    expect(failure.errors.map((error: { textConstraint?: { field: string } }) => error.textConstraint?.field)).toEqual(expect.arrayContaining(["title", "body", "kicker", "callout"]));
+  });
+
+  test.each(["checklist", "comparison", "framework", "process", "closing"] as const)("continues through overflowing labels and text in every %s item", async layout => {
+    const regular = { title: "Vérifier", body: "Comparer les droits." };
+    const overflowing = { ...regular, layout, items: Array.from({ length: 2 }, () => ({ label: "Rubrique ".repeat(30), text: "Explication ".repeat(40) })) };
+    const slides = layout === "closing" ? [regular, regular, overflowing] : [regular, overflowing, regular];
+    const failure = await new DeterministicContentMediaRenderer().render({
+      format: "linkedin_document", body: "Texte", brandKit: DEFAULT_CONTENT_BRAND_KIT,
+      outputDirectory: `/tmp/noosphere-item-field-errors-${crypto.randomUUID()}`,
+      plan: { format: "linkedin_document", visualTone: "editorial", title: "Accès", subtitle: null, altText: "Accès", scenes: [], slides },
+    }).then(() => { throw new Error("Overflowing items must not render"); }, error => error);
+    expect(failure.message).toBe("CONTENT_MEDIA_TEXT_OVERFLOW");
+    const fields = failure.errors.map((error: { textConstraint?: { field: string } }) => error.textConstraint?.field);
+    expect(fields.filter((field: string) => field === "items[].label")).toHaveLength(2);
+    expect(fields.filter((field: string) => field === "items[].text")).toHaveLength(2);
+  });
+
   test.each(["checklist", "comparison"] as const)("fits a long explanation in %s and rejects excessive copy rather than clipping it", async (layout) => {
     const render = (text: string, count = 1) => new DeterministicContentMediaRenderer().render({
       format: "linkedin_document",
