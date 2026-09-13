@@ -40,6 +40,24 @@ describe("LangChainContentPipelineAgent", () => {
     }
   });
 
+  test("supplies document layout limits on first writing and later editorial repairs", async () => {
+    const payloads: unknown[] = [];
+    const routedModel = { async invoke(input: { payload: unknown }) {
+      payloads.push(input.payload);
+      return { output: draft(), metadata: { provider: "codex-cli", model: "gpt-5.6-luna" } };
+    } } as unknown as WorkspaceStructuredModel;
+    const agent = new LangChainContentPipelineAgent({}, undefined, undefined, undefined, routedModel);
+    const context = { ...pipelineContext(), brief: { ...brief(), format: "linkedin_document" as const } };
+    await agent.write(context);
+    await agent.write({ ...context, draft: draft(), audit: audit(), validationFeedback: ["CONTENT_CRITIQUE_BLOCKER: Complete the explanation."] });
+    for (const payload of payloads) expect(payload).toMatchObject({ mediaLayoutConstraints: { layouts: {
+      cover: { kicker: { maxCharactersPerLine: 24, maxLines: 1 } },
+      closing: { body: { maxCharactersPerLine: 34, maxLines: 5 }, callout: { maxCharactersPerLine: 32, maxLines: 2 } },
+    } } });
+    await agent.write({ ...context, brief: { ...brief(), format: "linkedin_text" } });
+    expect(payloads[2]).not.toHaveProperty("mediaLayoutConstraints");
+  });
+
   test("guides complete short posts while preserving oversized drafts for application repair", async () => {
     let requestedSchema: z.ZodType | undefined;
     const oversized = { ...draft(), body: "a".repeat(1_501) };
@@ -148,7 +166,7 @@ describe("LangChainContentPipelineAgent", () => {
     ]);
     expect(recorded.map(({ purpose, model, promptVersion, contentGenerationRunId }) => ({ purpose, model, promptVersion, contentGenerationRunId }))).toEqual([
       { purpose: "content_brief", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-brief-v9", contentGenerationRunId: context.run.id },
-      { purpose: "content_writer", model: "k3", promptVersion: "noosphere-content-writer-v23", contentGenerationRunId: context.run.id },
+      { purpose: "content_writer", model: "k3", promptVersion: "noosphere-content-writer-v24", contentGenerationRunId: context.run.id },
       { purpose: "content_audit", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-audit-v6", contentGenerationRunId: context.run.id },
       { purpose: "content_critic", model: "k3", promptVersion: "noosphere-content-critic-v18", contentGenerationRunId: context.run.id },
     ]);

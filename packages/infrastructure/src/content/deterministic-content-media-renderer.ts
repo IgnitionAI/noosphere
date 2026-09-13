@@ -1,3 +1,4 @@
+import { DOCUMENT_LAYOUT_TEXT_LIMITS, DOCUMENT_ROW_TEXT_LIMITS, type ContentTextLimit } from "./content-document-layout";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { PDFDocument } from "pdf-lib";
@@ -259,12 +260,12 @@ function renderLayoutContent(input: {
 }
 
 function renderCover(input: Parameters<typeof renderLayoutContent>[0]): string {
-  const title = layoutWrap(input, input.input.title, 19, 5, "title");
-  const body = layoutWrap(input, input.input.body, 34, 4, "body");
+  const title = layoutWrap(input, input.input.title, DOCUMENT_LAYOUT_TEXT_LIMITS.cover.title, "title");
+  const body = layoutWrap(input, input.input.body, DOCUMENT_LAYOUT_TEXT_LIMITS.cover.body, "body");
   if (input.strictText && input.input.items.length) recordLayoutOverflow(input);
   const kicker = input.input.kicker ?? "DOSSIER PRATIQUE";
-  layoutWrap(input, kicker, 24, 1, "kicker");
-  const callout = input.input.callout ? layoutWrap(input, input.input.callout, 54, 2, "callout") : [];
+  layoutWrap(input, kicker, DOCUMENT_LAYOUT_TEXT_LIMITS.cover.kicker, "kicker");
+  const callout = input.input.callout ? layoutWrap(input, input.input.callout, DOCUMENT_LAYOUT_TEXT_LIMITS.cover.callout, "callout") : [];
   const bodyBottom = 390 + title.length * 84 + (body.length - 1) * 43 + 16;
   if (input.strictText && bodyBottom > (callout.length ? 985 : 1060)) recordLayoutOverflow(input);
   return `
@@ -278,9 +279,9 @@ function renderCover(input: Parameters<typeof renderLayoutContent>[0]): string {
 
 function insightTextLines(input: { readonly title: string; readonly body: string; readonly callout: string | null }, strictText = false, overflowErrors?: Error[]) {
   return {
-    title: layoutWrap({ strictText, ...(overflowErrors ? { overflowErrors } : {}) }, input.title, 24, 4, "title"),
-    focus: layoutWrap({ strictText, ...(overflowErrors ? { overflowErrors } : {}) }, input.callout ?? input.body, 29, 5, input.callout ? "callout" : "body"),
-    body: input.callout ? layoutWrap({ strictText, ...(overflowErrors ? { overflowErrors } : {}) }, input.body, 45, 3, "body") : [],
+    title: layoutWrap({ strictText, ...(overflowErrors ? { overflowErrors } : {}) }, input.title, DOCUMENT_LAYOUT_TEXT_LIMITS.insight.title, "title"),
+    focus: layoutWrap({ strictText, ...(overflowErrors ? { overflowErrors } : {}) }, input.callout ?? input.body, DOCUMENT_LAYOUT_TEXT_LIMITS.insight.focus, input.callout ? "callout" : "body"),
+    body: input.callout ? layoutWrap({ strictText, ...(overflowErrors ? { overflowErrors } : {}) }, input.body, DOCUMENT_LAYOUT_TEXT_LIMITS.insight.bodyWithCallout, "body") : [],
   };
 }
 
@@ -304,16 +305,16 @@ function renderChecklist(input: Parameters<typeof renderLayoutContent>[0]): stri
 
 /** Content-sized rows preserve the full explanation instead of clipping to card slots. */
 function renderEditorialRows(input: Parameters<typeof renderLayoutContent>[0]): string {
-  const title = layoutWrap(input, input.input.title, 24, 3, "title");
-  const intro = layoutWrap(input, input.input.body, 54, 4, "body");
-  const callout = input.input.callout ? layoutWrap(input, input.input.callout, 54, 2, "callout") : [];
+  const title = layoutWrap(input, input.input.title, DOCUMENT_LAYOUT_TEXT_LIMITS.checklist.title, "title");
+  const intro = layoutWrap(input, input.input.body, DOCUMENT_LAYOUT_TEXT_LIMITS.checklist.body, "body");
+  const callout = input.input.callout ? layoutWrap(input, input.input.callout, DOCUMENT_LAYOUT_TEXT_LIMITS.checklist.callout, "callout") : [];
   let y = 290 + (title.length - 1) * 68 + 60;
   const introduction = `<text x="88" y="${y}" font-family="${input.fontFamily}" font-size="28" fill="${input.text}">${tspans(intro, y, 35)}</text>`;
   y += (intro.length - 1) * 35 + 62;
   const rows: string[] = [];
   for (const item of input.input.items) {
-    const label = layoutWrap(input, item.label, 50, 2, "items[].label");
-    const text = layoutWrap(input, item.text, 52, 5, "items[].text");
+    const label = layoutWrap(input, item.label, DOCUMENT_LAYOUT_TEXT_LIMITS.checklist.itemLabel, "items[].label");
+    const text = layoutWrap(input, item.text, DOCUMENT_LAYOUT_TEXT_LIMITS.checklist.itemText, "items[].text");
     const textY = y + label.length * 30 + 15;
     const bottom = textY + (text.length - 1) * 34 + 24;
     if (bottom > (callout.length ? 1050 : 1130)) recordLayoutOverflow(input);
@@ -329,15 +330,15 @@ function renderEditorialRows(input: Parameters<typeof renderLayoutContent>[0]): 
 }
 
 function renderFramework(input: Parameters<typeof renderLayoutContent>[0]): string {
-  const title = layoutWrap(input, input.input.title, 24, 3, "title");
-  const intro = layoutWrap(input, input.input.body, 54, 4, "body");
+  const title = layoutWrap(input, input.input.title, DOCUMENT_LAYOUT_TEXT_LIMITS.framework.title, "title");
+  const intro = layoutWrap(input, input.input.body, DOCUMENT_LAYOUT_TEXT_LIMITS.framework.body, "body");
   const introY = 290 + (title.length - 1) * 68 + 60;
   let y = introY + (intro.length - 1) * 35 + 48;
   const items = input.input.items;
   const cards: string[] = [];
   for (let offset = 0; offset < items.length; offset += 2) {
     const row = items.slice(offset, offset + 2).map((item) => ({
-      label: layoutWrap(input, item.label, 23, 2, "items[].label"), text: layoutWrap(input, item.text, 24, 5, "items[].text"),
+      label: layoutWrap(input, item.label, DOCUMENT_LAYOUT_TEXT_LIMITS.framework.itemLabel, "items[].label"), text: layoutWrap(input, item.text, DOCUMENT_LAYOUT_TEXT_LIMITS.framework.itemText, "items[].text"),
     }));
     const height = Math.max(...row.map((item) => 78 + item.label.length * 28 + item.text.length * 36));
     if (y + height > (input.input.callout ? 1060 : 1150)) recordLayoutOverflow(input);
@@ -357,7 +358,7 @@ function renderFramework(input: Parameters<typeof renderLayoutContent>[0]): stri
 
 function renderRowCallout(input: Parameters<typeof renderLayoutContent>[0]): string {
   if (!input.input.callout) return "";
-  const lines = layoutWrap(input, input.input.callout, 54, 2, "callout");
+  const lines = layoutWrap(input, input.input.callout, DOCUMENT_ROW_TEXT_LIMITS.callout, "callout");
   return `<text x="88" y="1100" font-family="${input.fontFamily}" font-size="28" font-weight="700" fill="${input.text}">${tspans(lines, 1100, 35)}</text>`;
 }
 
@@ -366,16 +367,16 @@ function renderComparison(input: Parameters<typeof renderLayoutContent>[0]): str
 }
 
 function renderProcess(input: Parameters<typeof renderLayoutContent>[0]): string {
-  const title = layoutWrap(input, input.input.title, 24, 3, "title");
-  const intro = layoutWrap(input, input.input.body, 54, 4, "body");
+  const title = layoutWrap(input, input.input.title, DOCUMENT_LAYOUT_TEXT_LIMITS.process.title, "title");
+  const intro = layoutWrap(input, input.input.body, DOCUMENT_LAYOUT_TEXT_LIMITS.process.body, "body");
   const introY = 290 + (title.length - 1) * 68 + 60;
   let y = introY + (intro.length - 1) * 35 + 70;
   const rows: string[] = [];
   for (const [index, item] of input.input.items.entries()) {
     // The step number is already drawn in its badge; preserve it there only once.
     const prefix = new RegExp(`^${index + 1}(?:[.)]\\s+|\\s+[—–-]\\s+)`);
-    const label = layoutWrap(input, item.label.replace(prefix, ""), 42, 2, "items[].label");
-    const text = layoutWrap(input, item.text, 44, 5, "items[].text");
+    const label = layoutWrap(input, item.label.replace(prefix, ""), DOCUMENT_LAYOUT_TEXT_LIMITS.process.itemLabel, "items[].label");
+    const text = layoutWrap(input, item.text, DOCUMENT_LAYOUT_TEXT_LIMITS.process.itemText, "items[].text");
     const textY = y + label.length * 32 + 12;
     const bottom = textY + (text.length - 1) * 34 + 24;
     if (bottom > (input.input.callout ? 1050 : 1130)) recordLayoutOverflow(input);
@@ -390,15 +391,15 @@ function renderProcess(input: Parameters<typeof renderLayoutContent>[0]): string
 }
 
 function renderClosing(input: Parameters<typeof renderLayoutContent>[0]): string {
-  const title = layoutWrap(input, input.input.title, 16, 5, "title");
-  const body = layoutWrap(input, input.input.body, 34, 5, "body");
-  const callout = layoutWrap(input, input.input.callout ?? "À vous de décider", 32, 2, "callout");
+  const title = layoutWrap(input, input.input.title, DOCUMENT_LAYOUT_TEXT_LIMITS.closing.title, "title");
+  const body = layoutWrap(input, input.input.body, DOCUMENT_LAYOUT_TEXT_LIMITS.closing.body, "body");
+  const callout = layoutWrap(input, input.input.callout ?? "À vous de décider", DOCUMENT_LAYOUT_TEXT_LIMITS.closing.callout, "callout");
   const bodyBottom = 360 + title.length * 76 + (body.length - 1) * 43 + 18;
   if (input.strictText && bodyBottom > 865) recordLayoutOverflow(input);
   let itemY = bodyBottom + 40;
   const items = input.input.items.map(item => {
-    const label = layoutWrap(input, item.label, 40, 2, "items[].label");
-    const text = layoutWrap(input, item.text, 48, 3, "items[].text");
+    const label = layoutWrap(input, item.label, DOCUMENT_LAYOUT_TEXT_LIMITS.closing.itemLabel, "items[].label");
+    const text = layoutWrap(input, item.text, DOCUMENT_LAYOUT_TEXT_LIMITS.closing.itemText, "items[].text");
     const textY = itemY + label.length * 32;
     const bottom = textY + Math.max(0, text.length - 1) * 34 + 18;
     if (input.strictText && bottom > 865) recordLayoutOverflow(input);
@@ -416,7 +417,7 @@ function renderClosing(input: Parameters<typeof renderLayoutContent>[0]): string
 
 function renderKicker(input: Parameters<typeof renderLayoutContent>[0], y: number): string {
   if (!input.input.kicker) return "";
-  layoutWrap(input, input.input.kicker, 45, 1, "kicker");
+  layoutWrap(input, input.input.kicker, DOCUMENT_ROW_TEXT_LIMITS.kicker, "kicker");
   return `<text x="88" y="${y}" font-family="${input.fontFamily}" font-size="20" font-weight="780" letter-spacing="2" fill="${input.text}">${escapeText(input.input.kicker.toUpperCase())}</text>`;
 }
 
@@ -451,7 +452,8 @@ class ContentMediaFieldOverflowError extends Error {
   }
 }
 
-function layoutWrap(input: { readonly strictText: boolean; readonly overflowErrors?: Error[] }, value: string, maxCharacters: number, maxLines: number, field: string) {
+function layoutWrap(input: { readonly strictText: boolean; readonly overflowErrors?: Error[] }, value: string, limit: ContentTextLimit, field: string) {
+  const { maxCharactersPerLine: maxCharacters, maxLines } = limit;
   if (!input.strictText) return wrapText(value, maxCharacters, maxLines);
   try { return wrapComplete(value, maxCharacters, maxLines); }
   catch (error) {
