@@ -470,3 +470,12 @@ Follow-up to the intermittent crawler test: a deterministic clock-discrepancy re
 The targeted suite passes 11 tests / 35 assertions, including the clock discrepancy (red before fix), preservation of an operation-specific provider error, and successful evidence alongside a globally expired second read. Both independent reviews found no actionable issue. The patch records a triggered study expiry; it does not redesign every source budget around a monotonic clock. No provider settings, production content or deployment changed.
 
 Full `bun run check` exited 0 on the implementation; the subsequently added partial-evidence regression also passed in the targeted suite.
+
+
+### Fresh image generation on writer v19 / critic v16: rejected
+
+A new private Luna-medium generation started at a fresh brief, retaining only the saved KCS idea, actual extracted source, business context and Noosphere brand fixture. Unlike the successful saved-draft critic replay, no brief or draft was reused. The current application pipeline ran eight model calls: brief 14,335 ms; writer 23,938 ms; audit 20,152 ms; writer 23,531 ms; audit 16,616 ms; writer 28,109 ms; audit 22,186 ms; critic 23,788 ms. Total model time: 172,655 ms. Result: not ready (`editorial_brandVoice`, `unsupported_claim`, `ungrounded_statement`); no media rendered or scheduled.
+
+The first and second audits identified factual opening, concluding and image text omitted from the ledger. The writer rewrote substantial copy instead of consistently repairing the coverage. The third audit still found a missing factual sentence and rejected a source paraphrase; the critic additionally rejected a newly introduced reader-facing validation disclaimer about unproven time savings/escalation reductions. This failure contradicts any claim that the saved-draft success establishes stable fresh image generation. Keep the rejection and address coverage/repair behavior without weakening the factual or editorial gates.
+
+Private evidence: `noosphere-skills-kcs-image-fresh-v19-{result,trace}.json` outside the repository. The image-only format was configured in the private input; production settings, records and publication state were not modified. The source/idea was reused, so this does not evaluate fresh discovery.
