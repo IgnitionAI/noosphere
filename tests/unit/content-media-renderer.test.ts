@@ -197,7 +197,7 @@ describe("DeterministicContentMediaRenderer", () => {
     expect(result.mimeType).toBe("application/pdf");
     expect(document.getPageCount()).toBe(5);
     expect(result.pageCount).toBe(5);
-    expect(result.manifest).toEqual(expect.objectContaining({ renderer: "pdf-lib-sharp-v7", narrativeLayouts: ["cover", "insight", "comparison", "process", "closing"] }));
+    expect(result.manifest).toEqual(expect.objectContaining({ renderer: "pdf-lib-sharp-v8", narrativeLayouts: ["cover", "insight", "comparison", "process", "closing"] }));
   });
 
   const ffmpeg = Bun.which("ffmpeg");

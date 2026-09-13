@@ -87,7 +87,7 @@ export class DeterministicContentMediaRenderer implements ContentMediaRenderer {
       height: HEIGHT,
       pageCount: plan.slides.length,
       durationSeconds: null,
-      manifest: { renderer: "pdf-lib-sharp-v7", slides: plan.slides.length, ratio: "4:5", narrativeLayouts: layouts, logo: Boolean(logoBytes) },
+      manifest: { renderer: "pdf-lib-sharp-v8", slides: plan.slides.length, ratio: "4:5", narrativeLayouts: layouts, logo: Boolean(logoBytes) },
     };
   }
 
@@ -308,7 +308,7 @@ function renderEditorialRows(input: Parameters<typeof renderLayoutContent>[0]): 
     const textY = y + label.length * 30 + 15;
     const bottom = textY + (text.length - 1) * 34 + 24;
     if (bottom > (callout.length ? 1050 : 1130)) throw new Error("CONTENT_MEDIA_TEXT_OVERFLOW");
-    rows.push(`<line x1="88" y1="${y - 22}" x2="992" y2="${y - 22}" stroke="${input.primary}" opacity="0.16"/>
+    rows.push(`<line x1="88" y1="${y - 36}" x2="992" y2="${y - 36}" stroke="${input.primary}" opacity="0.16"/>
       <text x="88" y="${y}" font-family="${input.fontFamily}" font-size="26" font-weight="760" fill="${input.text}">${tspans(label, y, 30)}</text>
       <text x="88" y="${textY}" font-family="${input.fontFamily}" font-size="28" fill="${input.text}">${tspans(text, textY, 34)}</text>`);
     y = bottom + 30;
