@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { synchronizeAuditedClaimLedger } from "@outbound/domain/content/content-audit-ledger";
 import { fixtureAuditCoverage } from "../fixtures/content/audit-coverage";
 import { contentAuditEvidenceFingerprint } from "@outbound/application/content/content-audit-context";
-import type { ContentDraftSnapshot, ContentEvidenceAudit } from "@outbound/domain/content/content-asset";
+import { contentAuditCoverageStatus, type ContentDraftSnapshot, type ContentEvidenceAudit } from "@outbound/domain/content/content-asset";
 const statement = "Le filtre utilise les groupes de l’utilisateur.";
 const evidence = [{ key: "source:1", excerpt: statement }];
 const draft: ContentDraftSnapshot = { hook: "Examiner le filtre", body: "Une vérification à préparer.", callToAction: null, factualClaims: [], opinionStatements: [], illustrativeScenarios: [], mediaPlan: { format: "linkedin_document", visualTone: "technical", title: "Contrôler les accès", subtitle: null, altText: "Un contrôle à préparer", scenes: [], slides: [{ title: "Filtrage", body: statement }] } };
@@ -52,4 +52,31 @@ test("repeated support preserves a complete audited set instead of inventing the
   const assessed = fixtureAuditCoverage(draft, {...assessment, reviewedClaims: [...assessment.reviewedClaims, {...assessment.reviewedClaims[0]!, sourceKeys:["source:2"]}]}, sources);
   const result = sync(draft, assessed, ["source:1", "source:2"], contentAuditEvidenceFingerprint(sources));
   expect(result.draft.factualClaims).toEqual([{statement, sourceKeys:["source:1"]}]);
+});
+
+
+test("does not invalidate field coverage by promoting a claim repeated in an unreviewed field", () => {
+  const candidate = {...draft, body: statement};
+  const reviewed = fixtureAuditCoverage(candidate, assessment, evidence);
+  const partial = {...reviewed, coverage: {...reviewed.coverage!, passages: reviewed.coverage!.passages.map(p => p.field === "body" ? {...p, classification: "non_factual" as const, nonFactualReason: "The auditor classified this field as proposed guidance.", claims: []} : p)}};
+  expect(contentAuditCoverageStatus(candidate, partial, contentAuditEvidenceFingerprint(evidence))).toBe("current");
+  const result = sync(candidate, partial);
+  expect(contentAuditCoverageStatus(result.draft, result.audit, contentAuditEvidenceFingerprint(evidence))).toBe("current");
+  expect(result.draft.factualClaims).toEqual([]);
+  expect(result.audit.ungroundedStatements).toContain(statement);
+  expect(result.audit.coverage).toEqual(partial.coverage);
+});
+
+test("retains the uncovered finding while synchronizing an independent fully reviewed span", () => {
+  const independent = "La recherche utilise les droits du lecteur.";
+  const candidate = {...draft, body: statement, mediaPlan: {...draft.mediaPlan, title: independent}};
+  const reviewed = fixtureAuditCoverage(candidate, {...assessment,
+    reviewedClaims: [...assessment.reviewedClaims, {...assessment.reviewedClaims[0]!, statement: independent}],
+    ungroundedStatements: [statement, independent],
+  }, evidence);
+  const partial = {...reviewed, coverage: {...reviewed.coverage!, passages: reviewed.coverage!.passages.map(p => p.field === "body" ? {...p, classification: "non_factual" as const, nonFactualReason: "The auditor classified this field as proposed guidance.", claims: []} : p)}};
+  const result = sync(candidate, partial);
+  expect(result.draft.factualClaims).toEqual([{statement: independent, sourceKeys: ["source:1"]}]);
+  expect(result.audit.ungroundedStatements).toEqual([statement]);
+  expect(contentAuditCoverageStatus(result.draft, result.audit, contentAuditEvidenceFingerprint(evidence))).toBe("current");
 });

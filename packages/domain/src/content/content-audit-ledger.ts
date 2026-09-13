@@ -16,8 +16,19 @@ export function synchronizeAuditedClaimLedger(draft: ContentDraftSnapshot, audit
   }
   // Leave the complete original audit available to the bounded substantive repair path.
   if (!additions.size || draft.factualClaims.length + additions.size > MAX_CONTENT_FACTUAL_CLAIMS) return unchanged;
+  let synchronized = draft;
+  const accepted = new Set<string>();
+  for (const [statement, keys] of additions) {
+    const candidate = { ...synchronized, factualClaims: [...synchronized.factualClaims, { statement, sourceKeys: [...keys] }] };
+    // A promoted claim may also occur in another field classified differently.
+    // Keep it pending for substantive repair unless every occurrence is covered.
+    if (contentAuditCoverageStatus(candidate, audit, evidenceFingerprint) !== "current") continue;
+    synchronized = candidate;
+    accepted.add(statement);
+  }
+  if (!accepted.size) return unchanged;
   return {
-    draft: { ...draft, factualClaims: [...draft.factualClaims, ...[...additions].map(([statement, keys]) => ({ statement, sourceKeys: [...keys] }))] },
-    audit: { ...audit, ungroundedStatements: audit.ungroundedStatements.filter(statement => !additions.has(statement)) },
+    draft: synchronized,
+    audit: { ...audit, ungroundedStatements: audit.ungroundedStatements.filter(statement => !accepted.has(statement)) },
   };
 }
