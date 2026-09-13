@@ -2,7 +2,7 @@ import { contentAuditDeclarations } from "./content-audit-declarations";
 import { contentAuditEvidenceFingerprint } from "@outbound/application/content/content-audit-context";
 import { z } from "zod";
 import { contentDraftSnapshotSchema, contentEvidenceAuditSchema } from "@outbound/contracts/content";
-import { contentPublicFields } from "@outbound/domain/content/content-asset";
+import { contentAuditCoverageStatus, contentPublicFields } from "@outbound/domain/content/content-asset";
 
 /** Only malformed quote locations without substantive objections permit reassessment. */
 export class ContentAuditQuoteLocationError extends Error {
@@ -86,13 +86,23 @@ export function contentAuditModelSpec(context: unknown, system: string) {
       });
       // Keep opposing verdicts, even if they refer to the same repeated statement.
       const reviewedClaims = [...new Map([...result.passageReviews.flatMap(r => r.claims), ...declarations].map(c => [JSON.stringify([c.statement, c.verdict, [...c.sourceKeys].sort()]), c])).values()];
-      const ungroundedStatements = [...new Set(result.passageReviews.flatMap(r => r.claims).filter(c => c.kind === "factual" && !input.draft.factualClaims.some(d => d.statement.includes(c.statement))).map(c => c.statement))];
-      if (reviewedClaims.length > 30 || ungroundedStatements.length > 20) throw new Error("CONTENT_AUDIT_CAPACITY_EXCEEDED");
-      return contentEvidenceAuditSchema.parse({
+      if (reviewedClaims.length > 30) throw new Error("CONTENT_AUDIT_CAPACITY_EXCEEDED");
+      const audit = contentEvidenceAuditSchema.parse({
         topicReviews: topicObligations.map(({id, topic}) => ({topic, ...result.topicReviews[id]!})),
-        reviewedClaims: reviewedClaims.map(({statement, sourceKeys, verdict, reason}) => ({statement, sourceKeys, verdict, reason})), ungroundedStatements, reviewedScenarios: result.reviewedScenarios, forbiddenTopicMatches: result.forbiddenTopicMatches, topicFindings: result.topicFindings,
+        reviewedClaims: reviewedClaims.map(({statement, sourceKeys, verdict, reason}) => ({statement, sourceKeys, verdict, reason})), ungroundedStatements: [], reviewedScenarios: result.reviewedScenarios, forbiddenTopicMatches: result.forbiddenTopicMatches, topicFindings: result.topicFindings,
         coverage: { version: 1, evidenceFingerprint: contentAuditEvidenceFingerprint(input.evidence), passages, declarations },
       });
+      const disputed = new Set(reviewedClaims.filter(claim => claim.verdict !== "supported").map(claim => claim.statement));
+      const undeclared = result.passageReviews.flatMap(review => review.claims).filter(claim => claim.kind === "factual" && !input.draft.factualClaims.some(declared => declared.statement.includes(claim.statement)));
+      // A local positive verdict is insufficient: validate every occurrence as if
+      // the writer had declared it. Keep the authoritative references in coverage,
+      // without expanding the bounded writer ledger or changing public copy.
+      const ungroundedStatements = [...new Set(undeclared.filter(claim =>
+        claim.verdict !== "supported" || disputed.has(claim.statement)
+        || contentAuditCoverageStatus({...input.draft, factualClaims: [...input.draft.factualClaims, {statement: claim.statement, sourceKeys: claim.sourceKeys}]}, audit, audit.coverage!.evidenceFingerprint) !== "current"
+      ).map(claim => claim.statement))];
+      if (ungroundedStatements.length > 20) throw new Error("CONTENT_AUDIT_CAPACITY_EXCEEDED");
+      return {...audit, ungroundedStatements};
     },
   };
 }

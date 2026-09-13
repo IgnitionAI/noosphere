@@ -19,7 +19,7 @@ Make the independent audit responsible for both complete public coverage and fac
 - Bind coverage to the exact draft and evidence context. A public rewrite invalidates earlier coverage. Historical audit snapshots remain readable; absence of coverage cannot certify a newly generated result.
 - After complete validation, synchronize only ledger metadata from supported, exact current spans. Preserve public copy, existing claims and scenario declarations. Never use partial-claim containment to authorize a broader assertion.
 - Preserve negative findings on unchanged passages until explicitly resolved. A later audit omitting an earlier unsupported finding is not a resolution. Do not merge model votes into approval.
-- Respect existing bounded attempts and ledger capacity. If complete metadata cannot fit, request substantive consolidation within that budget; do not truncate claims, expand retries or drop inconvenient findings.
+- Respect existing bounded attempts and ledger capacity. When independently reviewed supported spans exceed the writer ledger capacity, retain their full references in audit coverage after checking every occurrence. Do not duplicate them into the writer ledger or rewrite public copy solely to fit duplicate metadata. Actual audit capacity exhaustion still fails explicitly; never truncate claims, expand retries or drop findings.
 
 Coverage records establish that the model addressed each passage, not that its semantic judgment is infallible. Independent editorial and visual acceptance remain required.
 
@@ -30,7 +30,7 @@ Coverage records establish that the model addressed each passage, not that its s
 3. An explicit unsupported assertion remains blocking if a later review silently omits it. The prototype's diagnostic inferences are unresolved controls, not approved prose.
 4. Mixed factual/opinion passages and explicit fictional cases retain their distinctions; mere writer labels cannot override contradictory evidence.
 5. A reviewed fragment cannot cover a broader promise. Full-claim review with harmless surrounding editorial context remains valid.
-6. Ledger capacity exhaustion retains normal substantive repair; source keys and classification cannot be invented to make metadata fit.
+6. Supported spans can remain in complete audit coverage when the writer ledger is full; every occurrence must be reviewed. Missing reviews, negatives and actual audit capacity exhaustion remain blocking. Source keys and classification cannot be invented to make metadata fit.
 7. Current Luna full-generation trials on more than the captured access-control topic must produce useful posts and media. Inspect actual renderings; compare repeated runs and negative controls. No acceptance solely from manifests, coverage counts or model approval.
 
 ## Implemented prerequisite
@@ -47,7 +47,7 @@ This also conservatively retains unsupported attribution entries flattened into 
 
 ## Audited ledger synchronization
 
-Complete, current field coverage can now append missing supported substantive spans with one complete reviewed source set each. Existing ledger entries, all public fields, opinions and scenario declarations remain unchanged. Attribution, unsupported and unresolved spans are excluded; unrelated findings remain blocking. Unknown source keys or stale coverage prevent synchronization. Exhausting ledger capacity leaves the complete original inputs for bounded substantive repair.
+Complete, current field coverage can now append missing supported substantive spans with one complete reviewed source set each. Existing ledger entries, all public fields, opinions and scenario declarations remain unchanged. Attribution, unsupported and unresolved spans are excluded; unrelated findings remain blocking. Unknown source keys or stale coverage prevent synchronization. Exhausting the writer ledger capacity preserves its original entries and the complete independent audit; the all-occurrence rule below determines whether public repair is necessary.
 
 The application checkpoints the synchronized draft and audit atomically before repair/critique. The repository permits only a normalized non-ledger-identical draft with the original ledger retained as a prefix. A resumed critic checkpoint can use its still-current independent audit to complete references without a new model call, through a guarded audit-stage transition. Crashes before or after the atomic checkpoint resume through ordinary pending-audit handling.
 
@@ -91,3 +91,9 @@ Historical topic labels without locations become explicit unresolved entries wit
 
 
 Each configured forbidden topic now has a required provider topicReviews slot (including an explicit reason for absence), not merely a requirement to locate topics the model chooses to report. Persisted reviews retain those decisions. hasCompleteContentTopicAudit compares the receipt with the strategy's complete expected set, rejects missing/duplicate/foreign reviews and incoherent verdicts or quotations, and is shared by readiness and critic-checkpoint reopening. Historical critic checkpoints with configured topics but no reviews reopen audit without rewriting the draft. The existing strategy contract permits thirty topics, including one-character names; all thirty obligations are supported while the distinct objection capacity remains twenty.
+
+## Supported spans without duplicate writer metadata
+
+The independent audit is also an authoritative claim registry. An undeclared substantive span may avoid a missing-reference repair only when its verdict is supported, its references are supplied evidence keys, no contrary verdict exists, and domain coverage validation succeeds with that span temporarily treated as a writer declaration. This checks every occurrence across public fields; a supported slide does not authorize an unreviewed repetition in the caption. The temporary declaration is never persisted. Original writer declarations, every audit finding and public copy remain intact; writer/audit capacity and retry limits are unchanged. Unsupported, disputed or incompletely reviewed spans still block readiness.
+
+Regression evidence: replaying the frozen V18 audit retains all 26 reviewed claims and 39 public fields with 9 original writer declarations, reconciles 17 fully reviewed supported spans, and changes no public text. This replay needs no model call and does not replace editorial critique or final visual acceptance.

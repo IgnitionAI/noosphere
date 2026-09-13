@@ -4,7 +4,7 @@ import { contentDraftSnapshotSchema } from "@outbound/contracts/content";
 import { AiTaskPauseError } from "@outbound/application/ai/ai-task-pause";
 import { ModelGatewayError } from "@outbound/application/ai/model-gateway";
 import type { AiRunRecorder } from "@outbound/application/ai/ai-run-recorder";
-import { editorialQualityCriteria, type ContentQualityAssessment } from "@outbound/domain/content/content-asset";
+import { evaluateContentReadiness, editorialQualityCriteria, type ContentQualityAssessment } from "@outbound/domain/content/content-asset";
 import { describe, expect, test } from "bun:test";
 import { z } from "zod";
 import { LangChainContentPipelineAgent } from "@outbound/infrastructure/content/langchain-content-pipeline-agent";
@@ -246,7 +246,7 @@ describe("LangChainContentPipelineAgent", () => {
     expect(recorded.map(({ purpose, model, promptVersion, contentGenerationRunId }) => ({ purpose, model, promptVersion, contentGenerationRunId }))).toEqual([
       { purpose: "content_brief", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-brief-v13", contentGenerationRunId: context.run.id },
       { purpose: "content_writer", model: "k3", promptVersion: "noosphere-content-writer-v33", contentGenerationRunId: context.run.id },
-      { purpose: "content_audit", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-audit-v14", contentGenerationRunId: context.run.id },
+      { purpose: "content_audit", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-audit-v15", contentGenerationRunId: context.run.id },
       { purpose: "content_critic", model: "k3", promptVersion: "noosphere-content-critic-v21", contentGenerationRunId: context.run.id },
     ]);
   });
@@ -524,6 +524,29 @@ test("retains opposing audit verdicts for the same statement repeated in two pub
   const result = await new LangChainContentPipelineAgent({}, undefined, undefined, undefined, routed).audit({...pipelineContext(), brief: brief(), draft: candidate});
   expect(result.reviewedClaims).toHaveLength(2);
   expect(result.reviewedClaims).toContainEqual(expect.objectContaining({statement: negative.statement, verdict: "unsupported"}));
+});
+
+test.each(["supported", "unsupported", "unreviewed_repeat"] as const)("retains an undeclared %s public claim in the independent audit without confusing provenance and support", async mode => {
+  const verdict: "supported" | "unsupported" = mode === "unsupported" ? "unsupported" : "supported";
+  const statement = "Une connaissance trouvée peut être réutilisée.";
+  const candidate = {...contentDraftSnapshotSchema.parse(draft()), mediaPlan: {format: "linkedin_image" as const, visualTone: "editorial" as const, title: statement, subtitle: null, altText: "Connaissance", slides: [], scenes: []}};
+  if (mode === "unreviewed_repeat") candidate.body += " " + statement;
+  const extra = {statement, kind: "factual" as const, sourceKeys: verdict === "supported" ? ["proof:1"] : [], verdict, reason: "An independent assessment of the current public statement against the supplied source."};
+  const output = {passageReviews: [
+    {passageId: "body", classification: "mixed", nonFactualReason: "The introduction is a personal opinion.", claims: audit().reviewedClaims.map(c => ({...c, kind: "factual" as const}))},
+    {passageId: "mediaPlan.title", classification: "factual", nonFactualReason: null, claims: [extra]},
+  ], declarationReviews: declaredReviews(candidate), reviewedScenarios: [], forbiddenTopicMatches: [], topicFindings: [], topicReviews: {}};
+  const routed = {async invoke() {return {output, metadata: {provider: "codex-cli", model: "gpt-5.6-luna"}};}} as unknown as WorkspaceStructuredModel;
+  const result = await new LangChainContentPipelineAgent({}, undefined, undefined, undefined, routed).audit({...pipelineContext(), brief: brief(), draft: candidate});
+  expect(result.ungroundedStatements).toEqual(mode === "supported" ? [] : [statement]);
+  expect(result.reviewedClaims).toContainEqual(expect.objectContaining({statement, verdict, sourceKeys: extra.sourceKeys}));
+  expect(result.coverage?.passages[1]?.claims).toEqual([extra]);
+  expect(candidate.factualClaims).toHaveLength(1);
+  const readiness = evaluateContentReadiness({draft: candidate, audit: result, critique: critique(), availableEvidenceKeys: ["proof:1"], recentBodies: []});
+  if (mode !== "supported") {
+    expect(readiness.ready).toBe(false);
+    expect(readiness.blockers).toContain("ungrounded_statement");
+  }
 });
 
 test("records verified bibliographic attribution without inventing a missing substantive claim", async () => {
