@@ -86,7 +86,7 @@ export class LangChainContentPipelineAgent implements ContentPipelineAgent {
       model,
       promptVersion: role === "writer"
         ? "noosphere-content-writer-v26"
-        : role === "critic" ? "noosphere-content-critic-v19" : role === "audit" ? "noosphere-content-audit-v6" : "noosphere-content-brief-v10",
+        : role === "critic" ? "noosphere-content-critic-v19" : role === "audit" ? "noosphere-content-audit-v7" : "noosphere-content-brief-v10",
       shadow: false,
       inputHash: new Bun.CryptoHasher("sha256").update(JSON.stringify(original)).digest("hex"),
       output: recordedOutput,
@@ -308,7 +308,7 @@ function pipelineModelSpec(role: PipelineRole, context: unknown) {
       ...editorialPlaybook.audit,
       "Inspect the full draft sentence by sentence. Review every factual claim, number, capability and outcome against the exact supplied evidence excerpts.",
       "The media plan is public content too. Audit its title, subtitle, slides and scenes with the same strictness as body.",
-      "A source key is not enough: mark unsupported when its excerpt does not prove the wording. Never repair, rewrite or excuse a claim.",
+      "For substantive factual claims, a source key is not enough: mark unsupported when its excerpt does not prove the wording. Verify bibliographic credits against source title, URL and excerpt as instructed, including credits already listed in factualClaims. A hosting platform does not establish author affiliation or institutional endorsement. Never repair, rewrite or excuse a claim.",
       "Conversely, a factual claim that is a faithful verbatim excerpt of an active supplied source must be supported. Never return verdict unsupported with a reason saying the source proves or repeats the statement exactly.",
       "List factual statements omitted from the writer's claim ledger as ungroundedStatements. Match forbidden topics exactly and conservatively.",
       "Do not schedule or publish. Call submit_evidence_audit exactly once.",
