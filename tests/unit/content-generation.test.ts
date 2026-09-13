@@ -361,7 +361,7 @@ describe("CNT-101 grounded content pipeline", () => {
     expect(receivedAudits).toEqual([1, 2].map(attempt => ({ ...audit(), ungroundedStatements: [`Le hook factuel manque au registre (audit ${attempt}).`] })));
     expect(feedback).toEqual([
       ["CONTENT_AUDIT_UNGROUNDED_STATEMENT: Le hook factuel manque au registre (audit 1)."],
-      ["CONTENT_AUDIT_UNGROUNDED_STATEMENT: Le hook factuel manque au registre (audit 2)."],
+      ["CONTENT_AUDIT_UNGROUNDED_STATEMENT: Le hook factuel manque au registre (audit 2).", "CONTENT_AUDIT_UNGROUNDED_STATEMENT: Le hook factuel manque au registre (audit 1)."],
     ]);
     expect(calls).toEqual(["start", "audit", "writer_repair", "draft_repaired", "audit", "writer_repair", "draft_repaired", "audit", "audit_saved", "critic", "ready", "ack"]);
   });
@@ -494,6 +494,42 @@ describe("CNT-101 grounded content pipeline", () => {
     expect(feedback[1]).toEqual([...feedback[0]!, "CONTENT_DRAFT_SCENARIO_INVALID"]);
     expect(saved).toEqual(stillInvalid ? [] : [repaired]);
     expect(audits).toBe(stillInvalid ? 1 : 2);
+  });
+
+  test("retains repaired audit and editorial requirements across alternating repair stages", async () => {
+    const context = pipelineContext("audit");
+    const feedback: Array<readonly string[]> = [];
+    let audits = 0;
+    let critiques = 0;
+    let finalReady = false;
+    const repository = { async loadContext() { return context; }, async startRun() {},
+      async reviseDraftAfterAudit() {}, async reviseDraftAfterCritique() {}, async checkpointAudit() {}, async saveAudit() {},
+      async completeRun(input: { readiness: { ready: boolean } }) { finalReady = input.readiness.ready; },
+    } as unknown as ContentGenerationRepository;
+    const processor = new ContentGenerationJobProcessor(repository, {
+      async buildBrief() { throw new Error("must not replay"); },
+      async write(input) { feedback.push([...(input.validationFeedback ?? [])]); return draft(); },
+      async audit(input) {
+        audits++;
+        return { ...audit(input.draft, input.evidence), ungroundedStatements: audits === 1
+          ? ["Une garantie de restauration ne figure pas dans la source."]
+          : audits === 3 ? ["Une nouvelle conclusion dépasse la source."] : [] };
+      },
+      async critique() {
+        return ++critiques === 1 ? { ...critique(), issues: [{ severity: "blocker" as const,
+          code: "missing_demonstration", message: "Montrer un résultat observable dans le cas fictif." }] } : critique();
+      },
+    }, { async acknowledge() {} } as unknown as JobQueue);
+    await processor.process(job(context.run.workspaceId, context.run.id));
+    expect(feedback).toHaveLength(3);
+    expect(feedback[1]).toContain("CONTENT_AUDIT_UNGROUNDED_STATEMENT: Une garantie de restauration ne figure pas dans la source.");
+    expect(feedback[1]).toContain("CONTENT_CRITIQUE_BLOCKER [missing_demonstration]: Montrer un résultat observable dans le cas fictif.");
+    expect(feedback[2]).toContain("CONTENT_AUDIT_UNGROUNDED_STATEMENT: Une nouvelle conclusion dépasse la source.");
+    expect(feedback[2]).toContain("CONTENT_CRITIQUE_BLOCKER [missing_demonstration]: Montrer un résultat observable dans le cas fictif.");
+    expect(feedback[2]).toContain("CONTENT_AUDIT_UNGROUNDED_STATEMENT: Une garantie de restauration ne figure pas dans la source.");
+    expect(audits).toBe(4);
+    expect(critiques).toBe(2);
+    expect(finalReady).toBe(true);
   });
 
   test("retains corrected attribution feedback when a later critique requests a better demonstration", async () => {

@@ -154,6 +154,13 @@ export class ContentGenerationJobProcessor {
     if (typeof payload.runId !== "string") throw new Error("CONTENT_GENERATION_JOB_INVALID");
     try {
       let context = await this.repository.loadContext({ workspaceId: job.workspaceId, runId: payload.runId });
+      // Writer guidance across this bounded attempt, not evidence or readiness state.
+      // Later repairs must preserve requirements already satisfied by earlier drafts.
+      let repairFeedbackHistory: readonly string[] = [];
+      const retainRepairFeedback = (current: readonly string[]) => {
+        repairFeedbackHistory = [...new Set([...current, ...repairFeedbackHistory])];
+        return repairFeedbackHistory;
+      };
       await this.repository.startRun({ workspaceId: job.workspaceId, runId: payload.runId, now: this.now() });
 
       if (stageAtOrBefore(context.run.stage, "brief")) {
@@ -181,7 +188,7 @@ export class ContentGenerationJobProcessor {
         for (let repairAttempt = 1; repairAttempt <= 2; repairAttempt += 1) {
           const auditFeedback = repairableAuditFeedback(audit);
           if (auditFeedback.length === 0 || audit.unresolvedTopics?.some(finding => finding.statement === null)) break;
-          draft = await this.#writeGroundedDraft({ ...context, brief: context.brief, draft, audit, repairMode: repairAttempt === 1 && canRepairClaimLedger(draft, audit, context.evidence) ? "claim_ledger" : undefined }, auditFeedback);
+          draft = await this.#writeGroundedDraft({ ...context, brief: context.brief, draft, audit, repairMode: repairAttempt === 1 && canRepairClaimLedger(draft, audit, context.evidence) ? "claim_ledger" : undefined }, retainRepairFeedback(auditFeedback));
           await this.repository.reviseDraftAfterAudit({ workspaceId: job.workspaceId, runId: payload.runId, draft, now: this.now() });
           ({ draft, audit } = await this.#auditDraft({ ...context, brief: context.brief, draft }, audit));
         }
@@ -211,18 +218,16 @@ export class ContentGenerationJobProcessor {
         });
         let media: StoredContentMedia | null;
         ({ readiness, media } = await this.#renderReadyDraft({ ...context, draft, brief: context.brief }, readiness));
-        let critiqueFeedbackHistory: readonly string[] = [];
         for (let repairAttempt = 1; repairAttempt <= 2 && !readiness.ready; repairAttempt += 1) {
           const critiqueFeedback = repairableCritiqueFeedback(critique, readiness);
           if (critiqueFeedback.length === 0) break;
-          critiqueFeedbackHistory = [...new Set([...critiqueFeedback, ...critiqueFeedbackHistory])];
-          draft = await this.#writeGroundedDraft({ ...context, brief: context.brief, draft, audit }, critiqueFeedbackHistory);
+          draft = await this.#writeGroundedDraft({ ...context, brief: context.brief, draft, audit }, retainRepairFeedback(critiqueFeedback));
           await this.repository.reviseDraftAfterCritique({ workspaceId: job.workspaceId, runId: payload.runId, draft, now: this.now() });
           ({ draft, audit } = await this.#auditDraft({ ...context, brief: context.brief, draft }, audit));
           for (let auditRepairAttempt = 1; auditRepairAttempt <= 2; auditRepairAttempt += 1) {
             const auditFeedback = repairableAuditFeedback(audit);
             if (auditFeedback.length === 0 || audit.unresolvedTopics?.some(finding => finding.statement === null)) break;
-            draft = await this.#writeGroundedDraft({ ...context, brief: context.brief, draft, audit, repairMode: auditRepairAttempt === 1 && canRepairClaimLedger(draft, audit, context.evidence) ? "claim_ledger" : undefined }, auditFeedback);
+            draft = await this.#writeGroundedDraft({ ...context, brief: context.brief, draft, audit, repairMode: auditRepairAttempt === 1 && canRepairClaimLedger(draft, audit, context.evidence) ? "claim_ledger" : undefined }, retainRepairFeedback(auditFeedback));
             await this.repository.reviseDraftAfterAudit({ workspaceId: job.workspaceId, runId: payload.runId, draft, now: this.now() });
             ({ draft, audit } = await this.#auditDraft({ ...context, brief: context.brief, draft }, audit));
           }
