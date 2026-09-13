@@ -271,6 +271,20 @@ databaseDescribe("CNT-101 durable content generation", () => {
     const negativeCheckpoint = { ...audit, reviewedClaims: audit.reviewedClaims.map(claim => ({ ...claim, verdict: "unsupported" as const })) };
     await repository.checkpointAudit({ workspaceId, runId: improved.id, audit: negativeCheckpoint, now });
     expect(await repository.loadContext({ workspaceId, runId: improved.id })).toMatchObject({run: {stage: "audit"}, audit: negativeCheckpoint});
+    const beforeLedger = await repository.loadContext({workspaceId, runId: improved.id});
+    const extraClaim = {statement: "Les équipes juridiques ont besoin d’une preuve résoluble avant de décider.", sourceKeys: [sourceKey]};
+    const ledgerDraft = {...beforeLedger.draft!, factualClaims: [...beforeLedger.draft!.factualClaims, extraClaim]};
+    const ledgerAudit = fixtureAuditCoverage(ledgerDraft, {...audit, reviewedClaims: [...audit.reviewedClaims, {...extraClaim, verdict: "supported" as const, reason: "Synthetic source verdict for the persistence fixture."}]}, beforeLedger.evidence);
+    await repository.checkpointAudit({workspaceId, runId: improved.id, draft: ledgerDraft, audit: ledgerAudit, now});
+    const afterLedger = await repository.loadContext({workspaceId, runId: improved.id});
+    expect(afterLedger.draft?.factualClaims).toContainEqual(extraClaim);
+    expect(afterLedger.audit).toMatchObject(ledgerAudit);
+    await expect(repository.checkpointAudit({workspaceId, runId: improved.id, draft: {...ledgerDraft, body: ledgerDraft.body + " Unexpected rewritten public copy."}, audit: ledgerAudit, now})).rejects.toThrow("CONTENT_LEDGER_PUBLIC_COPY_CHANGED");
+    expect((await repository.loadContext({workspaceId, runId: improved.id})).draft?.body).toBe(draft.body);
+    await expect(repository.checkpointAudit({workspaceId, runId: improved.id, draft: {...ledgerDraft, factualClaims: [extraClaim]}, audit: ledgerAudit, now})).rejects.toThrow("CONTENT_LEDGER_EXISTING_CLAIMS_CHANGED");
+    expect((await repository.loadContext({workspaceId, runId: improved.id})).draft?.factualClaims).toEqual(ledgerDraft.factualClaims);
+    // Restore the negative checkpoint to exercise repair continuity separately below.
+    await repository.checkpointAudit({workspaceId, runId: improved.id, audit: negativeCheckpoint, now});
     const auditRepairedDraft = { ...draft, hook: "Une preuve auditée reste résoluble." };
     await repository.reviseDraftAfterAudit({ workspaceId, runId: improved.id, draft: auditRepairedDraft, now });
     expect((await repository.loadContext({ workspaceId, runId: improved.id })).draft?.hook).toBe(auditRepairedDraft.hook);

@@ -745,3 +745,14 @@ A deterministic local replay of the two earlier field-path Luna audit captures r
 Remaining: metadata synchronization, semantic reformulation handling, misleading-scenario/topic continuity, explicit resolution using new evidence, and fresh useful Luna posts with inspected media. Conservative retention can block an unchanged false-positive until the assertion is removed; no majority-vote approval is implemented.
 
 Final check for assertion continuity: `bun run check` exit0; 1,273 unit/HTTP tests, 4,334 assertions, crawler62passed, types and builds green (/tmp/noosphere-findings-final-check.log). Both independent review axes cleared implemented scope including the pending-audit completion guard. Local PostgreSQL tests3passed144assertions. No push, deploy or publication.
+
+
+## Synchronize independently audited references without rewriting (local, 2026-09-13)
+
+The no-writer regression was red: a supported omitted statement triggered another writer call. It now passes by appending its reviewed source metadata and clearing only its exact missing-ledger finding. A current critic checkpoint also completes this metadata without another model audit. Unit negatives cover missing/stale coverage, unavailable sources, unsupported/unresolved spans, attribution and capacity. Separate source sets are not combined into a fictional aggregate review; synchronization is idempotent.
+
+The repository atomically persists draft and audit under a row lock, preserving non-ledger content and existing ledger entries. Real PostgreSQL tests reload after synchronization and reject public rewrite or deletion of an existing reference. A test fixture's short invalid rewrite initially failed schema validation first; using a valid-length altered body exercised the intended public-copy guard.
+
+Deterministic replay of the captured field-path Luna draft/audit against its original matching evidence fingerprint added five references, reduced missing ledger statements from six to one, and preserved all non-ledger content exactly. The unsupported opening remains unsupported and ungrounded. Private evidence: noosphere-audited-ledger-sync-replay.json in the inbound-quality evidence directory. Zero new model calls. This establishes metadata behavior on a real captured case, not fresh writing quality or visual acceptance.
+
+Final validation: `bun run check` exit0, 1,286 unit/HTTP tests and 4,357 assertions, crawler62passed, types/architecture/self-hosting/backend/web checks green (/tmp/noosphere-ledger-sync-final-check.log). Isolated PostgreSQL file3passed150assertions (/tmp/noosphere-ledger-atomic-reviewed.log). Both reviews cleared the implemented slice. Uninterrupted current-critic resume avoids writer/audit calls but still calls the critic; interrupted reopen/checkpoint/save can safely repeat audit during recovery. No release/deployment or fresh-generation acceptance is claimed.

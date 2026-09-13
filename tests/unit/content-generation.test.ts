@@ -837,3 +837,40 @@ test("an audit objection survives a quota pause before the writer repairs the dr
   await new ContentGenerationJobProcessor(repository, agent, queue).process(job(context.run.workspaceId, context.run.id));
   expect(completed).toMatchObject({readiness: {ready: false, blockers: expect.arrayContaining(["unresolved_audit_claim"])}});
 });
+
+test("synchronizes an audited omitted reference before the critic without another writer call", async () => {
+  const base = pipelineContext("audit");
+  const candidate = { ...draft(), factualClaims: [] };
+  const context = { ...base, draft: candidate };
+  const saved: unknown[] = [];
+  let completed: unknown;
+  const repository = { async loadContext() { return context; }, async startRun() {},
+    async checkpointAudit(input: unknown) { saved.push(input); }, async saveAudit() {}, async failRun() {},
+    async completeRun(input: unknown) { completed = input; },
+  } as unknown as ContentGenerationRepository;
+  await new ContentGenerationJobProcessor(repository, {
+    async buildBrief() { throw new Error("must preserve brief"); },
+    async write() { throw new Error("an already supported statement must not trigger a writer call"); },
+    async audit(input) { return { ...audit(input.draft, input.evidence), ungroundedStatements: [draft().factualClaims[0]!.statement] }; },
+    async critique(input) { expect(input.draft).toEqual(draft()); return critique(); },
+  }, { async acknowledge() {} } as unknown as JobQueue).process(job(context.run.workspaceId, context.run.id));
+  expect(saved).toHaveLength(1);
+  expect(saved[0]).toMatchObject({ draft: draft(), audit: {ungroundedStatements: []} });
+  expect(completed).toMatchObject({readiness: {ready: true, blockers: []}});
+});
+
+test("a current critic checkpoint can complete audited references without repeating model audit", async () => {
+  const base = pipelineContext("audit");
+  const candidate = {...draft(), factualClaims: []};
+  const context = {...base, run: {...base.run, stage: "critic" as const}, draft: candidate, audit: {...audit(candidate, base.evidence), ungroundedStatements: [draft().factualClaims[0]!.statement]}};
+  const calls: string[] = [];
+  const repository = { async loadContext() { return context; }, async startRun() {}, async reopenAudit() {calls.push("reopen");},
+    async checkpointAudit(input: {draft: unknown}) {expect(input.draft).toEqual(draft()); calls.push("checkpoint");}, async saveAudit() {calls.push("audit_saved");}, async failRun() {},
+    async completeRun(input: {readiness: {ready: boolean}}) {expect(input.readiness.ready).toBe(true); calls.push("complete");},
+  } as unknown as ContentGenerationRepository;
+  await new ContentGenerationJobProcessor(repository, {
+    async buildBrief() {throw new Error("must preserve brief");}, async write() {throw new Error("must preserve public copy");},
+    async audit() {throw new Error("current complete evidence audit must not repeat");}, async critique() {calls.push("critic"); return critique();},
+  }, {async acknowledge() {calls.push("ack");}} as unknown as JobQueue).process(job(context.run.workspaceId, context.run.id));
+  expect(calls).toEqual(["reopen", "checkpoint", "audit_saved", "critic", "complete", "ack"]);
+});

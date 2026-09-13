@@ -1,6 +1,6 @@
 # Complete audit coverage for unchanged Inbound content
 
-Status: field-aware audit response, coverage receipt, readiness enforcement and durable historical-checkpoint reassessment implemented. Unsupported reviewed assertions now survive re-audits and restarts while their exact public text remains. Ledger synchronization, scenario/topic tracking and explicit evidence-based resolution remain unimplemented. Not accepted for deployment.
+Status: field-aware audit response, coverage receipt, readiness enforcement and durable historical-checkpoint reassessment implemented. Unsupported reviewed assertions now survive re-audits and restarts while their exact public text remains. Ledger synchronization is implemented for fully audited supported exact spans. Scenario/topic tracking and explicit evidence-based resolution remain unimplemented. Not accepted for deployment.
 
 ## Problem
 
@@ -43,3 +43,10 @@ Readiness now requires the reviewed text to contain the entire declared claim, r
 The current slice checkpoints each independent audit before a repair can pause, retains the previous assessment through draft repair and critic-stage reopening, and marks those runs as pending audit. Completion is rejected until the run reaches critic again; an old retained audit is not approval. New audit snapshots carry unresolved prior unsupported assertions whose exact wording still occurs in caption or media. Model silence or a conflicting favorable vote cannot clear them. Removal releases that exact finding, with the replacement still subject to current coverage, grounding and editorial checks.
 
 This also conservatively retains unsupported attribution entries flattened into reviewedClaims. It is not semantic paraphrase tracking or source-based adjudication. Scenario/topic findings and newly available evidence need their own explicit resolution semantics. Capacity overflow fails instead of truncating findings.
+
+
+## Audited ledger synchronization
+
+Complete, current field coverage can now append missing supported substantive spans with one complete reviewed source set each. Existing ledger entries, all public fields, opinions and scenario declarations remain unchanged. Attribution, unsupported and unresolved spans are excluded; unrelated findings remain blocking. Unknown source keys or stale coverage prevent synchronization. Exhausting ledger capacity leaves the complete original inputs for bounded substantive repair.
+
+The application checkpoints the synchronized draft and audit atomically before repair/critique. The repository permits only a normalized non-ledger-identical draft with the original ledger retained as a prefix. A resumed critic checkpoint can use its still-current independent audit to complete references without a new model call, through a guarded audit-stage transition. Crashes before or after the atomic checkpoint resume through ordinary pending-audit handling.

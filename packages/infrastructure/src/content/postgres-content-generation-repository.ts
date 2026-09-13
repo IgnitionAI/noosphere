@@ -306,7 +306,24 @@ export class PostgresContentGenerationRepository implements ContentGenerationRep
   }
 
   async checkpointAudit(input: Parameters<ContentGenerationRepository["checkpointAudit"]>[0]): Promise<void> {
-    await this.advance(input.workspaceId, input.runId, "audit", { auditSnapshot: input.audit, updatedAt: input.now }, "ContentAuditCheckpointed", input.now);
+    await this.database.transaction(async tx => {
+      const run = (await tx.select().from(contentGenerationRuns).where(and(eq(contentGenerationRuns.workspaceId, input.workspaceId), eq(contentGenerationRuns.id, input.runId))).limit(1).for("update"))[0];
+      if (!run) throw new Error("CONTENT_GENERATION_RUN_NOT_FOUND");
+      if (stageAfter(run.stage as ContentGenerationStage, "audit")) return;
+      if (run.stage !== "audit") throw new Error("CONTENT_GENERATION_STAGE_CONFLICT");
+      let draftSnapshot = run.draftSnapshot;
+      if (input.draft) {
+        const previous = contentDraftSnapshotSchema.parse(run.draftSnapshot);
+        const next = contentDraftSnapshotSchema.parse(input.draft);
+        const { factualClaims: previousClaims, ...previousCopy } = previous;
+        const { factualClaims: nextClaims, ...nextCopy } = next;
+        if (JSON.stringify(previousCopy) !== JSON.stringify(nextCopy)) throw new Error("CONTENT_LEDGER_PUBLIC_COPY_CHANGED");
+        if (JSON.stringify(previousClaims) !== JSON.stringify(nextClaims.slice(0, previousClaims.length))) throw new Error("CONTENT_LEDGER_EXISTING_CLAIMS_CHANGED");
+        draftSnapshot = next;
+      }
+      await tx.update(contentGenerationRuns).set({ draftSnapshot, auditSnapshot: input.audit, updatedAt: input.now }).where(and(eq(contentGenerationRuns.workspaceId, input.workspaceId), eq(contentGenerationRuns.id, input.runId)));
+      await appendEvent(tx, { workspaceId: input.workspaceId, userId: null, runId: input.runId, eventType: "ContentAuditCheckpointed", changes: { at: input.now.toISOString() } });
+    });
   }
 
   async reopenAudit(input: Parameters<ContentGenerationRepository["reopenAudit"]>[0]): Promise<void> {

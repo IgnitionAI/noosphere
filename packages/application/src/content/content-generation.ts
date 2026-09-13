@@ -1,3 +1,4 @@
+import { synchronizeAuditedClaimLedger } from "@outbound/domain/content/content-audit-ledger";
 import { retainUnresolvedAuditClaims } from "@outbound/domain/content/content-audit-findings";
 import { contentAuditEvidenceFingerprint } from "@outbound/application/content/content-audit-context";
 import { AiTaskPauseError } from "@outbound/application/ai/ai-task-pause";
@@ -93,7 +94,7 @@ export interface ContentGenerationRepository {
   saveDraft(input: { workspaceId: string; runId: string; draft: ContentDraftSnapshot; now: Date }): Promise<void>;
   reviseDraftAfterAudit(input: { workspaceId: string; runId: string; draft: ContentDraftSnapshot; now: Date }): Promise<void>;
   reviseDraftAfterCritique(input: { workspaceId: string; runId: string; draft: ContentDraftSnapshot; now: Date }): Promise<void>;
-  checkpointAudit(input: { workspaceId: string; runId: string; audit: ContentEvidenceAudit; now: Date }): Promise<void>;
+  checkpointAudit(input: { workspaceId: string; runId: string; audit: ContentEvidenceAudit; draft?: ContentDraftSnapshot; now: Date }): Promise<void>;
   reopenAudit(input: { workspaceId: string; runId: string; now: Date }): Promise<void>;
   saveAudit(input: { workspaceId: string; runId: string; audit: ContentEvidenceAudit; now: Date }): Promise<void>;
   completeRun(input: { workspaceId: string; runId: string; critique: ContentEditorialCritique; readiness: { ready: boolean; blockers: readonly string[] }; media?: StoredContentMedia | null; now: Date }): Promise<void>;
@@ -174,22 +175,27 @@ export class ContentGenerationJobProcessor {
       }
       if (stageAtOrBefore(context.run.stage, "audit")) {
         if (!context.brief || !context.draft) throw new Error("CONTENT_DRAFT_CHECKPOINT_MISSING");
-        let draft = context.draft;
-        let audit = await this.#auditDraft({ ...context, brief: context.brief, draft }, context.audit);
+        let { draft, audit } = await this.#auditDraft({ ...context, brief: context.brief, draft: context.draft }, context.audit);
         for (let repairAttempt = 1; repairAttempt <= 2; repairAttempt += 1) {
           const auditFeedback = repairableAuditFeedback(audit);
           if (auditFeedback.length === 0) break;
           draft = await this.#writeGroundedDraft({ ...context, brief: context.brief, draft, audit, repairMode: repairAttempt === 1 && canRepairClaimLedger(draft, audit, context.evidence) ? "claim_ledger" : undefined }, auditFeedback);
           await this.repository.reviseDraftAfterAudit({ workspaceId: job.workspaceId, runId: payload.runId, draft, now: this.now() });
-          audit = await this.#auditDraft({ ...context, brief: context.brief, draft }, audit);
+          ({ draft, audit } = await this.#auditDraft({ ...context, brief: context.brief, draft }, audit));
         }
         await this.repository.saveAudit({ workspaceId: job.workspaceId, runId: payload.runId, audit, now: this.now() });
         context = { ...context, draft, audit, run: { ...context.run, stage: "critic" } };
       }
       if (stageAtOrBefore(context.run.stage, "critic")) {
         if (!context.brief || !context.draft || !context.audit) throw new Error("CONTENT_AUDIT_CHECKPOINT_MISSING");
-        let draft = context.draft;
-        let audit = context.audit;
+        const synchronized = synchronizeAuditedClaimLedger(context.draft, context.audit, context.evidence.map(item => item.key), contentAuditEvidenceFingerprint(context.evidence));
+        if (synchronized.draft !== context.draft) {
+          await this.repository.reopenAudit({ workspaceId: job.workspaceId, runId: payload.runId, now: this.now() });
+          await this.repository.checkpointAudit({ workspaceId: job.workspaceId, runId: payload.runId, ...synchronized, now: this.now() });
+          await this.repository.saveAudit({ workspaceId: job.workspaceId, runId: payload.runId, audit: synchronized.audit, now: this.now() });
+        }
+        let draft = synchronized.draft;
+        let audit = synchronized.audit;
         let critique = await this.agent.critique({ ...context, brief: context.brief, draft, audit });
         assertMediaPlanMatchesBrief(context.brief, draft);
         let readiness = evaluateContentReadiness({
@@ -209,13 +215,13 @@ export class ContentGenerationJobProcessor {
           critiqueFeedbackHistory = [...new Set([...critiqueFeedback, ...critiqueFeedbackHistory])];
           draft = await this.#writeGroundedDraft({ ...context, brief: context.brief, draft, audit }, critiqueFeedbackHistory);
           await this.repository.reviseDraftAfterCritique({ workspaceId: job.workspaceId, runId: payload.runId, draft, now: this.now() });
-          audit = await this.#auditDraft({ ...context, brief: context.brief, draft }, audit);
+          ({ draft, audit } = await this.#auditDraft({ ...context, brief: context.brief, draft }, audit));
           for (let auditRepairAttempt = 1; auditRepairAttempt <= 2; auditRepairAttempt += 1) {
             const auditFeedback = repairableAuditFeedback(audit);
             if (auditFeedback.length === 0) break;
             draft = await this.#writeGroundedDraft({ ...context, brief: context.brief, draft, audit, repairMode: auditRepairAttempt === 1 && canRepairClaimLedger(draft, audit, context.evidence) ? "claim_ledger" : undefined }, auditFeedback);
             await this.repository.reviseDraftAfterAudit({ workspaceId: job.workspaceId, runId: payload.runId, draft, now: this.now() });
-            audit = await this.#auditDraft({ ...context, brief: context.brief, draft }, audit);
+            ({ draft, audit } = await this.#auditDraft({ ...context, brief: context.brief, draft }, audit));
           }
           await this.repository.saveAudit({ workspaceId: job.workspaceId, runId: payload.runId, audit, now: this.now() });
           critique = await this.agent.critique({ ...context, brief: context.brief, draft, audit });
@@ -264,11 +270,12 @@ export class ContentGenerationJobProcessor {
     }
   }
 
-  async #auditDraft(context: ContentGenerationContext & { readonly brief: ContentBriefSnapshot; readonly draft: ContentDraftSnapshot }, previous: ContentEvidenceAudit | null): Promise<ContentEvidenceAudit> {
+  async #auditDraft(context: ContentGenerationContext & { readonly brief: ContentBriefSnapshot; readonly draft: ContentDraftSnapshot }, previous: ContentEvidenceAudit | null): Promise<{ draft: ContentDraftSnapshot; audit: ContentEvidenceAudit }> {
     const current = await this.agent.audit(context);
     const audit = retainUnresolvedAuditClaims(context.draft, current, previous);
-    await this.repository.checkpointAudit({ workspaceId: context.run.workspaceId, runId: context.run.id, audit, now: this.now() });
-    return audit;
+    const synchronized = synchronizeAuditedClaimLedger(context.draft, audit, context.evidence.map(item => item.key), contentAuditEvidenceFingerprint(context.evidence));
+    await this.repository.checkpointAudit({ workspaceId: context.run.workspaceId, runId: context.run.id, ...synchronized, now: this.now() });
+    return synchronized;
   }
 
   async #produceMedia(context: ContentGenerationContext & { readonly brief: ContentBriefSnapshot; readonly draft: ContentDraftSnapshot }): Promise<StoredContentMedia> {
