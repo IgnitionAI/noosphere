@@ -4,7 +4,7 @@ import { ModelGatewayError } from "@outbound/application/ai/model-gateway";
 import { contentPublicText, invalidEditorialAssessmentCriteria } from "@outbound/domain/content/content-asset";
 import { editorialPlaybook } from "@outbound/infrastructure/content/content-editorial-playbook";
 import { contentRuntimeSkills } from "@outbound/infrastructure/content/content-runtime-skills";
-import { selectNextContentFormat } from "@outbound/domain/content/content-brand-kit";
+import { selectNextContentFormat, linkedinContentFormats } from "@outbound/domain/content/content-brand-kit";
 import { ChatOpenAI } from "@langchain/openai";
 import { tool } from "@langchain/core/tools";
 import { z, type ZodType } from "zod";
@@ -15,6 +15,7 @@ import type { AiCapability, ModelRoute } from "@outbound/application/ai/model-ga
 import {
   contentBriefSnapshotSchema,
   contentDraftSnapshotSchema,
+  contentDraftGenerationSchema,
   currentContentEditorialCritiqueSchema,
   contentEvidenceAuditSchema,
 } from "@outbound/contracts/content";
@@ -84,7 +85,7 @@ export class LangChainContentPipelineAgent implements ContentPipelineAgent {
       provider,
       model,
       promptVersion: role === "writer"
-        ? "noosphere-content-writer-v24"
+        ? "noosphere-content-writer-v25"
         : role === "critic" ? "noosphere-content-critic-v18" : role === "audit" ? "noosphere-content-audit-v6" : "noosphere-content-brief-v9",
       shadow: false,
       inputHash: new Bun.CryptoHasher("sha256").update(JSON.stringify(original)).digest("hex"),
@@ -264,7 +265,7 @@ function pipelineModelSpec(role: PipelineRole, context: unknown) {
   if (role === "writer") return {
     name: "submit_linkedin_draft",
     description: "Submit one grounded LinkedIn draft, its media plan and explicit claim ledger.",
-    schema: contentDraftSnapshotSchema,
+    schema: contentDraftGenerationSchema(z.object({ brief: z.object({ format: z.enum(linkedinContentFormats) }) }).parse(context).brief.format),
     system: [
       "You are Noosphere's principal LinkedIn writer. Write in French unless the strategy explicitly uses another language.",
       contentRuntimeSkills.strategist,

@@ -1,3 +1,4 @@
+import { contentDraftSnapshotSchema } from "@outbound/contracts/content";
 import { AiTaskPauseError } from "@outbound/application/ai/ai-task-pause";
 import { ModelGatewayError } from "@outbound/application/ai/model-gateway";
 import type { AiRunRecorder } from "@outbound/application/ai/ai-run-recorder";
@@ -40,6 +41,54 @@ describe("LangChainContentPipelineAgent", () => {
     }
   });
 
+  test.each(["linkedin_text", "linkedin_image", "linkedin_document", "linkedin_video"] as const)("restricts generated media to its requested format: %s", async format => {
+    const plan = { format, visualTone: "editorial" as const, title: format === "linkedin_text" ? null : "Contrôler les droits",
+      subtitle: null, altText: format === "linkedin_text" ? null : "Vérifier les documents autorisés.",
+      slides: format === "linkedin_document" ? Array.from({ length: 3 }, () => ({ title: "Vérifier", body: "Comparer les permissions." })) : [],
+      scenes: format === "linkedin_video" ? Array.from({ length: 3 }, () => ({ title: "Vérifier", body: "Comparer les permissions.", durationSeconds: 4 })) : [],
+    };
+    const candidate = { ...draft(), mediaPlan: plan };
+    const routedModel = { async invoke(input: { schema: z.ZodType }) {
+      expect(input.schema.safeParse(candidate).success).toBe(true);
+      expect(input.schema.safeParse(draft()).success).toBe(false);
+      const otherFormat = format === "linkedin_text" ? "linkedin_image" : "linkedin_text";
+      expect(input.schema.safeParse({ ...candidate, mediaPlan: { ...plan, format: otherFormat } }).success).toBe(false);
+      const invalid = format === "linkedin_document" ? { ...plan, slides: plan.slides.slice(0, 2) }
+        : format === "linkedin_video" ? { ...plan, scenes: plan.scenes.slice(0, 2) }
+        : { ...plan, slides: [{ title: "Vérifier", body: "Comparer les permissions." }] };
+      expect(input.schema.safeParse({ ...candidate, mediaPlan: invalid }).success).toBe(false);
+      return { output: candidate, metadata: { provider: "codex-cli", model: "gpt-5.6-luna" } };
+    } } as unknown as WorkspaceStructuredModel;
+    await new LangChainContentPipelineAgent({}, undefined, undefined, undefined, routedModel).write({ ...pipelineContext(), brief: { ...brief(), format } });
+  });
+
+  test("still reads historical text drafts without a media plan", () => {
+    expect(contentDraftSnapshotSchema.parse(draft()).mediaPlan).toMatchObject({ format: "linkedin_text", title: null, altText: null, slides: [], scenes: [] });
+  });
+
+  test("requires document metadata in the model schema on initial writing and repair", async () => {
+    const document = { ...draft(), mediaPlan: { format: "linkedin_document" as const, visualTone: "editorial" as const,
+      title: "Contrôler les droits", subtitle: null, altText: "Trois pages sur le contrôle des droits.", scenes: [],
+      slides: Array.from({ length: 3 }, () => ({ title: "Vérifier", body: "Comparer les permissions." })),
+    } };
+    let calls = 0;
+    const routedModel = { async invoke(input: { schema: z.ZodType }) {
+      calls++;
+      expect(input.schema.safeParse(document).success).toBe(true);
+      for (const field of ["title", "altText"] as const) {
+        expect(input.schema.safeParse({ ...document, mediaPlan: { ...document.mediaPlan, [field]: null } }).success).toBe(false);
+      }
+      expect(input.schema.safeParse({ ...document, mediaPlan: { ...document.mediaPlan, format: "linkedin_text" } }).success).toBe(false);
+      expect(input.schema.safeParse({ ...document, mediaPlan: { ...document.mediaPlan, slides: [] } }).success).toBe(false);
+      return { output: document, metadata: { provider: "codex-cli", model: "gpt-5.6-luna" } };
+    } } as unknown as WorkspaceStructuredModel;
+    const agent = new LangChainContentPipelineAgent({}, undefined, undefined, undefined, routedModel);
+    const context = { ...pipelineContext(), brief: { ...brief(), format: "linkedin_document" as const } };
+    await agent.write(context);
+    await agent.write({ ...context, draft: document, validationFeedback: ["CONTENT_DRAFT_UNSOURCED_NUMBER"] });
+    expect(calls).toBe(2);
+  });
+
   test("supplies document layout limits on first writing and later editorial repairs", async () => {
     const payloads: unknown[] = [];
     const routedModel = { async invoke(input: { payload: unknown }) {
@@ -60,7 +109,7 @@ describe("LangChainContentPipelineAgent", () => {
 
   test("guides complete short posts while preserving oversized drafts for application repair", async () => {
     let requestedSchema: z.ZodType | undefined;
-    const oversized = { ...draft(), body: "a".repeat(1_501) };
+    const oversized = { ...draft(), body: "a".repeat(1_501), mediaPlan: { format: "linkedin_text", visualTone: "editorial", title: null, subtitle: null, altText: null, slides: [], scenes: [] } };
     const routedModel = {
       async invoke(input: { schema: z.ZodType }) {
         requestedSchema = input.schema;
@@ -166,7 +215,7 @@ describe("LangChainContentPipelineAgent", () => {
     ]);
     expect(recorded.map(({ purpose, model, promptVersion, contentGenerationRunId }) => ({ purpose, model, promptVersion, contentGenerationRunId }))).toEqual([
       { purpose: "content_brief", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-brief-v9", contentGenerationRunId: context.run.id },
-      { purpose: "content_writer", model: "k3", promptVersion: "noosphere-content-writer-v24", contentGenerationRunId: context.run.id },
+      { purpose: "content_writer", model: "k3", promptVersion: "noosphere-content-writer-v25", contentGenerationRunId: context.run.id },
       { purpose: "content_audit", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-audit-v6", contentGenerationRunId: context.run.id },
       { purpose: "content_critic", model: "k3", promptVersion: "noosphere-content-critic-v18", contentGenerationRunId: context.run.id },
     ]);
