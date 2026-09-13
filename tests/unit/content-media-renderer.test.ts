@@ -5,6 +5,23 @@ import { DeterministicContentMediaRenderer } from "@outbound/infrastructure/cont
 import { DEFAULT_CONTENT_BRAND_KIT } from "@outbound/domain/content/content-brand-kit";
 
 describe("DeterministicContentMediaRenderer", () => {
+  test("renders a binary decision with both labelled outcomes", async () => {
+    const result = await new DeterministicContentMediaRenderer().render({
+      format: "linkedin_document", body: "Texte", brandKit: DEFAULT_CONTENT_BRAND_KIT,
+      outputDirectory: `/tmp/noosphere-decision-${crypto.randomUUID()}`,
+      plan: {format: "linkedin_document", visualTone: "editorial", title: "Support", subtitle: null, altText: "Deux décisions", scenes: [], slides: [
+        {layout: "cover", title: "Créer un article ?", body: "Rechercher avant de créer."},
+        {layout: "decision", title: "La recherche décide", body: "Un article répond-il au besoin ?", items: [
+          {label: "Article trouvé", text: "Réutiliser et améliorer si nécessaire."},
+          {label: "Aucun article trouvé", text: "Analyser la solution, puis créer."},
+        ]},
+        {layout: "closing", title: "À vérifier", body: "Rechercher sur le prochain ticket."},
+      ]},
+    });
+    expect(result.pageCount).toBe(3);
+    expect(result.manifest.narrativeLayouts).toEqual(["cover", "decision", "closing"]);
+  });
+
   test("identifies the overflowing cover kicker without blaming its body", async () => {
     const plan = { format: "linkedin_document" as const, visualTone: "editorial" as const, title: "Accès", subtitle: null, altText: "Accès", scenes: [], slides: [
       { layout: "cover" as const, title: "Authentifié ≠ autorisé", body: "L’identité ne prouve pas les droits.", kicker: "NOOSPHERE · ACCÈS GOUVERNÉ" },
@@ -246,13 +263,13 @@ describe("DeterministicContentMediaRenderer", () => {
   });
 
   test("renders comparison differently from checklist for identical options", async () => {
-    const render = async (layout: "comparison" | "checklist") => {
+    const render = async (layout: "comparison" | "checklist" | "decision", text = "Observer les résultats disponibles.") => {
       const result = await new DeterministicContentMediaRenderer().render({
         format: "linkedin_document", body: "Comparer", brandKit: DEFAULT_CONTENT_BRAND_KIT,
         outputDirectory: `/tmp/noosphere-comparison-columns-${crypto.randomUUID()}`,
         plan: { format: "linkedin_document", visualTone: "editorial", title: "Comparer", subtitle: null, altText: "Options", scenes: [], slides: [
           { title: "Comparer", body: "Deux options." },
-          { layout, title: "Les options", body: "Choisir selon le contexte.", items: [{ label: "Première option", text: "Observer les résultats disponibles." }, { label: "Seconde option", text: "Vérifier les conditions applicables." }] },
+          { layout, title: "Les options", body: "Choisir selon le contexte.", items: [{ label: "Première option", text }, { label: "Seconde option", text: "Vérifier les conditions applicables." }] },
           { title: "Décider", body: "Garder le contexte." },
         ] },
       });
@@ -262,6 +279,7 @@ describe("DeterministicContentMediaRenderer", () => {
       return images.entries().map(([, ref]) => pdf.context.lookup(ref)).flatMap(x => x instanceof PDFRawStream ? [new Bun.CryptoHasher("sha256").update(x.getContents()).digest("hex")] : []);
     };
     expect(await render("comparison")).not.toEqual(await render("checklist"));
+    expect(await render("decision")).not.toEqual(await render("decision", "Une autre action est nécessaire."));
   });
 
   test("renders a LinkedIn carousel as a multi-page PDF document", async () => {
@@ -291,7 +309,7 @@ describe("DeterministicContentMediaRenderer", () => {
     expect(result.mimeType).toBe("application/pdf");
     expect(document.getPageCount()).toBe(5);
     expect(result.pageCount).toBe(5);
-    expect(result.manifest).toEqual(expect.objectContaining({ renderer: "pdf-lib-sharp-v9", narrativeLayouts: ["cover", "insight", "comparison", "process", "closing"] }));
+    expect(result.manifest).toEqual(expect.objectContaining({ renderer: "pdf-lib-sharp-v10", narrativeLayouts: ["cover", "insight", "comparison", "process", "closing"] }));
   });
 
   const ffmpeg = Bun.which("ffmpeg");

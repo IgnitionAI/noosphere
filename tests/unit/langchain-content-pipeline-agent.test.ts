@@ -29,6 +29,7 @@ describe("LangChainContentPipelineAgent", () => {
     const d = await agent.write({ ...context, brief: b });
     const a = await agent.audit({ ...context, brief: b, draft: d });
     await agent.critique({ ...context, brief: b, draft: d, audit: a });
+    expect(calls.map(({ systemPrompt }) => systemPrompt.includes("# Deliverable Designer"))).toEqual([true, true, false, false]);
     expect(calls.map(({ systemPrompt }) => ({
       strategy: systemPrompt.includes("# Content strategy"),
       brand: systemPrompt.includes("# Brand and creative review"),
@@ -61,6 +62,33 @@ describe("LangChainContentPipelineAgent", () => {
       return { output: candidate, metadata: { provider: "codex-cli", model: "gpt-5.6-luna" } };
     } } as unknown as WorkspaceStructuredModel;
     await new LangChainContentPipelineAgent({}, undefined, undefined, undefined, routedModel).write({ ...pipelineContext(), brief: { ...brief(), format } });
+  });
+
+  test.each([false, true])("constrains writer source references to supplied evidence (repair: %s)", async repair => {
+    const base = pipelineContext();
+    const key = "public_web:" + "a".repeat(64);
+    const context = { ...base, evidence: [{ ...base.evidence[0]!, key }] };
+    const candidate = { ...contentDraftSnapshotSchema.parse(draft()), factualClaims: [{ statement: draft().factualClaims[0]!.statement, sourceKeys: [key] }] };
+    const routedModel = { async invoke(input: { schema: z.ZodType }) {
+      expect(input.schema.safeParse(candidate).success).toBe(true);
+      const altered = { ...candidate, factualClaims: [{ ...candidate.factualClaims[0]!, sourceKeys: [key.slice(0, -8)] }] };
+      expect(input.schema.safeParse(altered).success).toBe(false);
+      const json = z.toJSONSchema(input.schema) as any;
+      expect(json.properties.factualClaims.items.properties.sourceKeys.items.enum).toEqual([key]);
+      return { output: candidate, metadata: { provider: "codex-cli", model: "gpt-5.6-luna" } };
+    } } as unknown as WorkspaceStructuredModel;
+    await new LangChainContentPipelineAgent({}, undefined, undefined, undefined, routedModel).write({
+      ...context, brief: brief(), ...(repair ? { draft: candidate, validationFeedback: ["CONTENT_DRAFT_UNRESOLVED_CLAIM"] } : {}),
+    });
+  });
+
+  test("rejects a decision without exactly two branches before rendering", () => {
+    const candidate = contentDraftSnapshotSchema.parse(draft());
+    const slide = {layout: "decision", title: "Choisir", body: "Un article existe-t-il ?", items: [{label: "Trouvé", text: "Réutiliser."}, {label: "Absent", text: "Analyser, puis créer."}]};
+    const parse = (items: typeof slide.items) => contentDraftSnapshotSchema.safeParse({...candidate, mediaPlan: {...candidate.mediaPlan, format: "linkedin_document", slides: [{...slide, items}]}});
+    expect(parse(slide.items).success).toBe(true);
+    expect(parse(slide.items.slice(0, 1)).success).toBe(false);
+    expect(parse([...slide.items, slide.items[0]!]).success).toBe(false);
   });
 
   test("still reads historical text drafts without a media plan", () => {
@@ -215,8 +243,8 @@ describe("LangChainContentPipelineAgent", () => {
       { role: "critic", model: "k3", effort: "max" },
     ]);
     expect(recorded.map(({ purpose, model, promptVersion, contentGenerationRunId }) => ({ purpose, model, promptVersion, contentGenerationRunId }))).toEqual([
-      { purpose: "content_brief", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-brief-v11", contentGenerationRunId: context.run.id },
-      { purpose: "content_writer", model: "k3", promptVersion: "noosphere-content-writer-v31", contentGenerationRunId: context.run.id },
+      { purpose: "content_brief", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-brief-v12", contentGenerationRunId: context.run.id },
+      { purpose: "content_writer", model: "k3", promptVersion: "noosphere-content-writer-v32", contentGenerationRunId: context.run.id },
       { purpose: "content_audit", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-audit-v13", contentGenerationRunId: context.run.id },
       { purpose: "content_critic", model: "k3", promptVersion: "noosphere-content-critic-v21", contentGenerationRunId: context.run.id },
     ]);

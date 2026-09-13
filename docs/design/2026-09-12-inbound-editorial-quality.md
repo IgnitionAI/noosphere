@@ -249,3 +249,12 @@ outputs remain recorded in private evidence, including unsuccessful attempts.
 Full local check passed before the latest media changes: 1131 unit/HTTP tests,
 crawler tests, TypeScript and builds. Browser suite: 52 passed, 4 conditional skips;
 a targeted controlled/provider-free run is checking those omitted scenarios.
+
+
+### 2026-09-13 — Deliverable conception and binary diagrams
+
+The manually authored KCS prototype established an explicit reference: question, decision flow, operational comparison, reusable check. It is not autonomous-generation evidence. The production renderer now supports a `decision` page: body is the question, exactly two item labels describe conditions and their text describes actions. Contract validation rejects missing or extra branches; rendering uses shared strict text limits and checks complete vertical fit. Existing layouts remain available.
+
+An original `deliverable-designer` runtime skill is embedded for brief and writer, requiring a reader outcome, meaningful representation, distinct page jobs, a usable takeaway, factual scope and a complementary caption. It does not copy third-party Kimi sources. Brief provenance is v12, writer v32, renderer v10. The writer also constrains factual source keys to supplied evidence, including on repairs.
+
+Evidence: the initial raster regression proved decision item edits had no effect (items were omitted by fallback rendering); it now passes. The actual renderer produced a three-page local PDF with a visually inspected decision page. Focused suites passed 83 tests; `bun run check` passed types, architecture, self-hosting, unit/HTTP, crawler and builds. Paired spec/standards review identified the brief version omission, corrected before commit. These checks establish local capability and distribution only. Live autonomous output, VPS canary and final editorial acceptance remain outstanding. No publishing resumed and no production data changed.

@@ -11,7 +11,7 @@ import type { ContentMediaPlan } from "@outbound/domain/content/content-asset";
 
 const WIDTH = 1080;
 const HEIGHT = 1350;
-type CarouselLayout = "cover" | "insight" | "checklist" | "framework" | "comparison" | "process" | "closing";
+type CarouselLayout = "cover" | "insight" | "checklist" | "framework" | "comparison" | "decision" | "process" | "closing";
 type CarouselItem = { readonly label: string; readonly text: string };
 
 export class DeterministicContentMediaRenderer implements ContentMediaRenderer {
@@ -98,7 +98,7 @@ export class DeterministicContentMediaRenderer implements ContentMediaRenderer {
       height: HEIGHT,
       pageCount: plan.slides.length,
       durationSeconds: null,
-      manifest: { renderer: "pdf-lib-sharp-v9", slides: plan.slides.length, ratio: "4:5", narrativeLayouts: layouts, logo: Boolean(logoBytes) },
+      manifest: { renderer: "pdf-lib-sharp-v10", slides: plan.slides.length, ratio: "4:5", narrativeLayouts: layouts, logo: Boolean(logoBytes) },
     };
   }
 
@@ -255,7 +255,7 @@ function renderLayoutContent(input: {
   const layout = input.input.layout;
   const render = layout === "cover" ? renderCover : layout === "closing" ? renderClosing
     : layout === "checklist" ? renderChecklist : layout === "framework" ? renderFramework
-    : layout === "comparison" ? renderComparison : layout === "process" ? renderProcess : renderInsight;
+    : layout === "decision" ? renderDecision : layout === "comparison" ? renderComparison : layout === "process" ? renderProcess : renderInsight;
   const svg = render(checkedInput);
   // Diagnostic wrapping may shorten temporary lines, but failed content never reaches image rendering.
   if (errors.length) throw new ContentMediaLayoutErrors(errors);
@@ -378,6 +378,38 @@ function renderComparison(input: Parameters<typeof renderLayoutContent>[0]): str
   // Historical single-item comparisons have no second option to place alongside.
   if (input.input.items.length < 2) return renderEditorialRows(input);
   return renderOptionGrid(input, DOCUMENT_LAYOUT_TEXT_LIMITS.comparison, input.input.items.length === 2 ? 380 : 0);
+}
+
+function renderDecision(input: Parameters<typeof renderLayoutContent>[0]): string {
+  if (input.input.items.length !== 2) throw new Error("CONTENT_MEDIA_DECISION_REQUIRES_TWO_BRANCHES");
+  const limits = DOCUMENT_LAYOUT_TEXT_LIMITS.decision;
+  const title = layoutWrap(input, input.input.title, limits.title, "title");
+  const question = layoutWrap(input, input.input.body, limits.body, "body");
+  const questionY = 290 + (title.length - 1) * 68 + 80;
+  const questionHeight = 70 + (question.length - 1) * 38;
+  const forkY = questionY + questionHeight + 50;
+  const cardY = forkY + 80;
+  const branches = input.input.items.map(item => ({
+    label: layoutWrap(input, item.label, limits.itemLabel, "items[].label"),
+    text: layoutWrap(input, item.text, limits.itemText, "items[].text"),
+  }));
+  const labelHeight = Math.max(...branches.map(item => item.label.length)) * 32;
+  const cardHeight = 78 + labelHeight + Math.max(...branches.map(item => item.text.length)) * 36;
+  if (cardY + cardHeight > (input.input.callout ? 1060 : 1150)) recordLayoutOverflow(input);
+  const questionText = escapeAttribute(bestContrastColor(input.primary, input.background, "#FFFFFF"));
+  const cards = branches.map((item, index) => {
+    const x = 88 + index * 464;
+    const center = x + 220;
+    const textY = cardY + 48 + labelHeight + 24;
+    return `<path d="M540 ${questionY + questionHeight}V${forkY}H${center}V${cardY - 18}m-8 -10l8 10 8 -10" fill="none" stroke="${input.text}" stroke-width="3"/>
+      <rect x="${x}" y="${cardY}" width="440" height="${cardHeight}" rx="16" fill="${input.accent}" opacity="0.12"/>
+      <text x="${x + 28}" y="${cardY + 44}" font-family="${input.fontFamily}" font-size="26" font-weight="780" fill="${input.text}">${tspans(item.label, cardY + 44, 32, x + 28)}</text>
+      <text x="${x + 28}" y="${textY}" font-family="${input.fontFamily}" font-size="28" fill="${input.text}">${tspans(item.text, textY, 36, x + 28)}</text>`;
+  });
+  return `${renderKicker(input, 205)}<text x="88" y="290" font-family="${input.fontFamily}" font-size="62" font-weight="790" fill="${input.text}">${tspans(title, 290, 68)}</text>
+    <rect x="180" y="${questionY}" width="720" height="${questionHeight}" rx="16" fill="${input.primary}"/>
+    <text x="210" y="${questionY + 45}" font-family="${input.fontFamily}" font-size="30" font-weight="700" fill="${questionText}">${tspans(question, questionY + 45, 38, 210)}</text>
+    ${cards.join("")}${renderRowCallout(input)}`;
 }
 
 function renderProcess(input: Parameters<typeof renderLayoutContent>[0]): string {

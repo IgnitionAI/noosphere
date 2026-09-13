@@ -39,7 +39,7 @@ export interface ContentMediaPlan {
     readonly title: string;
     readonly body: string;
     /** Optional for backward compatibility with the first rich-media snapshots. */
-    readonly layout?: "auto" | "cover" | "insight" | "checklist" | "framework" | "comparison" | "process" | "closing";
+    readonly layout?: "auto" | "cover" | "insight" | "checklist" | "framework" | "comparison" | "decision" | "process" | "closing";
     readonly kicker?: string | null;
     readonly callout?: string | null;
     readonly items?: readonly {

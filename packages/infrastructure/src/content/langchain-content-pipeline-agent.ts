@@ -3,7 +3,7 @@ import { claimLedgerModelSpec } from "./content-claim-ledger-repair";
 import { DOCUMENT_WRITING_LAYOUT_CONSTRAINTS } from "./content-document-layout";
 import { AiTaskPauseError } from "@outbound/application/ai/ai-task-pause";
 import { ModelGatewayError } from "@outbound/application/ai/model-gateway";
-import { contentPublicText, invalidEditorialAssessmentCriteria } from "@outbound/domain/content/content-asset";
+import { MAX_CONTENT_FACTUAL_CLAIMS, contentPublicText, invalidEditorialAssessmentCriteria } from "@outbound/domain/content/content-asset";
 import { editorialPlaybook } from "@outbound/infrastructure/content/content-editorial-playbook";
 import { contentRuntimeSkills } from "@outbound/infrastructure/content/content-runtime-skills";
 import { selectNextContentFormat, linkedinContentFormats } from "@outbound/domain/content/content-brand-kit";
@@ -98,8 +98,8 @@ export class LangChainContentPipelineAgent implements ContentPipelineAgent {
       provider,
       model,
       promptVersion: role === "writer"
-        ? "noosphere-content-writer-v31"
-        : role === "critic" ? "noosphere-content-critic-v21" : role === "audit" ? "noosphere-content-audit-v13" : "noosphere-content-brief-v11",
+        ? "noosphere-content-writer-v32"
+        : role === "critic" ? "noosphere-content-critic-v21" : role === "audit" ? "noosphere-content-audit-v13" : "noosphere-content-brief-v12",
       shadow: false,
       inputHash: new Bun.CryptoHasher("sha256").update(JSON.stringify(original)).digest("hex"),
       output: recordedOutput,
@@ -258,6 +258,20 @@ async function invokePipelineModel(input: Parameters<ModelInvoker>[0]) {
   return "decode" in spec ? spec.decode(output) : output;
 }
 
+function writerModelSchema(context: unknown) {
+  const input = z.object({
+    brief: z.object({ format: z.enum(linkedinContentFormats) }),
+    evidence: z.array(z.object({ key: z.string().min(1).max(500) })),
+  }).parse(context);
+  const schema = contentDraftGenerationSchema(input.brief.format);
+  const keys = [...new Set(input.evidence.map(source => source.key))];
+  if (keys.length === 0) return schema.extend({ factualClaims: schema.shape.factualClaims.max(0) });
+  const claim = schema.shape.factualClaims.element.extend({
+    sourceKeys: z.array(z.enum(keys as [string, ...string[]])).min(1).max(12),
+  });
+  return schema.extend({ factualClaims: z.array(claim).max(MAX_CONTENT_FACTUAL_CLAIMS) });
+}
+
 function pipelineModelSpec(role: PipelineRole, context: unknown) {
   if (role === "brief") return {
     name: "submit_content_brief",
@@ -267,6 +281,7 @@ function pipelineModelSpec(role: PipelineRole, context: unknown) {
       "You are Noosphere's bounded LinkedIn brief writer.",
       contentRuntimeSkills.strategist,
       ...editorialPlaybook.brief,
+      contentRuntimeSkills.designer,
       "Turn the supplied idea into one precise brief. Use only exact evidence keys and authorized claim IDs from the input.",
       "The problem, angle and objective must be specific to the offer and audience. Choose only a CTA from the strategy, or null.",
       "Choose exactly one format enabled by brandKit that serves the reader's decision: linkedin_text for nuance, linkedin_image for one memorable point, linkedin_document for a 3-9 page educational carousel, linkedin_video for a 12-60 second motion story. preferredFormat reflects weeklyMix and recentFormats; use it to break ties between equally useful treatments, not to stretch a short observation into a carousel.",
@@ -280,12 +295,13 @@ function pipelineModelSpec(role: PipelineRole, context: unknown) {
   if (role === "writer") return {
     name: "submit_linkedin_draft",
     description: "Submit one grounded LinkedIn draft, its media plan and explicit claim ledger.",
-    schema: contentDraftGenerationSchema(z.object({ brief: z.object({ format: z.enum(linkedinContentFormats) }) }).parse(context).brief.format),
+    schema: writerModelSchema(context),
     system: [
       "You are Noosphere's principal LinkedIn writer. Write in French unless the strategy explicitly uses another language.",
       contentRuntimeSkills.strategist,
       contentRuntimeSkills.guardian,
       ...editorialPlaybook.writer,
+      contentRuntimeSkills.designer,
       "Use the complete offer context, audience, idea, brief, real evidence and recent posts. The post must be specific enough that it cannot be swapped into another company.",
       "Open with a concrete tension, observation or consequence. Never use empty thought-leadership hooks, fabricated urgency or generic B2B advice.",
       "Write one focused idea. Prefer 500 to 1100 characters and never exceed 1500 characters. When evidence is thin, write a shorter post instead of padding it with inferred mechanisms, outcomes or process claims. Use one reader CTA. A numbered diagnostic checklist may contain questions that help apply the method; a question mark in a quoted source title is not a reader CTA.",
@@ -296,7 +312,7 @@ function pipelineModelSpec(role: PipelineRole, context: unknown) {
       "Every factualClaims.statement must be a verbatim contiguous excerpt of the body or one visible media field (a title, subtitle, slide, item or scene). Never paraphrase the ledger separately. A fact explained in the carousel need not also be copied into the caption merely to satisfy the ledger; keep each supported public claim traceable where it is actually shown.",
       "Always return mediaPlan. Its format must exactly match brief.format. For linkedin_text, leave title/subtitle/altText null and slides/scenes empty. For linkedin_image, provide a sharp title, optional subtitle and useful alt text. For linkedin_document, provide 3-9 concise slides that form a visual narrative. Choose the fewest pages that fully explain the point; never add pages merely to repeat it. For linkedin_video, provide 3-8 concise scenes totaling 12-60 seconds. Never copy the whole post into the visual.",
       "For linkedin_document, use mediaLayoutConstraints on every draft and repair. These are the renderer’s actual field limits; keep margin for wrapping and shared page space. Never treat them as a reason to omit essential reasoning.",
-      "For linkedin_document, design every slide deliberately. Slide 1 uses layout cover, the last uses closing. Choose each middle layout among insight, checklist, framework, comparison and process for its communication job. A short document may have one substantive middle slide. Vary layouts when the reasoning benefits; never add a slide merely to meet a layout quota. Avoid a monotonous sequence of numbered paragraph slides.",
+      "For linkedin_document, design every slide deliberately. Slide 1 uses layout cover, the last uses closing. Choose each middle layout among insight, checklist, framework, comparison, decision and process for its communication job. A short document may have one substantive middle slide. Vary layouts when the reasoning benefits; never add a slide merely to meet a layout quota. Avoid a monotonous sequence of numbered paragraph slides.",
       "Use kicker to orient the reader, callout for one memorable sentence, and 2-4 structured items for checklist, framework, comparison or process. Each item needs a short label and one concrete sentence. Keep each slide focused on one job and favor visual hierarchy over filling space.",
       "All factual statements and numbers shown in the media plan are public copy and obey the same evidence ledger as body.",
       "If validationFeedback contains CONTENT_DRAFT_TOO_LONG, use the measured body length and limit to rewrite more concisely. Remove repeated explanations and unnecessary implementation detail, preserving the useful point and source attribution. Never cut a sentence or a URL; synchronize every ledger with the revised copy.",

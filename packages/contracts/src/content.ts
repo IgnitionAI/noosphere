@@ -79,14 +79,16 @@ const contentMediaPlanSchema = z.object({
     slides: z.array(z.object({
       title: z.string().trim().min(2).max(140),
       body: z.string().trim().min(3).max(500),
-      layout: z.enum(["auto", "cover", "insight", "checklist", "framework", "comparison", "process", "closing"]).optional().default("auto"),
+      layout: z.enum(["auto", "cover", "insight", "checklist", "framework", "comparison", "decision", "process", "closing"]).optional().default("auto"),
       kicker: z.string().trim().min(2).max(80).nullable().optional().default(null),
       callout: z.string().trim().min(2).max(240).nullable().optional().default(null),
       items: z.array(z.object({
         label: z.string().trim().min(1).max(80),
         text: z.string().trim().min(2).max(220),
       }).strict()).max(4).optional().default([]),
-    }).strict()).max(9),
+    }).strict().refine(slide => slide.layout !== "decision" || slide.items.length === 2, {
+      message: "A decision needs exactly two labelled branches", path: ["items"],
+    })).max(9),
     scenes: z.array(z.object({
       title: z.string().trim().min(2).max(140),
       body: z.string().trim().min(3).max(500),
