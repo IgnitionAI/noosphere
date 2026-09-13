@@ -1,3 +1,4 @@
+import { contentAuditModelSpec } from "@outbound/infrastructure/content/content-audit-coverage";
 import { contentAuditDeclarations } from "@outbound/infrastructure/content/content-audit-declarations";
 import { contentDraftSnapshotSchema } from "@outbound/contracts/content";
 import { AiTaskPauseError } from "@outbound/application/ai/ai-task-pause";
@@ -130,7 +131,7 @@ describe("LangChainContentPipelineAgent", () => {
     await agent.write({ ...context, draft: draft(), audit: audit(), validationFeedback: ["CONTENT_CRITIQUE_BLOCKER: Complete the explanation."] });
     for (const payload of payloads) expect(payload).toMatchObject({ mediaLayoutConstraints: { layouts: {
       cover: { kicker: { maxCharactersPerLine: 24, maxLines: 1 } },
-      closing: { body: { maxCharactersPerLine: 34, maxLines: 5 }, callout: { maxCharactersPerLine: 32, maxLines: 2 } },
+      closing: { body: { maxCharactersPerLine: 34, maxLines: 5 }, callout: { maxCharactersPerLine: 32, maxLines: 4 } },
     } } });
     await agent.write({ ...context, brief: { ...brief(), format: "linkedin_text" } });
     expect(payloads[2]).not.toHaveProperty("mediaLayoutConstraints");
@@ -245,7 +246,7 @@ describe("LangChainContentPipelineAgent", () => {
     expect(recorded.map(({ purpose, model, promptVersion, contentGenerationRunId }) => ({ purpose, model, promptVersion, contentGenerationRunId }))).toEqual([
       { purpose: "content_brief", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-brief-v13", contentGenerationRunId: context.run.id },
       { purpose: "content_writer", model: "k3", promptVersion: "noosphere-content-writer-v33", contentGenerationRunId: context.run.id },
-      { purpose: "content_audit", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-audit-v13", contentGenerationRunId: context.run.id },
+      { purpose: "content_audit", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-audit-v14", contentGenerationRunId: context.run.id },
       { purpose: "content_critic", model: "k3", promptVersion: "noosphere-content-critic-v21", contentGenerationRunId: context.run.id },
     ]);
   });
@@ -490,6 +491,10 @@ test("rejects missing, duplicated, invented or ungrounded audit coverage", async
   const valid = { passageReviews: [{passageId: "body", classification: "mixed", nonFactualReason: "The opening expresses a personal point of view.", claims: audit().reviewedClaims.map(c => ({...c, kind: "factual" as const}))}], declarationReviews: declaredReviews(candidate), reviewedScenarios: [], forbiddenTopicMatches: [], topicFindings: [], topicReviews: {} };
   const review = valid.passageReviews[0]!;
   const factual = review.claims[0]!;
+  const schema = contentAuditModelSpec({...context, draft: candidate}, "").schema;
+  const withoutSources = {...valid, passageReviews: [{...review, claims: [{...factual, sourceKeys: []}]}]};
+  expect(schema.safeParse(withoutSources).success).toBe(false);
+  expect(schema.safeParse({...withoutSources, passageReviews: [{...review, claims: [{...factual, verdict: "unsupported", sourceKeys: []}]}]}).success).toBe(true);
   for (const output of [
     {...valid, passageReviews: []},
     {...valid, passageReviews: [review, review]},

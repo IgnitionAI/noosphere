@@ -5,6 +5,15 @@ import { DeterministicContentMediaRenderer } from "@outbound/infrastructure/cont
 import { DEFAULT_CONTENT_BRAND_KIT } from "@outbound/domain/content/content-brand-kit";
 
 describe("DeterministicContentMediaRenderer", () => {
+  test("fits a three-line closing CTA by growing its panel rather than rewriting the post", async () => {
+    const result = await new DeterministicContentMediaRenderer().render({format: "linkedin_document", body: "Source", brandKit: DEFAULT_CONTENT_BRAND_KIT, outputDirectory: `/tmp/noosphere-closing-cta-${crypto.randomUUID()}`, plan: {format: "linkedin_document", visualTone: "editorial", title: "Connaissance", subtitle: null, altText: "Connaissance", scenes: [], slides: [
+      {title: "Capturer", body: "Conserver le contexte."},
+      {title: "Rechercher", body: "Réutiliser les connaissances existantes."},
+      {title: "À vérifier", body: "La recherche détermine la suite.", callout: "Décrivez votre principal point de friction dans la recherche de connaissances."},
+    ]}});
+    expect(result.pageCount).toBe(3);
+  });
+
   test("renders a binary decision with both labelled outcomes", async () => {
     const result = await new DeterministicContentMediaRenderer().render({
       format: "linkedin_document", body: "Texte", brandKit: DEFAULT_CONTENT_BRAND_KIT,
@@ -57,12 +66,12 @@ describe("DeterministicContentMediaRenderer", () => {
       plan: { format: "linkedin_document", visualTone: "editorial", title: "Accès", subtitle: null, altText: "Accès", scenes: [],
         slides: [regular, regular, { ...regular,
           body: "Pour un pilote, validez séparément l’identité, les métadonnées de permissions et le filtrage effectif. Microsoft documente cette architecture pour Azure Logic Apps et Azure AI Search.",
-          callout: "L’accès à l’assistant n’est pas la preuve de l’accès à chaque connaissance.",
+          callout: "L’accès à l’assistant n’est pas la preuve de l’accès à chaque connaissance. Vérifiez les permissions et le périmètre documentaire pour chaque demande avant de conclure.",
         }],
       },
     })).rejects.toMatchObject({ message: "CONTENT_MEDIA_TEXT_OVERFLOW", errors: [
       { slideNumber: 3, layout: "closing", textConstraint: { field: "body", maxCharactersPerLine: 34, maxLines: 5 } },
-      { slideNumber: 3, layout: "closing", textConstraint: { field: "callout", maxCharactersPerLine: 32, maxLines: 2 } },
+      { slideNumber: 3, layout: "closing", textConstraint: { field: "callout", maxCharactersPerLine: 32, maxLines: 4 } },
     ] });
   });
 
@@ -309,7 +318,7 @@ describe("DeterministicContentMediaRenderer", () => {
     expect(result.mimeType).toBe("application/pdf");
     expect(document.getPageCount()).toBe(5);
     expect(result.pageCount).toBe(5);
-    expect(result.manifest).toEqual(expect.objectContaining({ renderer: "pdf-lib-sharp-v10", narrativeLayouts: ["cover", "insight", "comparison", "process", "closing"] }));
+    expect(result.manifest).toEqual(expect.objectContaining({ renderer: "pdf-lib-sharp-v11", narrativeLayouts: ["cover", "insight", "comparison", "process", "closing"] }));
   });
 
   const ffmpeg = Bun.which("ffmpeg");

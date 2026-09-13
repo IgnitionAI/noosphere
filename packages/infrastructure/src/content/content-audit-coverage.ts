@@ -16,12 +16,17 @@ export function contentAuditModelSpec(context: unknown, system: string) {
   const topicObligations = [...new Set(input.strategy?.forbiddenTopics ?? [])].map((topic, i) => ({id: `topic_${i}`, topic}));
   const declaredOccurrences = contentAuditDeclarations(input.draft);
   const keys = [...new Set(input.evidence.map(e => e.key))];
-  const claim = z.object({
+  const claimFields = z.object({
     statement: z.string().min(3).max(1_000), kind: z.enum(["factual", "attribution"]),
     sourceKeys: z.array(keys.length ? z.enum(keys as [string, ...string[]]) : z.string()).max(keys.length ? 12 : 0),
     verdict: z.enum(["supported", "unsupported"]), reason: z.string().min(3).max(1_000),
   }).strict();
-  const declarationReview = claim.omit({statement: true});
+  const supported = claimFields.extend({verdict: z.literal("supported"), sourceKeys: claimFields.shape.sourceKeys.min(1)});
+  const unsupported = claimFields.extend({verdict: z.literal("unsupported")});
+  const claim = keys.length ? z.union([supported, unsupported]) : unsupported;
+  const declarationReview = keys.length
+    ? z.union([supported.omit({statement: true}), unsupported.omit({statement: true})])
+    : unsupported.omit({statement: true});
   const declarationShape: Record<string, typeof declarationReview> = Object.fromEntries(declaredOccurrences.map(item => [item.id, declarationReview]));
   const schema = z.object({
     topicReviews: z.object(Object.fromEntries(topicObligations.map(({id}) => [id, z.object({violated: z.boolean(), reason: z.string().min(20).max(1_000)}).strict()]))).strict(),
@@ -52,7 +57,9 @@ export function contentAuditModelSpec(context: unknown, system: string) {
     schema, context: { ...(context as Record<string, unknown>), publicPassages, declaredOccurrences, topicObligations },
     system: `${system}\nReturn every required declarationReviews key listed in declaredOccurrences. Evaluate each entire declared statement in its own field context against evidence; declaration does not imply support. Never substitute a supported fragment for a broader assertion. Independently review the entire current field in passageReviews, including undeclared facts and contradictions. Keep the field classification and non-factual reasoning independent of the declaration slot. Return exactly one passageReviews entry per publicPassages ID. Review every factual span, including missing-ledger statements and short media instructions describing mechanisms. Use exact contiguous substrings of that field. Also cover the full wording of every writer-declared claim; do not approve only its supported fragment. Use classification factual with claims and null nonFactualReason; non_factual with no claims and a reason; mixed with claims and a reason identifying its non-factual material. Opinions, proposals, questions, structural markers and explicitly fictional inputs are not automatically factual assertions, but factual premises in mixed passages still require review. Never classify an unsupported factual assertion as an opinion to avoid a negative verdict. Supported factual spans require nonempty supplied source keys. Retain unsupported verdicts even when the writer omitted the claim. Bibliographic attribution must be verified in context; quotation identity alone does not establish endorsement or scope. Mark bibliographic credits as kind attribution and substantive assertions as kind factual, separating adjacent claims. An attribution is not a missing substantive ledger entry. Review declared scenarios separately. Independently assess every topicObligations entry in topicReviews, even when its violation is already rejected as an unsupported claim. Give a reason for both absent and present violations. A violated topic must appear verbatim in forbiddenTopicMatches with located topicFindings; an absent one must not. For each forbiddenTopicMatches entry, provide topicFindings with the same topic, a current field ID, an exact contiguous quotation from that field, and a reason explaining the violation. Do not list a topic without locating its offending wording. Both lists must be empty when no forbidden topic is present. Across all fields, at most30 distinct reviewed claims and20 missing substantive ledger statements fit the audit contract; do not drop findings to fit. Do not rewrite public copy.`,
     decode(output: unknown) {
-      const result = schema.parse(output);
+      const parsed = schema.safeParse(output);
+      if (!parsed.success) throw new Error("CONTENT_AUDIT_COVERAGE_INVALID");
+      const result = parsed.data;
       if (topicObligations.some(({id, topic}) => result.topicReviews[id]!.violated !== result.forbiddenTopicMatches.includes(topic))) throw new Error("CONTENT_AUDIT_TOPIC_COVERAGE_INVALID");
       if (result.forbiddenTopicMatches.some(topic => !result.topicFindings.some(finding => finding.topic === topic))
         || result.topicFindings.some(finding => !result.forbiddenTopicMatches.includes(finding.topic) || !publicPassages.find(p => p.field === finding.field)!.text.includes(finding.statement))) throw new Error("CONTENT_AUDIT_TOPIC_COVERAGE_INVALID");

@@ -98,7 +98,7 @@ export class DeterministicContentMediaRenderer implements ContentMediaRenderer {
       height: HEIGHT,
       pageCount: plan.slides.length,
       durationSeconds: null,
-      manifest: { renderer: "pdf-lib-sharp-v10", slides: plan.slides.length, ratio: "4:5", narrativeLayouts: layouts, logo: Boolean(logoBytes) },
+      manifest: { renderer: "pdf-lib-sharp-v11", slides: plan.slides.length, ratio: "4:5", narrativeLayouts: layouts, logo: Boolean(logoBytes) },
     };
   }
 
@@ -454,11 +454,13 @@ function renderClosing(input: Parameters<typeof renderLayoutContent>[0]): string
     itemY = bottom + 34;
     return row;
   }).join("");
+  const panelHeight = Math.max(142, 66 + callout.length * 37);
+  const arrowY = 900 + panelHeight / 2;
   return `${renderKicker(input, 185)}<text x="88" y="300" font-family="${input.fontFamily}" font-size="70" font-weight="800" fill="${input.text}">${tspans(title, 300, 76)}</text>
     <text x="88" y="${360 + title.length * 76}" font-family="${input.fontFamily}" font-size="34" font-weight="480" fill="${input.text}" opacity="0.78">${tspans(body, 360 + title.length * 76, 43)}</text>
-    ${items}<rect x="88" y="900" width="760" height="142" rx="30" fill="${input.background}" opacity="0.94"/>
+    ${items}<rect x="88" y="900" width="760" height="${panelHeight}" rx="30" fill="${input.background}" opacity="0.94"/>
     <text x="128" y="958" font-family="${input.fontFamily}" font-size="29" font-weight="760" fill="${input.primary}">${tspans(callout, 958, 37, 128)}</text>
-    <circle cx="922" cy="971" r="69" fill="${input.primary}"/><path d="M891 971h55m-20-20 20 20-20 20" fill="none" stroke="${input.background}" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>`;
+    <circle cx="922" cy="${arrowY}" r="69" fill="${input.primary}"/><path d="M891 ${arrowY}h55m-20-20 20 20-20 20" fill="none" stroke="${input.background}" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>`;
 }
 
 function renderKicker(input: Parameters<typeof renderLayoutContent>[0], y: number): string {

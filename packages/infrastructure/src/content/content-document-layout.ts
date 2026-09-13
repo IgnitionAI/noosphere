@@ -12,7 +12,7 @@ const list = { ...DOCUMENT_ROW_TEXT_LIMITS, itemLabel: limit(50, 2), itemText: l
 
 export const DOCUMENT_LAYOUT_TEXT_LIMITS = {
   cover: { title: limit(19, 5), body: limit(34, 4), kicker: limit(24, 1), callout: limit(54, 2) },
-  closing: { title: limit(16, 5), body: limit(34, 5), kicker: DOCUMENT_ROW_TEXT_LIMITS.kicker, callout: limit(32, 2), itemLabel: limit(40, 2), itemText: limit(48, 3) },
+  closing: { title: limit(16, 5), body: limit(34, 5), kicker: DOCUMENT_ROW_TEXT_LIMITS.kicker, callout: limit(32, 4), itemLabel: limit(40, 2), itemText: limit(48, 3) },
   insight: { title: limit(24, 4), focus: limit(29, 5), bodyWithCallout: limit(45, 3), kicker: DOCUMENT_ROW_TEXT_LIMITS.kicker },
   checklist: list,
   comparison: { ...DOCUMENT_ROW_TEXT_LIMITS, itemLabel: limit(23, 4), itemText: limit(24, 10), singleItem: list },
