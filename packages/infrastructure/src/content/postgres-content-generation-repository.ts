@@ -305,6 +305,10 @@ export class PostgresContentGenerationRepository implements ContentGenerationRep
     await this.advance(input.workspaceId, input.runId, "critic", { draftSnapshot: input.draft, auditSnapshot: null, critiqueSnapshot: null, updatedAt: input.now }, "ContentDraftRepairedAfterCritique", input.now, "audit");
   }
 
+  async reopenAudit(input: Parameters<ContentGenerationRepository["reopenAudit"]>[0]): Promise<void> {
+    await this.advance(input.workspaceId, input.runId, "critic", { auditSnapshot: null, critiqueSnapshot: null, updatedAt: input.now }, "ContentAuditReopened", input.now, "audit");
+  }
+
   async saveAudit(input: Parameters<ContentGenerationRepository["saveAudit"]>[0]): Promise<void> {
     await this.advance(input.workspaceId, input.runId, "audit", { auditSnapshot: input.audit, stage: "critic", updatedAt: input.now }, "ContentEvidenceAudited", input.now);
   }

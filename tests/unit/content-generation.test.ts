@@ -1,3 +1,5 @@
+import { fixtureAuditCoverage, fixtureReadinessInput } from "../fixtures/content/audit-coverage";
+import type { ContentDraftSnapshot } from "@outbound/domain/content/content-asset";
 import { ContentMediaTextOverflowsError, ContentMediaTextOverflowError } from "@outbound/application/content/content-media";
 import { editorialQualityCriteria, type ContentQualityAssessment } from "@outbound/domain/content/content-asset";
 import { describe, expect, test } from "bun:test";
@@ -47,7 +49,7 @@ describe("CNT-101 grounded content pipeline", () => {
     const processor = new ContentGenerationJobProcessor(repository, {
       async buildBrief() { return brief(); },
       async write(input) { received.push(input.brief); return draft(); },
-      async audit() { return audit(); }, async critique() { return critique(); },
+      async audit(input) { return audit(input.draft, input.evidence); }, async critique() { return critique(); },
     }, { async acknowledge() {} } as unknown as JobQueue);
     const processing = processor.process(job(context.run.workspaceId, context.run.id));
     if (enabled) await processing;
@@ -93,24 +95,24 @@ describe("CNT-101 grounded content pipeline", () => {
   });
 
   test("blocks a draft claim that the evidence auditor silently skipped", () => {
-    const readiness = evaluateContentReadiness({ draft: draft(), audit: { ...audit(), reviewedClaims: [] }, critique: critique(), availableEvidenceKeys: ["proof:1"], recentBodies: [] });
+    const readiness = evaluateContentReadiness(fixtureReadinessInput({ draft: draft(), audit: { ...audit(), reviewedClaims: [] }, critique: critique(), availableEvidenceKeys: ["proof:1"], recentBodies: [] }));
     expect(readiness).toEqual({ ready: false, blockers: ["unaudited_claim"] });
   });
 
   test("blocks generic copy even when the model critique incorrectly passes it", () => {
-    const readiness = evaluateContentReadiness({
+    const readiness = evaluateContentReadiness(fixtureReadinessInput({
       draft: { ...draft(), body: "Dans un monde en constante évolution, voici une analyse précise qui part du problème réel des équipes juridiques. Noosphere relie le contenu aux conversations." },
       audit: audit(),
       critique: critique(),
       availableEvidenceKeys: ["proof:1"],
       recentBodies: [],
-    });
+    }));
     expect(readiness.ready).toBe(false);
     expect(readiness.blockers).toContain("generic_language");
   });
 
   test("blocks internal evidence-audit narration from leaking into the visible post", () => {
-    const readiness = evaluateContentReadiness({
+    const readiness = evaluateContentReadiness(fixtureReadinessInput({
       draft: {
         ...draft(),
         body: "Ce qui est documenté : Noosphere relie le contenu aux conversations. Notre analyse ne constitue pas une garantie. La seule affirmation factuelle est celle du registre de preuves.",
@@ -119,14 +121,14 @@ describe("CNT-101 grounded content pipeline", () => {
       critique: critique(),
       availableEvidenceKeys: ["proof:1"],
       recentBodies: [],
-    });
+    }));
 
     expect(readiness.ready).toBe(false);
     expect(readiness.blockers).toContain("audit_language");
   });
 
   test("blocks an overlong LinkedIn post before publication", () => {
-    const readiness = evaluateContentReadiness({
+    const readiness = evaluateContentReadiness(fixtureReadinessInput({
       draft: {
         ...draft(),
         body: `${draft().body} ${"Une décision utile part d’un problème précis et se termine par une action claire. ".repeat(24)}`,
@@ -135,14 +137,14 @@ describe("CNT-101 grounded content pipeline", () => {
       critique: critique(),
       availableEvidenceKeys: ["proof:1"],
       recentBodies: [],
-    });
+    }));
 
     expect(readiness.ready).toBe(false);
     expect(readiness.blockers).toContain("too_long");
   });
 
   test("blocks a post that asks the reader to answer multiple questions", () => {
-    const readiness = evaluateContentReadiness({
+    const readiness = evaluateContentReadiness(fixtureReadinessInput({
       draft: {
         ...draft(),
         body: "Pourquoi perdre une preuve au moment de décider ? Noosphere relie le contenu aux conversations. Comment vérifiez-vous vos preuves ?",
@@ -151,14 +153,14 @@ describe("CNT-101 grounded content pipeline", () => {
       critique: critique(),
       availableEvidenceKeys: ["proof:1"],
       recentBodies: [],
-    });
+    }));
 
     expect(readiness.ready).toBe(false);
     expect(readiness.blockers).toContain("multiple_questions");
   });
 
   test("blocks a near-duplicate of a recent workspace post even when the critic misses it", () => {
-    const readiness = evaluateContentReadiness({
+    const readiness = evaluateContentReadiness(fixtureReadinessInput({
       draft: draft(),
       audit: audit(),
       critique: critique(),
@@ -166,14 +168,14 @@ describe("CNT-101 grounded content pipeline", () => {
       recentBodies: [
         "Une clause introuvable coûte plus qu'une recherche. Les équipes juridiques ont besoin d'une preuve résoluble avant de décider. Noosphere relie le contenu aux conversations. Échangeons.",
       ],
-    });
+    }));
 
     expect(readiness.ready).toBe(false);
     expect(readiness.blockers).toContain("repetition");
   });
 
   test("allows a distinct angle to reuse the same grounded product claim", () => {
-    const readiness = evaluateContentReadiness({
+    const readiness = evaluateContentReadiness(fixtureReadinessInput({
       draft: draft(),
       audit: audit(),
       critique: critique(),
@@ -181,13 +183,13 @@ describe("CNT-101 grounded content pipeline", () => {
       recentBodies: [
         "Publier ne suffit pas à créer une opportunité commerciale. Une équipe doit savoir relier un signal social à la bonne personne, puis garder le contexte quand la discussion commence. Noosphere relie le contenu aux conversations.",
       ],
-    });
+    }));
 
     expect(readiness).toEqual({ ready: true, blockers: [] });
   });
 
   test("keeps editorial polish advice non-blocking", () => {
-    const readiness = evaluateContentReadiness({
+    const readiness = evaluateContentReadiness(fixtureReadinessInput({
       draft: draft(),
       audit: audit(),
       critique: {
@@ -197,37 +199,15 @@ describe("CNT-101 grounded content pipeline", () => {
       },
       availableEvidenceKeys: ["proof:1"],
       recentBodies: [],
-    });
+    }));
 
     expect(readiness).toEqual({ ready: true, blockers: [] });
   });
 
-  test("accepts a sourced factual claim when the auditor wraps it in editorial context and also reviews opinions", () => {
-    const readiness = evaluateContentReadiness({
-      draft: draft(),
-      audit: {
-        ...audit(),
-        reviewedClaims: [
-          {
-            statement: `Ce qui est documenté : ${draft().factualClaims[0]!.statement}`,
-            sourceKeys: ["proof:1"],
-            verdict: "supported",
-            reason: "La preuve reprend explicitement le claim.",
-          },
-          {
-            statement: draft().opinionStatements[0]!,
-            sourceKeys: [],
-            verdict: "supported",
-            reason: "Cette phrase est explicitement une opinion.",
-          },
-        ],
-      },
-      critique: critique(),
-      availableEvidenceKeys: ["proof:1"],
-      recentBodies: [],
-    });
-
-    expect(readiness).toEqual({ ready: true, blockers: [] });
+  test("accepts full claim review with literal surrounding context and nonfactual reasoning", () => {
+    const candidate = { ...draft(), body: `Ce qui est documenté : ${draft().factualClaims[0]!.statement}` };
+    const assessment = { ...audit(), reviewedClaims: [{ statement: candidate.body, sourceKeys: ["proof:1"], verdict: "supported" as const, reason: "La source reprend explicitement le fait cité." }] };
+    expect(evaluateContentReadiness(fixtureReadinessInput({ draft: candidate, audit: assessment, critique: critique(), availableEvidenceKeys: ["proof:1"], recentBodies: [] }))).toEqual({ready: true, blockers: []});
   });
 
   test("repairs one deterministically rejected writer draft with explicit feedback", async () => {
@@ -251,7 +231,7 @@ describe("CNT-101 grounded content pipeline", () => {
         writerAttempt += 1;
         return writerAttempt === 1 ? { ...draft(), body: `${draft().body} 42% des équipes y arrivent.` } : draft();
       },
-      async audit() { calls.push("audit"); return audit(); },
+      async audit(input) { calls.push("audit"); return audit(input.draft, input.evidence); },
       async critique() { calls.push("critic"); return critique(); },
     }, queue);
 
@@ -275,7 +255,7 @@ describe("CNT-101 grounded content pipeline", () => {
       async produce(){calls.push("store");return {marker:"validated"};}} as unknown as import("@outbound/application/content/content-media").ContentMediaProducer;
     const processor = new ContentGenerationJobProcessor(repository, {
       async buildBrief(){return context.brief;},async write(input){calls.push("write");received.push(input.validationFeedback ?? []);return candidate;},
-      async audit(){calls.push("audit");return audit();},async critique(){calls.push("critic");return critique();}
+      async audit(input) {calls.push("audit");return audit(input.draft, input.evidence);},async critique(){calls.push("critic");return critique();}
     },{async acknowledge(){}} as unknown as JobQueue,()=>new Date(),producer);
     const processing = processor.process(job(context.run.workspaceId,context.run.id));
     if (persistent) await expect(processing).rejects.toThrow("CONTENT_MEDIA_TEXT_OVERFLOW"); else await processing;
@@ -295,7 +275,7 @@ describe("CNT-101 grounded content pipeline", () => {
     const processor = new ContentGenerationJobProcessor(repository, {
       async buildBrief() {return brief();},
       async write(input) {inputs.push(input); return inputs.length === 1 || persistent ? oversized : draft();},
-      async audit(input) {audited.push(input.draft); return audit();},
+      async audit(input) {audited.push(input.draft); return audit(input.draft, input.evidence);},
       async critique() {return critique();},
     }, {async acknowledge() {}} as unknown as JobQueue);
     const processing = processor.process(job(context.run.workspaceId, context.run.id));
@@ -323,7 +303,7 @@ describe("CNT-101 grounded content pipeline", () => {
     const processor = new ContentGenerationJobProcessor(repository, {
       async buildBrief() { throw new Error("brief must not replay"); },
       async write() { throw new Error("writer must not replay"); },
-      async audit() { calls.push("audit"); return audit(); },
+      async audit(input) { calls.push("audit"); return audit(input.draft, input.evidence); },
       async critique() { calls.push("critic"); return critique(); },
     }, queue);
     await processor.process(job(context.run.workspaceId, context.run.id));
@@ -348,12 +328,12 @@ describe("CNT-101 grounded content pipeline", () => {
     const processor = new ContentGenerationJobProcessor(repository, {
       async buildBrief() { throw new Error("brief must not replay"); },
       async write(input) { calls.push("writer_repair"); feedback.push(input.validationFeedback); receivedAudits.push(input.audit); return draft(); },
-      async audit() {
+      async audit(input) {
         calls.push("audit");
         auditAttempt += 1;
         return auditAttempt <= 2
-          ? { ...audit(), ungroundedStatements: [`Le hook factuel manque au registre (audit ${auditAttempt}).`] }
-          : audit();
+          ? { ...audit(input.draft, input.evidence), ungroundedStatements: [`Le hook factuel manque au registre (audit ${auditAttempt}).`] }
+          : audit(input.draft, input.evidence);
       },
       async critique() { calls.push("critic"); return critique(); },
     }, queue);
@@ -385,7 +365,7 @@ describe("CNT-101 grounded content pipeline", () => {
     const processor = new ContentGenerationJobProcessor(repository, {
       async buildBrief() { throw new Error("brief must not replay"); },
       async write(input) { receivedAudits.push(input.audit); return draft(); },
-      async audit() { return ++auditCount === 1 ? latestAudit : audit(); },
+      async audit(input) { return ++auditCount === 1 ? latestAudit : audit(input.draft, input.evidence); },
       async critique() {
         return ++criticCount === 1
           ? { ...critique(), issues: [{ severity: "blocker" as const, code: "READER_VALUE", message: "Expliquer la décision." }] }
@@ -415,7 +395,7 @@ describe("CNT-101 grounded content pipeline", () => {
     const processor = new ContentGenerationJobProcessor(repository, {
       async buildBrief() { throw new Error("brief must not replay"); },
       async write(input) { calls.push("writer_repair"); feedback.push(input.validationFeedback); return draft(); },
-      async audit() { calls.push("audit"); return audit(); },
+      async audit(input) { calls.push("audit"); return audit(input.draft, input.evidence); },
       async critique() {
         calls.push("critic");
         criticAttempt += 1;
@@ -452,7 +432,7 @@ describe("CNT-101 grounded content pipeline", () => {
     const processor = new ContentGenerationJobProcessor(repository, {
       async buildBrief() { throw new Error("brief must not replay"); },
       async write(input) { calls.push("writer_repair"); feedback.push(input.validationFeedback); return feedback.length === 1 ? { ...draft(), body: draft().body + " Gain de 42%." } : draft(); },
-      async audit() { calls.push("audit"); return audit(); },
+      async audit(input) { calls.push("audit"); return audit(input.draft, input.evidence); },
       async critique() {
         calls.push("critic");
         criticAttempt += 1;
@@ -486,7 +466,7 @@ describe("CNT-101 grounded content pipeline", () => {
     const processor = new ContentGenerationJobProcessor(repository, {
       async buildBrief() { throw new Error("brief must not replay"); },
       async write(input) { candidates.push(input.draft); feedback.push(input.validationFeedback); return candidates.length === 1 || stillInvalid ? invalid : repaired; },
-      async audit() { audits += 1; return audits === 1 ? { ...audit(), ungroundedStatements: ["Clarifier le scénario."] } : { ...audit(), reviewedScenarios: [{ statement: repaired.illustrativeScenarios[0]!, verdict: "hypothetical" as const, reason: "Entrée fictive sans promesse." }] }; },
+      async audit(input) { audits += 1; return audits === 1 ? { ...audit(input.draft, input.evidence), ungroundedStatements: ["Clarifier le scénario."] } : { ...audit(input.draft, input.evidence), reviewedScenarios: [{ statement: repaired.illustrativeScenarios[0]!, verdict: "hypothetical" as const, reason: "Entrée fictive sans promesse." }] }; },
       async critique() { return critique(); },
     }, { async acknowledge() {} } as unknown as JobQueue);
     const processing = processor.process(job(context.run.workspaceId, context.run.id));
@@ -509,7 +489,7 @@ describe("CNT-101 grounded content pipeline", () => {
     const processor = new ContentGenerationJobProcessor(repository, {
       async buildBrief() { throw new Error("must not replay"); },
       async write(input) { feedback.push(input.validationFeedback ?? []); return draft(); },
-      async audit() { return audit(); },
+      async audit(input) { return audit(input.draft, input.evidence); },
       async critique() {
         critiques++;
         return critiques <= 2 ? { ...critique(), issues: [{ severity: "blocker" as const,
@@ -541,7 +521,7 @@ describe("CNT-101 grounded content pipeline", () => {
     const processor = new ContentGenerationJobProcessor(repository, {
       async buildBrief() { throw new Error("must not replay"); },
       async write() { writes++; return outcome === "fatal" ? candidate : { ...candidate, mediaPlan: { ...candidate.mediaPlan, format: "linkedin_image" as const, slides: [] } }; },
-      async audit() { throw new Error("must not audit invalid draft"); }, async critique() { return critique(); },
+      async audit(input) { throw new Error("must not audit invalid draft"); }, async critique() { return critique(); },
     }, { async acknowledge() {} } as unknown as JobQueue, undefined, producer);
     const run = processor.process(job(context.run.workspaceId, context.run.id));
     if (outcome === "fatal") {
@@ -573,7 +553,7 @@ describe("CNT-101 grounded content pipeline", () => {
     const processor = new ContentGenerationJobProcessor(repository, {
       async buildBrief() { throw new Error("must not replay"); },
       async write(input) { feedback.push(input.validationFeedback); return candidate; },
-      async audit() { return audit(); }, async critique() { return critique(); },
+      async audit(input) { return audit(input.draft, input.evidence); }, async critique() { return critique(); },
     }, { async acknowledge() {} } as unknown as JobQueue, undefined, producer);
     await processor.process(job(context.run.workspaceId, context.run.id));
     expect(feedback).toHaveLength(2);
@@ -603,7 +583,7 @@ describe("CNT-101 grounded content pipeline", () => {
     const processor = new ContentGenerationJobProcessor(repository, {
       async buildBrief() { throw new Error("must not replay"); },
       async write(input) { feedback.push(input.validationFeedback); return feedback.length === 1 ? { ...candidate, body: candidate.body + " ".repeat(1) + "Texte ".repeat(300) } : candidate; },
-      async audit() { return audit(); }, async critique() { return critique(); },
+      async audit(input) { return audit(input.draft, input.evidence); }, async critique() { return critique(); },
     }, { async acknowledge() {} } as unknown as JobQueue, undefined, producer);
     await processor.process(job(context.run.workspaceId, context.run.id));
     expect(feedback).toHaveLength(2);
@@ -623,7 +603,7 @@ describe("CNT-101 grounded content pipeline", () => {
       slides: Array.from({ length: 3 }, () => ({ title: "Retrouver une preuve", body: "Examiner les preuves disponibles." })),
     } };
     const context = { ...original, run: { ...original.run, stage: "critic" as const },
-      brief: { ...brief(), format: "linkedin_document" as const }, draft: candidate, audit: audit() };
+      brief: { ...brief(), format: "linkedin_document" as const }, draft: candidate, audit: audit(candidate) };
     const calls: string[] = [];
     const feedback: unknown[] = [];
     let completed: { readiness: { ready: boolean; blockers: readonly string[] }; media: unknown } | undefined;
@@ -641,7 +621,7 @@ describe("CNT-101 grounded content pipeline", () => {
     const processor = new ContentGenerationJobProcessor(repository, {
       async buildBrief() { throw new Error("must not replay"); },
       async write(input) { calls.push("write"); feedback.push(input.validationFeedback); return candidate; },
-      async audit() { calls.push("audit"); return audit(); },
+      async audit(input) { calls.push("audit"); return audit(input.draft, input.evidence); },
       async critique() { calls.push("critic"); return critique(); },
     }, { async acknowledge() { calls.push("ack"); } } as unknown as JobQueue, () => new Date(), producer);
     const processing = processor.process(job(context.run.workspaceId, context.run.id));
@@ -674,12 +654,12 @@ describe("CNT-101 grounded content pipeline", () => {
     const processor = new ContentGenerationJobProcessor(repository, {
       async buildBrief() { throw new Error("brief must not replay"); },
       async write(input) { calls.push("writer_repair"); feedback.push(input.validationFeedback); return draft(); },
-      async audit() {
+      async audit(input) {
         calls.push("audit");
         auditAttempt += 1;
         return auditAttempt === 1
-          ? { ...audit(), forbiddenTopicMatches: ["Capacité produit non sourcée"] }
-          : audit();
+          ? { ...audit(input.draft, input.evidence), forbiddenTopicMatches: ["Capacité produit non sourcée"] }
+          : audit(input.draft, input.evidence);
       },
       async critique() { calls.push("critic"); return critique(); },
     }, queue);
@@ -692,11 +672,11 @@ describe("CNT-101 grounded content pipeline", () => {
 });
 
 function draft() { return { hook: "Une clause introuvable coûte plus qu’une recherche.", body: "Une clause introuvable coûte plus qu’une recherche. Les équipes juridiques ont besoin d’une preuve résoluble avant de décider. Noosphere relie le contenu aux conversations.", callToAction: "Comment vérifiez-vous vos preuves ?", factualClaims: [{ statement: "Noosphere relie le contenu aux conversations.", sourceKeys: ["proof:1"] }], opinionStatements: ["Une clause introuvable coûte plus qu’une recherche."] }; }
-function audit() { return { reviewedClaims: [{ statement: "Noosphere relie le contenu aux conversations.", sourceKeys: ["proof:1"], verdict: "supported" as const, reason: "La source le dit explicitement." }], ungroundedStatements: [], forbiddenTopicMatches: [] }; }
+function audit(candidate: ContentDraftSnapshot = draft(), sources: readonly { readonly key: string }[] = [evidence()]) { return fixtureAuditCoverage(candidate, { reviewedClaims: [{ statement: "Noosphere relie le contenu aux conversations.", sourceKeys: ["proof:1"], verdict: "supported" as const, reason: "La source le dit explicitement." }], ungroundedStatements: [], forbiddenTopicMatches: [] }, sources); }
 function critique() { return { qualityAssessment: Object.fromEntries(editorialQualityCriteria.map((key) => [key, { verdict: "pass", reason: "Fixture assessment for the content pipeline orchestration test.", excerpts: ["Noosphere relie le contenu aux conversations."] }])) as unknown as ContentQualityAssessment, genericPhrases: [], repeatedConcepts: [], callToActionAligned: true, distinctFromHistory: true, issues: [], summary: "Texte spécifique, étayé et aligné." }; }
 function brief() { return { objective: "explain" as const, audience: "Équipes juridiques", problem: "Les preuves sont dispersées dans les dossiers juridiques.", angle: "Relier une recherche documentaire à une décision commerciale.", format: "linkedin_text" as const, evidenceKeys: ["proof:1"], allowedClaimIds: [], callToAction: "Comment vérifiez-vous vos preuves ?", constraints: ["Aucun fait sans preuve"] }; }
 function pipelineContext(stage: "writer" | "audit") { const workspaceId = crypto.randomUUID(); const runId = crypto.randomUUID(); return { run: { id: runId, workspaceId, ideaId: crypto.randomUUID(), assetId: crypto.randomUUID(), assetVersionId: null, status: "running" as const, stage, instruction: null, lastErrorCode: null, lastErrorMessage: null, createdAt: new Date(), completedAt: null }, idea: { id: crypto.randomUUID(), workspaceId, strategyVersionId: crypto.randomUUID(), status: "briefed" as const, angle: "Recherche documentaire prouvée", rationale: "Un angle précis pour les juristes.", audience: "Équipes juridiques", pillar: "Recherche", priority: 90, freshnessUntil: new Date(Date.now() + 60_000), firstSeenAt: new Date(), lastSeenAt: new Date(), sources: [evidence()] }, strategy: { audience: { name: "Équipes juridiques", summary: "Juristes avec des preuves dispersées", awareness: "problem_aware" as const }, pillars: [{ name: "Recherche", promise: "Retrouver les preuves", proofTypes: ["claim"] }, { name: "Sécurité", promise: "Contrôler", proofTypes: ["audit"] }, { name: "Adoption", promise: "Déployer", proofTypes: ["chronologie"] }], voice: { traits: ["direct", "précis"], avoid: ["générique"] }, formats: ["linkedin_text" as const], cadence: { postsPerWeek: 3, preferredDays: [1, 3, 5], timezone: "Europe/Paris" }, callsToAction: ["Comment vérifiez-vous vos preuves ?"], allowedClaimIds: [], forbiddenTopics: [] }, evidence: [evidence()], recentBodies: [], brief: brief(), draft: stage === "audit" ? draft() : null, audit: null, critique: null }; }
-function evidence() { return { key: "proof:1", type: "public_web" as const, sourceRef: "https://example.com", canonicalUrl: "https://example.com", title: "Preuve", excerpt: "Noosphere relie le contenu aux conversations.", contentHash: "proof", collectedAt: new Date() }; }
+function evidence() { return { key: "proof:1", type: "public_web" as const, sourceRef: "https://example.com", canonicalUrl: "https://example.com", title: "Preuve", excerpt: "Noosphere relie le contenu aux conversations.", contentHash: "proof", collectedAt: new Date("2026-09-01T00:00:00Z") }; }
 function job(workspaceId: string, runId: string): LeasedJob { const now = new Date(); return { id: crypto.randomUUID(), workspaceId, type: "content.asset.generate", payload: { runId }, idempotencyKey: "content", correlationId: "content:test", attempts: 1, maxAttempts: 4, availableAt: now, lockedBy: "worker", lockedUntil: new Date(now.getTime() + 60_000) }; }
 
 test("quota pause preserves the writing checkpoint even on the last processing attempt", async () => {
@@ -708,7 +688,7 @@ test("quota pause preserves the writing checkpoint even on the last processing a
   const repository = { async loadContext() { return context; }, async startRun() {}, async failRun() { failed++; } } as unknown as ContentGenerationRepository;
   const processor = new ContentGenerationJobProcessor(repository, {
     async buildBrief() { throw new Error("completed brief must not replay"); }, async write() { throw failure; },
-    async audit() { throw new Error("must not advance"); }, async critique() { throw new Error("must not advance"); },
+    async audit(input) { throw new Error("must not advance"); }, async critique() { throw new Error("must not advance"); },
   }, {} as JobQueue);
   const leased = job(context.run.workspaceId, context.run.id);
   await expect(processor.process({ ...leased, attempts: leased.maxAttempts })).rejects.toBe(failure);
@@ -726,7 +706,7 @@ test("an invalid critic assessment blocks without rewriting the post to match in
   const processor = new ContentGenerationJobProcessor(repository, {
     async buildBrief() { throw new Error("must not rebuild"); },
     async write() { throw new Error("must not rewrite due to a critic citation error"); },
-    async audit() { return audit(); },
+    async audit(input) { return audit(input.draft, input.evidence); },
     async critique() { return { ...critique(), qualityAssessment: { ...critique().qualityAssessment, brandVoice: { verdict: "revise" as const, reason: "A prior draft contains inappropriate language requiring changes.", excerpts: ["This passage is absent from the current post."] } } }; },
   }, { async acknowledge() {} } as unknown as JobQueue);
   await processor.process(job(context.run.workspaceId, context.run.id));
@@ -758,7 +738,49 @@ test("does not let an audited fragment validate a broader unaudited promise", ()
   const original = draft();
   const broader = original.factualClaims[0]!.statement + " Il garantit aussi un rendez-vous pour chaque prospect.";
   const candidate = { ...original, body: original.body + " Il garantit aussi un rendez-vous pour chaque prospect.", factualClaims: [{ statement: broader, sourceKeys: ["proof:1"] }] };
-  const result = evaluateContentReadiness({ draft: candidate, audit: audit(), critique: critique(), availableEvidenceKeys: ["proof:1"], recentBodies: [] });
+  const result = evaluateContentReadiness(fixtureReadinessInput({ draft: candidate, audit: audit(candidate), critique: critique(), availableEvidenceKeys: ["proof:1"], recentBodies: [] }));
   expect(result.ready).toBe(false);
   expect(result.blockers).toContain("unaudited_claim");
+});
+
+test("does not approve a historical audit without current field coverage", () => {
+  const historical = {...audit(), coverage: undefined};
+  const result = evaluateContentReadiness({draft: draft(), audit: historical, critique: critique(), availableEvidenceKeys: ["proof:1"], recentBodies: [], evidenceFingerprint: "a".repeat(64)});
+  expect(result.ready).toBe(false);
+  expect(result.blockers).toContain("audit_coverage_missing");
+});
+
+test.each(["historical", "source_changed", "text_changed"] as const)("reassesses a critic checkpoint before approval when its audit is %s", async change => {
+  const base = pipelineContext("audit");
+  const storedAudit = change === "historical" ? { ...audit(), coverage: undefined } : audit();
+  const context = { ...base, run: { ...base.run, stage: "critic" as const }, audit: storedAudit,
+    draft: change === "text_changed" ? { ...draft(), body: draft().body + " Une piste à examiner." } : draft(),
+    evidence: change === "source_changed" ? [{ ...evidence(), excerpt: "Texte de la source mis à jour." }] : base.evidence,
+  };
+  const calls: string[] = [];
+  const repository = { async loadContext() { return context; }, async startRun() {}, async reopenAudit() { calls.push("reopen_audit"); }, async saveAudit() { calls.push("persist_audit"); },
+    async completeRun(input: { readiness: { ready: boolean } }) { calls.push(input.readiness.ready ? "ready" : "blocked"); }, async failRun() {},
+  } as unknown as ContentGenerationRepository;
+  await new ContentGenerationJobProcessor(repository, {
+    async buildBrief() { throw new Error("must preserve the brief"); },
+    async write() { throw new Error("must preserve public copy for reassessment"); },
+    async audit(input) { calls.push("audit"); expect(input.draft).toEqual(context.draft); return audit(input.draft, input.evidence); },
+    async critique() { calls.push("critic"); return critique(); },
+  }, { async acknowledge() { calls.push("ack"); } } as unknown as JobQueue).process(job(context.run.workspaceId, context.run.id));
+  expect(calls).toEqual(["reopen_audit", "audit", "persist_audit", "critic", "ready", "ack"]);
+});
+
+test("a redelivered completed job does not reopen its historical audit", async () => {
+  const base = pipelineContext("audit");
+  const context = { ...base, run: { ...base.run, stage: "completed" as const, status: "ready" as const }, audit: { ...audit(), coverage: undefined } };
+  const calls: string[] = [];
+  const repository = { async loadContext() { return context; }, async startRun() {}, async failRun() {},
+  } as unknown as ContentGenerationRepository;
+  await new ContentGenerationJobProcessor(repository, {
+    async buildBrief() { throw new Error("completed job must not regenerate"); },
+    async write() { throw new Error("completed job must not rewrite"); },
+    async audit() { throw new Error("completed job must not re-audit"); },
+    async critique() { throw new Error("completed job must not re-approve"); },
+  }, { async acknowledge() { calls.push("ack"); } } as unknown as JobQueue).process(job(context.run.workspaceId, context.run.id));
+  expect(calls).toEqual(["ack"]);
 });

@@ -1,10 +1,11 @@
+import { fixtureReadinessInput } from "../fixtures/content/audit-coverage";
 import { expect, test } from "bun:test";
 import { assertGroundedContentDraft, evaluateContentReadiness, editorialQualityCriteria } from "@outbound/domain/content/content-asset";
 
 const scenario = 'Exemple fictif : le ticket porte sur la version 4.2 et le document décrit la version 4.1.';
 const draft = { hook:'Vérifiez la version avant de répondre.', body:'Vérifiez la version avant de répondre.\n\n'+scenario, callToAction:null, factualClaims:[],opinionStatements:[],illustrativeScenarios:[scenario] };
 const critique = {qualityAssessment:Object.fromEntries(editorialQualityCriteria.map(key=>[key,{verdict:'pass',reason:'Le texte illustre une vérification proposée, sans revendiquer de performance.',excerpts:[scenario]}])) as any,genericPhrases:[],repeatedConcepts:[],callToActionAligned:true,distinctFromHistory:true,issues:[],summary:'Méthode illustrée'};
-function assess(reviewedScenarios: any[] = []) { return evaluateContentReadiness({draft,audit:{reviewedClaims:[],ungroundedStatements:[],forbiddenTopicMatches:[],reviewedScenarios},critique,availableEvidenceKeys:[],recentBodies:[]}); }
+function assess(reviewedScenarios: any[] = []) { return evaluateContentReadiness(fixtureReadinessInput({draft,audit:{reviewedClaims:[],ungroundedStatements:[],forbiddenTopicMatches:[],reviewedScenarios},critique,availableEvidenceKeys:[],recentBodies:[]})); }
 
 test('declared illustrative version numbers are allowed into audit, but not ready without that audit', () => {
   expect(()=>assertGroundedContentDraft(draft,[])).not.toThrow();

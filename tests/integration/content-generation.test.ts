@@ -1,3 +1,4 @@
+import { fixtureAuditCoverage } from "../fixtures/content/audit-coverage";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
@@ -280,8 +281,19 @@ databaseDescribe("CNT-101 durable content generation", () => {
       critique: null,
     });
     await repository.saveAudit({ workspaceId, runId: improved.id, audit, now });
+    await expect(repository.reopenAudit({ workspaceId: otherWorkspaceId, runId: improved.id, now })).rejects.toThrow("CONTENT_GENERATION_RUN_NOT_FOUND");
+    await repository.reopenAudit({ workspaceId, runId: improved.id, now });
+    // Simulate a worker restart after reopening: public copy survives; obsolete verdicts do not certify readiness.
+    const reopened = await repository.loadContext({ workspaceId, runId: improved.id });
+    expect(reopened).toMatchObject({ run: { stage: "audit" }, draft: criticRepairedDraft, audit: null, critique: null });
+    const refreshedAudit = fixtureAuditCoverage(reopened.draft!, audit, reopened.evidence);
+    await repository.saveAudit({ workspaceId, runId: improved.id, audit: refreshedAudit, now });
+    expect((await repository.loadContext({ workspaceId, runId: improved.id })).audit).toMatchObject(refreshedAudit);
     await repository.completeRun({ workspaceId, runId: improved.id, critique, readiness: { ready: true, blockers: [] }, now });
     expect((await repository.findAssetByIdea({ workspaceId, ideaId }))?.latestVersion).toBe(2);
+    expect((await repository.findAssetByIdea({ workspaceId, ideaId }))?.latest?.audit).toMatchObject(refreshedAudit);
+    await repository.reopenAudit({ workspaceId, runId: improved.id, now });
+    expect((await repository.loadContext({ workspaceId, runId: improved.id })).run.stage).toBe("completed");
 
     await database.client`update content_idea_sources set content_hash = ${"claim-hash-changed"} where workspace_id = ${workspaceId} and idea_id = ${ideaId}`;
     const evidenceChanged = await repository.createGeneration({

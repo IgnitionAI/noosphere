@@ -1,3 +1,4 @@
+import { contentAuditEvidenceFingerprint } from "@outbound/application/content/content-audit-context";
 import { AiTaskPauseError } from "@outbound/application/ai/ai-task-pause";
 import { requireWorkspaceAi, type WorkspaceAiAvailability } from "@outbound/application/ai/ai-availability";
 import type { JobQueue, LeasedJob } from "@outbound/application/jobs/job-queue";
@@ -15,7 +16,7 @@ import type {
   ContentGenerationStage,
   ContentGenerationStatus,
 } from "@outbound/domain/content/content-asset";
-import { MAX_CONTENT_FACTUAL_CLAIMS, contentPublicText, ContentDraftUnsourcedNumberError, MAX_CONTENT_BODY_LENGTH, assertGroundedContentDraft, assertMediaPlanMatchesBrief, evaluateContentReadiness } from "@outbound/domain/content/content-asset";
+import { MAX_CONTENT_FACTUAL_CLAIMS, contentAuditCoverageStatus, contentPublicText, ContentDraftUnsourcedNumberError, MAX_CONTENT_BODY_LENGTH, assertGroundedContentDraft, assertMediaPlanMatchesBrief, evaluateContentReadiness } from "@outbound/domain/content/content-asset";
 
 export const CONTENT_GENERATION_JOB_TYPE = "content.asset.generate";
 export const CONTENT_GENERATION_JOB_PRIORITY = 60;
@@ -91,6 +92,7 @@ export interface ContentGenerationRepository {
   saveDraft(input: { workspaceId: string; runId: string; draft: ContentDraftSnapshot; now: Date }): Promise<void>;
   reviseDraftAfterAudit(input: { workspaceId: string; runId: string; draft: ContentDraftSnapshot; now: Date }): Promise<void>;
   reviseDraftAfterCritique(input: { workspaceId: string; runId: string; draft: ContentDraftSnapshot; now: Date }): Promise<void>;
+  reopenAudit(input: { workspaceId: string; runId: string; now: Date }): Promise<void>;
   saveAudit(input: { workspaceId: string; runId: string; audit: ContentEvidenceAudit; now: Date }): Promise<void>;
   completeRun(input: { workspaceId: string; runId: string; critique: ContentEditorialCritique; readiness: { ready: boolean; blockers: readonly string[] }; media?: StoredContentMedia | null; now: Date }): Promise<void>;
   failRun(input: { workspaceId: string; runId: string; code: string; message: string; now: Date }): Promise<void>;
@@ -163,6 +165,11 @@ export class ContentGenerationJobProcessor {
         await this.repository.saveDraft({ workspaceId: job.workspaceId, runId: payload.runId, draft, now: this.now() });
         context = { ...context, draft, run: { ...context.run, stage: "audit" } };
       }
+      if (context.run.stage === "critic" && context.draft
+        && (!context.audit || contentAuditCoverageStatus(context.draft, context.audit, contentAuditEvidenceFingerprint(context.evidence)) !== "current")) {
+        await this.repository.reopenAudit({ workspaceId: job.workspaceId, runId: payload.runId, now: this.now() });
+        context = { ...context, audit: null, critique: null, run: { ...context.run, stage: "audit" } };
+      }
       if (stageAtOrBefore(context.run.stage, "audit")) {
         if (!context.brief || !context.draft) throw new Error("CONTENT_DRAFT_CHECKPOINT_MISSING");
         let draft = context.draft;
@@ -188,6 +195,7 @@ export class ContentGenerationJobProcessor {
           audit,
           critique,
           availableEvidenceKeys: context.evidence.map((item) => item.key),
+          evidenceFingerprint: contentAuditEvidenceFingerprint(context.evidence),
           recentBodies: context.recentBodies,
         });
         let media: StoredContentMedia | null;
@@ -215,6 +223,7 @@ export class ContentGenerationJobProcessor {
             audit,
             critique,
             availableEvidenceKeys: context.evidence.map((item) => item.key),
+            evidenceFingerprint: contentAuditEvidenceFingerprint(context.evidence),
             recentBodies: context.recentBodies,
           });
           ({ readiness, media } = await this.#renderReadyDraft({ ...context, draft, brief: context.brief }, readiness));
@@ -340,7 +349,7 @@ function repairableCritiqueFeedback(
   readiness: { readonly ready: boolean; readonly blockers: readonly string[] },
 ): readonly string[] {
   if (readiness.ready) return [];
-  if (readiness.blockers.some(blocker => ["editorial_assessment_missing", "editorial_assessment_invalid"].includes(blocker))) return [];
+  if (readiness.blockers.some(blocker => ["editorial_assessment_missing", "editorial_assessment_invalid", "audit_coverage_missing", "audit_coverage_invalid"].includes(blocker))) return [];
   const evidenceBlockers = new Set(["unaudited_claim", "unsupported_claim", "ungrounded_statement", "forbidden_topic"]);
   if (readiness.blockers.some((blocker) => evidenceBlockers.has(blocker))) return [];
   const feedback = [

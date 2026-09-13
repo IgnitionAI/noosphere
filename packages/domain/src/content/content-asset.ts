@@ -248,6 +248,40 @@ export function contentPublicFields(draft: ContentDraftSnapshot, omitStructuralN
   return fields;
 }
 
+/** Validate a stored receipt against the current public fields and supplied evidence context. */
+export function contentAuditCoverageStatus(draft: ContentDraftSnapshot, audit: ContentEvidenceAudit, evidenceFingerprint?: string): "missing" | "invalid" | "current" {
+  const coverage = audit.coverage;
+  if (!coverage) return "missing";
+  if (!evidenceFingerprint || !/^[a-f0-9]{64}$/.test(evidenceFingerprint) || coverage.version !== 1 || coverage.evidenceFingerprint !== evidenceFingerprint) return "invalid";
+  const fields = contentPublicFields(draft);
+  if (coverage.passages.length !== fields.length || new Set(coverage.passages.map(p => p.field)).size !== fields.length) return "invalid";
+  for (const field of fields) {
+    const passage = coverage.passages.find(p => p.field === field.field);
+    if (!passage || passage.text !== field.text
+      || !["factual", "non_factual", "mixed"].includes(passage.classification)
+      || (passage.classification === "non_factual") !== (passage.claims.length === 0)
+      || (passage.classification === "factual") !== (passage.nonFactualReason === null)
+      || (passage.nonFactualReason !== null && passage.nonFactualReason.trim().length < 20)) return "invalid";
+    for (const claim of passage.claims) {
+      if (claim.statement.length < 3 || !field.text.includes(claim.statement)
+        || !["factual", "attribution"].includes(claim.kind)
+        || (claim.verdict === "supported" && claim.sourceKeys.length === 0)
+        || !audit.reviewedClaims.some(reviewed => reviewed.statement === claim.statement && reviewed.verdict === claim.verdict
+          && sameSourceKeys(reviewed.sourceKeys, claim.sourceKeys))) return "invalid";
+    }
+  }
+  const passageClaims = coverage.passages.flatMap(passage => passage.claims);
+  if (audit.reviewedClaims.some(reviewed => !passageClaims.some(claim =>
+    claim.statement === reviewed.statement && claim.verdict === reviewed.verdict
+    && sameSourceKeys(claim.sourceKeys, reviewed.sourceKeys)))) return "invalid";
+  return "current";
+}
+
+function sameSourceKeys(left: readonly string[], right: readonly string[]): boolean {
+  const keys = new Set(left);
+  return keys.size === new Set(right).size && right.every(key => keys.has(key));
+}
+
 function unsourcedNumberLocations(draft: ContentDraftSnapshot, unsupported: ReadonlySet<string>) {
   const lines = contentPublicFields(draft, true).flatMap(entry => entry.text.split("\n").map(text => ({ field: entry.field, text })));
   let text = lines.map(line => line.text).join("\n");
@@ -299,9 +333,12 @@ export function evaluateContentReadiness(input: {
   readonly critique: ContentEditorialCritique;
   readonly availableEvidenceKeys: readonly string[];
   readonly recentBodies: readonly string[];
+  readonly evidenceFingerprint?: string;
 }): { readonly ready: boolean; readonly blockers: readonly string[] } {
   assertGroundedContentDraft(input.draft, input.availableEvidenceKeys);
   const blockers = new Set<string>();
+  const coverageStatus = contentAuditCoverageStatus(input.draft, input.audit, input.evidenceFingerprint);
+  if (coverageStatus !== "current") blockers.add(coverageStatus === "missing" ? "audit_coverage_missing" : "audit_coverage_invalid");
   const assessment = input.critique.qualityAssessment;
   if (!assessment) blockers.add("editorial_assessment_missing");
   else {

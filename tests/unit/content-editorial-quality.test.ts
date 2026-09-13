@@ -1,3 +1,4 @@
+import { fixtureReadinessInput } from "../fixtures/content/audit-coverage";
 import { expect, test } from 'bun:test';
 import { evaluateContentReadiness, type ContentEditorialCritique } from '@outbound/domain/content/content-asset';
 
@@ -7,12 +8,12 @@ function assessment() {
   return Object.fromEntries(criteria.map(key => [key, { verdict: 'pass', reason: 'Le texte propose un exercice explicite sans promettre de résultat mesuré.', excerpts: [body] } ]));
 }
 function evaluate(qualityAssessment?: unknown, publicBody = body) {
-  return evaluateContentReadiness({
+  return evaluateContentReadiness(fixtureReadinessInput({
     draft: { hook: 'Pour tester votre procédure', body: publicBody, callToAction: null, factualClaims: [], opinionStatements: [body] },
     audit: { reviewedClaims: [], ungroundedStatements: [], forbiddenTopicMatches: [] },
     critique: { genericPhrases: [], repeatedConcepts: [], callToActionAligned: true, distinctFromHistory: true, issues: [], summary: 'Prêt', ...(qualityAssessment ? { qualityAssessment } : {}) } as unknown as ContentEditorialCritique,
     availableEvidenceKeys: [], recentBodies: [],
-  });
+  }));
 }
 test('a legacy positive summary is insufficient for editorial readiness', () => {
   expect(evaluate().blockers).toContain('editorial_assessment_missing');

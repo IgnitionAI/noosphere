@@ -1,6 +1,6 @@
 # Complete audit coverage for unchanged Inbound content
 
-Status: field-aware audit response and coverage receipt implemented; readiness enforcement, synchronization, historical-checkpoint handling and prior-finding resolution remain unimplemented. Not accepted for deployment.
+Status: field-aware audit response, coverage receipt, readiness enforcement and durable historical-checkpoint reassessment implemented. Ledger synchronization and prior-finding resolution remain unimplemented. Not accepted for deployment.
 
 ## Problem
 

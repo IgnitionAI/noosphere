@@ -1,3 +1,4 @@
+import { contentAuditEvidenceFingerprint } from "@outbound/application/content/content-audit-context";
 import { z } from "zod";
 import { contentDraftSnapshotSchema, contentEvidenceAuditSchema } from "@outbound/contracts/content";
 import { contentPublicFields } from "@outbound/domain/content/content-asset";
@@ -42,7 +43,7 @@ export function contentAuditModelSpec(context: unknown, system: string) {
       if (reviewedClaims.length > 30 || ungroundedStatements.length > 20) throw new Error("CONTENT_AUDIT_CAPACITY_EXCEEDED");
       return contentEvidenceAuditSchema.parse({
         reviewedClaims: reviewedClaims.map(({kind: _kind, ...c}) => c), ungroundedStatements, reviewedScenarios: result.reviewedScenarios, forbiddenTopicMatches: result.forbiddenTopicMatches,
-        coverage: { version: 1, evidenceFingerprint: new Bun.CryptoHasher("sha256").update(JSON.stringify(input.evidence)).digest("hex"), passages },
+        coverage: { version: 1, evidenceFingerprint: contentAuditEvidenceFingerprint(input.evidence), passages },
       });
     },
   };
