@@ -1,3 +1,4 @@
+import { wrapContentText as wrapText } from "./content-text-wrap";
 import { requireContentTextRendering } from "./content-text-rendering";
 import { DOCUMENT_LAYOUT_TEXT_LIMITS, DOCUMENT_ROW_TEXT_LIMITS, type ContentTextLimit } from "./content-document-layout";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -491,19 +492,6 @@ function mediaResult(bytes: Uint8Array, mimeType: "image/png", filename: string,
   return { bytes, mimeType, filename, width: WIDTH, height: HEIGHT, pageCount, durationSeconds: null, manifest };
 }
 
-function wrapText(value: string, maxCharacters: number, maxLines: number): readonly string[] {
-  const words = value.trim().replace(/\s+/g, " ").split(" ").filter(Boolean);
-  const lines: string[] = [];
-  for (const word of words) {
-    const current = lines.at(-1);
-    if (!current || `${current} ${word}`.length > maxCharacters) lines.push(word);
-    else lines[lines.length - 1] = `${current} ${word}`;
-    if (lines.length > maxLines) break;
-  }
-  const retained = lines.slice(0, maxLines);
-  if (lines.length > maxLines && retained.length) retained[retained.length - 1] = `${retained.at(-1)!.replace(/[.…]+$/, "")}…`;
-  return retained.length ? retained : [""];
-}
 
 function tspans(lines: readonly string[], firstY: number, lineHeight: number, x = 88): string {
   return lines.map((line, index) => `<tspan x="${x}" y="${firstY + index * lineHeight}">${escapeText(line)}</tspan>`).join("");
