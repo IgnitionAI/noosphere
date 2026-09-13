@@ -127,3 +127,44 @@ def test_crawl_limits_and_regex_guards_are_enforced():
             url="https://example.com",
             includePatterns=["(.*)+(.*)+"],
         )
+
+
+@pytest.mark.parametrize("failed", [True, False])
+async def test_empty_search_distinguishes_engine_failure_from_no_matches(monkeypatch, failed):
+    payload = {"results": [], "unresponsive_engines": [["duckduckgo", "CAPTCHA"]] if failed else []}
+    monkeypatch.setattr(search.httpx, "AsyncClient", lambda **kwargs: FakeClient(FakeResponse(payload), **kwargs))
+    monkeypatch.setattr(settings, "search_fallback_enabled", False)
+    if failed:
+        with pytest.raises(search.SearchProviderError):
+            await search.search_web("public documentation", 4)
+    else:
+        assert await search.search_web("no matching document", 4) == ([], "searxng", [])
+
+
+async def test_engine_failure_uses_configured_fallback_without_discarding_partial_results(monkeypatch):
+    payload = {"results": [], "unresponsive_engines": [["brave", "Suspended: too many requests"]]}
+    monkeypatch.setattr(search.httpx, "AsyncClient", lambda **kwargs: FakeClient(FakeResponse(payload), **kwargs))
+    monkeypatch.setattr(settings, "search_fallback_enabled", True)
+    calls = []
+    async def fallback(query, limit):
+        calls.append((query, limit))
+        return []
+    async def allowed(url):
+        return True
+    monkeypatch.setattr(search, "search_duckduckgo", fallback)
+    monkeypatch.setattr(search, "is_url_allowed_async", allowed)
+    assert await search.search_web("docs", 4) == ([], "duckduckgo", ["searxng: SearchProviderError"])
+    assert calls == [("docs", 4)]
+    payload["results"] = [{"url": "https://example.com/docs", "title": "Documentation", "content": "Verified location"}]
+    results, provider, errors = await search.search_web("docs", 4)
+    assert provider == "searxng"
+    assert len(results) == 1
+    assert errors == []
+    assert len(calls) == 1
+
+
+async def test_fallback_challenge_is_not_a_successful_empty_search(monkeypatch):
+    response = FakeResponse(text='<form id="challenge-form" action="/anomaly.js">Challenge</form>')
+    monkeypatch.setattr(search.httpx, "AsyncClient", lambda **kwargs: FakeClient(response, **kwargs))
+    with pytest.raises(search.SearchProviderError, match="interactive challenge"):
+        await search.search_duckduckgo("documentation", 4)

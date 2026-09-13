@@ -72,3 +72,24 @@ written to production object storage.
   verify authenticated UI/MCP state and rendered media on that deployment.
 - Validate persistent canary storage and scheduling snapshots without real-recipient
   actions. Do not resume automatic publishing without the required authorization.
+
+
+### Alternating repair guidance (2026-09-13)
+
+The native backup-document-v14 trace exposed a lost writer requirement: after an
+unsupported-claim repair passed the next audit, the editorial repair received only
+the latest critique. Its next draft reintroduced a previously contested premise.
+The job processor now retains the bounded invocation’s audit and critique feedback
+for subsequent writer repairs, with current feedback first and exact duplicates
+removed. This is writer guidance, not evidence: auditor input, readiness rules,
+negative-finding persistence and retry limits are unchanged. The history is local
+to one `process` invocation; continuity across a restart is not claimed.
+
+The new alternating audit → critique → audit regression failed first because the
+critic repair lacked the earlier audit requirement. After the change, 116 targeted
+generation/audit tests pass (267 assertions). Both specification and standards
+reviews found no blocking defect. Real-model benefit remains under evaluation:
+backup-repair-v15 reuses v14’s frozen brief and source context and starts at writer,
+so its timing must be compared only with v14’s writer/audit/critic stages, not its
+search and briefing. Old guidance can be redundant; the native trial must assess
+whether retaining it helps rather than merely enlarging the input.

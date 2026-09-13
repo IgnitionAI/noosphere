@@ -211,6 +211,10 @@ export interface ContentAssetVersion {
     readonly mediaPlan?: ContentMediaPlan;
   };
   readonly audit: {
+    readonly unresolvedClaims?: readonly { readonly statement: string; readonly reason: string }[];
+    readonly unresolvedScenarios?: readonly { readonly statement: string; readonly reason: string }[];
+    readonly unresolvedTopics?: readonly { readonly topic: string; readonly statement: string | null; readonly reason: string }[];
+    readonly topicFindings?: readonly { readonly topic: string; readonly statement: string; readonly reason: string }[];
     readonly reviewedClaims: readonly { readonly statement: string; readonly sourceKeys: readonly string[]; readonly verdict: "supported" | "unsupported"; readonly reason: string }[];
     readonly ungroundedStatements: readonly string[];
     readonly forbiddenTopicMatches: readonly string[];

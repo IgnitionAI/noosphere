@@ -76,6 +76,11 @@ async def search_searxng(
         response.raise_for_status()
         payload = response.json()
 
+    # HTTP 200 does not mean search succeeded: SearXNG reports upstream
+    # rate limits and challenges separately from the result list.
+    if not payload.get("results") and payload.get("unresponsive_engines"):
+        raise SearchProviderError("SearXNG returned no results while engines were unavailable")
+
     results: list[SearchResult] = []
     for item in payload.get("results", []):
         url = str(item.get("url", "")).strip()
@@ -105,6 +110,9 @@ async def search_duckduckgo(query: str, limit: int) -> list[SearchResult]:
     ) as client:
         response = await client.get(DUCKDUCKGO_URL, params={"q": query})
         response.raise_for_status()
+
+    if "challenge-form" in response.text and "anomaly.js" in response.text:
+        raise SearchProviderError("DuckDuckGo requires an interactive challenge")
 
     links = _RESULT_LINK_RE.findall(response.text)
     snippets = _RESULT_SNIPPET_RE.findall(response.text)

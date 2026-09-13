@@ -105,6 +105,17 @@ export class PostgresContentGenerationRepository implements ContentGenerationRep
         `${source.type}:${source.sourceRef}`,
         source.contentHash,
       ]));
+      const previousVersion = input.operation === "asset.improve" && asset.latestVersion > 0
+        ? (await tx.select({
+            id: contentAssetVersions.id,
+            draft: contentAssetVersions.draft,
+            audit: contentAssetVersions.audit,
+          }).from(contentAssetVersions).where(and(
+            eq(contentAssetVersions.workspaceId, input.workspaceId),
+            eq(contentAssetVersions.assetId, asset.id),
+            eq(contentAssetVersions.version, asset.latestVersion),
+          )).limit(1))[0]
+        : undefined;
       const previousBrief = input.operation === "asset.improve" && asset.latestVersion > 0
         ? (await tx.select({
             id: contentBriefs.id,
@@ -138,6 +149,9 @@ export class PostgresContentGenerationRepository implements ContentGenerationRep
         status: "queued",
         stage: reusableBrief ? "writer" : "brief",
         briefSnapshot: reusableBrief?.snapshot ?? null,
+        // Pin the immutable version being improved, even when new evidence requires a new brief.
+        draftSnapshot: previousVersion?.draft ?? null,
+        auditSnapshot: previousVersion?.audit ?? null,
         instruction: input.instruction?.trim() || null,
         createdBy: input.userId,
         createdAt: input.now,
@@ -168,7 +182,7 @@ export class PostgresContentGenerationRepository implements ContentGenerationRep
         payload: { runId }, idempotencyKey: `content-generation:${runId}:v1`, correlationId: input.correlationId ?? `content-generation:${runId}`,
         maxAttempts: 4, priority: CONTENT_GENERATION_JOB_PRIORITY, availableAt: input.now, createdAt: input.now, updatedAt: input.now,
       });
-      await appendEvent(tx, { workspaceId: input.workspaceId, userId: input.userId, runId, eventType: "ContentGenerationScheduled", changes: { ideaId: idea.id, assetId: asset.id, operation: input.operation } });
+      await appendEvent(tx, { workspaceId: input.workspaceId, userId: input.userId, runId, eventType: "ContentGenerationScheduled", changes: { ideaId: idea.id, assetId: asset.id, operation: input.operation, sourceVersionId: previousVersion?.id ?? null } });
       if (reusableBrief) {
         await appendEvent(tx, {
           workspaceId: input.workspaceId,
@@ -298,11 +312,36 @@ export class PostgresContentGenerationRepository implements ContentGenerationRep
   }
 
   async reviseDraftAfterAudit(input: Parameters<ContentGenerationRepository["reviseDraftAfterAudit"]>[0]): Promise<void> {
-    await this.advance(input.workspaceId, input.runId, "audit", { draftSnapshot: input.draft, auditSnapshot: null, updatedAt: input.now }, "ContentDraftRepairedAfterAudit", input.now, "audit");
+    await this.advance(input.workspaceId, input.runId, "audit", { draftSnapshot: input.draft, updatedAt: input.now }, "ContentDraftRepairedAfterAudit", input.now, "audit");
   }
 
   async reviseDraftAfterCritique(input: Parameters<ContentGenerationRepository["reviseDraftAfterCritique"]>[0]): Promise<void> {
-    await this.advance(input.workspaceId, input.runId, "critic", { draftSnapshot: input.draft, auditSnapshot: null, critiqueSnapshot: null, updatedAt: input.now }, "ContentDraftRepairedAfterCritique", input.now, "audit");
+    await this.advance(input.workspaceId, input.runId, "critic", { draftSnapshot: input.draft, critiqueSnapshot: null, updatedAt: input.now }, "ContentDraftRepairedAfterCritique", input.now, "audit");
+  }
+
+  async checkpointAudit(input: Parameters<ContentGenerationRepository["checkpointAudit"]>[0]): Promise<void> {
+    await this.database.transaction(async tx => {
+      const run = (await tx.select().from(contentGenerationRuns).where(and(eq(contentGenerationRuns.workspaceId, input.workspaceId), eq(contentGenerationRuns.id, input.runId))).limit(1).for("update"))[0];
+      if (!run) throw new Error("CONTENT_GENERATION_RUN_NOT_FOUND");
+      if (stageAfter(run.stage as ContentGenerationStage, "audit")) return;
+      if (run.stage !== "audit") throw new Error("CONTENT_GENERATION_STAGE_CONFLICT");
+      let draftSnapshot = run.draftSnapshot;
+      if (input.draft) {
+        const previous = contentDraftSnapshotSchema.parse(run.draftSnapshot);
+        const next = contentDraftSnapshotSchema.parse(input.draft);
+        const { factualClaims: previousClaims, ...previousCopy } = previous;
+        const { factualClaims: nextClaims, ...nextCopy } = next;
+        if (JSON.stringify(previousCopy) !== JSON.stringify(nextCopy)) throw new Error("CONTENT_LEDGER_PUBLIC_COPY_CHANGED");
+        if (JSON.stringify(previousClaims) !== JSON.stringify(nextClaims.slice(0, previousClaims.length))) throw new Error("CONTENT_LEDGER_EXISTING_CLAIMS_CHANGED");
+        draftSnapshot = next;
+      }
+      await tx.update(contentGenerationRuns).set({ draftSnapshot, auditSnapshot: input.audit, updatedAt: input.now }).where(and(eq(contentGenerationRuns.workspaceId, input.workspaceId), eq(contentGenerationRuns.id, input.runId)));
+      await appendEvent(tx, { workspaceId: input.workspaceId, userId: null, runId: input.runId, eventType: "ContentAuditCheckpointed", changes: { at: input.now.toISOString() } });
+    });
+  }
+
+  async reopenAudit(input: Parameters<ContentGenerationRepository["reopenAudit"]>[0]): Promise<void> {
+    await this.advance(input.workspaceId, input.runId, "critic", { critiqueSnapshot: null, updatedAt: input.now }, "ContentAuditReopened", input.now, "audit");
   }
 
   async saveAudit(input: Parameters<ContentGenerationRepository["saveAudit"]>[0]): Promise<void> {
@@ -314,6 +353,7 @@ export class PostgresContentGenerationRepository implements ContentGenerationRep
       const run = (await tx.select().from(contentGenerationRuns).where(and(eq(contentGenerationRuns.workspaceId, input.workspaceId), eq(contentGenerationRuns.id, input.runId))).limit(1).for("update"))[0];
       if (!run) throw new Error("CONTENT_GENERATION_RUN_NOT_FOUND");
       if (run.stage === "completed") return;
+      if (run.stage !== "critic") throw new Error("CONTENT_GENERATION_STAGE_CONFLICT");
       if (!run.draftSnapshot || !run.auditSnapshot) throw new Error("CONTENT_GENERATION_CHECKPOINT_MISSING");
       const brief = (await tx.select().from(contentBriefs).where(and(eq(contentBriefs.workspaceId, input.workspaceId), eq(contentBriefs.runId, run.id))).limit(1))[0];
       if (!brief) throw new Error("CONTENT_BRIEF_CHECKPOINT_MISSING");

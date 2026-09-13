@@ -68,6 +68,27 @@ export interface GenerativeVideoProvider {
   }>;
 }
 
+export interface ContentMediaTextConstraint {
+  readonly field: string;
+  readonly maxCharactersPerLine: number;
+  readonly maxLines: number;
+  readonly actualCharacters: number;
+}
+
+export class ContentMediaTextOverflowError extends Error {
+  constructor(readonly slideNumber: number, readonly layout: string, readonly textConstraint?: ContentMediaTextConstraint) {
+    super("CONTENT_MEDIA_TEXT_OVERFLOW");
+    this.name = "ContentMediaTextOverflowError";
+  }
+}
+
+export class ContentMediaTextOverflowsError extends Error {
+  constructor(readonly errors: readonly ContentMediaTextOverflowError[]) {
+    super("CONTENT_MEDIA_TEXT_OVERFLOW");
+    this.name = "ContentMediaTextOverflowsError";
+  }
+}
+
 export class ContentMediaProducer {
   constructor(
     private readonly storage: ContentMediaObjectStorage,
@@ -75,6 +96,23 @@ export class ContentMediaProducer {
     private readonly generativeVideo?: GenerativeVideoProvider,
     private readonly temporaryRoot = "/tmp",
   ) {}
+
+  // Document layout is checked locally before model audits; no generated video or object write occurs here.
+  async checkDraftLayout(input: Parameters<ContentMediaProducer["produce"]>[0]): Promise<void> {
+    if (input.format !== "linkedin_document") return;
+    if (input.draft.mediaPlan?.format !== input.format || !input.draft.mediaPlan.altText) throw new Error("CONTENT_MEDIA_PLAN_INVALID");
+    await this.#renderDeterministic(input, `${this.temporaryRoot.replace(/\/+$/, "")}/noosphere-media-${input.runId}`);
+  }
+
+  async #renderDeterministic(input: Parameters<ContentMediaProducer["produce"]>[0], outputDirectory: string) {
+    const plan = input.draft.mediaPlan;
+    if (input.format === "linkedin_text" || !plan) throw new Error("CONTENT_MEDIA_PLAN_INVALID");
+    const logoBytes = input.brandKit.logo
+      ? await this.storage.get({objectKey: input.brandKit.logo.objectKey, maxBytes: 5 * 1024 * 1024})
+      : undefined;
+    return this.renderer.render({format: input.format, plan, body: input.draft.body,
+      brandKit: input.brandKit, ...(logoBytes ? {logoBytes} : {}), outputDirectory});
+  }
 
   async produce(input: {
     readonly workspaceId: string;
@@ -105,17 +143,7 @@ export class ContentMediaProducer {
       };
       provenance = { provider: "generative", model: generated.model, promptVersion: generated.promptVersion };
     } else {
-      const logoBytes = input.brandKit.logo
-        ? await this.storage.get({ objectKey: input.brandKit.logo.objectKey, maxBytes: 5 * 1024 * 1024 })
-        : undefined;
-      rendered = await this.renderer.render({
-        format: input.format,
-        plan,
-        body: input.draft.body,
-        brandKit: input.brandKit,
-        ...(logoBytes ? { logoBytes } : {}),
-        outputDirectory,
-      });
+      rendered = await this.#renderDeterministic(input, outputDirectory);
     }
     if (rendered.bytes.byteLength < 1 || rendered.bytes.byteLength > 100 * 1024 * 1024) throw new Error("CONTENT_MEDIA_SIZE_INVALID");
     const checksumSha256 = new Bun.CryptoHasher("sha256").update(rendered.bytes).digest("hex");

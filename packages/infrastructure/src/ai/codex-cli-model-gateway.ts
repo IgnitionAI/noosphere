@@ -285,8 +285,11 @@ async function readCodexOutput(outputPath: string, stdout: string): Promise<stri
   }
 }
 
-function classifyCodexFailure(stderr: string, stdout: string): ModelGatewayError {
+export function classifyCodexFailure(stderr: string, stdout: string): ModelGatewayError {
   const detail = `${stderr}\n${stdout}`.toLowerCase();
+  if (/invalid schema for response_format|invalid_json_schema/.test(detail)) {
+    return new ModelGatewayError("AI_PROVIDER_OUTPUT_INVALID", "codex-cli", "Codex rejected the structured output schema", false, false);
+  }
   if (
     /(?:you(?:'ve| have) reached your usage limit|usage limit (?:is )?(?:exhausted|reached)|rate_limit_exceeded|quota (?:is )?(?:exhausted|exceeded)|too many requests|insufficient_quota)/.test(detail)
   ) {
@@ -402,7 +405,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 // Codex rejects JSON Schema's URI format. Preserve the application schema and
 // validate the returned URLs with request.parse after generation.
-function codexOutputSchema(value: unknown): unknown {
+export function codexOutputSchema(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(codexOutputSchema);
   if (!value || typeof value !== "object") return value;
   return Object.fromEntries(Object.entries(value).filter(([key, entry]) => !(key === "format" && entry === "uri")).map(([key, entry]) => [key, codexOutputSchema(entry)]));

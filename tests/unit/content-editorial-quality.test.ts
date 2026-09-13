@@ -1,3 +1,4 @@
+import { fixtureReadinessInput } from "../fixtures/content/audit-coverage";
 import { expect, test } from 'bun:test';
 import { evaluateContentReadiness, type ContentEditorialCritique } from '@outbound/domain/content/content-asset';
 
@@ -7,12 +8,12 @@ function assessment() {
   return Object.fromEntries(criteria.map(key => [key, { verdict: 'pass', reason: 'Le texte propose un exercice explicite sans promettre de résultat mesuré.', excerpts: [body] } ]));
 }
 function evaluate(qualityAssessment?: unknown, publicBody = body) {
-  return evaluateContentReadiness({
+  return evaluateContentReadiness(fixtureReadinessInput({
     draft: { hook: 'Pour tester votre procédure', body: publicBody, callToAction: null, factualClaims: [], opinionStatements: [body] },
     audit: { reviewedClaims: [], ungroundedStatements: [], forbiddenTopicMatches: [] },
     critique: { genericPhrases: [], repeatedConcepts: [], callToActionAligned: true, distinctFromHistory: true, issues: [], summary: 'Prêt', ...(qualityAssessment ? { qualityAssessment } : {}) } as unknown as ContentEditorialCritique,
     availableEvidenceKeys: [], recentBodies: [],
-  });
+  }));
 }
 test('a legacy positive summary is insufficient for editorial readiness', () => {
   expect(evaluate().blockers).toContain('editorial_assessment_missing');
@@ -84,4 +85,31 @@ test('multiline slide headings cannot shift numeric claims outside the checked t
   const { assertGroundedContentDraft } = await import('@outbound/domain/content/content-asset');
   const candidate = {hook:'Méthode',body:'Une proposition.',callToAction:null,factualClaims:[],opinionStatements:[],mediaPlan:{format:'linkedin_document' as const,visualTone:'editorial' as const,title:'Méthode',subtitle:null,altText:'Méthode',slides:[{title:'Introduction\nMéthode',body:'Contexte.'},{title:'Vérification',body:'Procédure.'},{title:'42% de gains',body:'Résultat.'}],scenes:[]}};
   expect(()=>assertGroundedContentDraft(candidate,[])).toThrow('CONTENT_DRAFT_UNSOURCED_NUMBER');
+});
+
+
+test('URL query separators are not reader questions, including beside a genuine CTA', () => {
+  const copy = body + '\nSources : https://example.com/a?hl=fr ; [Documentation](https://example.com/b?lang=fr&view=full)\nQuel cas ajouteriez-vous ?';
+  expect(evaluate(assessment(), copy).ready).toBe(true);
+  expect(evaluate(assessment(), copy + '\nQuelle méthode utilisez-vous ?').blockers).toContain('multiple_questions');
+  expect(evaluate(assessment(), body + '\nUtilisez-vous [ce guide](https://example.com/guide)?\nConsultez-vous [cette page](https://example.com/page)?').blockers).toContain('multiple_questions');
+});
+
+
+test('an answered third-person decision question is not a second reader CTA', () => {
+  const explanation = 'Le contexte supplémentaire permet-il de retrouver une connaissance utilisable ? Si oui, on réutilise la connaissance trouvée. Si aucune connaissance adaptée ne ressort, on analyse la solution avant de créer un article.';
+  const copy = body + '\n' + explanation + '\nQuel cas ajouteriez-vous ?';
+  expect(evaluate(assessment(), copy).ready).toBe(true);
+  expect(evaluate(assessment(), copy + '\nQuelle méthode utilisez-vous ?').blockers).toContain('multiple_questions');
+});
+
+test.each([
+  'Le contexte permet-il de retrouver une connaissance utilisable ?',
+  'Le contexte permet-il de retrouver une connaissance utilisable ? Si oui, on réutilise.',
+  'Un audit serait-il utile ? Si oui, réservez un créneau avec notre équipe. Sinon, demandez une démonstration.',
+  'Un audit serait-il utile ? Si oui, il reste des créneaux : réservez dès maintenant. Sinon, une démonstration est disponible : contactez notre équipe.',
+  'Souhaitez-vous un audit ? Si oui, réservez votre rendez-vous. Sinon, contactez notre équipe.',
+  'Votre contexte permet-il de retrouver une connaissance ? Si oui, réservez un audit. Sinon, demandez une démonstration.',
+])('keeps unanswered decisions and answered solicitations in the reader question count: %s', (question) => {
+  expect(evaluate(assessment(), body + '\n' + question + '\nQuelle méthode utilisez-vous ?').blockers).toContain('multiple_questions');
 });

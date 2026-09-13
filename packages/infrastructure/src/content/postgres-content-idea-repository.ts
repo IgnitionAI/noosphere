@@ -30,6 +30,8 @@ import {
   knowledgeSources,
   messages,
   offerClaims,
+  offerVersions,
+  icpVersions,
   outboxEvents,
 } from "@outbound/infrastructure/database/schema";
 
@@ -221,11 +223,14 @@ export class PostgresContentIdeaRepository implements ContentIdeaRepository {
   }
 
   async loadDiscoveryContext(input: { workspaceId: string; runId: string }): Promise<ContentIdeaDiscoveryContext> {
-    const rows = await this.database.select({ run: contentIdeaDiscoveryRuns, snapshot: editorialStrategyVersions.snapshot }).from(contentIdeaDiscoveryRuns)
+    const rows = await this.database.select({ run: contentIdeaDiscoveryRuns, snapshot: editorialStrategyVersions.snapshot, offer: offerVersions, icp: icpVersions }).from(contentIdeaDiscoveryRuns)
       .innerJoin(editorialStrategyVersions, and(
         eq(editorialStrategyVersions.workspaceId, contentIdeaDiscoveryRuns.workspaceId),
         eq(editorialStrategyVersions.id, contentIdeaDiscoveryRuns.strategyVersionId),
-      )).where(and(eq(contentIdeaDiscoveryRuns.workspaceId, input.workspaceId), eq(contentIdeaDiscoveryRuns.id, input.runId))).limit(1);
+      ))
+      .innerJoin(offerVersions, and(eq(offerVersions.workspaceId, contentIdeaDiscoveryRuns.workspaceId), eq(offerVersions.id, editorialStrategyVersions.offerVersionId)))
+      .innerJoin(icpVersions, and(eq(icpVersions.workspaceId, contentIdeaDiscoveryRuns.workspaceId), eq(icpVersions.id, editorialStrategyVersions.icpVersionId)))
+      .where(and(eq(contentIdeaDiscoveryRuns.workspaceId, input.workspaceId), eq(contentIdeaDiscoveryRuns.id, input.runId))).limit(1);
     const current = rows[0];
     if (!current) throw new Error("CONTENT_IDEA_RUN_NOT_FOUND");
     const strategy = editorialStrategySnapshotSchema.parse(current.snapshot);
@@ -253,6 +258,17 @@ export class PostgresContentIdeaRepository implements ContentIdeaRepository {
     return {
       run: toRun(current.run),
       strategy,
+      businessContext: {
+        offer: {
+          versionId: current.offer.id, name: current.offer.name, category: current.offer.category,
+          valueProposition: current.offer.valueProposition, targetAudience: current.offer.targetAudience,
+          constraints: current.offer.constraints, objections: current.offer.objections,
+        },
+        icp: {
+          versionId: current.icp.id, name: current.icp.name, problems: current.icp.problems,
+          buyingCommittee: current.icp.buyingCommittee, exclusions: current.icp.exclusions, criteria: current.icp.criteria,
+        },
+      },
       queries: zodStringArray(current.run.queryPlan),
       internalEvidence,
     };

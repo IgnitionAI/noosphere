@@ -249,3 +249,32 @@ outputs remain recorded in private evidence, including unsuccessful attempts.
 Full local check passed before the latest media changes: 1131 unit/HTTP tests,
 crawler tests, TypeScript and builds. Browser suite: 52 passed, 4 conditional skips;
 a targeted controlled/provider-free run is checking those omitted scenarios.
+
+
+### 2026-09-13 — Deliverable conception and binary diagrams
+
+The manually authored KCS prototype established an explicit reference: question, decision flow, operational comparison, reusable check. It is not autonomous-generation evidence. The production renderer now supports a `decision` page: body is the question, exactly two item labels describe conditions and their text describes actions. Contract validation rejects missing or extra branches; rendering uses shared strict text limits and checks complete vertical fit. Existing layouts remain available.
+
+An original `deliverable-designer` runtime skill is embedded for brief and writer, requiring a reader outcome, meaningful representation, distinct page jobs, a usable takeaway, factual scope and a complementary caption. It does not copy third-party Kimi sources. Brief provenance is v12, writer v32, renderer v10. The writer also constrains factual source keys to supplied evidence, including on repairs.
+
+Evidence: the initial raster regression proved decision item edits had no effect (items were omitted by fallback rendering); it now passes. The actual renderer produced a three-page local PDF with a visually inspected decision page. Focused suites passed 83 tests; `bun run check` passed types, architecture, self-hosting, unit/HTTP, crawler and builds. Paired spec/standards review identified the brief version omission, corrected before commit. These checks establish local capability and distribution only. Live autonomous output, VPS canary and final editorial acceptance remain outstanding. No publishing resumed and no production data changed.
+
+
+### 2026-09-13 — First autonomous designer evaluation
+
+A read-only-input Luna/medium evaluation on e0412b1 reuses the collected KCS evidence with a fresh brief and writer, in-memory generation state, private file output and a six-call evaluation cap. Initial harness imports failed before any model call; the fully bundled harness then ran in the existing native dependency environment. It does not publish or persist production generation data.
+
+The first writer invented a named example that restated the rule and confused alternative outcomes with a chronology. Independent critique also requested revision for reader value and coherence; local human review rejected this as an acceptance result. The strategist instructions were too broad: “write the demonstration” promoted an unnecessary case, and control/planning-artifact guidance leaked into an unrelated methodology explanation. The revised skill makes an example conditional on explanatory value, keeps alternative outcomes distinct, and scopes planning-control terminology to topics that actually require it. Brief v13 and writer v33 record the change. The 52 pipeline-agent tests pass and paired review found no weakening of factual checks. This prompt revision has not yet been validated with a fresh autonomous output.
+
+
+### 2026-09-13 — V17 layout and audit-contract findings
+
+The fresh Luna/medium evaluation on e9aa14d used four calls (204,985 ms reported model latency) and failed; it is not accepted. The fictitious case disappeared, but the document still repeats its core distinction. Two concrete defects were isolated without another generation: a 78-character closing CTA triggered a rewrite despite available page space, and the auditor marked one body claim supported with no source keys. All 39 public passages were present; the failure was not missing passage coverage.
+
+Closing CTA panels now grow for up to four lines while preserving font size, complete text and footer clearance (four-line panel ends at y=1114, footer y=1190). The exact first draft renders without that rewrite; the three-line closing page was visually inspected. Over-limit text is still rejected. Renderer provenance is v11.
+
+Audit v14 expresses source requirements directly in the provider schema for both public claims and declarations: supported requires at least one supplied evidence key, unsupported may have none, and no-evidence input only permits unsupported. The decoder keeps its factual checks and stable failure code; malformed support does not enable a quote-location reassessment. Red/green tests distinguish supported-without-source from a legitimate negative verdict. Paired spec/standards reviews found no blocker. The modified schema has not yet been validated on another real model call. No production data, scheduling or publication changed.
+
+## Bounded V19 continuation: audited draft to rendered deliverable
+
+The captured V18 draft/evidence and first complete independent audit were replayed through the corrected decoder, with current evidence fingerprint, all 39 public fields, all 26 reviews and unchanged public copy. The production processor then resumed at critic in an in-memory repository: one real Luna medium call, 28,770 ms, readiness true with no blockers, followed by native five-page PDF rendering. No production database write, object-store write or publication occurred. All five rendered pages were inspected: complete readable text, adequate contrast, distinct reuse/create branches, no clipping. The caption includes the primary KCS source and limits its claims to that framework. This proves the bounded continuation and this deliverable; it does not prove a fresh end-to-end generation, production deployment or publication. Private evidence is retained outside Git.

@@ -1,9 +1,12 @@
+export const MAX_CONTENT_FACTUAL_CLAIMS = 20;
 import type { LinkedinContentFormat } from "@outbound/domain/content/content-brand-kit";
 
 export const contentGenerationStages = ["brief", "writer", "audit", "critic", "completed"] as const;
 export type ContentGenerationStage = (typeof contentGenerationStages)[number];
 
-export const CONTENT_EDITORIAL_POLICY_VERSION = "linkedin-editorial-v3";
+export const MAX_CONTENT_BODY_LENGTH = 1_500;
+
+export const CONTENT_EDITORIAL_POLICY_VERSION = "linkedin-editorial-v4";
 
 export const editorialQualityCriteria = ["audienceRelevance", "readerValue", "coherence", "sourceAttribution", "ctaTruthfulness", "brandVoice", "distinctness"] as const;
 export type ContentQualityAssessment = Readonly<Record<(typeof editorialQualityCriteria)[number], {
@@ -36,7 +39,7 @@ export interface ContentMediaPlan {
     readonly title: string;
     readonly body: string;
     /** Optional for backward compatibility with the first rich-media snapshots. */
-    readonly layout?: "auto" | "cover" | "insight" | "checklist" | "framework" | "comparison" | "process" | "closing";
+    readonly layout?: "auto" | "cover" | "insight" | "checklist" | "framework" | "comparison" | "decision" | "process" | "closing";
     readonly kicker?: string | null;
     readonly callout?: string | null;
     readonly items?: readonly {
@@ -67,6 +70,45 @@ export interface ContentDraftSnapshot {
 }
 
 export interface ContentEvidenceAudit {
+  readonly topicReviews?: readonly { readonly topic: string; readonly violated: boolean; readonly reason: string }[] | undefined;
+  readonly topicFindings?: readonly {
+    readonly topic: string; readonly field: string; readonly statement: string; readonly reason: string;
+  }[] | undefined;
+  /** A null quotation is a historical objection whose location was never recorded. */
+  readonly unresolvedTopics?: readonly {
+    readonly topic: string; readonly field: string | null; readonly statement: string | null; readonly reason: string;
+  }[] | undefined;
+  /** Earlier misleading scenarios still present in public copy, even if no longer declared. */
+  readonly unresolvedScenarios?: readonly {
+    readonly statement: string; readonly verdict: "misleading"; readonly reason: string;
+  }[] | undefined;
+  /** Earlier factual objections still present in the public copy; not resolved by model silence. */
+  readonly unresolvedClaims?: readonly {
+    readonly statement: string; readonly sourceKeys: readonly string[]; readonly verdict: "unsupported"; readonly reason: string;
+  }[] | undefined;
+  /** Present on current complete audits; historical snapshots remain readable. */
+  readonly coverage?: {
+    readonly version: 1;
+    readonly evidenceFingerprint: string;
+    readonly declarations?: readonly {
+      readonly field: string; readonly start: number; readonly statement: string;
+      readonly kind: "factual" | "attribution"; readonly sourceKeys: readonly string[];
+      readonly verdict: "supported" | "unsupported"; readonly reason: string;
+    }[] | undefined;
+    readonly passages: readonly {
+      readonly field: string;
+      readonly text: string;
+      readonly classification: "factual" | "non_factual" | "mixed";
+      readonly nonFactualReason: string | null;
+      readonly claims: readonly {
+        readonly statement: string;
+        readonly kind: "factual" | "attribution";
+        readonly sourceKeys: readonly string[];
+        readonly verdict: "supported" | "unsupported";
+        readonly reason: string;
+      }[];
+    }[];
+  } | undefined;
   readonly reviewedScenarios?: readonly {
     readonly statement: string;
     readonly verdict: "hypothetical" | "misleading";
@@ -121,6 +163,13 @@ const internalAuditPhrases = [
   "preuve fournie",
 ] as const;
 
+export class ContentDraftUnsourcedNumberError extends Error {
+  constructor(readonly locations: readonly { readonly field: string; readonly numbers: readonly string[] }[]) {
+    super("CONTENT_DRAFT_UNSOURCED_NUMBER");
+    this.name = "ContentDraftUnsourcedNumberError";
+  }
+}
+
 export function assertGroundedContentDraft(
   draft: ContentDraftSnapshot,
   availableEvidenceKeys: readonly string[],
@@ -146,7 +195,7 @@ export function assertGroundedContentDraft(
   const bodyNumbers = numberTokens(factualText);
   const groundedNumbers = new Set(draft.factualClaims.flatMap((claim) => numberTokens(claim.statement)));
   if (bodyNumbers.some((token) => !groundedNumbers.has(token))) {
-    throw new Error("CONTENT_DRAFT_UNSOURCED_NUMBER");
+    throw new ContentDraftUnsourcedNumberError(unsourcedNumberLocations(draft, new Set(bodyNumbers.filter(token => !groundedNumbers.has(token)))));
   }
 }
 
@@ -184,24 +233,169 @@ export function assertMediaPlanMatchesBrief(brief: ContentBriefSnapshot, draft: 
   }
 }
 
-function contentPublicText(draft: ContentDraftSnapshot, omitStructuralNumbers = false): string {
+export function contentPublicText(draft: ContentDraftSnapshot, omitStructuralNumbers = false): string {
+  return contentPublicFields(draft, omitStructuralNumbers).map(entry => entry.text).join("\n");
+}
+
+export function contentPublicFields(draft: ContentDraftSnapshot, omitStructuralNumbers = false) {
   const plan = normalizedMediaPlan(draft);
-  const slideTitles = omitStructuralNumbers
-    ? stripOrderedListMarkers(plan.slides.map((slide) => slide.title))
-    : plan.slides.map((slide) => slide.title);
-  return [
-    draft.body,
-    plan.title,
-    plan.subtitle,
-    ...plan.slides.flatMap((slide, index) => [
-      slide.kicker,
-      slideTitles[index],
-      slide.body,
-      slide.callout,
-      ...(slide.items ?? []).flatMap((item) => [item.label, item.text]),
-    ]),
-    ...plan.scenes.flatMap((scene) => [scene.title, scene.body]),
-  ].filter((value): value is string => Boolean(value)).join("\n");
+  const titles = plan.slides.map(slide => slide.title);
+  const slideTitles = omitStructuralNumbers ? stripOrderedListMarkers(titles) : titles;
+  const kickers = plan.slides.map(slide => slide.kicker ?? "");
+  const slideKickers = omitStructuralNumbers ? stripSequenceKickers(kickers) : kickers;
+  const fields: { field: string; text: string }[] = [];
+  const add = (field: string, text: string | null | undefined) => { if (text) fields.push({ field, text }); };
+  add("body", draft.body);
+  add("mediaPlan.title", plan.title);
+  add("mediaPlan.subtitle", plan.subtitle);
+  plan.slides.forEach((slide, index) => {
+    const prefix = `mediaPlan.slides[${index}]`;
+    add(`${prefix}.kicker`, slideKickers[index]);
+    const title = slideTitles[index];
+    const processTitle = omitStructuralNumbers && slide.layout === "process" && (slide.items?.length ?? 0) >= 2
+      ? title?.replace(/^(?:(?:(?:une?|le|la) )?(?:vérification|méthode|procédure|processus|contrôle|parcours) en )?([1-9]\d?) (étapes?|steps?)$/i, (match, count: string) => Number(count) === slide.items!.length ? match.replace(count, "") : match)
+      : title;
+    add(`${prefix}.title`, processTitle);
+    add(`${prefix}.body`, slide.body);
+    add(`${prefix}.callout`, slide.callout);
+    const items = slide.items ?? [];
+    const labels = items.map(item => item.label);
+    const itemLabels = omitStructuralNumbers ? stripOrderedItemLabels(labels) : labels;
+    items.forEach((item, itemIndex) => {
+      add(`${prefix}.items[${itemIndex}].label`, itemLabels[itemIndex]);
+      add(`${prefix}.items[${itemIndex}].text`, item.text);
+    });
+  });
+  plan.scenes.forEach((scene, index) => {
+    add(`mediaPlan.scenes[${index}].title`, scene.title);
+    add(`mediaPlan.scenes[${index}].body`, scene.body);
+  });
+  return fields;
+}
+
+/** Validate a stored receipt against the current public fields and supplied evidence context. */
+export function contentAuditCoverageStatus(draft: ContentDraftSnapshot, audit: ContentEvidenceAudit, evidenceFingerprint?: string): "missing" | "invalid" | "current" {
+  return auditCoverageStatus(draft, audit, evidenceFingerprint, true);
+}
+
+/** Retry eligibility only; this structural check must never authorize readiness. */
+export function contentAuditStructureStatus(draft: ContentDraftSnapshot, audit: ContentEvidenceAudit, evidenceFingerprint?: string): "missing" | "invalid" | "current" {
+  return auditCoverageStatus(draft, audit, evidenceFingerprint, false);
+}
+
+function auditCoverageStatus(draft: ContentDraftSnapshot, audit: ContentEvidenceAudit, evidenceFingerprint: string | undefined, requireDeclarations: boolean): "missing" | "invalid" | "current" {
+  const coverage = audit.coverage;
+  if (!coverage) return "missing";
+  if (!evidenceFingerprint || !/^[a-f0-9]{64}$/.test(evidenceFingerprint) || coverage.version !== 1 || coverage.evidenceFingerprint !== evidenceFingerprint) return "invalid";
+  const fields = contentPublicFields(draft);
+  if (coverage.passages.length !== fields.length || new Set(coverage.passages.map(p => p.field)).size !== fields.length) return "invalid";
+  for (const field of fields) {
+    const passage = coverage.passages.find(p => p.field === field.field);
+    if (!passage || passage.text !== field.text
+      || !["factual", "non_factual", "mixed"].includes(passage.classification)
+      || (passage.classification === "non_factual") !== (passage.claims.length === 0)
+      || (passage.classification === "factual") !== (passage.nonFactualReason === null)
+      || (passage.nonFactualReason !== null && passage.nonFactualReason.trim().length < 20)) return "invalid";
+    for (const claim of passage.claims) {
+      if (claim.statement.length < 3 || !field.text.includes(claim.statement)
+        || !["factual", "attribution"].includes(claim.kind)
+        || (claim.verdict === "supported" && claim.sourceKeys.length === 0)
+        || !audit.reviewedClaims.some(reviewed => reviewed.statement === claim.statement && reviewed.verdict === claim.verdict
+          && sameSourceKeys(reviewed.sourceKeys, claim.sourceKeys))) return "invalid";
+    }
+  }
+  const declarations = coverage.declarations ?? [];
+  const locations = new Set<string>();
+  for (const claim of declarations) {
+    const field = fields.find(field => field.field === claim.field);
+    const location = JSON.stringify([claim.field, claim.start, claim.statement]);
+    if (!field || !Number.isInteger(claim.start) || claim.start < 0 || locations.has(location)
+      || field.text.slice(claim.start, claim.start + claim.statement.length) !== claim.statement
+      || !draft.factualClaims.some(declared => normalize(declared.statement) === normalize(claim.statement))
+      || !["factual", "attribution"].includes(claim.kind)
+      || !["supported", "unsupported"].includes(claim.verdict)
+      || claim.reason.trim().length < 3 || (claim.verdict === "supported" && !claim.sourceKeys.length)
+      || !audit.reviewedClaims.some(reviewed => reviewed.statement === claim.statement && reviewed.verdict === claim.verdict && sameSourceKeys(reviewed.sourceKeys, claim.sourceKeys))) return "invalid";
+    locations.add(location);
+  }
+  for (const claim of requireDeclarations ? draft.factualClaims : []) {
+    for (const field of fields) {
+      for (const occurrence of contentClaimOccurrences(field.text, claim.statement)) {
+        const declared = declarations.some(item => item.field === field.field && item.start === occurrence.start && item.statement === occurrence.statement);
+        const fieldReviewed = coverage.passages.find(item => item.field === field.field)?.claims.some(item => reviewedClaimCoversDraftClaim(item, claim));
+        if (!declared && !fieldReviewed) return "invalid";
+      }
+    }
+  }
+  const passageClaims = [...coverage.passages.flatMap(passage => passage.claims), ...declarations];
+  if (audit.reviewedClaims.some(reviewed => !passageClaims.some(claim =>
+    claim.statement === reviewed.statement && claim.verdict === reviewed.verdict
+    && sameSourceKeys(claim.sourceKeys, reviewed.sourceKeys)))) return "invalid";
+  return "current";
+}
+
+function sameSourceKeys(left: readonly string[], right: readonly string[]): boolean {
+  const keys = new Set(left);
+  return keys.size === new Set(right).size && right.every(key => keys.has(key));
+}
+
+function unsourcedNumberLocations(draft: ContentDraftSnapshot, unsupported: ReadonlySet<string>) {
+  const lines = contentPublicFields(draft, true).flatMap(entry => entry.text.split("\n").map(text => ({ field: entry.field, text })));
+  let text = lines.map(line => line.text).join("\n");
+  // Preserve line ownership while excluding complete declared passages, including
+  // historical scenarios spanning more than one public field.
+  for (const scenario of draft.illustrativeScenarios ?? []) text = text.split(scenario).join(scenario.replace(/[^\n]/g, " "));
+  const prose = stripOrderedListMarkers(text.replace(/https?:\/\/[^\s<>()[\]{}]+/g, "").split("\n"));
+  const findings = new Map<string, Set<string>>();
+  const joined = prose.join("\n");
+  for (const match of numberTokenMatches(joined)) {
+    if (!unsupported.has(match.token)) continue;
+    const lineIndex = joined.slice(0, match.index).split("\n").length - 1;
+    const field = lines[lineIndex]!.field;
+    const values = findings.get(field) ?? new Set<string>();
+    values.add(match.token);
+    findings.set(field, values);
+  }
+  return [...findings].map(([field, numbers]) => ({ field, numbers: [...numbers] }));
+}
+
+/** A review must cite the exact current public copy, not an earlier draft or its brief. */
+export function invalidEditorialAssessmentCriteria(draft: ContentDraftSnapshot, critique: ContentEditorialCritique): readonly (typeof editorialQualityCriteria)[number][] {
+  const publicText = contentPublicText(draft);
+  return editorialQualityCriteria.filter(criterion => {
+    const review = critique.qualityAssessment?.[criterion];
+    return !review || !["pass", "revise"].includes(review.verdict)
+      || typeof review.reason !== "string" || review.reason.trim().length < 20
+      || !Array.isArray(review.excerpts) || review.excerpts.length === 0
+      || review.excerpts.some(excerpt => typeof excerpt !== "string" || excerpt.trim().length < 12 || !publicText.includes(excerpt));
+  });
+}
+
+// A narrowly identifiable explanatory question: third-person subject, one
+// question, and explicit answers for both branches. Direct reader requests and
+// incomplete answers retain the conservative punctuation check.
+function isAnsweredDecisionQuestion(line: string): boolean {
+  const parts = line.split("?");
+  if (parts.length !== 2 || /\b(?:vous|votre|vos|tu|ton|ta|tes)\b/i.test(line)) return false;
+  const question = parts[0]!;
+  const answer = parts[1]!.trim();
+  return /-(?:il|elle|ils|elles)\b/i.test(question)
+    && /^(?:si oui|oui)\s*[:,]\s*(?:on|il|elle|ils|elles|le|la|les|un|une|des)\b[^.!;:,\n]+[.!;]\s+(?:si (?!oui\b)[^.!;?:,\n]+,|(?:sinon|non)\s*[:,])\s*(?:on|il|elle|ils|elles|le|la|les|un|une|des)\b[^.!;:,\n]+[.!]?$/i.test(answer)
+    && answer.length >= 40;
+}
+
+/** Every configured topic needs a current explicit verdict, including absence. */
+export function hasCompleteContentTopicAudit(draft: ContentDraftSnapshot, audit: ContentEvidenceAudit, expectedTopics: readonly string[]): boolean {
+  const expected = new Set(expectedTopics);
+  const reviews = audit.topicReviews ?? [];
+  if (reviews.length !== expected.size || new Set(reviews.map(review => review.topic)).size !== reviews.length
+    || reviews.some(review => !expected.has(review.topic) || review.reason.trim().length < 20 || review.violated !== audit.forbiddenTopicMatches.includes(review.topic))) return false;
+  const findings = audit.topicFindings ?? [];
+  const fields = contentPublicFields(draft);
+  return !audit.forbiddenTopicMatches.some(topic => !expected.has(topic) || !findings.some(finding => finding.topic === topic))
+    && !findings.some(finding => !audit.forbiddenTopicMatches.includes(finding.topic)
+      || !fields.find(field => field.field === finding.field)?.text.includes(finding.statement)
+      || finding.statement.length < 3 || finding.reason.trim().length < 20);
 }
 
 export function evaluateContentReadiness(input: {
@@ -210,22 +404,23 @@ export function evaluateContentReadiness(input: {
   readonly critique: ContentEditorialCritique;
   readonly availableEvidenceKeys: readonly string[];
   readonly recentBodies: readonly string[];
+  readonly evidenceFingerprint?: string;
+  readonly forbiddenTopics?: readonly string[];
 }): { readonly ready: boolean; readonly blockers: readonly string[] } {
   assertGroundedContentDraft(input.draft, input.availableEvidenceKeys);
   const blockers = new Set<string>();
+  const coverageStatus = contentAuditCoverageStatus(input.draft, input.audit, input.evidenceFingerprint);
+  if (coverageStatus !== "current") blockers.add(coverageStatus === "missing" ? "audit_coverage_missing" : "audit_coverage_invalid");
+  if (input.audit.unresolvedClaims?.length) blockers.add("unresolved_audit_claim");
+  if (input.audit.unresolvedScenarios?.length) blockers.add("unresolved_audit_scenario");
+  if (input.audit.unresolvedTopics?.length) blockers.add("unresolved_audit_topic");
+  if (!hasCompleteContentTopicAudit(input.draft, input.audit, input.forbiddenTopics ?? [])) blockers.add("topic_audit_invalid");
   const assessment = input.critique.qualityAssessment;
   if (!assessment) blockers.add("editorial_assessment_missing");
   else {
-    const publicText = contentPublicText(input.draft);
+    if (invalidEditorialAssessmentCriteria(input.draft, input.critique).length) blockers.add("editorial_assessment_invalid");
     for (const criterion of editorialQualityCriteria) {
-      const review = assessment[criterion];
-      if (!review || !["pass", "revise"].includes(review.verdict)
-        || typeof review.reason !== "string" || review.reason.trim().length < 20
-        || !Array.isArray(review.excerpts) || review.excerpts.length === 0
-        || review.excerpts.some((excerpt) => typeof excerpt !== "string" || excerpt.trim().length < 12 || !publicText.includes(excerpt))) {
-        blockers.add("editorial_assessment_invalid");
-      }
-      if (review?.verdict === "revise") blockers.add(`editorial_${criterion}`);
+      if (assessment[criterion]?.verdict === "revise") blockers.add(`editorial_${criterion}`);
     }
   }
   const declaredScenarios = new Set(input.draft.illustrativeScenarios ?? []);
@@ -240,11 +435,7 @@ export function evaluateContentReadiness(input: {
   }
   const available = new Set(input.availableEvidenceKeys);
 
-  for (const claim of input.draft.factualClaims) {
-    if (!input.audit.reviewedClaims.some((reviewed) => reviewedClaimCoversDraftClaim(reviewed, claim))) {
-      blockers.add("unaudited_claim");
-    }
-  }
+  if (unauditedContentClaims(input.draft, input.audit).length) blockers.add("unaudited_claim");
 
   for (const claim of input.audit.reviewedClaims) {
     if (claim.verdict !== "supported" || claim.sourceKeys.some((key) => !available.has(key))) {
@@ -259,13 +450,15 @@ export function evaluateContentReadiness(input: {
   if (internalAuditPhrases.filter((phrase) => normalize(input.draft.body).includes(normalize(phrase))).length >= 2) {
     blockers.add("audit_language");
   }
-  if (input.draft.body.trim().length > 1_500) blockers.add("too_long");
+  if (input.draft.body.trim().length > MAX_CONTENT_BODY_LENGTH) blockers.add("too_long");
   // A title quotation or a diagnostic checklist is not a competing CTA.
   // Editorial critique still checks whether the list supplies genuine reader value.
   const readerQuestions = input.draft.body
+    .replace(/https?:\/\/[^\s<>"«»\)\]]+/gi, "")
     .replace(/«[^»]*»/g, "")
     .split("\n")
     .filter((line) => !/^[ \t]*\d{1,2}[.)][ \t]+/.test(line))
+    .filter((line) => !isAnsweredDecisionQuestion(line))
     .join("\n");
   if ((readerQuestions.match(/\?/g) ?? []).length > 1) blockers.add("multiple_questions");
   if (
@@ -279,13 +472,44 @@ export function evaluateContentReadiness(input: {
   return { ready: blockers.size === 0, blockers: [...blockers] };
 }
 
+/** Match the existing grounding equivalence, but return only complete exact public substrings. */
+export function contentClaimOccurrences(text: string, declaredStatement: string) {
+  const needle = normalize(declaredStatement);
+  if (!needle.length) return [];
+  const positions: {start: number; end: number}[] = [];
+  let normalized = "";
+  let offset = 0;
+  for (const character of text) {
+    const value = normalize(character);
+    const end = offset + character.length;
+    for (let i = 0; i < value.length; i += 1) positions.push({start: offset, end});
+    if (!value.length && positions.length) positions[positions.length - 1]!.end = end;
+    normalized += value;
+    offset = end;
+  }
+  const occurrences: {start: number; statement: string}[] = [];
+  let found = normalized.indexOf(needle);
+  while (found !== -1) {
+    const start = positions[found]!.start;
+    const end = positions[found + needle.length - 1]!.end;
+    const statement = text.slice(start, end);
+    if (normalize(statement) === needle && !occurrences.some(item => item.start === start)) occurrences.push({start, statement});
+    found = normalized.indexOf(needle, found + 1);
+  }
+  return occurrences;
+}
+
+export function unauditedContentClaims(draft: ContentDraftSnapshot, audit: ContentEvidenceAudit) {
+  return draft.factualClaims.filter(claim => !audit.reviewedClaims.some(reviewed => reviewedClaimCoversDraftClaim(reviewed, claim)));
+}
+
 function reviewedClaimCoversDraftClaim(
   reviewed: ContentEvidenceAudit["reviewedClaims"][number],
   draftClaim: ContentDraftSnapshot["factualClaims"][number],
 ): boolean {
   const reviewedStatement = normalize(reviewed.statement);
   const draftStatement = normalize(draftClaim.statement);
-  if (!reviewedStatement.includes(draftStatement) && !draftStatement.includes(reviewedStatement)) return false;
+  if (!reviewedStatement.includes(draftStatement)) return false;
   const reviewedSources = new Set(reviewed.sourceKeys);
   return draftClaim.sourceKeys.every((key) => reviewedSources.has(key));
 }
@@ -294,7 +518,37 @@ function numberTokens(value: string): readonly string[] {
   // Citation addresses and ordered-list markers describe the document's structure,
   // not a measured outcome. Numbers inside each list item still require evidence.
   const prose = stripOrderedListMarkers(value.replace(/https?:\/\/[^\s<>()[\]{}]+/g, "").split("\n")).join("\n");
-  return [...prose.matchAll(/\b\d+(?:[.,]\d+)?(?:\s?%|\s?[kKmM€$])?\b/g)].map((match) => match[0]!.replace(/\s/g, "").toLowerCase());
+  return numberTokenMatches(prose).map(match => match.token);
+}
+
+function numberTokenMatches(value: string) {
+  return [...value.matchAll(/\b\d+(?:[.,]\d+)?(?:\s?%|\s?[kKmM€$])?\b/g)].map(match => ({ token: match[0]!.replace(/\s/g, "").toLowerCase(), index: match.index }));
+}
+
+function stripSequenceKickers(values: readonly string[]): readonly string[] {
+  // Only a complete, ordered sequence of standalone navigation labels is structural.
+  // Prose, quantities, percentages and numbers in the rest of the slide stay audited.
+  const groups = new Map<string, Array<{ index: number; ordinal: number }>>();
+  values.forEach((value, index) => {
+    const match = value.trim().match(/^(branche|branch|étape|step|phase|partie|part)\s+([1-9]\d?)$/i);
+    if (!match) return;
+    const label = match[1]!.toLocaleLowerCase("fr-FR");
+    const group = groups.get(label) ?? [];
+    group.push({ index, ordinal: Number(match[2]) });
+    groups.set(label, group);
+  });
+  const result = [...values];
+  for (const [label, group] of groups) {
+    if (group.length < 2 || !group.every((entry, index) => entry.ordinal === index + 1)) continue;
+    for (const entry of group) result[entry.index] = label;
+  }
+  return result;
+}
+
+function stripOrderedItemLabels(values: readonly string[]): readonly string[] {
+  const matches = values.map(value => value.match(/^([1-9]\d?)(?:[.)][ \t]+|[ \t]+[—–·-][ \t]+)(.+)$/));
+  if (matches.length < 2 || !matches.every((match, index) => match && Number(match[1]) === index + 1)) return values;
+  return matches.map(match => match![2]!);
 }
 
 function stripOrderedListMarkers(values: readonly string[]): readonly string[] {

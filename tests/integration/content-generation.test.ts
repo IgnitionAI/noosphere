@@ -1,3 +1,4 @@
+import { fixtureAuditCoverage } from "../fixtures/content/audit-coverage";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
@@ -179,34 +180,36 @@ databaseDescribe("CNT-101 durable content generation", () => {
 
     const autopilotRepository = new PostgresContentAutopilotRepository(database.db);
     expect(await autopilotRepository.get({ workspaceId })).toMatchObject({ readyAssets: 1, blockedAssets: 0 });
-    await database.client`alter table content_asset_versions disable trigger content_asset_versions_immutable_trg`;
-    await database.client`update content_asset_versions set readiness = readiness - 'policyVersion' where workspace_id = ${workspaceId} and id = ${asset!.latest!.id}`;
-    await database.client`alter table content_asset_versions enable trigger content_asset_versions_immutable_trg`;
-    try {
-      expect(await autopilotRepository.get({ workspaceId })).toMatchObject({ readyAssets: 0, blockedAssets: 1 });
-      const legacySummary = await operationalViews.getSummary(workspaceId);
-      expect(legacySummary.nextOutcomes.some((item) => item.id === `content:${asset!.id}`)).toBe(false);
-      const legacyActivity = await operationalViews.getActivity({ workspaceId, lens: "inbound" });
-      expect(legacyActivity.items).toContainEqual(expect.objectContaining({ id: `content-asset:${asset!.id}`, status: "attention" }));
-      expect((await repository.findAssetByIdea({ workspaceId, ideaId }))?.latest?.readiness).toMatchObject({ ready: false, blockers: ["editorial_policy_outdated"] });
-      expect(await autopilotRepository.listRepairCandidates({ workspaceId, strategyVersionId, limit: 10 })).toContainEqual({
-        assetId: asset!.id,
-        attempt: 1,
-        blockers: ["editorial_policy_outdated"],
-      });
-      await expect(publicationRepository.schedule({
-        workspaceId,
-        userId,
-        assetId: asset!.id,
-        requestKey: "publication:legacy-policy:must-not-send",
-        scheduledFor: new Date(now.getTime() + 5_000),
-        account: { provider: "unipile", providerAccountId: "linkedin-account-fixture", displayName: "Compte LinkedIn fixture", selectionVersion: now.toISOString(), observedAt: now.toISOString() },
-        now,
-      })).rejects.toThrow("CONTENT_ASSET_EDITORIAL_POLICY_OUTDATED");
-    } finally {
+    for (const legacyPolicy of [null, "linkedin-editorial-v3"]) {
       await database.client`alter table content_asset_versions disable trigger content_asset_versions_immutable_trg`;
-      await database.client`update content_asset_versions set readiness = jsonb_set(readiness, '{policyVersion}', to_jsonb(${'linkedin-editorial-v3'}::text), true) where workspace_id = ${workspaceId} and id = ${asset!.latest!.id}`;
+      await database.client`update content_asset_versions set readiness = case when ${legacyPolicy}::text is null then readiness - 'policyVersion' else jsonb_set(readiness, '{policyVersion}', to_jsonb(${legacyPolicy}::text), true) end where workspace_id = ${workspaceId} and id = ${asset!.latest!.id}`;
       await database.client`alter table content_asset_versions enable trigger content_asset_versions_immutable_trg`;
+      try {
+        expect(await autopilotRepository.get({ workspaceId })).toMatchObject({ readyAssets: 0, blockedAssets: 1 });
+        const legacySummary = await operationalViews.getSummary(workspaceId);
+        expect(legacySummary.nextOutcomes.some((item) => item.id === `content:${asset!.id}`)).toBe(false);
+        const legacyActivity = await operationalViews.getActivity({ workspaceId, lens: "inbound" });
+        expect(legacyActivity.items).toContainEqual(expect.objectContaining({ id: `content-asset:${asset!.id}`, status: "attention" }));
+        expect((await repository.findAssetByIdea({ workspaceId, ideaId }))?.latest?.readiness).toMatchObject({ ready: false, blockers: ["editorial_policy_outdated"] });
+        expect(await autopilotRepository.listRepairCandidates({ workspaceId, strategyVersionId, limit: 10 })).toContainEqual({
+          assetId: asset!.id,
+          attempt: 1,
+          blockers: ["editorial_policy_outdated"],
+        });
+        await expect(publicationRepository.schedule({
+          workspaceId,
+          userId,
+          assetId: asset!.id,
+          requestKey: "publication:legacy-policy:must-not-send",
+          scheduledFor: new Date(now.getTime() + 5_000),
+          account: { provider: "unipile", providerAccountId: "linkedin-account-fixture", displayName: "Compte LinkedIn fixture", selectionVersion: now.toISOString(), observedAt: now.toISOString() },
+          now,
+        })).rejects.toThrow("CONTENT_ASSET_EDITORIAL_POLICY_OUTDATED");
+      } finally {
+        await database.client`alter table content_asset_versions disable trigger content_asset_versions_immutable_trg`;
+        await database.client`update content_asset_versions set readiness = jsonb_set(readiness, '{policyVersion}', to_jsonb(${'linkedin-editorial-v4'}::text), true) where workspace_id = ${workspaceId} and id = ${asset!.latest!.id}`;
+        await database.client`alter table content_asset_versions enable trigger content_asset_versions_immutable_trg`;
+      }
     }
     const autopilotClock = { now: () => now };
     const autopilotPublishing = new ContentPublicationApplication(
@@ -261,25 +264,57 @@ databaseDescribe("CNT-101 durable content generation", () => {
     expect(improvementContext).toMatchObject({
       run: { stage: "writer" },
       brief,
+      draft,
+      audit,
       recentBodies: [],
     });
     await repository.startRun({ workspaceId, runId: improved.id, now });
     await repository.saveDraft({ workspaceId, runId: improved.id, draft: { ...draft, hook: "Le précédent n’est utile que s’il est retrouvable." }, now });
+    const negativeCheckpoint = { ...audit, reviewedClaims: audit.reviewedClaims.map(claim => ({ ...claim, verdict: "unsupported" as const })), unresolvedTopics: [{ topic: "Synthetic historical forbidden topic", field: null, statement: null, reason: "Historical objection without location for persistence verification only." }], unresolvedScenarios: [{ statement: draft.body.slice(0, 100), verdict: "misleading" as const, reason: "Synthetic historical scenario objection for checkpoint persistence only." }] };
+    await repository.checkpointAudit({ workspaceId, runId: improved.id, audit: negativeCheckpoint, now });
+    expect(await repository.loadContext({ workspaceId, runId: improved.id })).toMatchObject({run: {stage: "audit"}, audit: negativeCheckpoint});
+    const beforeLedger = await repository.loadContext({workspaceId, runId: improved.id});
+    const extraClaim = {statement: "Les équipes juridiques ont besoin d’une preuve résoluble avant de décider.", sourceKeys: [sourceKey]};
+    const ledgerDraft = {...beforeLedger.draft!, factualClaims: [...beforeLedger.draft!.factualClaims, extraClaim]};
+    const ledgerAudit = fixtureAuditCoverage(ledgerDraft, {...audit, reviewedClaims: [...audit.reviewedClaims, {...extraClaim, verdict: "supported" as const, reason: "Synthetic source verdict for the persistence fixture."}]}, beforeLedger.evidence);
+    await repository.checkpointAudit({workspaceId, runId: improved.id, draft: ledgerDraft, audit: ledgerAudit, now});
+    const afterLedger = await repository.loadContext({workspaceId, runId: improved.id});
+    expect(afterLedger.draft?.factualClaims).toContainEqual(extraClaim);
+    expect(afterLedger.audit).toMatchObject(ledgerAudit);
+    await expect(repository.checkpointAudit({workspaceId, runId: improved.id, draft: {...ledgerDraft, body: ledgerDraft.body + " Unexpected rewritten public copy."}, audit: ledgerAudit, now})).rejects.toThrow("CONTENT_LEDGER_PUBLIC_COPY_CHANGED");
+    expect((await repository.loadContext({workspaceId, runId: improved.id})).draft?.body).toBe(draft.body);
+    await expect(repository.checkpointAudit({workspaceId, runId: improved.id, draft: {...ledgerDraft, factualClaims: [extraClaim]}, audit: ledgerAudit, now})).rejects.toThrow("CONTENT_LEDGER_EXISTING_CLAIMS_CHANGED");
+    expect((await repository.loadContext({workspaceId, runId: improved.id})).draft?.factualClaims).toEqual(ledgerDraft.factualClaims);
+    // Restore the negative checkpoint to exercise repair continuity separately below.
+    await repository.checkpointAudit({workspaceId, runId: improved.id, audit: negativeCheckpoint, now});
     const auditRepairedDraft = { ...draft, hook: "Une preuve auditée reste résoluble." };
     await repository.reviseDraftAfterAudit({ workspaceId, runId: improved.id, draft: auditRepairedDraft, now });
     expect((await repository.loadContext({ workspaceId, runId: improved.id })).draft?.hook).toBe(auditRepairedDraft.hook);
+    expect((await repository.loadContext({ workspaceId, runId: improved.id })).audit).toMatchObject(negativeCheckpoint);
     await repository.saveAudit({ workspaceId, runId: improved.id, audit, now });
     const criticRepairedDraft = { ...auditRepairedDraft, hook: "Une décision juridique exige une preuve retrouvable." };
     await repository.reviseDraftAfterCritique({ workspaceId, runId: improved.id, draft: criticRepairedDraft, now });
     expect(await repository.loadContext({ workspaceId, runId: improved.id })).toMatchObject({
       run: { stage: "audit" },
       draft: { hook: criticRepairedDraft.hook },
-      audit: null,
+      audit,
       critique: null,
     });
     await repository.saveAudit({ workspaceId, runId: improved.id, audit, now });
+    await expect(repository.reopenAudit({ workspaceId: otherWorkspaceId, runId: improved.id, now })).rejects.toThrow("CONTENT_GENERATION_RUN_NOT_FOUND");
+    await repository.reopenAudit({ workspaceId, runId: improved.id, now });
+    // Reopening retains the previous assessment as pending context; stage audit requires a fresh assessment.
+    const reopened = await repository.loadContext({ workspaceId, runId: improved.id });
+    expect(reopened).toMatchObject({ run: { stage: "audit" }, draft: criticRepairedDraft, audit, critique: null });
+    await expect(repository.completeRun({ workspaceId, runId: improved.id, critique, readiness: {ready: true, blockers: []}, now })).rejects.toThrow("CONTENT_GENERATION_STAGE_CONFLICT");
+    const refreshedAudit = fixtureAuditCoverage(reopened.draft!, audit, reopened.evidence);
+    await repository.saveAudit({ workspaceId, runId: improved.id, audit: refreshedAudit, now });
+    expect((await repository.loadContext({ workspaceId, runId: improved.id })).audit).toMatchObject(refreshedAudit);
     await repository.completeRun({ workspaceId, runId: improved.id, critique, readiness: { ready: true, blockers: [] }, now });
     expect((await repository.findAssetByIdea({ workspaceId, ideaId }))?.latestVersion).toBe(2);
+    expect((await repository.findAssetByIdea({ workspaceId, ideaId }))?.latest?.audit).toMatchObject(refreshedAudit);
+    await repository.reopenAudit({ workspaceId, runId: improved.id, now });
+    expect((await repository.loadContext({ workspaceId, runId: improved.id })).run.stage).toBe("completed");
 
     await database.client`update content_idea_sources set content_hash = ${"claim-hash-changed"} where workspace_id = ${workspaceId} and idea_id = ${ideaId}`;
     const evidenceChanged = await repository.createGeneration({
@@ -293,6 +328,8 @@ databaseDescribe("CNT-101 durable content generation", () => {
     expect(await repository.loadContext({ workspaceId, runId: evidenceChanged.id })).toMatchObject({
       run: { stage: "brief" },
       brief: null,
+      draft: criticRepairedDraft,
+      audit: refreshedAudit,
     });
     await database.client`update content_idea_sources set content_hash = ${"claim-hash"} where workspace_id = ${workspaceId} and idea_id = ${ideaId}`;
 
@@ -327,14 +364,14 @@ databaseDescribe("CNT-101 durable content generation", () => {
 
     // Simulate a publication queued before a policy upgrade, retaining its immutable snapshot.
     await database.client`alter table content_asset_versions disable trigger content_asset_versions_immutable_trg`;
-    await database.client`update content_asset_versions set readiness = jsonb_set(readiness, '{policyVersion}', '"linkedin-editorial-v2"'::jsonb) where workspace_id = ${workspaceId} and id = ${scheduled.assetVersionId}`;
+    await database.client`update content_asset_versions set readiness = jsonb_set(readiness, '{policyVersion}', '"linkedin-editorial-v3"'::jsonb) where workspace_id = ${workspaceId} and id = ${scheduled.assetVersionId}`;
     await database.client`alter table content_asset_versions enable trigger content_asset_versions_immutable_trg`;
     try {
       await expect(publicationRepository.claimExecution({ workspaceId, publicationId: scheduled.id, currentAccountId: "linkedin-account-fixture", executionToken: crypto.randomUUID(), now: new Date(now.getTime() + 2_000) })).rejects.toThrow("CONTENT_ASSET_EDITORIAL_POLICY_OUTDATED");
       expect((await publicationRepository.find({ workspaceId, publicationId: scheduled.id }))?.status).toBe("scheduled");
     } finally {
       await database.client`alter table content_asset_versions disable trigger content_asset_versions_immutable_trg`;
-      await database.client`update content_asset_versions set readiness = jsonb_set(readiness, '{policyVersion}', '"linkedin-editorial-v3"'::jsonb) where workspace_id = ${workspaceId} and id = ${scheduled.assetVersionId}`;
+      await database.client`update content_asset_versions set readiness = jsonb_set(readiness, '{policyVersion}', '"linkedin-editorial-v4"'::jsonb) where workspace_id = ${workspaceId} and id = ${scheduled.assetVersionId}`;
       await database.client`alter table content_asset_versions enable trigger content_asset_versions_immutable_trg`;
     }
 
@@ -587,6 +624,32 @@ databaseDescribe("CNT-101 durable content generation", () => {
       requestKey: "autopilot:integration:operational-proof:cancel",
       now: operationalSlot,
     });
+
+    // A new improvement must not erase the negative history of an immutable blocked version.
+    const blockedIdeaId = crypto.randomUUID();
+    const [originalIdea] = await database.db.select().from(contentIdeas).where(inArray(contentIdeas.id, [ideaId]));
+    const [originalSource] = await database.db.select().from(contentIdeaSources).where(inArray(contentIdeaSources.ideaId, [ideaId]));
+    await database.db.insert(contentIdeas).values({ ...originalIdea!, id: blockedIdeaId, fingerprint: blockedIdeaId, status: "discovered" });
+    await database.db.insert(contentIdeaSources).values({ ...originalSource!, id: crypto.randomUUID(), ideaId: blockedIdeaId });
+    const blockedRun = await repository.createGeneration({ workspaceId, userId, ideaId: blockedIdeaId, operation: "asset.generate", requestKey: "content:blocked-history", now: new Date(now.getTime() + 100_000) });
+    await repository.startRun({ workspaceId, runId: blockedRun.id, now });
+    await repository.saveBrief({ workspaceId, runId: blockedRun.id, brief, now });
+    await repository.saveDraft({ workspaceId, runId: blockedRun.id, draft, now });
+    await repository.saveAudit({ workspaceId, runId: blockedRun.id, audit: negativeCheckpoint, now });
+    await repository.completeRun({ workspaceId, runId: blockedRun.id, critique, readiness: { ready: false, blockers: ["unresolved_audit_topic", "unresolved_audit_scenario"] }, now });
+    const blockedVersion = (await repository.findAssetByIdea({ workspaceId, ideaId: blockedIdeaId }))!.latest!;
+    const retryBlocked = await repository.createGeneration({ workspaceId, userId, assetId: blockedRun.assetId, operation: "asset.improve", requestKey: "content:improve-blocked-history", instruction: "Corriger les objections sans changer le sujet.", now: new Date(now.getTime() + 101_000) });
+    const restartedRepository = new PostgresContentGenerationRepository(database.db);
+    expect(await restartedRepository.loadContext({ workspaceId, runId: retryBlocked.id })).toMatchObject({
+      run: { stage: "writer", instruction: "Corriger les objections sans changer le sujet." },
+      draft,
+      audit: negativeCheckpoint,
+    });
+    await expect(restartedRepository.loadContext({ workspaceId: otherWorkspaceId, runId: retryBlocked.id })).rejects.toThrow("CONTENT_GENERATION_RUN_NOT_FOUND");
+    await restartedRepository.startRun({ workspaceId, runId: retryBlocked.id, now });
+    await restartedRepository.saveDraft({ workspaceId, runId: retryBlocked.id, draft: { ...draft, hook: "Une révision conserve ses objections." }, now });
+    expect((await restartedRepository.loadContext({ workspaceId, runId: retryBlocked.id })).audit).toMatchObject(negativeCheckpoint);
+    expect((await repository.findAssetByIdea({ workspaceId, ideaId: blockedIdeaId }))!.latest).toEqual(blockedVersion);
 
     await expectRejected(() => database.client`update content_asset_versions set body = 'mutated' where workspace_id = ${workspaceId}`, "CONTENT_SNAPSHOT_IMMUTABLE");
     await expectRejected(() => database.client`update content_publications set content_snapshot = '{"body":"mutated"}'::jsonb where workspace_id = ${workspaceId}`, "CONTENT_PUBLICATION_SNAPSHOT_IMMUTABLE");

@@ -1,0 +1,17 @@
+{
+  "purpose": "Agent-authored semantic evaluation cases for a claimed worked example. Evaluate in the same post context; schema tests or labels alone do not establish a model verdict. All inputs are fictional.",
+  "cases": [
+    {
+      "id": "example-conclusion-without-comparison",
+      "example": "Exemple fictif : Lina reçoit un ticket : « impossible d’ouvrir le dossier X ». Elle note le contexte dans les champs du ticket et recherche. Un article applicable est trouvé : elle le réutilise et le lie au ticket. Après une précision du demandeur, elle capture à nouveau et relance la recherche. Si aucun article applicable n’est trouvé, elle analyse la solution, puis transforme ses notes en nouvel article.",
+      "expectedReaderValue": "revise",
+      "basis": "The named ticket does not explain why an article is applicable; the example restates the process."
+    },
+    {
+      "id": "example-explicit-comparison",
+      "example": "Exemple fictif : Lina reçoit « export CSV : erreur 403 ». Un premier article explique un échec de connexion. Or la connexion fonctionne : cet article ne traite pas l’action en échec. Lina ajoute « export CSV » et « 403 » au contexte du ticket, puis recherche à nouveau. Le guide trouvé décrit cette même action et ce même code : elle le réutilise et le lie au ticket, au lieu de créer un doublon.",
+      "expectedReaderValue": "pass",
+      "basis": "The initial article concerns login but login works; action and error refine the search and justify reusing the matching guide."
+    }
+  ]
+}

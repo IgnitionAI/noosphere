@@ -1,10 +1,11 @@
+import { fixtureReadinessInput } from "../fixtures/content/audit-coverage";
 import { expect, test } from "bun:test";
 import { assertGroundedContentDraft, evaluateContentReadiness, editorialQualityCriteria } from "@outbound/domain/content/content-asset";
 
 const scenario = 'Exemple fictif : le ticket porte sur la version 4.2 et le document décrit la version 4.1.';
 const draft = { hook:'Vérifiez la version avant de répondre.', body:'Vérifiez la version avant de répondre.\n\n'+scenario, callToAction:null, factualClaims:[],opinionStatements:[],illustrativeScenarios:[scenario] };
 const critique = {qualityAssessment:Object.fromEntries(editorialQualityCriteria.map(key=>[key,{verdict:'pass',reason:'Le texte illustre une vérification proposée, sans revendiquer de performance.',excerpts:[scenario]}])) as any,genericPhrases:[],repeatedConcepts:[],callToActionAligned:true,distinctFromHistory:true,issues:[],summary:'Méthode illustrée'};
-function assess(reviewedScenarios: any[] = []) { return evaluateContentReadiness({draft,audit:{reviewedClaims:[],ungroundedStatements:[],forbiddenTopicMatches:[],reviewedScenarios},critique,availableEvidenceKeys:[],recentBodies:[]}); }
+function assess(reviewedScenarios: any[] = []) { return evaluateContentReadiness(fixtureReadinessInput({draft,audit:{reviewedClaims:[],ungroundedStatements:[],forbiddenTopicMatches:[],reviewedScenarios},critique,availableEvidenceKeys:[],recentBodies:[]})); }
 
 test('declared illustrative version numbers are allowed into audit, but not ready without that audit', () => {
   expect(()=>assertGroundedContentDraft(draft,[])).not.toThrow();
@@ -38,4 +39,35 @@ test('provider output requires scenario arrays while historical snapshots remain
   expect(z.toJSONSchema(contentEvidenceAuditSchema).required).toContain('reviewedScenarios');
   expect(contentDraftSnapshotSchema.parse({...draft,illustrativeScenarios:undefined}).illustrativeScenarios).toEqual([]);
   expect(contentEvidenceAuditSchema.parse({reviewedClaims:[],ungroundedStatements:[],forbiddenTopicMatches:[]}).reviewedScenarios).toEqual([]);
+});
+
+test('locates an undeclared media occurrence without blaming the declared caption', () => {
+  const mediaPlan = { format: 'linkedin_document' as const, visualTone: 'editorial' as const, title: 'Version', subtitle: null, altText: 'Version', scenes: [], slides: [{ title: 'Vérifier', body: 'Le document porte la version 4.2.' }] };
+  let failure: unknown;
+  try { assertGroundedContentDraft({ ...draft, mediaPlan }, []); } catch (error) { failure = error; }
+  expect(failure).toMatchObject({ message: 'CONTENT_DRAFT_UNSOURCED_NUMBER', locations: [{ field: 'mediaPlan.slides[0].body', numbers: ['4.2'] }] });
+});
+
+test('numeric locations preserve cross-field scenarios, URLs and ordered slide markers', () => {
+  const body = 'Exemple fictif : version 4.2';
+  const title = 'à comparer avec 4.1.';
+  const candidate = { ...draft, body, illustrativeScenarios: [body+'\n'+title], mediaPlan: {
+    format: 'linkedin_document' as const, visualTone: 'editorial' as const, title, subtitle: null, altText: 'Version', scenes: [], slides: [
+      { title: '1. Observer', body: 'Source : https://example.com/18' },
+      { title: '2. Comparer', body: 'Résultat réel : 18 dossiers.', items: [{ label: 'Conclusion', text: 'Un gain réel de 19 points.' }] },
+    ],
+  } };
+  let failure: unknown;
+  try { assertGroundedContentDraft(candidate, []); } catch (error) { failure = error; }
+  expect(failure).toMatchObject({ message: 'CONTENT_DRAFT_UNSOURCED_NUMBER', locations: [
+    { field: 'mediaPlan.slides[1].body', numbers: ['18'] },
+    { field: 'mediaPlan.slides[1].items[0].text', numbers: ['19'] },
+  ] });
+});
+
+
+test('numeric locations use the same multiline unit tokens as the gate', () => {
+  let failure: unknown;
+  try { assertGroundedContentDraft({ ...draft, body: '42\nM contrats', illustrativeScenarios: [] }, []); } catch (error) { failure = error; }
+  expect(failure).toMatchObject({ message: 'CONTENT_DRAFT_UNSOURCED_NUMBER', locations: [{ field: 'body', numbers: ['42m'] }] });
 });

@@ -1,3 +1,4 @@
+import { MAX_CONTENT_FACTUAL_CLAIMS } from "@outbound/domain/content/content-asset";
 import { z } from "zod";
 import type { EditorialStrategySnapshot } from "@outbound/domain/content/editorial-strategy";
 import type { ContentIdeaCandidate } from "@outbound/domain/content/content-idea";
@@ -7,7 +8,7 @@ import type {
   ContentEditorialCritique,
   ContentEvidenceAudit,
 } from "@outbound/domain/content/content-asset";
-import type { ContentBrandKitSnapshot } from "@outbound/domain/content/content-brand-kit";
+import type { ContentBrandKitSnapshot, LinkedinContentFormat } from "@outbound/domain/content/content-brand-kit";
 import { linkedinContentFormats } from "@outbound/domain/content/content-brand-kit";
 
 const linkedinContentFormatSchema = z.enum(linkedinContentFormats);
@@ -69,17 +70,7 @@ export const contentBriefSnapshotSchema: z.ZodType<ContentBriefSnapshot> = z.obj
   constraints: z.array(z.string().trim().min(2).max(500)).min(1).max(20),
 }).strict();
 
-export const contentDraftSnapshotSchema: z.ZodType<ContentDraftSnapshot> = z.object({
-  hook: z.string().trim().min(5).max(500),
-  body: z.string().trim().min(80).max(3_000),
-  callToAction: z.string().trim().min(2).max(300).nullable(),
-  factualClaims: z.array(z.object({
-    statement: z.string().trim().min(3).max(1_000),
-    sourceKeys: z.array(z.string().trim().min(1).max(500)).min(1).max(12),
-  }).strict()).max(20),
-  opinionStatements: z.array(z.string().trim().min(3).max(1_000)).max(20),
-  illustrativeScenarios: z.array(z.string().trim().min(20).max(600)).max(2).optional().default([]),
-  mediaPlan: z.object({
+const contentMediaPlanSchema = z.object({
     format: linkedinContentFormatSchema,
     visualTone: z.enum(["editorial", "technical", "bold", "minimal"]),
     title: z.string().trim().min(3).max(180).nullable(),
@@ -88,20 +79,34 @@ export const contentDraftSnapshotSchema: z.ZodType<ContentDraftSnapshot> = z.obj
     slides: z.array(z.object({
       title: z.string().trim().min(2).max(140),
       body: z.string().trim().min(3).max(500),
-      layout: z.enum(["auto", "cover", "insight", "checklist", "framework", "comparison", "process", "closing"]).optional().default("auto"),
+      layout: z.enum(["auto", "cover", "insight", "checklist", "framework", "comparison", "decision", "process", "closing"]).optional().default("auto"),
       kicker: z.string().trim().min(2).max(80).nullable().optional().default(null),
       callout: z.string().trim().min(2).max(240).nullable().optional().default(null),
       items: z.array(z.object({
         label: z.string().trim().min(1).max(80),
         text: z.string().trim().min(2).max(220),
       }).strict()).max(4).optional().default([]),
-    }).strict()).max(9),
+    }).strict().refine(slide => slide.layout !== "decision" || slide.items.length === 2, {
+      message: "A decision needs exactly two labelled branches", path: ["items"],
+    })).max(9),
     scenes: z.array(z.object({
       title: z.string().trim().min(2).max(140),
       body: z.string().trim().min(3).max(500),
       durationSeconds: z.number().int().min(3).max(15),
     }).strict()).max(8),
-  }).strict().optional().default({
+  }).strict();
+
+const contentDraftObjectSchema = z.object({
+  hook: z.string().trim().min(5).max(500),
+  body: z.string().trim().min(80).max(3_000).describe("Complete public LinkedIn post, including the hook, source attribution and CTA. Compose for 500-1100 characters, keeping the complete post at or below 1500 characters. Finish the explanation and all sentences; do not cut words or URLs. The larger schema tolerance is for recovery of invalid drafts, not a writing target."),
+  callToAction: z.string().trim().min(2).max(300).nullable(),
+  factualClaims: z.array(z.object({
+    statement: z.string().trim().min(3).max(1_000),
+    sourceKeys: z.array(z.string().trim().min(1).max(500)).min(1).max(12),
+  }).strict()).max(MAX_CONTENT_FACTUAL_CLAIMS),
+  opinionStatements: z.array(z.string().trim().min(3).max(1_000)).max(20),
+  illustrativeScenarios: z.array(z.string().trim().min(20).max(600)).max(2).optional().default([]),
+  mediaPlan: contentMediaPlanSchema.optional().default({
     format: "linkedin_text",
     visualTone: "editorial",
     title: null,
@@ -111,6 +116,21 @@ export const contentDraftSnapshotSchema: z.ZodType<ContentDraftSnapshot> = z.obj
     scenes: [],
   }),
 }).strict();
+
+// Historical snapshots retain the permissive media shape and text-only default.
+export const contentDraftSnapshotSchema: z.ZodType<ContentDraftSnapshot> = contentDraftObjectSchema;
+
+export function contentDraftGenerationSchema(format: LinkedinContentFormat) {
+  const fields = contentMediaPlanSchema.shape;
+  const mediaPlan = format === "linkedin_text"
+    ? contentMediaPlanSchema.extend({ format: z.literal(format), title: z.null(), subtitle: z.null(), altText: z.null(), slides: fields.slides.max(0), scenes: fields.scenes.max(0) })
+    : contentMediaPlanSchema.extend({
+      format: z.literal(format), title: fields.title.unwrap(), altText: fields.altText.unwrap(),
+      slides: format === "linkedin_document" ? fields.slides.min(3) : fields.slides.max(0),
+      scenes: format === "linkedin_video" ? fields.scenes.min(3).describe("Three to eight scenes, totaling 12 to 60 seconds; each scene lasts 3 to 15 seconds.") : fields.scenes.max(0),
+    });
+  return contentDraftObjectSchema.extend({ mediaPlan });
+}
 
 const hexColorSchema = z.string().regex(/^#[0-9A-Fa-f]{6}$/);
 
@@ -208,6 +228,27 @@ export const contentBrandDirectionProposalSchema = z.object({
 }).strict();
 
 export const contentEvidenceAuditSchema: z.ZodType<ContentEvidenceAudit> = z.object({
+  topicReviews: z.array(z.object({topic: z.string().min(1).max(300), violated: z.boolean(), reason: z.string().min(20).max(1_000)}).strict()).max(30).optional(),
+  topicFindings: z.array(z.object({ topic: z.string().min(1).max(300), field: z.string().min(1), statement: z.string().min(3).max(1_000), reason: z.string().min(20).max(1_000) }).strict()).max(20).optional(),
+  unresolvedTopics: z.array(z.object({ topic: z.string().min(1).max(300), field: z.string().min(1).nullable(), statement: z.string().min(3).max(1_000).nullable(), reason: z.string().min(20).max(1_000) }).strict()).max(20).optional(),
+  unresolvedScenarios: z.array(z.object({ statement: z.string().min(20).max(600), verdict: z.literal("misleading"), reason: z.string().min(20).max(1_000) }).strict()).max(6).optional(),
+  unresolvedClaims: z.array(z.object({ statement: z.string().min(3).max(1_000), sourceKeys: z.array(z.string()).max(12), verdict: z.literal("unsupported"), reason: z.string().min(3).max(1_000) })).max(30).optional(),
+  coverage: z.object({
+    version: z.literal(1), evidenceFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    declarations: z.array(z.object({
+      field: z.string().min(1), start: z.number().int().min(0), statement: z.string().min(3).max(1_000),
+      kind: z.enum(["factual", "attribution"]), sourceKeys: z.array(z.string()).max(12),
+      verdict: z.enum(["supported", "unsupported"]), reason: z.string().min(3).max(1_000),
+    }).strict()).max(200).optional(),
+    passages: z.array(z.object({
+      field: z.string().min(1), text: z.string().min(1),
+      classification: z.enum(["factual", "non_factual", "mixed"]),
+      nonFactualReason: z.string().nullable(), claims: z.array(z.object({
+        statement: z.string().min(3).max(1_000), kind: z.enum(["factual", "attribution"]),
+        sourceKeys: z.array(z.string()).max(12), verdict: z.enum(["supported", "unsupported"]), reason: z.string().min(3).max(1_000),
+      }).strict()).max(30),
+    }).strict()).min(1),
+  }).strict().optional(),
   reviewedScenarios: z.array(z.object({
     statement: z.string().trim().min(20).max(600),
     verdict: z.enum(["hypothetical", "misleading"]),
@@ -220,7 +261,7 @@ export const contentEvidenceAuditSchema: z.ZodType<ContentEvidenceAudit> = z.obj
     reason: z.string().trim().min(3).max(1_000),
   }).strict()).max(30),
   ungroundedStatements: z.array(z.string().trim().min(3).max(1_000)).max(20),
-  forbiddenTopicMatches: z.array(z.string().trim().min(2).max(500)).max(20),
+  forbiddenTopicMatches: z.array(z.string().trim().min(1).max(500)).max(20),
 }).strict();
 
 const contentQualityCriterionSchema = z.object({
