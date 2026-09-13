@@ -36,3 +36,9 @@ In the readerValue reason, state the actual new understanding supported by the c
 ## Check the basis for a prescribed action
 
 Insufficient evidence for one action does not by itself establish that another action is mandatory. When public copy prescribes a necessary or exclusive next action, identify the source, explicit policy or scenario condition that justifies that necessity. A missing prerequisite may call for checking it; do not silently assume that an authorized check is unavailable. If a material alternative remains open, require a conditional recommendation or the observation that would distinguish the alternatives. Do not demand exhaustive alternatives, invent organizational policy, or reject a proportionate precaution merely because another choice exists. Apply this to the actual public reasoning under coherence and cite the unjustified leap when revising.
+
+## Respect what the image renderer can show
+
+The current linkedin_image renderer produces a branded typographic card: its visible content is the title and subtitle, with the workspace identity. If subtitle is absent, it displays an excerpt of the post body instead. It does not draw a diagram, branches, annotations or comparison columns from altText. Alt text describes the actual visible card; it is not a drawing instruction or evidence that an imagined composition exists.
+
+For this format, let the card communicate one accurate point and let the caption explain the reasoning and qualifications. Judge that combination against its actual reading promise. Do not request unsupported composition fields or a multi-branch diagram merely because the caption compares two actions. If the title/subtitle promises a diagram, or makes an oversimplified claim, revise that promise or copy within the supported format. Reject unsupported claims and missing reasoning as before; renderer limits do not excuse a misleading or empty post. Do not claim a visual inspection from a media plan alone.
