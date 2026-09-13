@@ -1,3 +1,6 @@
+import { AiTaskPauseError } from "@outbound/application/ai/ai-task-pause";
+import { ModelGatewayError } from "@outbound/application/ai/model-gateway";
+import type { AiRunRecorder } from "@outbound/application/ai/ai-run-recorder";
 import { editorialQualityCriteria, type ContentQualityAssessment } from "@outbound/domain/content/content-asset";
 import { describe, expect, test } from "bun:test";
 import { z } from "zod";
@@ -57,6 +60,31 @@ describe("LangChainContentPipelineAgent", () => {
     expect(result.body).toBe(oversized.body);
     expect(requestedSchema!.safeParse({ ...oversized, body: "a".repeat(3_000) }).success).toBe(true);
     expect(requestedSchema!.safeParse({ ...oversized, body: "a".repeat(3_001) }).success).toBe(false);
+  });
+
+  test.each([false, true])("records a safe timeout trace while preserving the pause error (recorder fails: %s)", async (recorderFails) => {
+    const context = pipelineContext();
+    const error = new AiTaskPauseError(
+      new ModelGatewayError("AI_PROVIDER_TIMEOUT", "codex-cli", "private upstream detail", true, true),
+      "content_writer", "writer-test", [{ provider: "codex-cli", model: "gpt-5.6-luna", reasoningEffort: "medium" }],
+    );
+    const recorded: Parameters<AiRunRecorder["record"]>[0][] = [];
+    const agent = new LangChainContentPipelineAgent({}, undefined, {
+      async record(input) {
+        recorded.push(input);
+        if (recorderFails) throw new Error("recorder unavailable");
+        return { id: crypto.randomUUID() };
+      },
+    }, undefined, { async invoke() { throw error; } } as unknown as WorkspaceStructuredModel);
+    await expect(agent.write({ ...context, brief: brief() })).rejects.toBe(error);
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]).toMatchObject({
+      workspaceId: context.run.workspaceId, contentGenerationRunId: context.run.id,
+      purpose: "content_writer", status: "failed", provider: "codex-cli", model: "gpt-5.6-luna",
+      output: { code: "AI_PROVIDER_TIMEOUT" }, cost: null,
+    });
+    expect(recorded[0]!.latencyMs).toBeGreaterThanOrEqual(0);
+    expect(JSON.stringify(recorded)).not.toContain("private upstream detail");
   });
 
   test("passes the versioned offer and buyer context to every editorial role", async () => {

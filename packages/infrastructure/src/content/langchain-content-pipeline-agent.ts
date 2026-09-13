@@ -1,3 +1,5 @@
+import { AiTaskPauseError } from "@outbound/application/ai/ai-task-pause";
+import { ModelGatewayError } from "@outbound/application/ai/model-gateway";
 import { contentPublicText, invalidEditorialAssessmentCriteria } from "@outbound/domain/content/content-asset";
 import { editorialPlaybook } from "@outbound/infrastructure/content/content-editorial-playbook";
 import { contentRuntimeSkills } from "@outbound/infrastructure/content/content-runtime-skills";
@@ -68,38 +70,10 @@ export class LangChainContentPipelineAgent implements ContentPipelineAgent {
   private async invoke(role: PipelineRole, workspaceId: string, runId: string, context: unknown, original: unknown, requestSuffix?: string): Promise<unknown> {
     const startedAt = performance.now();
     const principalRole = role === "writer" || role === "critic";
-    let provider: string;
-    let model: string;
+    let provider = "unknown";
+    let model = "unknown";
     let output: unknown;
-    if (this.routedModel) {
-      const spec = pipelineModelSpec(role, context);
-      const result = await this.routedModel.invoke({
-        workspaceId,
-        capability: pipelineCapability(role),
-        requestKey: `content-${role}:${runId}${requestSuffix ? `:${requestSuffix}` : ""}`,
-        fallbackRoutes: this.fallbackRoutes(principalRole),
-        systemPrompt: spec.system,
-        payload: spec.context,
-        outputName: spec.name,
-        outputDescription: spec.description,
-        schema: spec.schema as ZodType<unknown>,
-      });
-      output = "decode" in spec ? spec.decode(result.output) : result.output;
-      provider = result.metadata.provider;
-      model = result.metadata.model;
-    } else {
-      const policy = await this.modelPolicyReader?.find(workspaceId);
-      const principal = policy?.researchModels[0] ?? this.#configuration.researchModels[0]!;
-      const executor = policy?.synthesisModels[0] ?? this.#configuration.synthesisModels[0]!;
-      model = principalRole ? principal : executor;
-      provider = this.#configuration.provider;
-      output = await this.invokeModel({
-        role,
-        fields: buildChatModelFields(this.#configuration, model, principalRole ? "max" : "low"),
-        context,
-      });
-    }
-    await this.aiRunRecorder?.record({
+    const record = (status: "completed" | "failed", recordedOutput: unknown) => this.aiRunRecorder?.record({
       workspaceId,
       contentGenerationRunId: runId,
       purpose: `content_${role}`,
@@ -110,11 +84,54 @@ export class LangChainContentPipelineAgent implements ContentPipelineAgent {
         : role === "critic" ? "noosphere-content-critic-v15" : role === "audit" ? "noosphere-content-audit-v6" : "noosphere-content-brief-v8",
       shadow: false,
       inputHash: new Bun.CryptoHasher("sha256").update(JSON.stringify(original)).digest("hex"),
-      output,
-      status: "completed",
+      output: recordedOutput,
+      status,
       cost: null,
       latencyMs: Math.max(0, Math.round(performance.now() - startedAt)),
     });
+    try {
+      if (this.routedModel) {
+        const spec = pipelineModelSpec(role, context);
+        const result = await this.routedModel.invoke({
+          workspaceId,
+          capability: pipelineCapability(role),
+          requestKey: `content-${role}:${runId}${requestSuffix ? `:${requestSuffix}` : ""}`,
+          fallbackRoutes: this.fallbackRoutes(principalRole),
+          systemPrompt: spec.system,
+          payload: spec.context,
+          outputName: spec.name,
+          outputDescription: spec.description,
+          schema: spec.schema as ZodType<unknown>,
+        });
+        provider = result.metadata.provider;
+        model = result.metadata.model;
+        output = "decode" in spec ? spec.decode(result.output) : result.output;
+      } else {
+        const policy = await this.modelPolicyReader?.find(workspaceId);
+        const principal = policy?.researchModels[0] ?? this.#configuration.researchModels[0]!;
+        const executor = policy?.synthesisModels[0] ?? this.#configuration.synthesisModels[0]!;
+        model = principalRole ? principal : executor;
+        provider = this.#configuration.provider;
+        output = await this.invokeModel({
+          role,
+          fields: buildChatModelFields(this.#configuration, model, principalRole ? "max" : "low"),
+          context,
+        });
+      }
+    } catch (error) {
+      if (error instanceof ModelGatewayError) provider = error.provider;
+      if (error instanceof AiTaskPauseError) {
+        const models = new Set(error.routes.filter(route => route.provider === error.provider).map(route => route.model));
+        if (models.size === 1) model = [...models][0]!;
+      }
+      try {
+        await record("failed", { code: error instanceof ModelGatewayError ? error.code : "CONTENT_MODEL_INVOCATION_FAILED" });
+      } catch {
+        // Recording must not replace the provider error that governs pause/retry.
+      }
+      throw error;
+    }
+    await record("completed", output);
     return output;
   }
 
