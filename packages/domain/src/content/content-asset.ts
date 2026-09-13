@@ -70,6 +70,10 @@ export interface ContentDraftSnapshot {
 }
 
 export interface ContentEvidenceAudit {
+  /** Earlier factual objections still present in the public copy; not resolved by model silence. */
+  readonly unresolvedClaims?: readonly {
+    readonly statement: string; readonly sourceKeys: readonly string[]; readonly verdict: "unsupported"; readonly reason: string;
+  }[] | undefined;
   /** Present on current complete audits; historical snapshots remain readable. */
   readonly coverage?: {
     readonly version: 1;
@@ -339,6 +343,7 @@ export function evaluateContentReadiness(input: {
   const blockers = new Set<string>();
   const coverageStatus = contentAuditCoverageStatus(input.draft, input.audit, input.evidenceFingerprint);
   if (coverageStatus !== "current") blockers.add(coverageStatus === "missing" ? "audit_coverage_missing" : "audit_coverage_invalid");
+  if (input.audit.unresolvedClaims?.length) blockers.add("unresolved_audit_claim");
   const assessment = input.critique.qualityAssessment;
   if (!assessment) blockers.add("editorial_assessment_missing");
   else {

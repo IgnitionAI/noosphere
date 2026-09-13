@@ -268,24 +268,29 @@ databaseDescribe("CNT-101 durable content generation", () => {
     });
     await repository.startRun({ workspaceId, runId: improved.id, now });
     await repository.saveDraft({ workspaceId, runId: improved.id, draft: { ...draft, hook: "Le précédent n’est utile que s’il est retrouvable." }, now });
+    const negativeCheckpoint = { ...audit, reviewedClaims: audit.reviewedClaims.map(claim => ({ ...claim, verdict: "unsupported" as const })) };
+    await repository.checkpointAudit({ workspaceId, runId: improved.id, audit: negativeCheckpoint, now });
+    expect(await repository.loadContext({ workspaceId, runId: improved.id })).toMatchObject({run: {stage: "audit"}, audit: negativeCheckpoint});
     const auditRepairedDraft = { ...draft, hook: "Une preuve auditée reste résoluble." };
     await repository.reviseDraftAfterAudit({ workspaceId, runId: improved.id, draft: auditRepairedDraft, now });
     expect((await repository.loadContext({ workspaceId, runId: improved.id })).draft?.hook).toBe(auditRepairedDraft.hook);
+    expect((await repository.loadContext({ workspaceId, runId: improved.id })).audit).toMatchObject(negativeCheckpoint);
     await repository.saveAudit({ workspaceId, runId: improved.id, audit, now });
     const criticRepairedDraft = { ...auditRepairedDraft, hook: "Une décision juridique exige une preuve retrouvable." };
     await repository.reviseDraftAfterCritique({ workspaceId, runId: improved.id, draft: criticRepairedDraft, now });
     expect(await repository.loadContext({ workspaceId, runId: improved.id })).toMatchObject({
       run: { stage: "audit" },
       draft: { hook: criticRepairedDraft.hook },
-      audit: null,
+      audit,
       critique: null,
     });
     await repository.saveAudit({ workspaceId, runId: improved.id, audit, now });
     await expect(repository.reopenAudit({ workspaceId: otherWorkspaceId, runId: improved.id, now })).rejects.toThrow("CONTENT_GENERATION_RUN_NOT_FOUND");
     await repository.reopenAudit({ workspaceId, runId: improved.id, now });
-    // Simulate a worker restart after reopening: public copy survives; obsolete verdicts do not certify readiness.
+    // Reopening retains the previous assessment as pending context; stage audit requires a fresh assessment.
     const reopened = await repository.loadContext({ workspaceId, runId: improved.id });
-    expect(reopened).toMatchObject({ run: { stage: "audit" }, draft: criticRepairedDraft, audit: null, critique: null });
+    expect(reopened).toMatchObject({ run: { stage: "audit" }, draft: criticRepairedDraft, audit, critique: null });
+    await expect(repository.completeRun({ workspaceId, runId: improved.id, critique, readiness: {ready: true, blockers: []}, now })).rejects.toThrow("CONTENT_GENERATION_STAGE_CONFLICT");
     const refreshedAudit = fixtureAuditCoverage(reopened.draft!, audit, reopened.evidence);
     await repository.saveAudit({ workspaceId, runId: improved.id, audit: refreshedAudit, now });
     expect((await repository.loadContext({ workspaceId, runId: improved.id })).audit).toMatchObject(refreshedAudit);

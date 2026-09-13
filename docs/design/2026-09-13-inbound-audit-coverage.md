@@ -1,6 +1,6 @@
 # Complete audit coverage for unchanged Inbound content
 
-Status: field-aware audit response, coverage receipt, readiness enforcement and durable historical-checkpoint reassessment implemented. Ledger synchronization and prior-finding resolution remain unimplemented. Not accepted for deployment.
+Status: field-aware audit response, coverage receipt, readiness enforcement and durable historical-checkpoint reassessment implemented. Unsupported reviewed assertions now survive re-audits and restarts while their exact public text remains. Ledger synchronization, scenario/topic tracking and explicit evidence-based resolution remain unimplemented. Not accepted for deployment.
 
 ## Problem
 
@@ -36,3 +36,10 @@ Coverage records establish that the model addressed each passage, not that its s
 ## Implemented prerequisite
 
 Readiness now requires the reviewed text to contain the entire declared claim, rather than accepting containment in either direction. The broader-guarantee regression failed before the change and passes afterward. This does not yet implement complete coverage.
+
+
+## Exact assertion continuity
+
+The current slice checkpoints each independent audit before a repair can pause, retains the previous assessment through draft repair and critic-stage reopening, and marks those runs as pending audit. Completion is rejected until the run reaches critic again; an old retained audit is not approval. New audit snapshots carry unresolved prior unsupported assertions whose exact wording still occurs in caption or media. Model silence or a conflicting favorable vote cannot clear them. Removal releases that exact finding, with the replacement still subject to current coverage, grounding and editorial checks.
+
+This also conservatively retains unsupported attribution entries flattened into reviewedClaims. It is not semantic paraphrase tracking or source-based adjudication. Scenario/topic findings and newly available evidence need their own explicit resolution semantics. Capacity overflow fails instead of truncating findings.

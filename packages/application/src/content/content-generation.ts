@@ -1,3 +1,4 @@
+import { retainUnresolvedAuditClaims } from "@outbound/domain/content/content-audit-findings";
 import { contentAuditEvidenceFingerprint } from "@outbound/application/content/content-audit-context";
 import { AiTaskPauseError } from "@outbound/application/ai/ai-task-pause";
 import { requireWorkspaceAi, type WorkspaceAiAvailability } from "@outbound/application/ai/ai-availability";
@@ -92,6 +93,7 @@ export interface ContentGenerationRepository {
   saveDraft(input: { workspaceId: string; runId: string; draft: ContentDraftSnapshot; now: Date }): Promise<void>;
   reviseDraftAfterAudit(input: { workspaceId: string; runId: string; draft: ContentDraftSnapshot; now: Date }): Promise<void>;
   reviseDraftAfterCritique(input: { workspaceId: string; runId: string; draft: ContentDraftSnapshot; now: Date }): Promise<void>;
+  checkpointAudit(input: { workspaceId: string; runId: string; audit: ContentEvidenceAudit; now: Date }): Promise<void>;
   reopenAudit(input: { workspaceId: string; runId: string; now: Date }): Promise<void>;
   saveAudit(input: { workspaceId: string; runId: string; audit: ContentEvidenceAudit; now: Date }): Promise<void>;
   completeRun(input: { workspaceId: string; runId: string; critique: ContentEditorialCritique; readiness: { ready: boolean; blockers: readonly string[] }; media?: StoredContentMedia | null; now: Date }): Promise<void>;
@@ -168,18 +170,18 @@ export class ContentGenerationJobProcessor {
       if (context.run.stage === "critic" && context.draft
         && (!context.audit || contentAuditCoverageStatus(context.draft, context.audit, contentAuditEvidenceFingerprint(context.evidence)) !== "current")) {
         await this.repository.reopenAudit({ workspaceId: job.workspaceId, runId: payload.runId, now: this.now() });
-        context = { ...context, audit: null, critique: null, run: { ...context.run, stage: "audit" } };
+        context = { ...context, critique: null, run: { ...context.run, stage: "audit" } };
       }
       if (stageAtOrBefore(context.run.stage, "audit")) {
         if (!context.brief || !context.draft) throw new Error("CONTENT_DRAFT_CHECKPOINT_MISSING");
         let draft = context.draft;
-        let audit = await this.agent.audit({ ...context, brief: context.brief, draft });
+        let audit = await this.#auditDraft({ ...context, brief: context.brief, draft }, context.audit);
         for (let repairAttempt = 1; repairAttempt <= 2; repairAttempt += 1) {
           const auditFeedback = repairableAuditFeedback(audit);
           if (auditFeedback.length === 0) break;
           draft = await this.#writeGroundedDraft({ ...context, brief: context.brief, draft, audit, repairMode: repairAttempt === 1 && canRepairClaimLedger(draft, audit, context.evidence) ? "claim_ledger" : undefined }, auditFeedback);
           await this.repository.reviseDraftAfterAudit({ workspaceId: job.workspaceId, runId: payload.runId, draft, now: this.now() });
-          audit = await this.agent.audit({ ...context, brief: context.brief, draft });
+          audit = await this.#auditDraft({ ...context, brief: context.brief, draft }, audit);
         }
         await this.repository.saveAudit({ workspaceId: job.workspaceId, runId: payload.runId, audit, now: this.now() });
         context = { ...context, draft, audit, run: { ...context.run, stage: "critic" } };
@@ -207,13 +209,13 @@ export class ContentGenerationJobProcessor {
           critiqueFeedbackHistory = [...new Set([...critiqueFeedback, ...critiqueFeedbackHistory])];
           draft = await this.#writeGroundedDraft({ ...context, brief: context.brief, draft, audit }, critiqueFeedbackHistory);
           await this.repository.reviseDraftAfterCritique({ workspaceId: job.workspaceId, runId: payload.runId, draft, now: this.now() });
-          audit = await this.agent.audit({ ...context, brief: context.brief, draft });
+          audit = await this.#auditDraft({ ...context, brief: context.brief, draft }, audit);
           for (let auditRepairAttempt = 1; auditRepairAttempt <= 2; auditRepairAttempt += 1) {
             const auditFeedback = repairableAuditFeedback(audit);
             if (auditFeedback.length === 0) break;
             draft = await this.#writeGroundedDraft({ ...context, brief: context.brief, draft, audit, repairMode: auditRepairAttempt === 1 && canRepairClaimLedger(draft, audit, context.evidence) ? "claim_ledger" : undefined }, auditFeedback);
             await this.repository.reviseDraftAfterAudit({ workspaceId: job.workspaceId, runId: payload.runId, draft, now: this.now() });
-            audit = await this.agent.audit({ ...context, brief: context.brief, draft });
+            audit = await this.#auditDraft({ ...context, brief: context.brief, draft }, audit);
           }
           await this.repository.saveAudit({ workspaceId: job.workspaceId, runId: payload.runId, audit, now: this.now() });
           critique = await this.agent.critique({ ...context, brief: context.brief, draft, audit });
@@ -260,6 +262,13 @@ export class ContentGenerationJobProcessor {
       if (!(error instanceof Error) || error.message !== "CONTENT_MEDIA_TEXT_OVERFLOW") throw error;
       return { readiness: { ready: false, blockers: ["media_text_overflow"] }, media: null };
     }
+  }
+
+  async #auditDraft(context: ContentGenerationContext & { readonly brief: ContentBriefSnapshot; readonly draft: ContentDraftSnapshot }, previous: ContentEvidenceAudit | null): Promise<ContentEvidenceAudit> {
+    const current = await this.agent.audit(context);
+    const audit = retainUnresolvedAuditClaims(context.draft, current, previous);
+    await this.repository.checkpointAudit({ workspaceId: context.run.workspaceId, runId: context.run.id, audit, now: this.now() });
+    return audit;
   }
 
   async #produceMedia(context: ContentGenerationContext & { readonly brief: ContentBriefSnapshot; readonly draft: ContentDraftSnapshot }): Promise<StoredContentMedia> {
@@ -324,6 +333,7 @@ function draftValidationFeedback(error: Error, draft: ContentDraftSnapshot): str
 function canRepairClaimLedger(draft: ContentDraftSnapshot, audit: ContentEvidenceAudit, evidence: readonly ContentIdeaEvidence[]): boolean {
   return draft.factualClaims.length + new Set(audit.ungroundedStatements).size <= MAX_CONTENT_FACTUAL_CLAIMS
     && evidence.length > 0 && audit.ungroundedStatements.length > 0 && audit.ungroundedStatements.length <= 8
+    && !audit.unresolvedClaims?.length
     && audit.forbiddenTopicMatches.length === 0
     && audit.reviewedClaims.every(claim => claim.verdict === "supported")
     && (audit.reviewedScenarios ?? []).every(scenario => scenario.verdict !== "misleading")
@@ -334,6 +344,7 @@ function canRepairClaimLedger(draft: ContentDraftSnapshot, audit: ContentEvidenc
 
 function repairableAuditFeedback(audit: ContentEvidenceAudit): readonly string[] {
   const feedback = [
+    ...(audit.unresolvedClaims ?? []).map(claim => `CONTENT_AUDIT_UNRESOLVED_CLAIM: ${claim.statement} — ${claim.reason}`),
     ...(audit.reviewedScenarios ?? []).filter((item) => item.verdict === "misleading").map((item) => `CONTENT_AUDIT_MISLEADING_SCENARIO: ${item.statement} — ${item.reason}`),
     ...audit.forbiddenTopicMatches.map((topic) => `CONTENT_AUDIT_FORBIDDEN_TOPIC: ${topic}`),
     ...audit.ungroundedStatements.map((statement) => `CONTENT_AUDIT_UNGROUNDED_STATEMENT: ${statement}`),
@@ -350,7 +361,7 @@ function repairableCritiqueFeedback(
 ): readonly string[] {
   if (readiness.ready) return [];
   if (readiness.blockers.some(blocker => ["editorial_assessment_missing", "editorial_assessment_invalid", "audit_coverage_missing", "audit_coverage_invalid"].includes(blocker))) return [];
-  const evidenceBlockers = new Set(["unaudited_claim", "unsupported_claim", "ungrounded_statement", "forbidden_topic"]);
+  const evidenceBlockers = new Set(["unaudited_claim", "unsupported_claim", "unresolved_audit_claim", "ungrounded_statement", "forbidden_topic"]);
   if (readiness.blockers.some((blocker) => evidenceBlockers.has(blocker))) return [];
   const feedback = [
     ...Object.entries(critique.qualityAssessment ?? {})

@@ -732,3 +732,16 @@ A stale critic checkpoint now durably reopens its audit stage before reassessmen
 The PostgreSQL test used a newly created local-only database, reloaded after reopening and after saving the refreshed receipt, and inspected the finalized asset through the repository. It also checked wrong-workspace access and the completed-stage guard. All three tests in tests/integration/content-generation.test.ts passed (141 assertions); raw local result /tmp/noosphere-audit-persistence-green.log. No production state or external provider modified. Unit model receipts are explicitly synthetic orchestration fixtures; they do not prove semantic judgment. Ledger synchronization, prior negative finding resolution, fresh Luna content quality and visual acceptance remain outstanding.
 
 Final local check: `bun run check` passed (1,267 unit/HTTP tests, 4,324 assertions; crawler 62 passed; types, architecture, self-hosting checks and backend/web builds). Result: /tmp/noosphere-readiness-final-check.log. Both independent code-review axes found no remaining blocker in this bounded slice after the persistence and terminal-replay fixes. No release or provider acceptance is implied.
+
+
+## Preserve unsupported assertions across re-audits and pauses (local, 2026-09-13)
+
+Regression: a first unsupported assertion followed by unchanged writer repairs and favorable audits previously finalized ready. The new unresolved-claim gate blocks this sequence. A quota-pause test confirms checkpointing happens before writing and a new processor resumes with the objection intact. Domain tests cover silence, conflicting favorable verdict, movement into media and removal of the disputed exact text. Test coverage is exact-text continuity, not semantic similarity.
+
+PostgreSQL retains prior audits while stage audit requires reassessment. A separate red regression demonstrated completeRun accepted pending-audit completion; the new critic-stage guard rejects that path. Isolated local DB result: /tmp/noosphere-findings-stage-green.log. No production state altered.
+
+A deterministic local replay of the two earlier field-path Luna audit captures retained the original unsupported opening “L’agent est connecté.” which the subsequent authored-negative case had silently omitted. The new false-product-guarantee finding also remains in its current audit. Result: private noosphere-retained-findings-replay.json under the inbound-quality evidence directory. Zero new model calls; this is not fresh generation, source discovery or visual acceptance.
+
+Remaining: metadata synchronization, semantic reformulation handling, misleading-scenario/topic continuity, explicit resolution using new evidence, and fresh useful Luna posts with inspected media. Conservative retention can block an unchanged false-positive until the assertion is removed; no majority-vote approval is implemented.
+
+Final check for assertion continuity: `bun run check` exit0; 1,273 unit/HTTP tests, 4,334 assertions, crawler62passed, types and builds green (/tmp/noosphere-findings-final-check.log). Both independent review axes cleared implemented scope including the pending-audit completion guard. Local PostgreSQL tests3passed144assertions. No push, deploy or publication.

@@ -44,7 +44,7 @@ describe("CNT-101 grounded content pipeline", () => {
     const received: unknown[] = [];
     const repository = { async loadContext() { return context; }, async startRun() {},
       async saveBrief(input: { brief: unknown }) { saved.push(input.brief); },
-      async saveDraft() {}, async saveAudit() {}, async completeRun() {}, async failRun() {},
+      async saveDraft() {}, async checkpointAudit() {}, async saveAudit() {}, async completeRun() {}, async failRun() {},
     } as unknown as ContentGenerationRepository;
     const processor = new ContentGenerationJobProcessor(repository, {
       async buildBrief() { return brief(); },
@@ -218,7 +218,7 @@ describe("CNT-101 grounded content pipeline", () => {
       async loadContext() { return context; },
       async startRun() { calls.push("start"); },
       async saveDraft() { calls.push("draft_saved"); },
-      async saveAudit() { calls.push("audit_saved"); },
+      async checkpointAudit() {}, async saveAudit() { calls.push("audit_saved"); },
       async completeRun() { calls.push("ready"); },
       async failRun() {},
     } as unknown as ContentGenerationRepository;
@@ -250,7 +250,7 @@ describe("CNT-101 grounded content pipeline", () => {
     const received: (readonly string[])[] = [];
     let checks = 0;
     const repository = {async loadContext(){return context;}, async startRun(){},
-      async saveDraft(){calls.push("save");},async saveAudit(){},async completeRun(){},async failRun(){}} as unknown as ContentGenerationRepository;
+      async saveDraft(){calls.push("save");},async checkpointAudit() {}, async saveAudit(){},async completeRun(){},async failRun(){}} as unknown as ContentGenerationRepository;
     const producer = {async checkDraftLayout(){calls.push("layout"); if (++checks === 1 || persistent) throw new ContentMediaTextOverflowError(2, "comparison");},
       async produce(){calls.push("store");return {marker:"validated"};}} as unknown as import("@outbound/application/content/content-media").ContentMediaProducer;
     const processor = new ContentGenerationJobProcessor(repository, {
@@ -270,7 +270,7 @@ describe("CNT-101 grounded content pipeline", () => {
     const repository = {
       async loadContext() {return context;}, async startRun() {},
       async saveDraft(input: any) {saved.push(input.draft);},
-      async saveAudit() {}, async completeRun() {}, async failRun() {},
+      async checkpointAudit() {}, async saveAudit() {}, async completeRun() {}, async failRun() {},
     } as unknown as ContentGenerationRepository;
     const processor = new ContentGenerationJobProcessor(repository, {
       async buildBrief() {return brief();},
@@ -295,7 +295,7 @@ describe("CNT-101 grounded content pipeline", () => {
     const repository = {
       async loadContext() { return context; },
       async startRun() { calls.push("start"); },
-      async saveAudit() { calls.push("audit_saved"); },
+      async checkpointAudit() {}, async saveAudit() { calls.push("audit_saved"); },
       async completeRun(input: { readiness: { ready: boolean } }) { calls.push(input.readiness.ready ? "ready" : "blocked"); },
       async failRun() {},
     } as unknown as ContentGenerationRepository;
@@ -319,7 +319,7 @@ describe("CNT-101 grounded content pipeline", () => {
       async loadContext() { return context; },
       async startRun() { calls.push("start"); },
       async reviseDraftAfterAudit() { calls.push("draft_repaired"); },
-      async saveAudit() { calls.push("audit_saved"); },
+      async checkpointAudit() {}, async saveAudit() { calls.push("audit_saved"); },
       async completeRun(input: { readiness: { ready: boolean } }) { calls.push(input.readiness.ready ? "ready" : "blocked"); },
       async failRun() {},
     } as unknown as ContentGenerationRepository;
@@ -358,7 +358,7 @@ describe("CNT-101 grounded content pipeline", () => {
     let finalReady = false;
     const repository = {
       async loadContext() { return context; },
-      async startRun() {}, async reviseDraftAfterCritique() {}, async reviseDraftAfterAudit() {}, async saveAudit() {},
+      async startRun() {}, async reviseDraftAfterCritique() {}, async reviseDraftAfterAudit() {}, async checkpointAudit() {}, async saveAudit() {},
       async completeRun(input: { readiness: { ready: boolean } }) { finalReady = input.readiness.ready; },
       async failRun() {},
     } as unknown as ContentGenerationRepository;
@@ -386,7 +386,7 @@ describe("CNT-101 grounded content pipeline", () => {
       async loadContext() { return context; },
       async startRun() { calls.push("start"); },
       async reviseDraftAfterCritique() { calls.push("draft_repaired_after_critique"); },
-      async saveAudit() { calls.push("audit_saved"); },
+      async checkpointAudit() {}, async saveAudit() { calls.push("audit_saved"); },
       async completeRun(input: { readiness: { ready: boolean } }) { calls.push(input.readiness.ready ? "ready" : "blocked"); },
       async failRun() {},
     } as unknown as ContentGenerationRepository;
@@ -423,7 +423,7 @@ describe("CNT-101 grounded content pipeline", () => {
       async loadContext() { return context; },
       async startRun() { calls.push("start"); },
       async reviseDraftAfterCritique() { calls.push("draft_repaired_after_critique"); },
-      async saveAudit() { calls.push("audit_saved"); },
+      async checkpointAudit() {}, async saveAudit() { calls.push("audit_saved"); },
       async completeRun(input: { readiness: { ready: boolean } }) { calls.push(input.readiness.ready ? "ready" : "blocked"); },
       async failRun() {},
     } as unknown as ContentGenerationRepository;
@@ -461,7 +461,7 @@ describe("CNT-101 grounded content pipeline", () => {
     const repository = {
       async loadContext() { return context; }, async startRun() {},
       async reviseDraftAfterAudit(input: { draft: unknown }) { saved.push(input.draft); },
-      async saveAudit() {}, async completeRun() {}, async failRun() {},
+      async checkpointAudit() {}, async saveAudit() {}, async completeRun() {}, async failRun() {},
     } as unknown as ContentGenerationRepository;
     const processor = new ContentGenerationJobProcessor(repository, {
       async buildBrief() { throw new Error("brief must not replay"); },
@@ -484,7 +484,7 @@ describe("CNT-101 grounded content pipeline", () => {
     const feedback: Array<readonly string[]> = [];
     let critiques = 0;
     const repository = { async loadContext() { return context; }, async startRun() {},
-      async reviseDraftAfterCritique() {}, async saveAudit() {}, async completeRun() {},
+      async reviseDraftAfterCritique() {}, async checkpointAudit() {}, async saveAudit() {}, async completeRun() {},
     } as unknown as ContentGenerationRepository;
     const processor = new ContentGenerationJobProcessor(repository, {
       async buildBrief() { throw new Error("must not replay"); },
@@ -544,7 +544,7 @@ describe("CNT-101 grounded content pipeline", () => {
     const context = { ...base, brief: { ...brief(), format: "linkedin_document" as const } };
     const feedback: Array<readonly string[] | undefined> = [];
     const repository = { async loadContext() { return context; }, async startRun() {}, async saveDraft() {},
-      async saveAudit() {}, async completeRun() {}, async failRun() {},
+      async checkpointAudit() {}, async saveAudit() {}, async completeRun() {}, async failRun() {},
     } as unknown as ContentGenerationRepository;
     let checks = 0;
     const producer = { async checkDraftLayout() {
@@ -571,7 +571,7 @@ describe("CNT-101 grounded content pipeline", () => {
     const context = { ...base, brief: { ...brief(), format: "linkedin_document" as const } };
     const feedback: Array<readonly string[] | undefined> = [];
     const repository = { async loadContext() { return context; }, async startRun() {}, async saveDraft() {},
-      async saveAudit() {}, async completeRun() {}, async failRun() {},
+      async checkpointAudit() {}, async saveAudit() {}, async completeRun() {}, async failRun() {},
     } as unknown as ContentGenerationRepository;
     let checks = 0;
     const producer = { async checkDraftLayout() {
@@ -608,7 +608,7 @@ describe("CNT-101 grounded content pipeline", () => {
     const feedback: unknown[] = [];
     let completed: { readiness: { ready: boolean; blockers: readonly string[] }; media: unknown } | undefined;
     const repository = { async loadContext() { return context; }, async startRun() {},
-      async reviseDraftAfterCritique() { calls.push("saved"); }, async saveAudit() {},
+      async reviseDraftAfterCritique() { calls.push("saved"); }, async checkpointAudit() {}, async saveAudit() {},
       async completeRun(input: typeof completed) { completed = input; }, async failRun() {},
     } as unknown as ContentGenerationRepository;
     let renders = 0;
@@ -645,7 +645,7 @@ describe("CNT-101 grounded content pipeline", () => {
       async loadContext() { return context; },
       async startRun() { calls.push("start"); },
       async reviseDraftAfterAudit() { calls.push("draft_repaired"); },
-      async saveAudit() { calls.push("audit_saved"); },
+      async checkpointAudit() {}, async saveAudit() { calls.push("audit_saved"); },
       async completeRun(input: { readiness: { ready: boolean } }) { calls.push(input.readiness.ready ? "ready" : "blocked"); },
       async failRun() {},
     } as unknown as ContentGenerationRepository;
@@ -700,7 +700,7 @@ test("an invalid critic assessment blocks without rewriting the post to match in
   const context = pipelineContext("audit");
   let result: unknown;
   const repository = {
-    async loadContext() { return context; }, async startRun() {}, async saveAudit() {}, async failRun() {},
+    async loadContext() { return context; }, async startRun() {}, async checkpointAudit() {}, async saveAudit() {}, async failRun() {},
     async completeRun(input: unknown) { result = input; },
   } as unknown as ContentGenerationRepository;
   const processor = new ContentGenerationJobProcessor(repository, {
@@ -722,7 +722,7 @@ test.each([1, 20])("bounds ledger repair and keeps substantive rewriting availab
   const saved: unknown[] = [];
   const repository = { loadContext: async () => context, startRun: async () => {},
     reviseDraftAfterAudit: async (input: {draft: unknown}) => { saved.push(input.draft); },
-    saveAudit: async () => {}, completeRun: async () => {}, failRun: async () => {},
+    checkpointAudit: async () => {}, saveAudit: async () => {}, completeRun: async () => {}, failRun: async () => {},
   } as unknown as ContentGenerationRepository;
   const agent = { buildBrief: async () => brief(), write: async (input: any) => { modes.push(input.repairMode); return draft(); },
     audit: async () => ++audits <= 2 ? { ...audit(), ungroundedStatements: [statement] } : audit(),
@@ -758,7 +758,7 @@ test.each(["historical", "source_changed", "text_changed"] as const)("reassesses
     evidence: change === "source_changed" ? [{ ...evidence(), excerpt: "Texte de la source mis à jour." }] : base.evidence,
   };
   const calls: string[] = [];
-  const repository = { async loadContext() { return context; }, async startRun() {}, async reopenAudit() { calls.push("reopen_audit"); }, async saveAudit() { calls.push("persist_audit"); },
+  const repository = { async loadContext() { return context; }, async startRun() {}, async reopenAudit() { calls.push("reopen_audit"); }, async checkpointAudit() {}, async saveAudit() { calls.push("persist_audit"); },
     async completeRun(input: { readiness: { ready: boolean } }) { calls.push(input.readiness.ready ? "ready" : "blocked"); }, async failRun() {},
   } as unknown as ContentGenerationRepository;
   await new ContentGenerationJobProcessor(repository, {
@@ -783,4 +783,57 @@ test("a redelivered completed job does not reopen its historical audit", async (
     async critique() { throw new Error("completed job must not re-approve"); },
   }, { async acknowledge() { calls.push("ack"); } } as unknown as JobQueue).process(job(context.run.workspaceId, context.run.id));
   expect(calls).toEqual(["ack"]);
+});
+
+test("favorable re-audits cannot approve an unsupported assertion left unchanged by repairs", async () => {
+  const context = pipelineContext("audit");
+  let reviews = 0;
+  let completed: unknown;
+  const checkpoints: unknown[] = [];
+  const repository = { async loadContext() { return context; }, async startRun() {},
+    async checkpointAudit(input: unknown) { checkpoints.push(input); },
+    async reviseDraftAfterAudit() {}, async saveAudit() {}, async failRun() {},
+    async completeRun(input: unknown) { completed = input; },
+  } as unknown as ContentGenerationRepository;
+  await new ContentGenerationJobProcessor(repository, {
+    async buildBrief() { throw new Error("must preserve brief"); }, async write() { return draft(); },
+    async audit(input) {
+      const result = audit(input.draft, input.evidence);
+      if (++reviews > 1) return result;
+      return fixtureAuditCoverage(input.draft, { ...result, reviewedClaims: result.reviewedClaims.map(c => ({ ...c, verdict: "unsupported" as const })) }, input.evidence);
+    }, async critique() { return critique(); },
+  }, { async acknowledge() {} } as unknown as JobQueue).process(job(context.run.workspaceId, context.run.id));
+  expect(completed).toMatchObject({readiness: {ready: false, blockers: expect.arrayContaining(["unresolved_audit_claim"])}});
+  expect(checkpoints.length).toBeGreaterThan(0);
+});
+
+test("an audit objection survives a quota pause before the writer repairs the draft", async () => {
+  const { AiTaskPauseError } = await import("@outbound/application/ai/ai-task-pause");
+  const { ModelGatewayError } = await import("@outbound/application/ai/model-gateway");
+  const context = pipelineContext("audit");
+  let storedAudit: import("@outbound/domain/content/content-asset").ContentEvidenceAudit | null = null;
+  let completed: unknown;
+  let reviews = 0;
+  let pause = true;
+  const failure = new AiTaskPauseError(new ModelGatewayError("AI_PROVIDER_QUOTA_EXHAUSTED", "openai-api", "quota", true, false), "content_writer", "write", []);
+  const repository = { async loadContext() { return { ...context, audit: storedAudit }; }, async startRun() {},
+    async checkpointAudit(input: {audit: import("@outbound/domain/content/content-asset").ContentEvidenceAudit}) { storedAudit = input.audit; },
+    async reviseDraftAfterAudit() {}, async saveAudit() {}, async failRun() { throw new Error("quota pause must preserve the checkpoint"); },
+    async completeRun(input: unknown) { completed = input; },
+  } as unknown as ContentGenerationRepository;
+  const agent: import("@outbound/application/content/content-generation").ContentPipelineAgent = {
+    async buildBrief() { throw new Error("must preserve brief"); },
+    async write() { if (pause) { pause = false; throw failure; } return draft(); },
+    async audit(input) {
+      const result = audit(input.draft, input.evidence);
+      if (++reviews > 1) return result;
+      return fixtureAuditCoverage(input.draft, { ...result, reviewedClaims: result.reviewedClaims.map(c => ({ ...c, verdict: "unsupported" as const })) }, input.evidence);
+    }, async critique() { return critique(); },
+  };
+  const queue = { async acknowledge() {} } as unknown as JobQueue;
+  await expect(new ContentGenerationJobProcessor(repository, agent, queue).process(job(context.run.workspaceId, context.run.id))).rejects.toBe(failure);
+  expect(structuredClone(storedAudit)).toMatchObject({reviewedClaims: [expect.objectContaining({verdict: "unsupported"})]});
+  expect(completed).toBeUndefined();
+  await new ContentGenerationJobProcessor(repository, agent, queue).process(job(context.run.workspaceId, context.run.id));
+  expect(completed).toMatchObject({readiness: {ready: false, blockers: expect.arrayContaining(["unresolved_audit_claim"])}});
 });

@@ -298,15 +298,19 @@ export class PostgresContentGenerationRepository implements ContentGenerationRep
   }
 
   async reviseDraftAfterAudit(input: Parameters<ContentGenerationRepository["reviseDraftAfterAudit"]>[0]): Promise<void> {
-    await this.advance(input.workspaceId, input.runId, "audit", { draftSnapshot: input.draft, auditSnapshot: null, updatedAt: input.now }, "ContentDraftRepairedAfterAudit", input.now, "audit");
+    await this.advance(input.workspaceId, input.runId, "audit", { draftSnapshot: input.draft, updatedAt: input.now }, "ContentDraftRepairedAfterAudit", input.now, "audit");
   }
 
   async reviseDraftAfterCritique(input: Parameters<ContentGenerationRepository["reviseDraftAfterCritique"]>[0]): Promise<void> {
-    await this.advance(input.workspaceId, input.runId, "critic", { draftSnapshot: input.draft, auditSnapshot: null, critiqueSnapshot: null, updatedAt: input.now }, "ContentDraftRepairedAfterCritique", input.now, "audit");
+    await this.advance(input.workspaceId, input.runId, "critic", { draftSnapshot: input.draft, critiqueSnapshot: null, updatedAt: input.now }, "ContentDraftRepairedAfterCritique", input.now, "audit");
+  }
+
+  async checkpointAudit(input: Parameters<ContentGenerationRepository["checkpointAudit"]>[0]): Promise<void> {
+    await this.advance(input.workspaceId, input.runId, "audit", { auditSnapshot: input.audit, updatedAt: input.now }, "ContentAuditCheckpointed", input.now);
   }
 
   async reopenAudit(input: Parameters<ContentGenerationRepository["reopenAudit"]>[0]): Promise<void> {
-    await this.advance(input.workspaceId, input.runId, "critic", { auditSnapshot: null, critiqueSnapshot: null, updatedAt: input.now }, "ContentAuditReopened", input.now, "audit");
+    await this.advance(input.workspaceId, input.runId, "critic", { critiqueSnapshot: null, updatedAt: input.now }, "ContentAuditReopened", input.now, "audit");
   }
 
   async saveAudit(input: Parameters<ContentGenerationRepository["saveAudit"]>[0]): Promise<void> {
@@ -318,6 +322,7 @@ export class PostgresContentGenerationRepository implements ContentGenerationRep
       const run = (await tx.select().from(contentGenerationRuns).where(and(eq(contentGenerationRuns.workspaceId, input.workspaceId), eq(contentGenerationRuns.id, input.runId))).limit(1).for("update"))[0];
       if (!run) throw new Error("CONTENT_GENERATION_RUN_NOT_FOUND");
       if (run.stage === "completed") return;
+      if (run.stage !== "critic") throw new Error("CONTENT_GENERATION_STAGE_CONFLICT");
       if (!run.draftSnapshot || !run.auditSnapshot) throw new Error("CONTENT_GENERATION_CHECKPOINT_MISSING");
       const brief = (await tx.select().from(contentBriefs).where(and(eq(contentBriefs.workspaceId, input.workspaceId), eq(contentBriefs.runId, run.id))).limit(1))[0];
       if (!brief) throw new Error("CONTENT_BRIEF_CHECKPOINT_MISSING");
