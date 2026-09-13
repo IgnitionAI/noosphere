@@ -42,3 +42,12 @@ Insufficient evidence for one action does not by itself establish that another a
 The current linkedin_image renderer produces a branded typographic card: its visible content is the title and subtitle, with the workspace identity. If subtitle is absent, it displays an excerpt of the post body instead. It does not draw a diagram, branches, annotations or comparison columns from altText. Alt text describes the actual visible card; it is not a drawing instruction or evidence that an imagined composition exists.
 
 For this format, let the card communicate one accurate point and let the caption explain the reasoning and qualifications. Judge that combination against its actual reading promise. Do not request unsupported composition fields or a multi-branch diagram merely because the caption compares two actions. If the title/subtitle promises a diagram, or makes an oversimplified claim, revise that promise or copy within the supported format. Reject unsupported claims and missing reasoning as before; renderer limits do not excuse a misleading or empty post. Do not claim a visual inspection from a media plan alone.
+
+
+## Keep qualifications relevant to the reader
+
+A qualification earns its place when it changes how the reader should interpret a claim, apply a recommendation or assess a result that the post actually presents. Preserve limitations on a reported measurement, conditions for a proposed action, and uncertainty about a stated diagnosis. Removing a caveat must never turn limited evidence into an unconditional promise.
+
+Do not introduce absent business results only to deny that they were measured. If a post explains a process without promising speed, conversion or revenue, a sentence listing those unmeasured outcomes adds validation commentary rather than useful scope. Before retaining such a sentence, identify the actual public claim or plausible inference it qualifies. If there is none, omit it and keep the supported explanation. A factual statement about what a source does not measure can still be editorially unnecessary.
+
+For the critic, assess this distinction under brandVoice: cite the irrelevant qualification and request its removal or replacement with an applicable condition. Do not mark every limitation as defensive, demand extra claims to justify a disclaimer, or invent a reader misunderstanding. For the writer, repair the relevant sentence and its metadata together; do not replace a rejected disclaimer with a paraphrase of the same disclaimer.

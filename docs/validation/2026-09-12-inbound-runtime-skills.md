@@ -492,3 +492,19 @@ A private Luna-medium replay then resumed the *first* draft from the rejected fr
 Manual inspection: image typography and contrast are readable, with no clipping. The complete post still introduces an unnecessary statement about the source not measuring time savings or fewer escalations, despite no such result being promised. The critic accepted this formulation, unlike its rejection of similar wording in the preceding trial. Some methodological statements were moved into `opinionStatements`; that metadata label cannot itself establish grounding. Accordingly automated readiness is not manual editorial acceptance. Further calibration must distinguish useful scope qualifications from disclaimers answering claims the post never made, while retaining real evidential limits.
 
 Private evidence: `noosphere-skills-current-audit-replay-{result,trace}.json`, `noosphere-skills-current-audit-replay-rendered.png`. No production content, settings, checkpoints or publication state changed. CI run 34731565381 on the previous crawler commit completed successfully; it does not validate this newer diff.
+
+
+### Relevant qualifications: three-case critic calibration
+
+The shared Brand Guardian now distinguishes a qualification tied to a public claim, applicable condition or plausible inference from a disclaimer denying business outcomes the post never promised. It explicitly preserves measurement limits, conditions and diagnostic uncertainty. This guidance is consumed by writer v21 and critic v17; audit policy and readiness rules are unchanged.
+
+A native Luna-medium critic comparison used the captured current-audit replay plus two authored variants: (1) the captured sentence about unmeasured time savings/escalations, (2) that sentence removed, and (3) an applicable condition explaining that unsuccessful search alone does not suffice and resolution precedes article creation. Each used one real model call. The captured disclaimer received brandVoice=revise and a blocker; both authored variants passed all seven criteria with no issues. All critiques cited current passages validly. The variants are critic calibration fixtures, not independently audited replacement publications. The prior critic v16 had accepted the captured disclaimer; one comparison does not establish general reliability.
+
+Private comparison evidence: `noosphere-critic-qualification-calibration.json`. Adapter tests: 12 passed / 137 assertions; full `bun run check` exited 0. Both independent reviews found no actionable issue, while noting that version tests alone do not demonstrate editorial efficacy.
+
+
+The actual private repair loop resumed the captured draft at the critic stage, retaining its existing audit and applying no manual edits. Current critic rejected the unnecessary qualification; writer corrected it; fresh audit and critic passed; PNG rendered. Four native Luna-medium calls: critic 20,093 ms, writer 23,066 ms, audit 20,062 ms, critic 14,574 ms (77,795 ms total). The defensive sentence is absent from the final copy; the supplied-source attribution and fictional illustration of search/reuse/create remain. This is a successful repair of a saved draft, not a new discovery-to-publication trial.
+
+Manual review confirms the wording now explains the distinction without discussing unpromised business results. The image remains a simple legible typographic card rather than an illustrated diagnostic. Remaining limits: the acronym KCS is not expanded, the CTA is broad, and the audit did not flag the hook/title absent from the verbatim factual ledger. Their source-supported meaning does not demonstrate exhaustive ledger coverage. These observations remain separate from the model's positive readiness verdict; no production publication occurred.
+
+Private artifacts: `noosphere-skills-qualification-repair-{result,trace}.json` and `noosphere-skills-qualification-repair-rendered.png`.
