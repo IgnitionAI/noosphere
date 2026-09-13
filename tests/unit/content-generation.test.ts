@@ -524,6 +524,33 @@ describe("CNT-101 grounded content pipeline", () => {
     expect(critiques).toBe(3);
   });
 
+  test("gives the writer the failing field and limits during layout preflight repair", async () => {
+    const base = pipelineContext("writer");
+    const candidate = { ...draft(), mediaPlan: { format: "linkedin_document" as const, visualTone: "editorial" as const,
+      title: "Accès", subtitle: null, altText: "Accès", scenes: [],
+      slides: Array.from({ length: 3 }, () => ({ title: "Vérifier les droits", body: "Examiner les preuves." })),
+    } };
+    const context = { ...base, brief: { ...brief(), format: "linkedin_document" as const } };
+    const feedback: Array<readonly string[] | undefined> = [];
+    const repository = { async loadContext() { return context; }, async startRun() {}, async saveDraft() {},
+      async saveAudit() {}, async completeRun() {}, async failRun() {},
+    } as unknown as ContentGenerationRepository;
+    let checks = 0;
+    const producer = { async checkDraftLayout() {
+      if (++checks === 1) throw new ContentMediaTextOverflowError(1, "cover", { field: "kicker", maxCharactersPerLine: 24, maxLines: 1, actualCharacters: 26 });
+    }, async produce() { return {}; } } as unknown as import("@outbound/application/content/content-media").ContentMediaProducer;
+    const processor = new ContentGenerationJobProcessor(repository, {
+      async buildBrief() { throw new Error("must not replay"); },
+      async write(input) { feedback.push(input.validationFeedback); return candidate; },
+      async audit() { return audit(); }, async critique() { return critique(); },
+    }, { async acknowledge() {} } as unknown as JobQueue, undefined, producer);
+    await processor.process(job(context.run.workspaceId, context.run.id));
+    expect(feedback).toHaveLength(2);
+    expect(feedback[1]?.[0]).toContain("slide 1 (cover)");
+    expect(feedback[1]?.[0]).toContain("Field kicker currently has 26 characters and must fit within 1 line(s) of at most 24 characters each");
+    expect(checks).toBe(2);
+  });
+
   test.each(["repaired", "persistent", "storage"])("handles media overflow with bounded audited repairs: %s", async (outcome) => {
     const original = pipelineContext("audit");
     const candidate = { ...draft(), mediaPlan: { format: "linkedin_document" as const, visualTone: "editorial" as const,

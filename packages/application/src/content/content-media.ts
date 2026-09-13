@@ -68,8 +68,15 @@ export interface GenerativeVideoProvider {
   }>;
 }
 
+export interface ContentMediaTextConstraint {
+  readonly field: string;
+  readonly maxCharactersPerLine: number;
+  readonly maxLines: number;
+  readonly actualCharacters: number;
+}
+
 export class ContentMediaTextOverflowError extends Error {
-  constructor(readonly slideNumber: number, readonly layout: string) {
+  constructor(readonly slideNumber: number, readonly layout: string, readonly textConstraint?: ContentMediaTextConstraint) {
     super("CONTENT_MEDIA_TEXT_OVERFLOW");
     this.name = "ContentMediaTextOverflowError";
   }

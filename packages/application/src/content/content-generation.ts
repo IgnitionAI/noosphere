@@ -289,7 +289,7 @@ async function writeGroundedDraft(
       validationFeedback = [...initialValidationFeedback, error.message === "CONTENT_DRAFT_TOO_LONG"
         ? `${error.message}: body has ${draft.body.trim().length} characters; maximum ${MAX_CONTENT_BODY_LENGTH}. Rewrite concisely while retaining the explanation and source attribution. Do not truncate. Resynchronize the claim ledger with the rewritten public copy.`
         : error instanceof ContentMediaTextOverflowError
-          ? `CONTENT_READINESS_BLOCKER: media_text_overflow on slide ${error.slideNumber} (${error.layout}). Shorten or redistribute that page while preserving its complete reasoning and the other pages.`
+          ? `CONTENT_READINESS_BLOCKER: media_text_overflow on slide ${error.slideNumber} (${error.layout}). ${error.textConstraint ? `Field ${error.textConstraint.field} currently has ${error.textConstraint.actualCharacters} characters and must fit within ${error.textConstraint.maxLines} line(s) of at most ${error.textConstraint.maxCharactersPerLine} characters each. Rewrite that field without truncation; preserve the other fields unless they also need correction.` : "Shorten or redistribute that page while preserving its complete reasoning and the other pages."}`
           : error.message === "CONTENT_MEDIA_TEXT_OVERFLOW" ? "CONTENT_READINESS_BLOCKER: media_text_overflow" : error.message];
     }
   }

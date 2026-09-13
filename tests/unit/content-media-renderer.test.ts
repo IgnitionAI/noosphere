@@ -5,6 +5,18 @@ import { DeterministicContentMediaRenderer } from "@outbound/infrastructure/cont
 import { DEFAULT_CONTENT_BRAND_KIT } from "@outbound/domain/content/content-brand-kit";
 
 describe("DeterministicContentMediaRenderer", () => {
+  test("identifies the overflowing cover kicker without blaming its body", async () => {
+    const plan = { format: "linkedin_document" as const, visualTone: "editorial" as const, title: "Accès", subtitle: null, altText: "Accès", scenes: [], slides: [
+      { layout: "cover" as const, title: "Authentifié ≠ autorisé", body: "L’identité ne prouve pas les droits.", kicker: "NOOSPHERE · ACCÈS GOUVERNÉ" },
+      { layout: "insight" as const, title: "Vérifier les droits", body: "Comparer les documents autorisés." },
+      { layout: "closing" as const, title: "Vérifier", body: "Conserver la portée du contrôle." },
+    ] };
+    const render = () => new DeterministicContentMediaRenderer().render({ format: "linkedin_document", plan, brandKit: DEFAULT_CONTENT_BRAND_KIT, body: "Texte", outputDirectory: `/tmp/noosphere-field-fit-${crypto.randomUUID()}` });
+    await expect(render()).rejects.toMatchObject({ slideNumber: 1, layout: "cover", textConstraint: { field: "kicker", maxCharactersPerLine: 24, maxLines: 1, actualCharacters: 26 } });
+    plan.slides[0]!.kicker = "ACCÈS GOUVERNÉ";
+    expect((await render()).pageCount).toBe(3);
+  });
+
   test.each(["checklist", "comparison"] as const)("fits a long explanation in %s and rejects excessive copy rather than clipping it", async (layout) => {
     const render = (text: string, count = 1) => new DeterministicContentMediaRenderer().render({
       format: "linkedin_document",
