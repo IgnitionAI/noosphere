@@ -1,6 +1,6 @@
 # Complete audit coverage for unchanged Inbound content
 
-Status: field-aware audit response, coverage receipt, readiness enforcement and durable historical-checkpoint reassessment implemented. Unsupported reviewed assertions now survive re-audits and restarts while their exact public text remains. Ledger synchronization is implemented for fully audited supported exact spans. Scenario/topic tracking and explicit evidence-based resolution remain unimplemented. Not accepted for deployment.
+Status: field-aware audit response, coverage receipt, readiness enforcement and durable historical-checkpoint reassessment implemented. Unsupported reviewed assertions now survive re-audits and restarts while their exact public text remains. Ledger synchronization is implemented for fully audited supported exact spans. Exact-text scenario tracking is implemented. Topic tracking and explicit evidence-based resolution remain unimplemented. Not accepted for deployment.
 
 ## Problem
 
@@ -72,3 +72,10 @@ Exhaustive field review remains responsible for undeclared assertions. A separat
 Strict completeness governs readiness. The structure-only helper permits the existing bounded reassessment of omissions but cannot approve content. Public copy and original writer declarations remain unchanged; duplicate slots merge claimed source references without implying support. Unit coverage includes historical body-only receipts with omitted titles, repeated contexts, accent/case variants, decomposed Unicode, UTF-16 offsets, partial ligature rejection, negative verdict retention and invalid model slots.
 
 The private same-draft Luna v10 assessment decoded 36 field reviews, 15 mandatory declaration occurrences and 21 aggregate claims. This proves one instance of contract compliance, not semantic accuracy or editorial readiness. The current public CTA still needs the independent editorial gate and correction. Broader fresh generation and media acceptance remain open.
+
+
+## Historical misleading scenarios
+
+Application-owned unresolvedScenarios retain earlier misleading scenario statements while their exact text remains in public fields, even after a declaration is removed or the text moves into media. A later silent or favorable audit cannot clear the objection. Genuine removal releases that exact finding; replacement copy still needs the independent current audit. The persisted optional field is bounded to six distinct statement/reason objections; overflow fails rather than truncating. Current model-supplied history is ignored.
+
+Readiness blocks retained scenarios, audit repair receives the original statement/reason, metadata-only repair is ineligible, and editorial repair cannot open an extra repair budget after the two audit repairs. Regression checks cover checkpoint serialization, PostgreSQL reload and draft-repair continuity. This does not implement semantic paraphrase tracking, evidence adjudication or forbidden-topic continuity.

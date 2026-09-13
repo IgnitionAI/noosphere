@@ -1,5 +1,5 @@
 import { synchronizeAuditedClaimLedger } from "@outbound/domain/content/content-audit-ledger";
-import { retainUnresolvedAuditClaims } from "@outbound/domain/content/content-audit-findings";
+import { retainUnresolvedAuditFindings } from "@outbound/domain/content/content-audit-findings";
 import { contentAuditEvidenceFingerprint } from "@outbound/application/content/content-audit-context";
 import { AiTaskPauseError } from "@outbound/application/ai/ai-task-pause";
 import { requireWorkspaceAi, type WorkspaceAiAvailability } from "@outbound/application/ai/ai-availability";
@@ -277,7 +277,7 @@ export class ContentGenerationJobProcessor {
     let validationFeedback: readonly string[] = [];
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const current = await this.agent.audit({ ...context, draft, validationFeedback });
-      audit = retainUnresolvedAuditClaims(draft, current, audit);
+      audit = retainUnresolvedAuditFindings(draft, current, audit);
       ({ draft, audit } = synchronizeAuditedClaimLedger(draft, audit, context.evidence.map(item => item.key), contentAuditEvidenceFingerprint(context.evidence)));
       await this.repository.checkpointAudit({ workspaceId: context.run.workspaceId, runId: context.run.id, draft, audit, now: this.now() });
       const missing = unauditedContentClaims(draft, audit);
@@ -350,6 +350,7 @@ function canRepairClaimLedger(draft: ContentDraftSnapshot, audit: ContentEvidenc
   return draft.factualClaims.length + new Set(audit.ungroundedStatements).size <= MAX_CONTENT_FACTUAL_CLAIMS
     && evidence.length > 0 && audit.ungroundedStatements.length > 0 && audit.ungroundedStatements.length <= 8
     && !audit.unresolvedClaims?.length
+    && !audit.unresolvedScenarios?.length
     && audit.forbiddenTopicMatches.length === 0
     && audit.reviewedClaims.every(claim => claim.verdict === "supported")
     && (audit.reviewedScenarios ?? []).every(scenario => scenario.verdict !== "misleading")
@@ -360,6 +361,7 @@ function canRepairClaimLedger(draft: ContentDraftSnapshot, audit: ContentEvidenc
 
 function repairableAuditFeedback(audit: ContentEvidenceAudit): readonly string[] {
   const feedback = [
+    ...(audit.unresolvedScenarios ?? []).map(scenario => `CONTENT_AUDIT_UNRESOLVED_SCENARIO: ${scenario.statement} — ${scenario.reason}`),
     ...(audit.unresolvedClaims ?? []).map(claim => `CONTENT_AUDIT_UNRESOLVED_CLAIM: ${claim.statement} — ${claim.reason}`),
     ...(audit.reviewedScenarios ?? []).filter((item) => item.verdict === "misleading").map((item) => `CONTENT_AUDIT_MISLEADING_SCENARIO: ${item.statement} — ${item.reason}`),
     ...audit.forbiddenTopicMatches.map((topic) => `CONTENT_AUDIT_FORBIDDEN_TOPIC: ${topic}`),
@@ -377,7 +379,7 @@ function repairableCritiqueFeedback(
 ): readonly string[] {
   if (readiness.ready) return [];
   if (readiness.blockers.some(blocker => ["editorial_assessment_missing", "editorial_assessment_invalid", "audit_coverage_missing", "audit_coverage_invalid"].includes(blocker))) return [];
-  const evidenceBlockers = new Set(["unaudited_claim", "unsupported_claim", "unresolved_audit_claim", "ungrounded_statement", "forbidden_topic"]);
+  const evidenceBlockers = new Set(["unaudited_claim", "unsupported_claim", "unresolved_audit_claim", "unresolved_audit_scenario", "ungrounded_statement", "forbidden_topic"]);
   if (readiness.blockers.some((blocker) => evidenceBlockers.has(blocker))) return [];
   const feedback = [
     ...Object.entries(critique.qualityAssessment ?? {})

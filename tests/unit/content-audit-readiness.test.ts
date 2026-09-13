@@ -44,3 +44,8 @@ test.each(["missing", "source_changed", "body_changed", "missing_passage", "dupl
   if (change === "different_verdict") assessment = { ...assessment, reviewedClaims: [{ ...review, verdict: "unsupported" }] };
   expect(readiness(candidate, assessment, currentFingerprint)).toMatchObject({ ready: false, blockers: expect.arrayContaining([change === "missing" ? "audit_coverage_missing" : "audit_coverage_invalid"]) });
 });
+
+test("a retained scenario objection blocks a favorable current audit", () => {
+  const assessment = { ...audit, unresolvedScenarios: [{ statement, verdict: "misleading" as const, reason: "Une objection antérieure reste présente dans le texte courant." }] };
+  expect(readiness(draft, assessment)).toMatchObject({ ready: false, blockers: expect.arrayContaining(["unresolved_audit_scenario"]) });
+});

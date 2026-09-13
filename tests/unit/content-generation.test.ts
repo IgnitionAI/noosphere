@@ -912,3 +912,28 @@ test.each([
   expect(completed?.readiness.ready).toBe(!persistent);
   if (persistent) expect(completed?.readiness.blockers).toContain("unaudited_claim");
 });
+
+test("misleading scenario objections remain checkpointed and reach writer repair feedback", async () => {
+  const base = pipelineContext("audit");
+  const scenario = "Exemple fictif : la validation ouvre tous les dossiers privés.";
+  const candidate = { ...draft(), body: draft().body + "\n\n" + scenario, illustrativeScenarios: [scenario] };
+  const context = { ...base, draft: candidate };
+  let reviews = 0;
+  let completed: unknown;
+  const feedback: string[] = [];
+  const checkpoints: unknown[] = [];
+  const repository = { async loadContext() { return context; }, async startRun() {},
+    async checkpointAudit(input: unknown) { checkpoints.push(input); }, async reviseDraftAfterAudit() {},
+    async saveAudit() {}, async reviseDraftAfterCritique() {}, async failRun() {}, async completeRun(input: unknown) { completed = input; },
+  } as unknown as ContentGenerationRepository;
+  await new ContentGenerationJobProcessor(repository, {
+    async buildBrief() { throw new Error("must preserve brief"); },
+    async write(input) { feedback.push(...(input.validationFeedback ?? [])); return candidate; },
+    async audit(input) { return { ...audit(input.draft, input.evidence), reviewedScenarios: [{ statement: scenario, verdict: ++reviews === 1 ? "misleading" as const : "hypothetical" as const, reason: "L’autorisation présentée ne justifie pas l’ouverture de tous les dossiers." }] }; },
+    async critique() { return critique(); },
+  }, { async acknowledge() {} } as unknown as JobQueue).process(job(context.run.workspaceId, context.run.id));
+  expect(reviews).toBe(3);
+  expect(completed).toMatchObject({readiness: {ready: false, blockers: expect.arrayContaining(["unresolved_audit_scenario"])}});
+  expect(checkpoints).toEqual(expect.arrayContaining([expect.objectContaining({ audit: expect.objectContaining({ unresolvedScenarios: expect.arrayContaining([expect.objectContaining({statement: scenario})]) }) })]));
+  expect(feedback.some(message => message.includes("CONTENT_AUDIT_UNRESOLVED_SCENARIO"))).toBe(true);
+});

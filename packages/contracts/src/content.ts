@@ -226,6 +226,7 @@ export const contentBrandDirectionProposalSchema = z.object({
 }).strict();
 
 export const contentEvidenceAuditSchema: z.ZodType<ContentEvidenceAudit> = z.object({
+  unresolvedScenarios: z.array(z.object({ statement: z.string().min(20).max(600), verdict: z.literal("misleading"), reason: z.string().min(20).max(1_000) }).strict()).max(6).optional(),
   unresolvedClaims: z.array(z.object({ statement: z.string().min(3).max(1_000), sourceKeys: z.array(z.string()).max(12), verdict: z.literal("unsupported"), reason: z.string().min(3).max(1_000) })).max(30).optional(),
   coverage: z.object({
     version: z.literal(1), evidenceFingerprint: z.string().regex(/^[a-f0-9]{64}$/),

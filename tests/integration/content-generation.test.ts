@@ -268,7 +268,7 @@ databaseDescribe("CNT-101 durable content generation", () => {
     });
     await repository.startRun({ workspaceId, runId: improved.id, now });
     await repository.saveDraft({ workspaceId, runId: improved.id, draft: { ...draft, hook: "Le précédent n’est utile que s’il est retrouvable." }, now });
-    const negativeCheckpoint = { ...audit, reviewedClaims: audit.reviewedClaims.map(claim => ({ ...claim, verdict: "unsupported" as const })) };
+    const negativeCheckpoint = { ...audit, reviewedClaims: audit.reviewedClaims.map(claim => ({ ...claim, verdict: "unsupported" as const })), unresolvedScenarios: [{ statement: draft.body.slice(0, 100), verdict: "misleading" as const, reason: "Synthetic historical scenario objection for checkpoint persistence only." }] };
     await repository.checkpointAudit({ workspaceId, runId: improved.id, audit: negativeCheckpoint, now });
     expect(await repository.loadContext({ workspaceId, runId: improved.id })).toMatchObject({run: {stage: "audit"}, audit: negativeCheckpoint});
     const beforeLedger = await repository.loadContext({workspaceId, runId: improved.id});
