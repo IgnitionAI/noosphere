@@ -806,3 +806,12 @@ Full local integration run passed 327 tests across 78 isolated suites with 2,860
 
 
 The controlled browser rerun passed all eight targeted cases (guided login/expiry/renewal and instance setup on desktop/mobile), with zero skips or failures (/tmp/noosphere-v10-e2e-controlled.log). Together with the initial run, every one of the 56 browser cases was exercised successfully; this remains local controlled-provider E2E. The generated Next.js development type-path change was restored after the test server exited. Full local check included 1,299 unit/HTTP tests with 4,423 assertions.
+
+
+## 2026-09-13 — example comparison calibration
+
+The latest KCS image draft passed critic v20 although its fictional example asserted that an applicable article was found without showing what matched. A focused Brand Guardian addition distinguishes observations from conclusion labels, while preserving explicit absent-prerequisite cases and explained distinctions that do not promise a worked example. Consumers are versioned writer v30 / critic v21.
+
+A private Luna assessment of the unchanged negative example returned readerValue=revise, explicitly citing the missing ticket/article comparison. A paired control changed only that paragraph to a fictional action/error comparison; it returned readerValue=pass, explaining why the first article did not match and how refined context led to the second. The control illustrates reasoning, not measured resolution or a universal rule that matching an error code proves applicability. Agent-authored reference excerpts and expectations are in tests/fixtures/content/editorial-example-cases.json; these are not human labels or automated semantic tests.
+
+Private raw inputs/outputs and decoded judgments: noosphere-critic-case-{probe,control}-{input,output,decoded}.json, mode0600. Both review axes cleared the scoped change after correcting the fixture's labeling provenance. 31 adapter tests pass with 211 assertions, and full bun run check passes (/tmp/noosphere-example-review-check.log). The native pair ran the new skill body before the subsequent prompt-version-only increment; the exact private inputs preserve this boundary. An actual writer repair through the application processor is still running and must be assessed separately. No production publication or configuration changed.
