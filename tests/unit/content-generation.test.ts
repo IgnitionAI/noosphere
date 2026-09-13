@@ -874,3 +874,41 @@ test("a current critic checkpoint can complete audited references without repeat
   }, {async acknowledge() {calls.push("ack");}} as unknown as JobQueue).process(job(context.run.workspaceId, context.run.id));
   expect(calls).toEqual(["reopen", "checkpoint", "audit_saved", "critic", "complete", "ack"]);
 });
+
+
+test.each([
+  {stage: "audit" as const, persistent: false}, {stage: "audit" as const, persistent: true},
+  {stage: "critic" as const, persistent: false}, {stage: "critic" as const, persistent: true},
+])("rechecks an omitted declaration without rewriting copy: %j", async ({stage, persistent}) => {
+  const base = pipelineContext("audit");
+  const context = { ...base, run: {...base.run, stage}, draft: draft(), audit: fixtureAuditCoverage(draft(), {...audit(draft(), base.evidence), reviewedClaims: []}, base.evidence) };
+  let reopened = false;
+  const checkpoints: unknown[] = [];
+  let calls = 0;
+  let completed: {readiness: {ready: boolean; blockers: string[]}} | undefined;
+  const repository = { async loadContext() {return context;}, async startRun() {},
+    async checkpointAudit(input: unknown) {checkpoints.push(input);}, async saveAudit() {},
+    async reopenAudit() {reopened = true;},
+    async failRun() {throw new Error("must complete with a truthful outcome");},
+    async completeRun(input: typeof completed) {completed=input;},
+  } as unknown as ContentGenerationRepository;
+  const agent = {
+    async buildBrief() {throw new Error("preserve brief");}, async write() {throw new Error("preserve copy");},
+    async audit(input: {draft: ContentDraftSnapshot; validationFeedback?: readonly string[]}) {
+      expect(input.draft).toEqual(context.draft);
+      expect(reopened).toBe(stage === "critic");
+      if (++calls === 2) {
+        expect(checkpoints).toHaveLength(1);
+        expect(input.validationFeedback?.join(" ")).toContain(context.draft.factualClaims[0]!.statement);
+      }
+      return calls === 1 || persistent
+        ? fixtureAuditCoverage(input.draft, {...audit(input.draft, context.evidence), reviewedClaims: []}, context.evidence)
+        : audit(input.draft, context.evidence);
+    }, async critique() {return critique();},
+  };
+  await new ContentGenerationJobProcessor(repository,agent,{async acknowledge(){}} as unknown as JobQueue).process(job(context.run.workspaceId,context.run.id));
+  expect(calls).toBe(2);
+  expect(checkpoints).toHaveLength(2);
+  expect(completed?.readiness.ready).toBe(!persistent);
+  if (persistent) expect(completed?.readiness.blockers).toContain("unaudited_claim");
+});

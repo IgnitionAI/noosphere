@@ -18,7 +18,7 @@ import type {
   ContentGenerationStage,
   ContentGenerationStatus,
 } from "@outbound/domain/content/content-asset";
-import { MAX_CONTENT_FACTUAL_CLAIMS, contentAuditCoverageStatus, contentPublicText, ContentDraftUnsourcedNumberError, MAX_CONTENT_BODY_LENGTH, assertGroundedContentDraft, assertMediaPlanMatchesBrief, evaluateContentReadiness } from "@outbound/domain/content/content-asset";
+import { MAX_CONTENT_FACTUAL_CLAIMS, unauditedContentClaims, contentAuditCoverageStatus, contentPublicText, ContentDraftUnsourcedNumberError, MAX_CONTENT_BODY_LENGTH, assertGroundedContentDraft, assertMediaPlanMatchesBrief, evaluateContentReadiness } from "@outbound/domain/content/content-asset";
 
 export const CONTENT_GENERATION_JOB_TYPE = "content.asset.generate";
 export const CONTENT_GENERATION_JOB_PRIORITY = 60;
@@ -110,7 +110,7 @@ export interface ContentPipelineAgent {
     readonly repairMode?: "claim_ledger" | undefined;
     readonly audit?: ContentEvidenceAudit | null;
   }): Promise<ContentDraftSnapshot>;
-  audit(input: Pick<ContentGenerationContext, "businessContext" | "run" | "strategy" | "evidence"> & { readonly brief: ContentBriefSnapshot; readonly draft: ContentDraftSnapshot }): Promise<ContentEvidenceAudit>;
+  audit(input: Pick<ContentGenerationContext, "businessContext" | "run" | "strategy" | "evidence"> & { readonly brief: ContentBriefSnapshot; readonly draft: ContentDraftSnapshot; readonly validationFeedback?: readonly string[] }): Promise<ContentEvidenceAudit>;
   critique(input: Pick<ContentGenerationContext, "businessContext" | "run" | "idea" | "strategy" | "brandKit" | "evidence" | "recentBodies"> & { readonly brief: ContentBriefSnapshot; readonly draft: ContentDraftSnapshot; readonly audit: ContentEvidenceAudit }): Promise<ContentEditorialCritique>;
 }
 
@@ -169,7 +169,8 @@ export class ContentGenerationJobProcessor {
         context = { ...context, draft, run: { ...context.run, stage: "audit" } };
       }
       if (context.run.stage === "critic" && context.draft
-        && (!context.audit || contentAuditCoverageStatus(context.draft, context.audit, contentAuditEvidenceFingerprint(context.evidence)) !== "current")) {
+        && (!context.audit || contentAuditCoverageStatus(context.draft, context.audit, contentAuditEvidenceFingerprint(context.evidence)) !== "current"
+          || unauditedContentClaims(context.draft, context.audit).length > 0)) {
         await this.repository.reopenAudit({ workspaceId: job.workspaceId, runId: payload.runId, now: this.now() });
         context = { ...context, critique: null, run: { ...context.run, stage: "audit" } };
       }
@@ -271,11 +272,19 @@ export class ContentGenerationJobProcessor {
   }
 
   async #auditDraft(context: ContentGenerationContext & { readonly brief: ContentBriefSnapshot; readonly draft: ContentDraftSnapshot }, previous: ContentEvidenceAudit | null): Promise<{ draft: ContentDraftSnapshot; audit: ContentEvidenceAudit }> {
-    const current = await this.agent.audit(context);
-    const audit = retainUnresolvedAuditClaims(context.draft, current, previous);
-    const synchronized = synchronizeAuditedClaimLedger(context.draft, audit, context.evidence.map(item => item.key), contentAuditEvidenceFingerprint(context.evidence));
-    await this.repository.checkpointAudit({ workspaceId: context.run.workspaceId, runId: context.run.id, ...synchronized, now: this.now() });
-    return synchronized;
+    let draft = context.draft;
+    let audit = previous;
+    let validationFeedback: readonly string[] = [];
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const current = await this.agent.audit({ ...context, draft, validationFeedback });
+      audit = retainUnresolvedAuditClaims(draft, current, audit);
+      ({ draft, audit } = synchronizeAuditedClaimLedger(draft, audit, context.evidence.map(item => item.key), contentAuditEvidenceFingerprint(context.evidence)));
+      await this.repository.checkpointAudit({ workspaceId: context.run.workspaceId, runId: context.run.id, draft, audit, now: this.now() });
+      const missing = unauditedContentClaims(draft, audit);
+      if (!missing.length || contentAuditCoverageStatus(draft, audit, contentAuditEvidenceFingerprint(context.evidence)) !== "current") break;
+      validationFeedback = missing.map(claim => `CONTENT_AUDIT_UNREVIEWED_DECLARATION: ${claim.statement} — Review this complete current declaration and its supplied source keys (${claim.sourceKeys.join(", ")}). Return a supported or unsupported verdict based on evidence, not on its declaration. Review every current public field. Do not rewrite public copy.`);
+    }
+    return { draft, audit: audit! };
   }
 
   async #produceMedia(context: ContentGenerationContext & { readonly brief: ContentBriefSnapshot; readonly draft: ContentDraftSnapshot }): Promise<StoredContentMedia> {

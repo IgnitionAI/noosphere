@@ -364,11 +364,7 @@ export function evaluateContentReadiness(input: {
   }
   const available = new Set(input.availableEvidenceKeys);
 
-  for (const claim of input.draft.factualClaims) {
-    if (!input.audit.reviewedClaims.some((reviewed) => reviewedClaimCoversDraftClaim(reviewed, claim))) {
-      blockers.add("unaudited_claim");
-    }
-  }
+  if (unauditedContentClaims(input.draft, input.audit).length) blockers.add("unaudited_claim");
 
   for (const claim of input.audit.reviewedClaims) {
     if (claim.verdict !== "supported" || claim.sourceKeys.some((key) => !available.has(key))) {
@@ -403,6 +399,10 @@ export function evaluateContentReadiness(input: {
   if (input.critique.issues.some((issue) => issue.severity === "blocker")) blockers.add("editorial_blocker");
 
   return { ready: blockers.size === 0, blockers: [...blockers] };
+}
+
+export function unauditedContentClaims(draft: ContentDraftSnapshot, audit: ContentEvidenceAudit) {
+  return draft.factualClaims.filter(claim => !audit.reviewedClaims.some(reviewed => reviewedClaimCoversDraftClaim(reviewed, claim)));
 }
 
 function reviewedClaimCoversDraftClaim(

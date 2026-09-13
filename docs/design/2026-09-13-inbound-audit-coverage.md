@@ -56,3 +56,9 @@ The application checkpoints the synchronized draft and audit atomically before r
 Audit v9 excludes the previous audit snapshot from the model payload. The current draft, evidence and business context remain available. Durable previous objections stay in application state and are reconciled after the independent assessment; they are not supplied as candidate current quotations.
 
 A private native Luna capture reproduced v8 quoting “La vérification utile comporte deux niveaux :” from the previous audit even though the current caption instead said “Pour décider si le contrôle est suffisant, séparez deux niveaux :”. All 36 field IDs were covered, but that non-current quotation correctly failed exact coverage. The fix removes this input contamination path without accepting approximate quotations or suppressing unresolved negatives. Model validity and editorial usefulness still require native verification.
+
+## Missing declared-claim reassessment
+
+A full-field receipt may classify a writer-declared factual title as non-factual and omit its verdict. The shared readiness matcher identifies declarations lacking full text and source-set coverage. After checkpointing a valid current audit, the processor permits one additional independent assessment with explicit current missing declarations. The copy is preserved, negative findings are retained, and a second omission remains blocking. The bound is per audit-stage invocation, not a persisted global call budget. Current critic checkpoints with missing declarations reopen the audit stage on resume. Invalid coverage is not accepted or repaired by this mechanism.
+
+Native inspection found a truthful CTA_RESOURCE_UNVERIFIED rejection for a promised grid, but unaudited_claim prevented editorial repair. An experimental targeted Luna reassessment failed CONTENT_AUDIT_COVERAGE_INVALID; native recovery, useful final copy and rendered media remain unproven.
