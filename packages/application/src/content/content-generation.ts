@@ -15,7 +15,7 @@ import type {
   ContentGenerationStage,
   ContentGenerationStatus,
 } from "@outbound/domain/content/content-asset";
-import { MAX_CONTENT_BODY_LENGTH, assertGroundedContentDraft, assertMediaPlanMatchesBrief, evaluateContentReadiness } from "@outbound/domain/content/content-asset";
+import { ContentDraftUnsourcedNumberError, MAX_CONTENT_BODY_LENGTH, assertGroundedContentDraft, assertMediaPlanMatchesBrief, evaluateContentReadiness } from "@outbound/domain/content/content-asset";
 
 export const CONTENT_GENERATION_JOB_TYPE = "content.asset.generate";
 export const CONTENT_GENERATION_JOB_PRIORITY = 60;
@@ -299,6 +299,9 @@ async function writeGroundedDraft(
 }
 
 function draftValidationFeedback(error: Error, draft: ContentDraftSnapshot): string {
+  if (error instanceof ContentDraftUnsourcedNumberError && error.locations.length) {
+    return `${error.message}: ${error.locations.map(item => `${item.field}: ${item.numbers.join(", ")}`).join("; ")}. Array indexes are zero-based. Correct these public occurrences, including media. A scenario declared in the caption does not cover a different slide passage. Remove the unsupported numeric reference from that field or cite evidence that proves it. For an already fictional example only, the visible passage must begin with Exemple fictif : and the same complete passage must be added verbatim to illustrativeScenarios. Merely adding detail or changing the title to Test fictif does not declare the passage. Do not reclassify real results as fictional; retain independent factual audit and never invent a source.`;
+  }
   if (error.message === "CONTENT_DRAFT_TOO_LONG") {
     return `${error.message}: body has ${draft.body.trim().length} characters; maximum ${MAX_CONTENT_BODY_LENGTH}. Rewrite concisely while retaining the explanation and source attribution. Do not truncate. Resynchronize the claim ledger with the rewritten public copy.`;
   }

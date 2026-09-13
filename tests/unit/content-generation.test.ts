@@ -257,7 +257,7 @@ describe("CNT-101 grounded content pipeline", () => {
 
     await processor.process(job(context.run.workspaceId, context.run.id));
 
-    expect(feedback).toEqual([undefined, ["CONTENT_DRAFT_UNSOURCED_NUMBER"]]);
+    expect(feedback).toEqual([undefined, [expect.stringContaining("CONTENT_DRAFT_UNSOURCED_NUMBER: body: 42.")]]);
     expect(calls).toEqual(["start", "draft_saved", "audit", "audit_saved", "critic", "ready", "ack"]);
   });
 
@@ -466,7 +466,7 @@ describe("CNT-101 grounded content pipeline", () => {
 
     expect(feedback).toHaveLength(2);
     expect(feedback[0]).toContain("CONTENT_CRITIQUE_BLOCKER [readerValue]: Expliquer une décision concrète que le lecteur peut prendre.");
-    expect(feedback[1]).toEqual([...feedback[0]!, "CONTENT_DRAFT_UNSOURCED_NUMBER"]);
+    expect(feedback[1]).toEqual([...feedback[0]!, expect.stringContaining("CONTENT_DRAFT_UNSOURCED_NUMBER: body: 42.")]);
     expect(calls).toContain("ready");
   });
 

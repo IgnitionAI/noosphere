@@ -123,6 +123,13 @@ const internalAuditPhrases = [
   "preuve fournie",
 ] as const;
 
+export class ContentDraftUnsourcedNumberError extends Error {
+  constructor(readonly locations: readonly { readonly field: string; readonly numbers: readonly string[] }[]) {
+    super("CONTENT_DRAFT_UNSOURCED_NUMBER");
+    this.name = "ContentDraftUnsourcedNumberError";
+  }
+}
+
 export function assertGroundedContentDraft(
   draft: ContentDraftSnapshot,
   availableEvidenceKeys: readonly string[],
@@ -148,7 +155,7 @@ export function assertGroundedContentDraft(
   const bodyNumbers = numberTokens(factualText);
   const groundedNumbers = new Set(draft.factualClaims.flatMap((claim) => numberTokens(claim.statement)));
   if (bodyNumbers.some((token) => !groundedNumbers.has(token))) {
-    throw new Error("CONTENT_DRAFT_UNSOURCED_NUMBER");
+    throw new ContentDraftUnsourcedNumberError(unsourcedNumberLocations(draft, new Set(bodyNumbers.filter(token => !groundedNumbers.has(token)))));
   }
 }
 
@@ -187,25 +194,59 @@ export function assertMediaPlanMatchesBrief(brief: ContentBriefSnapshot, draft: 
 }
 
 export function contentPublicText(draft: ContentDraftSnapshot, omitStructuralNumbers = false): string {
+  return contentPublicFields(draft, omitStructuralNumbers).map(entry => entry.text).join("\n");
+}
+
+function contentPublicFields(draft: ContentDraftSnapshot, omitStructuralNumbers = false) {
   const plan = normalizedMediaPlan(draft);
-  const slideTitles = omitStructuralNumbers
-    ? stripOrderedListMarkers(plan.slides.map((slide) => slide.title))
-    : plan.slides.map((slide) => slide.title);
-  const kickers = plan.slides.map((slide) => slide.kicker ?? "");
+  const titles = plan.slides.map(slide => slide.title);
+  const slideTitles = omitStructuralNumbers ? stripOrderedListMarkers(titles) : titles;
+  const kickers = plan.slides.map(slide => slide.kicker ?? "");
   const slideKickers = omitStructuralNumbers ? stripSequenceKickers(kickers) : kickers;
-  return [
-    draft.body,
-    plan.title,
-    plan.subtitle,
-    ...plan.slides.flatMap((slide, index) => {
-      const items = slide.items ?? [];
-      const labels = items.map(item => item.label);
-      const itemLabels = omitStructuralNumbers ? stripOrderedItemLabels(labels) : labels;
-      return [slideKickers[index], slideTitles[index], slide.body, slide.callout,
-        ...items.flatMap((item, itemIndex) => [itemLabels[itemIndex], item.text])];
-    }),
-    ...plan.scenes.flatMap((scene) => [scene.title, scene.body]),
-  ].filter((value): value is string => Boolean(value)).join("\n");
+  const fields: { field: string; text: string }[] = [];
+  const add = (field: string, text: string | null | undefined) => { if (text) fields.push({ field, text }); };
+  add("body", draft.body);
+  add("mediaPlan.title", plan.title);
+  add("mediaPlan.subtitle", plan.subtitle);
+  plan.slides.forEach((slide, index) => {
+    const prefix = `mediaPlan.slides[${index}]`;
+    add(`${prefix}.kicker`, slideKickers[index]);
+    add(`${prefix}.title`, slideTitles[index]);
+    add(`${prefix}.body`, slide.body);
+    add(`${prefix}.callout`, slide.callout);
+    const items = slide.items ?? [];
+    const labels = items.map(item => item.label);
+    const itemLabels = omitStructuralNumbers ? stripOrderedItemLabels(labels) : labels;
+    items.forEach((item, itemIndex) => {
+      add(`${prefix}.items[${itemIndex}].label`, itemLabels[itemIndex]);
+      add(`${prefix}.items[${itemIndex}].text`, item.text);
+    });
+  });
+  plan.scenes.forEach((scene, index) => {
+    add(`mediaPlan.scenes[${index}].title`, scene.title);
+    add(`mediaPlan.scenes[${index}].body`, scene.body);
+  });
+  return fields;
+}
+
+function unsourcedNumberLocations(draft: ContentDraftSnapshot, unsupported: ReadonlySet<string>) {
+  const lines = contentPublicFields(draft, true).flatMap(entry => entry.text.split("\n").map(text => ({ field: entry.field, text })));
+  let text = lines.map(line => line.text).join("\n");
+  // Preserve line ownership while excluding complete declared passages, including
+  // historical scenarios spanning more than one public field.
+  for (const scenario of draft.illustrativeScenarios ?? []) text = text.split(scenario).join(scenario.replace(/[^\n]/g, " "));
+  const prose = stripOrderedListMarkers(text.replace(/https?:\/\/[^\s<>()[\]{}]+/g, "").split("\n"));
+  const findings = new Map<string, Set<string>>();
+  const joined = prose.join("\n");
+  for (const match of numberTokenMatches(joined)) {
+    if (!unsupported.has(match.token)) continue;
+    const lineIndex = joined.slice(0, match.index).split("\n").length - 1;
+    const field = lines[lineIndex]!.field;
+    const values = findings.get(field) ?? new Set<string>();
+    values.add(match.token);
+    findings.set(field, values);
+  }
+  return [...findings].map(([field, numbers]) => ({ field, numbers: [...numbers] }));
 }
 
 /** A review must cite the exact current public copy, not an earlier draft or its brief. */
@@ -318,7 +359,11 @@ function numberTokens(value: string): readonly string[] {
   // Citation addresses and ordered-list markers describe the document's structure,
   // not a measured outcome. Numbers inside each list item still require evidence.
   const prose = stripOrderedListMarkers(value.replace(/https?:\/\/[^\s<>()[\]{}]+/g, "").split("\n")).join("\n");
-  return [...prose.matchAll(/\b\d+(?:[.,]\d+)?(?:\s?%|\s?[kKmM€$])?\b/g)].map((match) => match[0]!.replace(/\s/g, "").toLowerCase());
+  return numberTokenMatches(prose).map(match => match.token);
+}
+
+function numberTokenMatches(value: string) {
+  return [...value.matchAll(/\b\d+(?:[.,]\d+)?(?:\s?%|\s?[kKmM€$])?\b/g)].map(match => ({ token: match[0]!.replace(/\s/g, "").toLowerCase(), index: match.index }));
 }
 
 function stripSequenceKickers(values: readonly string[]): readonly string[] {

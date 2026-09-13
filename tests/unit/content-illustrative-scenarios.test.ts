@@ -39,3 +39,34 @@ test('provider output requires scenario arrays while historical snapshots remain
   expect(contentDraftSnapshotSchema.parse({...draft,illustrativeScenarios:undefined}).illustrativeScenarios).toEqual([]);
   expect(contentEvidenceAuditSchema.parse({reviewedClaims:[],ungroundedStatements:[],forbiddenTopicMatches:[]}).reviewedScenarios).toEqual([]);
 });
+
+test('locates an undeclared media occurrence without blaming the declared caption', () => {
+  const mediaPlan = { format: 'linkedin_document' as const, visualTone: 'editorial' as const, title: 'Version', subtitle: null, altText: 'Version', scenes: [], slides: [{ title: 'Vérifier', body: 'Le document porte la version 4.2.' }] };
+  let failure: unknown;
+  try { assertGroundedContentDraft({ ...draft, mediaPlan }, []); } catch (error) { failure = error; }
+  expect(failure).toMatchObject({ message: 'CONTENT_DRAFT_UNSOURCED_NUMBER', locations: [{ field: 'mediaPlan.slides[0].body', numbers: ['4.2'] }] });
+});
+
+test('numeric locations preserve cross-field scenarios, URLs and ordered slide markers', () => {
+  const body = 'Exemple fictif : version 4.2';
+  const title = 'à comparer avec 4.1.';
+  const candidate = { ...draft, body, illustrativeScenarios: [body+'\n'+title], mediaPlan: {
+    format: 'linkedin_document' as const, visualTone: 'editorial' as const, title, subtitle: null, altText: 'Version', scenes: [], slides: [
+      { title: '1. Observer', body: 'Source : https://example.com/18' },
+      { title: '2. Comparer', body: 'Résultat réel : 18 dossiers.', items: [{ label: 'Conclusion', text: 'Un gain réel de 19 points.' }] },
+    ],
+  } };
+  let failure: unknown;
+  try { assertGroundedContentDraft(candidate, []); } catch (error) { failure = error; }
+  expect(failure).toMatchObject({ message: 'CONTENT_DRAFT_UNSOURCED_NUMBER', locations: [
+    { field: 'mediaPlan.slides[1].body', numbers: ['18'] },
+    { field: 'mediaPlan.slides[1].items[0].text', numbers: ['19'] },
+  ] });
+});
+
+
+test('numeric locations use the same multiline unit tokens as the gate', () => {
+  let failure: unknown;
+  try { assertGroundedContentDraft({ ...draft, body: '42\nM contrats', illustrativeScenarios: [] }, []); } catch (error) { failure = error; }
+  expect(failure).toMatchObject({ message: 'CONTENT_DRAFT_UNSOURCED_NUMBER', locations: [{ field: 'body', numbers: ['42m'] }] });
+});
