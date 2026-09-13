@@ -35,7 +35,7 @@ export class WorkspaceContentIdeaSource implements ContentIdeaSourceDiscovery {
     const native = this.nativeFactory({ codexHome: instanceCodexHome(this.environment, ready.connectionId), ...(this.environment.CODEX_BINARY_PATH ? { binaryPath: this.environment.CODEX_BINARY_PATH } : {}) });
     const started = performance.now();
     const log = { workspaceId: input.workspaceId, purpose: "content_source_discovery", provider: route.provider, model: route.model,
-      promptVersion: "noosphere-native-source-discovery-v1", shadow: false, cost: null,
+      promptVersion: "noosphere-native-source-discovery-v2", shadow: false, cost: null,
       inputHash: new Bun.CryptoHasher("sha256").update(JSON.stringify({ query: input.query, limit: input.limit })).digest("hex") };
     const invocation = { correlationId: input.correlationId, connectionId: ready.connectionId, connectionVersion: ready.connectionVersion };
     let discovered;
