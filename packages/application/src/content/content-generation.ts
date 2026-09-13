@@ -102,6 +102,7 @@ export interface ContentPipelineAgent {
     readonly brief: ContentBriefSnapshot;
     readonly draft?: ContentDraftSnapshot | null;
     readonly validationFeedback?: readonly string[];
+    readonly audit?: ContentEvidenceAudit | null;
   }): Promise<ContentDraftSnapshot>;
   audit(input: Pick<ContentGenerationContext, "businessContext" | "run" | "strategy" | "evidence"> & { readonly brief: ContentBriefSnapshot; readonly draft: ContentDraftSnapshot }): Promise<ContentEvidenceAudit>;
   critique(input: Pick<ContentGenerationContext, "businessContext" | "run" | "idea" | "strategy" | "brandKit" | "evidence" | "recentBodies"> & { readonly brief: ContentBriefSnapshot; readonly draft: ContentDraftSnapshot; readonly audit: ContentEvidenceAudit }): Promise<ContentEditorialCritique>;
@@ -168,7 +169,7 @@ export class ContentGenerationJobProcessor {
         for (let repairAttempt = 1; repairAttempt <= 2; repairAttempt += 1) {
           const auditFeedback = repairableAuditFeedback(audit);
           if (auditFeedback.length === 0) break;
-          draft = await this.#writeGroundedDraft({ ...context, brief: context.brief, draft }, auditFeedback);
+          draft = await this.#writeGroundedDraft({ ...context, brief: context.brief, draft, audit }, auditFeedback);
           await this.repository.reviseDraftAfterAudit({ workspaceId: job.workspaceId, runId: payload.runId, draft, now: this.now() });
           audit = await this.agent.audit({ ...context, brief: context.brief, draft });
         }
@@ -195,13 +196,13 @@ export class ContentGenerationJobProcessor {
           const critiqueFeedback = repairableCritiqueFeedback(critique, readiness);
           if (critiqueFeedback.length === 0) break;
           critiqueFeedbackHistory = [...new Set([...critiqueFeedback, ...critiqueFeedbackHistory])];
-          draft = await this.#writeGroundedDraft({ ...context, brief: context.brief, draft }, critiqueFeedbackHistory);
+          draft = await this.#writeGroundedDraft({ ...context, brief: context.brief, draft, audit }, critiqueFeedbackHistory);
           await this.repository.reviseDraftAfterCritique({ workspaceId: job.workspaceId, runId: payload.runId, draft, now: this.now() });
           audit = await this.agent.audit({ ...context, brief: context.brief, draft });
           for (let auditRepairAttempt = 1; auditRepairAttempt <= 2; auditRepairAttempt += 1) {
             const auditFeedback = repairableAuditFeedback(audit);
             if (auditFeedback.length === 0) break;
-            draft = await this.#writeGroundedDraft({ ...context, brief: context.brief, draft }, auditFeedback);
+            draft = await this.#writeGroundedDraft({ ...context, brief: context.brief, draft, audit }, auditFeedback);
             await this.repository.reviseDraftAfterAudit({ workspaceId: job.workspaceId, runId: payload.runId, draft, now: this.now() });
             audit = await this.agent.audit({ ...context, brief: context.brief, draft });
           }

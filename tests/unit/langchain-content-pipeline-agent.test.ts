@@ -87,6 +87,18 @@ describe("LangChainContentPipelineAgent", () => {
     expect(JSON.stringify(recorded)).not.toContain("private upstream detail");
   });
 
+  test("passes the complete current audit to the writer repair model", async () => {
+    const currentAudit = { ...audit(), ungroundedStatements: ["Une conclusion manque au registre."] };
+    let payload: unknown;
+    const agent = new LangChainContentPipelineAgent(
+      { AI_PROVIDER: "kimi-code", KIMI_CODE_API_KEY: "test-key" }, undefined, undefined,
+      async ({ context }) => { payload = context; return draft(); },
+    );
+    await agent.write({ ...pipelineContext(), brief: brief(), draft: draft(), audit: currentAudit,
+      validationFeedback: ["CONTENT_AUDIT_UNGROUNDED_STATEMENT: Une conclusion manque au registre."] });
+    expect(payload).toMatchObject({ audit: currentAudit, draft: draft() });
+  });
+
   test("passes the versioned offer and buyer context to every editorial role", async () => {
     const businessContext = {
       offer: { versionId: "offer-v1", name: "Assistant documentaire", category: "software", valueProposition: "Retrouver une procédure autorisée", targetAudience: "Support", constraints: ["Pas de réponse hors périmètre"], objections: [] },
@@ -136,7 +148,7 @@ describe("LangChainContentPipelineAgent", () => {
     ]);
     expect(recorded.map(({ purpose, model, promptVersion, contentGenerationRunId }) => ({ purpose, model, promptVersion, contentGenerationRunId }))).toEqual([
       { purpose: "content_brief", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-brief-v8", contentGenerationRunId: context.run.id },
-      { purpose: "content_writer", model: "k3", promptVersion: "noosphere-content-writer-v19", contentGenerationRunId: context.run.id },
+      { purpose: "content_writer", model: "k3", promptVersion: "noosphere-content-writer-v20", contentGenerationRunId: context.run.id },
       { purpose: "content_audit", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-audit-v6", contentGenerationRunId: context.run.id },
       { purpose: "content_critic", model: "k3", promptVersion: "noosphere-content-critic-v16", contentGenerationRunId: context.run.id },
     ]);

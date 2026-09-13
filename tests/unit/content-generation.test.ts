@@ -334,6 +334,7 @@ describe("CNT-101 grounded content pipeline", () => {
     const calls: string[] = [];
     const feedback: Array<readonly string[] | undefined> = [];
     const context = pipelineContext("audit");
+    const receivedAudits: unknown[] = [];
     const repository = {
       async loadContext() { return context; },
       async startRun() { calls.push("start"); },
@@ -346,7 +347,7 @@ describe("CNT-101 grounded content pipeline", () => {
     let auditAttempt = 0;
     const processor = new ContentGenerationJobProcessor(repository, {
       async buildBrief() { throw new Error("brief must not replay"); },
-      async write(input) { calls.push("writer_repair"); feedback.push(input.validationFeedback); return draft(); },
+      async write(input) { calls.push("writer_repair"); feedback.push(input.validationFeedback); receivedAudits.push(input.audit); return draft(); },
       async audit() {
         calls.push("audit");
         auditAttempt += 1;
@@ -359,11 +360,42 @@ describe("CNT-101 grounded content pipeline", () => {
 
     await processor.process(job(context.run.workspaceId, context.run.id));
 
+    expect(receivedAudits).toEqual([1, 2].map(attempt => ({ ...audit(), ungroundedStatements: [`Le hook factuel manque au registre (audit ${attempt}).`] })));
     expect(feedback).toEqual([
       ["CONTENT_AUDIT_UNGROUNDED_STATEMENT: Le hook factuel manque au registre (audit 1)."],
       ["CONTENT_AUDIT_UNGROUNDED_STATEMENT: Le hook factuel manque au registre (audit 2)."],
     ]);
     expect(calls).toEqual(["start", "audit", "writer_repair", "draft_repaired", "audit", "writer_repair", "draft_repaired", "audit", "audit_saved", "critic", "ready", "ack"]);
+  });
+
+  test("uses the latest audit when a critic repair causes a new factual rejection", async () => {
+    const initial = pipelineContext("audit");
+    const context = { ...initial, run: { ...initial.run, stage: "critic" as const }, audit: audit() };
+    const latestAudit = { ...audit(), ungroundedStatements: ["Une conclusion ajoutée après la critique manque au registre."] };
+    const receivedAudits: unknown[] = [];
+    let auditCount = 0;
+    let criticCount = 0;
+    let finalReady = false;
+    const repository = {
+      async loadContext() { return context; },
+      async startRun() {}, async reviseDraftAfterCritique() {}, async reviseDraftAfterAudit() {}, async saveAudit() {},
+      async completeRun(input: { readiness: { ready: boolean } }) { finalReady = input.readiness.ready; },
+      async failRun() {},
+    } as unknown as ContentGenerationRepository;
+    const processor = new ContentGenerationJobProcessor(repository, {
+      async buildBrief() { throw new Error("brief must not replay"); },
+      async write(input) { receivedAudits.push(input.audit); return draft(); },
+      async audit() { return ++auditCount === 1 ? latestAudit : audit(); },
+      async critique() {
+        return ++criticCount === 1
+          ? { ...critique(), issues: [{ severity: "blocker" as const, code: "READER_VALUE", message: "Expliquer la décision." }] }
+          : critique();
+      },
+    }, { async acknowledge() {} } as unknown as JobQueue);
+    await processor.process(job(context.run.workspaceId, context.run.id));
+    expect(receivedAudits).toEqual([context.audit, latestAudit]);
+    expect(auditCount).toBe(2);
+    expect(finalReady).toBe(true);
   });
 
   test.each(["issue", "assessment"] as const)("repairs a critic rejection from %s and re-audits before readiness", async (kind) => {
