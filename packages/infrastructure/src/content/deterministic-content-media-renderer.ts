@@ -1,3 +1,4 @@
+import { requireContentTextRendering } from "./content-text-rendering";
 import { DOCUMENT_LAYOUT_TEXT_LIMITS, DOCUMENT_ROW_TEXT_LIMITS, type ContentTextLimit } from "./content-document-layout";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
@@ -16,6 +17,7 @@ export class DeterministicContentMediaRenderer implements ContentMediaRenderer {
   constructor(private readonly ffmpegBinary = "ffmpeg") {}
 
   async render(input: Parameters<ContentMediaRenderer["render"]>[0]): ReturnType<ContentMediaRenderer["render"]> {
+    await requireContentTextRendering();
     await mkdir(input.outputDirectory, { recursive: true });
     try {
       if (input.format === "linkedin_image") {
