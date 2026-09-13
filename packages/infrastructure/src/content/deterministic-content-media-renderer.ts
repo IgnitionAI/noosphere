@@ -87,7 +87,7 @@ export class DeterministicContentMediaRenderer implements ContentMediaRenderer {
       height: HEIGHT,
       pageCount: plan.slides.length,
       durationSeconds: null,
-      manifest: { renderer: "pdf-lib-sharp-v6", slides: plan.slides.length, ratio: "4:5", narrativeLayouts: layouts, logo: Boolean(logoBytes) },
+      manifest: { renderer: "pdf-lib-sharp-v7", slides: plan.slides.length, ratio: "4:5", narrativeLayouts: layouts, logo: Boolean(logoBytes) },
     };
   }
 
@@ -384,12 +384,23 @@ function renderClosing(input: Parameters<typeof renderLayoutContent>[0]): string
   const title = layoutWrap(input, input.input.title, 16, 5);
   const body = layoutWrap(input, input.input.body, 34, 5);
   const callout = layoutWrap(input, input.input.callout ?? "À vous de décider", 32, 2);
-  if (input.strictText && input.input.items.length) throw new Error("CONTENT_MEDIA_TEXT_OVERFLOW");
   const bodyBottom = 360 + title.length * 76 + (body.length - 1) * 43 + 18;
   if (input.strictText && bodyBottom > 865) throw new Error("CONTENT_MEDIA_TEXT_OVERFLOW");
+  let itemY = bodyBottom + 40;
+  const items = input.input.items.map(item => {
+    const label = layoutWrap(input, item.label, 40, 2);
+    const text = layoutWrap(input, item.text, 48, 3);
+    const textY = itemY + label.length * 32;
+    const bottom = textY + Math.max(0, text.length - 1) * 34 + 18;
+    if (input.strictText && bottom > 865) throw new Error("CONTENT_MEDIA_TEXT_OVERFLOW");
+    const row = `<text x="88" y="${itemY}" font-family="${input.fontFamily}" font-size="26" font-weight="750" fill="${input.text}">${tspans(label, itemY, 32)}</text>
+      <text x="88" y="${textY}" font-family="${input.fontFamily}" font-size="26" fill="${input.text}" opacity="0.85">${tspans(text, textY, 34)}</text>`;
+    itemY = bottom + 34;
+    return row;
+  }).join("");
   return `${renderKicker(input, 185)}<text x="88" y="300" font-family="${input.fontFamily}" font-size="70" font-weight="800" fill="${input.text}">${tspans(title, 300, 76)}</text>
     <text x="88" y="${360 + title.length * 76}" font-family="${input.fontFamily}" font-size="34" font-weight="480" fill="${input.text}" opacity="0.78">${tspans(body, 360 + title.length * 76, 43)}</text>
-    <rect x="88" y="900" width="760" height="142" rx="30" fill="${input.background}" opacity="0.94"/>
+    ${items}<rect x="88" y="900" width="760" height="142" rx="30" fill="${input.background}" opacity="0.94"/>
     <text x="128" y="958" font-family="${input.fontFamily}" font-size="29" font-weight="760" fill="${input.primary}">${tspans(callout, 958, 37, 128)}</text>
     <circle cx="922" cy="971" r="69" fill="${input.primary}"/><path d="M891 971h55m-20-20 20 20-20 20" fill="none" stroke="${input.background}" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>`;
 }

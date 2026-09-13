@@ -106,7 +106,7 @@ export class LangChainContentPipelineAgent implements ContentPipelineAgent {
       provider,
       model,
       promptVersion: role === "writer"
-        ? "noosphere-content-writer-v15"
+        ? "noosphere-content-writer-v16"
         : role === "critic" ? "noosphere-content-critic-v14" : role === "audit" ? "noosphere-content-audit-v6" : "noosphere-content-brief-v8",
       shadow: false,
       inputHash: new Bun.CryptoHasher("sha256").update(JSON.stringify(original)).digest("hex"),
@@ -256,14 +256,14 @@ function pipelineModelSpec(role: PipelineRole, context: unknown) {
       "Avoid defensive phrases such as 'ce qui est documenté', 'la seule affirmation factuelle', 'notre analyse', 'registre de preuves' or repeated warranty disclaimers. State the useful point naturally; if one caveat is genuinely necessary, say it once and briefly.",
       "Use recentBodies to choose a genuinely different problem, mechanism and takeaway. A paraphrase of a recent post is not distinct.",
       "Every factual statement, number, performance claim or product capability must appear verbatim in factualClaims with exact supplied source keys.",
-      "Every factualClaims.statement must also be a verbatim contiguous excerpt of body; never paraphrase the ledger separately.",
+      "Every factualClaims.statement must be a verbatim contiguous excerpt of the body or one visible media field (a title, subtitle, slide, item or scene). Never paraphrase the ledger separately. A fact explained in the carousel need not also be copied into the caption merely to satisfy the ledger; keep each supported public claim traceable where it is actually shown.",
       "Always return mediaPlan. Its format must exactly match brief.format. For linkedin_text, leave title/subtitle/altText null and slides/scenes empty. For linkedin_image, provide a sharp title, optional subtitle and useful alt text. For linkedin_document, provide 3-9 concise slides that form a visual narrative. Choose the fewest pages that fully explain the point; never add pages merely to repeat it. For linkedin_video, provide 3-8 concise scenes totaling 12-60 seconds. Never copy the whole post into the visual.",
       "For linkedin_document, design every slide deliberately. Slide 1 uses layout cover, the last uses closing. Choose each middle layout among insight, checklist, framework, comparison and process for its communication job. A short document may have one substantive middle slide. Vary layouts when the reasoning benefits; never add a slide merely to meet a layout quota. Avoid a monotonous sequence of numbered paragraph slides.",
       "Use kicker to orient the reader, callout for one memorable sentence, and 2-4 structured items for checklist, framework, comparison or process. Each item needs a short label and one concrete sentence. Keep each slide focused on one job and favor visual hierarchy over filling space.",
       "All factual statements and numbers shown in the media plan are public copy and obey the same evidence ledger as body.",
       "If validationFeedback contains CONTENT_DRAFT_TOO_LONG, use the measured body length and limit to rewrite more concisely. Remove repeated explanations and unnecessary implementation detail, preserving the useful point and source attribution. Never cut a sentence or a URL; synchronize every ledger with the revised copy.",
       "If validationFeedback contains CONTENT_DRAFT_UNSOURCED_NUMBER, remove every number absent from evidence or add the exact sourced sentence to factualClaims.",
-      "If validationFeedback contains CONTENT_DRAFT_CLAIM_NOT_IN_BODY, make each claim statement an exact excerpt of body.",
+      "If validationFeedback contains CONTENT_DRAFT_CLAIM_NOT_IN_BODY, synchronize each claim statement with an exact excerpt of the current body or one visible media field. The legacy error name covers all public copy; do not duplicate slide copy in the caption to repair the ledger.",
       "If validationFeedback contains CONTENT_DRAFT_UNRESOLVED_CLAIM, use only evidence keys present in the supplied context.",
       "If validationFeedback contains CONTENT_DRAFT_SCENARIO_INVALID, correct the supplied rejected draft: each illustrativeScenarios entry must begin with 'Exemple fictif :' and reproduce an exact complete contiguous passage present in the current public copy. Resynchronize the ledger after rewriting body or media. Never remove a still-present invented numeric example from the ledger to bypass validation; preserve its explicit fictional label and independent audit.",
       "If validationFeedback contains CONTENT_AUDIT_UNGROUNDED_STATEMENT, either add the exact factual sentence to factualClaims only when supplied evidence directly proves it. Otherwise replace the unsupported premise with an explicitly hypothetical worked example that demonstrates a proposed decision without claiming real effectiveness, or remove the premise while preserving the useful explanation. An opinion label such as 'mon analyse' never makes an unsupported product mechanism, outcome or process acceptable. Do not soften a factual claim into an implied claim, and do not substitute a disclaimer for reader value.",

@@ -141,6 +141,35 @@ describe("DeterministicContentMediaRenderer", () => {
     expect(branded.manifest).toMatchObject({ logo: true });
   });
 
+  test("renders a closing source credit without dropping it and rejects excess copy", async () => {
+    const render = (text: string | null) => new DeterministicContentMediaRenderer().render({
+      format: "linkedin_document", body: "Texte du post", brandKit: DEFAULT_CONTENT_BRAND_KIT,
+      outputDirectory: `/tmp/noosphere-closing-credit-${crypto.randomUUID()}`,
+      plan: { format: "linkedin_document", visualTone: "editorial", title: "Accès", subtitle: null, altText: "Document", scenes: [],
+        slides: [
+          { title: "Masquer n’est pas filtrer", body: "Le contrôle se vérifie dans la requête." },
+          { layout: "insight", title: "Une distinction", body: "Comparer le champ et le résultat." },
+          { layout: "closing", title: "Le point à retenir", kicker: "Azure AI Search",
+            body: "`retrievable=false` n’est pas un mécanisme d’obfuscation du contenu ni de sécurité au niveau du champ.",
+            callout: "Le filtre gouverne les résultats.",
+            items: text === null ? [] : [{ label: "Source", text }],
+          },
+        ],
+      },
+    });
+    const source = "Security filters for trimming results in Azure AI Search — Microsoft Learn";
+    const result = await render(source);
+    expect(result.pageCount).toBe(3);
+    const imageBytes = async (bytes: Uint8Array) => {
+      const { PDFDict, PDFName, PDFRawStream } = await import("pdf-lib");
+      const pdf = await PDFDocument.load(bytes);
+      const images = pdf.getPage(2).node.Resources()!.lookup(PDFName.of("XObject"), PDFDict);
+      return images.entries().map(([, ref]) => pdf.context.lookup(ref)).flatMap(x => x instanceof PDFRawStream ? [new Bun.CryptoHasher("sha256").update(x.getContents()).digest("hex")] : []);
+    };
+    expect(await imageBytes(result.bytes)).not.toEqual(await imageBytes((await render(null)).bytes));
+    await expect(render(source.repeat(20))).rejects.toMatchObject({ message: "CONTENT_MEDIA_TEXT_OVERFLOW", slideNumber: 3, layout: "closing" });
+  });
+
   test("renders a LinkedIn carousel as a multi-page PDF document", async () => {
     const renderer = new DeterministicContentMediaRenderer();
     const result = await renderer.render({
@@ -168,7 +197,7 @@ describe("DeterministicContentMediaRenderer", () => {
     expect(result.mimeType).toBe("application/pdf");
     expect(document.getPageCount()).toBe(5);
     expect(result.pageCount).toBe(5);
-    expect(result.manifest).toEqual(expect.objectContaining({ renderer: "pdf-lib-sharp-v6", narrativeLayouts: ["cover", "insight", "comparison", "process", "closing"] }));
+    expect(result.manifest).toEqual(expect.objectContaining({ renderer: "pdf-lib-sharp-v7", narrativeLayouts: ["cover", "insight", "comparison", "process", "closing"] }));
   });
 
   const ffmpeg = Bun.which("ffmpeg");
