@@ -444,3 +444,18 @@ Two private current-adapter critique calls used captured image drafts without ed
 Both static reviews requested the same correction: mention the body-excerpt fallback when subtitle is null. That clarification is applied; both captured cases have explicit subtitles, so their tested visible content is unaffected. No schema, renderer, timeout, retry budget or persisted provider setting changed. Eleven public-agent tests pass (136 assertions); full local check is recorded separately when terminal. The multiple_questions false positive remains unresolved and no production publication occurred.
 
 Full local bun run check completed successfully. The focused public-agent suite also passes after the fallback wording clarification (11 tests, 136 assertions).
+
+
+### Answered decision question: observed false positive and image replay
+
+The first image draft with a clean evidence audit and seven passing editorial criteria was blocked solely by `multiple_questions`: a third-person explanatory question, answered explicitly for both outcomes, was counted alongside the single reader CTA. Added a deliberately narrow French syntactic exemption. It requires one question, no direct second-person address, third-person inversion, and two complete declarative branches. Additional clauses separated by punctuation keep the conservative question count. This is not semantic CTA classification; the editorial critic remains necessary.
+
+Red/green evidence: the captured explanatory case failed before the fix. Reviewers supplied imperative invitations, including an invitation following an initially declarative branch; both bypasses were reproduced and covered before tightening the rule. Final focused suites: 67 passing tests, 128 assertions. Both reviewers found no remaining actionable issue within this bounded syntax. Replaying the original trace accepts its first draft while keeping the later brand-voice and coherence failures blocked.
+
+A private native Luna-medium replay resumed the saved draft and audit at the critic stage, with writer v19 / critic v16; one actual critic invocation took 19,198 ms. Readiness passed and the renderer produced a 1080×1350 PNG (78,599 bytes). No fresh writer invocation, production checkpoint, publication or scheduling occurred. The final syntax refinement was subsequently checked against the same captured question; no new provider invocation was needed for this deterministic refinement.
+
+The exported PNG was inspected: dark navy title and body on a light card, no clipping, readable typography, and no imaginary diagram. Actual media alt text describes the visible title/subtitle rather than the draft’s proposed comparison diagram. Limitations remain: the card is a simple typographic summary, the caption repeats some distinctions and ends with a broad discussion question; the private brand fixture is Noosphere without a logo. This is one accepted saved-draft replay, not evidence of stable end-to-end image quality or other workspace branding. Private evidence files: `noosphere-skills-image-question-replay-{result,trace}.json` and `noosphere-skills-image-question-replay-rendered.png` outside the repository.
+
+Validation caveat: the first full check after the final syntax refinement reported 1,203 passing tests and one failure in the pre-existing 30 ms crawler discovery deadline test (`CONTENT_SOURCE_READ_FAILED` instead of the expected deadline error). The crawler suite then passed independently (8 tests, 27 assertions). This intermittent deadline classification is an unresolved finding; a passing rerun does not establish its cause or fix it.
+
+The full `bun run check` rerun exited 0 after the final refinement. The intermittent crawler finding above remains open.

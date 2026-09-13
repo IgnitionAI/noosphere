@@ -220,6 +220,19 @@ export function invalidEditorialAssessmentCriteria(draft: ContentDraftSnapshot, 
   });
 }
 
+// A narrowly identifiable explanatory question: third-person subject, one
+// question, and explicit answers for both branches. Direct reader requests and
+// incomplete answers retain the conservative punctuation check.
+function isAnsweredDecisionQuestion(line: string): boolean {
+  const parts = line.split("?");
+  if (parts.length !== 2 || /\b(?:vous|votre|vos|tu|ton|ta|tes)\b/i.test(line)) return false;
+  const question = parts[0]!;
+  const answer = parts[1]!.trim();
+  return /-(?:il|elle|ils|elles)\b/i.test(question)
+    && /^(?:si oui|oui)\s*[:,]\s*(?:on|il|elle|ils|elles|le|la|les|un|une|des)\b[^.!;:,\n]+[.!;]\s+(?:si (?!oui\b)[^.!;?:,\n]+,|(?:sinon|non)\s*[:,])\s*(?:on|il|elle|ils|elles|le|la|les|un|une|des)\b[^.!;:,\n]+[.!]?$/i.test(answer)
+    && answer.length >= 40;
+}
+
 export function evaluateContentReadiness(input: {
   readonly draft: ContentDraftSnapshot;
   readonly audit: ContentEvidenceAudit;
@@ -276,6 +289,7 @@ export function evaluateContentReadiness(input: {
     .replace(/«[^»]*»/g, "")
     .split("\n")
     .filter((line) => !/^[ \t]*\d{1,2}[.)][ \t]+/.test(line))
+    .filter((line) => !isAnsweredDecisionQuestion(line))
     .join("\n");
   if ((readerQuestions.match(/\?/g) ?? []).length > 1) blockers.add("multiple_questions");
   if (

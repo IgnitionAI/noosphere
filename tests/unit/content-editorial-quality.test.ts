@@ -93,3 +93,22 @@ test('URL query separators are not reader questions, including beside a genuine 
   expect(evaluate(assessment(), copy + '\nQuelle méthode utilisez-vous ?').blockers).toContain('multiple_questions');
   expect(evaluate(assessment(), body + '\nUtilisez-vous [ce guide](https://example.com/guide)?\nConsultez-vous [cette page](https://example.com/page)?').blockers).toContain('multiple_questions');
 });
+
+
+test('an answered third-person decision question is not a second reader CTA', () => {
+  const explanation = 'Le contexte supplémentaire permet-il de retrouver une connaissance utilisable ? Si oui, on réutilise la connaissance trouvée. Si aucune connaissance adaptée ne ressort, on analyse la solution avant de créer un article.';
+  const copy = body + '\n' + explanation + '\nQuel cas ajouteriez-vous ?';
+  expect(evaluate(assessment(), copy).ready).toBe(true);
+  expect(evaluate(assessment(), copy + '\nQuelle méthode utilisez-vous ?').blockers).toContain('multiple_questions');
+});
+
+test.each([
+  'Le contexte permet-il de retrouver une connaissance utilisable ?',
+  'Le contexte permet-il de retrouver une connaissance utilisable ? Si oui, on réutilise.',
+  'Un audit serait-il utile ? Si oui, réservez un créneau avec notre équipe. Sinon, demandez une démonstration.',
+  'Un audit serait-il utile ? Si oui, il reste des créneaux : réservez dès maintenant. Sinon, une démonstration est disponible : contactez notre équipe.',
+  'Souhaitez-vous un audit ? Si oui, réservez votre rendez-vous. Sinon, contactez notre équipe.',
+  'Votre contexte permet-il de retrouver une connaissance ? Si oui, réservez un audit. Sinon, demandez une démonstration.',
+])('keeps unanswered decisions and answered solicitations in the reader question count: %s', (question) => {
+  expect(evaluate(assessment(), body + '\n' + question + '\nQuelle méthode utilisez-vous ?').blockers).toContain('multiple_questions');
+});
