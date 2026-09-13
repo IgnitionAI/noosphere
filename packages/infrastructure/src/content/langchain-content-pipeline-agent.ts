@@ -1,4 +1,4 @@
-import { contentAuditModelSpec } from "./content-audit-coverage";
+import { ContentAuditQuoteLocationError, contentAuditModelSpec } from "./content-audit-coverage";
 import { claimLedgerModelSpec } from "./content-claim-ledger-repair";
 import { DOCUMENT_WRITING_LAYOUT_CONSTRAINTS } from "./content-document-layout";
 import { AiTaskPauseError } from "@outbound/application/ai/ai-task-pause";
@@ -62,7 +62,15 @@ export class LangChainContentPipelineAgent implements ContentPipelineAgent {
     // Previous findings are retained by the application after this independent review.
     // Sending old verdicts here can make the auditor quote superseded public copy.
     const { audit: _previousAudit, ...context } = boundedContext(input);
-    return contentEvidenceAuditSchema.parse(await this.invoke("audit", input.run.workspaceId, input.run.id, context, input));
+    try {
+      return contentEvidenceAuditSchema.parse(await this.invoke("audit", input.run.workspaceId, input.run.id, context, input));
+    } catch (error) {
+      if (!(error instanceof ContentAuditQuoteLocationError)) throw error;
+      const repair = { ...context, validationFeedback: [...(input.validationFeedback ?? []),
+        `CONTENT_AUDIT_QUOTE_LOCATION_INVALID: ${error.fields.join(", ")}. Reassess the unchanged draft against evidence. Each quoted statement must be an exact contiguous substring of its own publicPassages field, not a paraphrase or text borrowed from another field. Review every current field and declaration independently; do not rewrite the post or assume approval.`,
+      ] };
+      return contentEvidenceAuditSchema.parse(await this.invoke("audit", input.run.workspaceId, input.run.id, repair, repair, "quote-location-reassessment"));
+    }
   }
 
   async critique(input: Parameters<ContentPipelineAgent["critique"]>[0]) {
@@ -91,7 +99,7 @@ export class LangChainContentPipelineAgent implements ContentPipelineAgent {
       model,
       promptVersion: role === "writer"
         ? "noosphere-content-writer-v31"
-        : role === "critic" ? "noosphere-content-critic-v21" : role === "audit" ? "noosphere-content-audit-v11" : "noosphere-content-brief-v11",
+        : role === "critic" ? "noosphere-content-critic-v21" : role === "audit" ? "noosphere-content-audit-v12" : "noosphere-content-brief-v11",
       shadow: false,
       inputHash: new Bun.CryptoHasher("sha256").update(JSON.stringify(original)).digest("hex"),
       output: recordedOutput,

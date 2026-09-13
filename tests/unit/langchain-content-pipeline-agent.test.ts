@@ -217,7 +217,7 @@ describe("LangChainContentPipelineAgent", () => {
     expect(recorded.map(({ purpose, model, promptVersion, contentGenerationRunId }) => ({ purpose, model, promptVersion, contentGenerationRunId }))).toEqual([
       { purpose: "content_brief", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-brief-v11", contentGenerationRunId: context.run.id },
       { purpose: "content_writer", model: "k3", promptVersion: "noosphere-content-writer-v31", contentGenerationRunId: context.run.id },
-      { purpose: "content_audit", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-audit-v11", contentGenerationRunId: context.run.id },
+      { purpose: "content_audit", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-audit-v12", contentGenerationRunId: context.run.id },
       { purpose: "content_critic", model: "k3", promptVersion: "noosphere-content-critic-v21", contentGenerationRunId: context.run.id },
     ]);
   });
@@ -548,3 +548,40 @@ test.each(["duplicate", "cross_field"])("rejects %s field assignments even when 
 function declaredReviews(candidate: Parameters<typeof contentAuditDeclarations>[0]) {
   return Object.fromEntries(contentAuditDeclarations(candidate).map(item => [item.id, {kind: "factual" as const, sourceKeys: item.claimedSourceKeys, verdict: "supported" as const, reason: "Synthetic declaration assessment for the model-contract fixture."}]));
 }
+
+
+test("reassesses a misplaced supported audit quote once without rewriting or importing prior verdicts", async () => {
+  const candidate = {...contentDraftSnapshotSchema.parse(draft()), mediaPlan: {format: "linkedin_image" as const, visualTone: "editorial" as const, title: "Une autre phrase visible", subtitle: null, altText: "Une carte", slides: [], scenes: []}};
+  const requests: any[] = [];
+  const routed = {async invoke(input: any) {
+    requests.push(input);
+    const output = modelAudit(input.payload);
+    if (requests.length === 1) output.passageReviews[0]!.claims.push({...output.passageReviews[0]!.claims[0]!, statement: candidate.mediaPlan.title});
+    return {output, metadata: {provider: "codex-cli", model: "gpt-5.6-luna"}};
+  }} as unknown as WorkspaceStructuredModel;
+  const result = await new LangChainContentPipelineAgent({}, undefined, undefined, undefined, routed).audit({...pipelineContext(), brief: brief(), draft: candidate});
+  expect(requests).toHaveLength(2);
+  expect(requests[1].requestKey).not.toBe(requests[0].requestKey);
+  expect(requests[1].payload.draft).toEqual(candidate);
+  expect(requests[1].payload.evidence).toEqual(requests[0].payload.evidence);
+  expect(requests[1].payload).not.toHaveProperty("audit");
+  expect(requests[1].payload.validationFeedback.join(" ")).toContain("body");
+  expect(result.coverage?.passages[0]?.text).toBe(candidate.body);
+});
+
+test.each(["negative_claim", "negative_declaration", "missing_source", "misleading_scenario", "forbidden_topic", "repeated_misplacement"])("does not hide objections or loop on %s", async kind => {
+  let calls = 0;
+  const routed = {async invoke(input: any) {
+    calls++;
+    const output: any = modelAudit(input.payload);
+    output.passageReviews[0].claims[0].statement = "A quotation absent from this field.";
+    if (kind === "negative_claim") output.passageReviews[0].claims[0].verdict = "unsupported";
+    if (kind === "missing_source") output.passageReviews[0].claims[0].sourceKeys = [];
+    if (kind === "negative_declaration") Object.values(output.declarationReviews).forEach((v: any) => v.verdict = "unsupported");
+    if (kind === "misleading_scenario") output.reviewedScenarios = [{statement: "A fictional claim that implies an observed outcome.", verdict: "misleading", reason: "The example misleadingly implies that this was actually observed."}];
+    if (kind === "forbidden_topic") output.forbiddenTopicMatches = ["A forbidden public topic"];
+    return {output, metadata: {provider: "codex-cli", model: "gpt-5.6-luna"}};
+  }} as unknown as WorkspaceStructuredModel;
+  await expect(new LangChainContentPipelineAgent({}, undefined, undefined, undefined, routed).audit({...pipelineContext(), brief: brief(), draft: contentDraftSnapshotSchema.parse(draft())})).rejects.toThrow("CONTENT_AUDIT_COVERAGE_INVALID");
+  expect(calls).toBe(kind === "repeated_misplacement" ? 2 : 1);
+});

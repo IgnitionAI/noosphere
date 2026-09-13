@@ -4,6 +4,11 @@ import { z } from "zod";
 import { contentDraftSnapshotSchema, contentEvidenceAuditSchema } from "@outbound/contracts/content";
 import { contentPublicFields } from "@outbound/domain/content/content-asset";
 
+/** Only malformed quote locations without substantive objections permit reassessment. */
+export class ContentAuditQuoteLocationError extends Error {
+  constructor(readonly fields: readonly string[]) { super("CONTENT_AUDIT_COVERAGE_INVALID"); }
+}
+
 /** Provider IDs are resolved against the current input, never persisted as evidence of coverage. */
 export function contentAuditModelSpec(context: unknown, system: string) {
   const input = z.object({ draft: contentDraftSnapshotSchema, evidence: z.array(z.object({ key: z.string() }).passthrough()) }).parse(context);
@@ -46,6 +51,14 @@ export function contentAuditModelSpec(context: unknown, system: string) {
     decode(output: unknown) {
       const result = schema.parse(output);
       if (new Set(result.passageReviews.map(r => r.passageId)).size !== publicPassages.length) throw new Error("CONTENT_AUDIT_COVERAGE_INVALID");
+      const misplacedFields = publicPassages.filter(p => result.passageReviews.find(r => r.passageId === p.id)!.claims.some(c => !p.text.includes(c.statement))).map(p => p.field);
+      if (misplacedFields.length) {
+        const claims = [...result.passageReviews.flatMap(r => r.claims), ...Object.values(result.declarationReviews)];
+        const hasObjection = claims.some(c => c.verdict === "unsupported" || !c.sourceKeys.length)
+          || result.reviewedScenarios.some(s => s.verdict === "misleading") || result.forbiddenTopicMatches.length > 0;
+        if (hasObjection) throw new Error("CONTENT_AUDIT_COVERAGE_INVALID");
+        throw new ContentAuditQuoteLocationError(misplacedFields);
+      }
       const passages = publicPassages.map(p => {
         const review = result.passageReviews.find(r => r.passageId === p.id)!;
         if ((review.classification === "non_factual") !== (review.claims.length === 0)
