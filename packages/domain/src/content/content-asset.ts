@@ -351,7 +351,7 @@ function reviewedClaimCoversDraftClaim(
 ): boolean {
   const reviewedStatement = normalize(reviewed.statement);
   const draftStatement = normalize(draftClaim.statement);
-  if (!reviewedStatement.includes(draftStatement) && !draftStatement.includes(reviewedStatement)) return false;
+  if (!reviewedStatement.includes(draftStatement)) return false;
   const reviewedSources = new Set(reviewed.sourceKeys);
   return draftClaim.sourceKeys.every((key) => reviewedSources.has(key));
 }

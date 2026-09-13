@@ -753,3 +753,12 @@ test.each([1, 20])("bounds ledger repair and keeps substantive rewriting availab
   expect(audits).toBe(3);
   expect(saved).toHaveLength(2);
 });
+
+test("does not let an audited fragment validate a broader unaudited promise", () => {
+  const original = draft();
+  const broader = original.factualClaims[0]!.statement + " Il garantit aussi un rendez-vous pour chaque prospect.";
+  const candidate = { ...original, body: original.body + " Il garantit aussi un rendez-vous pour chaque prospect.", factualClaims: [{ statement: broader, sourceKeys: ["proof:1"] }] };
+  const result = evaluateContentReadiness({ draft: candidate, audit: audit(), critique: critique(), availableEvidenceKeys: ["proof:1"], recentBodies: [] });
+  expect(result.ready).toBe(false);
+  expect(result.blockers).toContain("unaudited_claim");
+});
