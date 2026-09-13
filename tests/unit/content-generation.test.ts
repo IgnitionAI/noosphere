@@ -3,7 +3,7 @@ import type { ContentDraftSnapshot } from "@outbound/domain/content/content-asse
 import { ContentMediaTextOverflowsError, ContentMediaTextOverflowError } from "@outbound/application/content/content-media";
 import { editorialQualityCriteria, type ContentQualityAssessment } from "@outbound/domain/content/content-asset";
 import { describe, expect, test } from "bun:test";
-import { assertGroundedContentDraft, evaluateContentReadiness } from "@outbound/domain/content/content-asset";
+import { assertGroundedContentDraft, contentPublicFields, evaluateContentReadiness } from "@outbound/domain/content/content-asset";
 import { ContentGenerationApplication, ContentGenerationJobProcessor, type ContentGenerationRepository } from "@outbound/application/content/content-generation";
 import { DEFAULT_CONTENT_BRAND_KIT, selectNextContentFormat } from "@outbound/domain/content/content-brand-kit";
 import type { JobQueue, LeasedJob } from "@outbound/application/jobs/job-queue";
@@ -79,6 +79,7 @@ describe("CNT-101 grounded content pipeline", () => {
   test.each([
     {labels:["1 — Identité","2 — Résultat"],extra:"",valid:true},
     {labels:["1. Identité","2. Résultat"],extra:"",valid:true},
+    {labels:["1 · Identité","2 · Résultat"],extra:"",valid:true},
     {labels:["1 — Identité","3 — Résultat"],extra:"",valid:false},
     {labels:["1 — 42% de réussite","2 — Résultat"],extra:"",valid:false},
     {labels:["1% Identité","2 — Résultat"],extra:"",valid:false},
@@ -86,6 +87,23 @@ describe("CNT-101 grounded content pipeline", () => {
   ])("separates ordered item labels from factual numbers: %j", ({labels,extra,valid}) => {
     const candidate={...draft(),mediaPlan:{format:"linkedin_document" as const,visualTone:"editorial" as const,title:"Contrôler",subtitle:null,altText:"Contrôle",scenes:[],
       slides:[{title:"Une procédure",body:"Examiner les éléments.",items:labels.map(label=>({label,text:extra}))}]}};
+    if(valid)expect(()=>assertGroundedContentDraft(candidate,["proof:1"])).not.toThrow();
+    else expect(()=>assertGroundedContentDraft(candidate,["proof:1"])).toThrow("CONTENT_DRAFT_UNSOURCED_NUMBER");
+  });
+
+  test.each([
+    {title:"Une vérification en 2 étapes",layout:"process" as const,extra:"",valid:true},
+    {title:"Une vérification en 3 étapes",layout:"process" as const,extra:"",valid:false},
+    {title:"Nous avons supprimé 2 étapes",layout:"process" as const,extra:"",valid:false},
+    {title:"Notre méthode supprime 2 étapes",layout:"process" as const,extra:"",valid:false},
+    {title:"2 étapes",layout:"process" as const,extra:"",valid:true},
+    {title:"2 étapes et 42% de réussite",layout:"process" as const,extra:"",valid:false},
+    {title:"Une vérification en 2 étapes",layout:"insight" as const,extra:"",valid:false},
+    {title:"Une vérification en 2 étapes",layout:"process" as const,extra:"42% de réussite",valid:false},
+  ])("checks a process heading count against its actual items: %j", ({title,layout,extra,valid}) => {
+    const candidate={...draft(),mediaPlan:{format:"linkedin_document" as const,visualTone:"editorial" as const,title:"Contrôler",subtitle:null,altText:"Contrôle",scenes:[],
+      slides:[{title,layout,body:"Méthode proposée.",items:[{label:"Identifier",text:extra},{label:"Observer",text:"Consigner le résultat."}]}]}};
+    expect(contentPublicFields(candidate).find(field=>field.field==="mediaPlan.slides[0].title")?.text).toBe(title);
     if(valid)expect(()=>assertGroundedContentDraft(candidate,["proof:1"])).not.toThrow();
     else expect(()=>assertGroundedContentDraft(candidate,["proof:1"])).toThrow("CONTENT_DRAFT_UNSOURCED_NUMBER");
   });

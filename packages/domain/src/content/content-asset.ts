@@ -251,7 +251,11 @@ export function contentPublicFields(draft: ContentDraftSnapshot, omitStructuralN
   plan.slides.forEach((slide, index) => {
     const prefix = `mediaPlan.slides[${index}]`;
     add(`${prefix}.kicker`, slideKickers[index]);
-    add(`${prefix}.title`, slideTitles[index]);
+    const title = slideTitles[index];
+    const processTitle = omitStructuralNumbers && slide.layout === "process" && (slide.items?.length ?? 0) >= 2
+      ? title?.replace(/^(?:(?:(?:une?|le|la) )?(?:vérification|méthode|procédure|processus|contrôle|parcours) en )?([1-9]\d?) (étapes?|steps?)$/i, (match, count: string) => Number(count) === slide.items!.length ? match.replace(count, "") : match)
+      : title;
+    add(`${prefix}.title`, processTitle);
     add(`${prefix}.body`, slide.body);
     add(`${prefix}.callout`, slide.callout);
     const items = slide.items ?? [];
@@ -542,7 +546,7 @@ function stripSequenceKickers(values: readonly string[]): readonly string[] {
 }
 
 function stripOrderedItemLabels(values: readonly string[]): readonly string[] {
-  const matches = values.map(value => value.match(/^([1-9]\d?)(?:[.)][ \t]+|[ \t]+[—–-][ \t]+)(.+)$/));
+  const matches = values.map(value => value.match(/^([1-9]\d?)(?:[.)][ \t]+|[ \t]+[—–·-][ \t]+)(.+)$/));
   if (matches.length < 2 || !matches.every((match, index) => match && Number(match[1]) === index + 1)) return values;
   return matches.map(match => match![2]!);
 }
