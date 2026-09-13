@@ -631,3 +631,16 @@ Native calibration on the unchanged final draft accepts the correct source credi
 A separate diagnostic render of the unchanged captured final draft passes snapshot/grounding/format checks and renders five pages with a 1,206-character caption. Inspected all five at800px: legible, no clipping/overlap. Editorial/visual shortcomings remain despite the model’s approval: much unused middle-page space; the case lacks named decisive inputs; the comparison mixes an observation with an instruction; an entire page foregrounds a generic audit-scope caveat. No automatic readiness or publication was created by this diagnostic render. Private artifact: noosphere-fresh-brief-v26-diagnostic.pdf.
 
 Adapter tests19/168 pass; full bun run check exited0. Spec review found no blocker; Standards review’s conflicting-source-rule concern addressed and calibrated. Broader quality remains incomplete.
+
+
+### Comparison columns: renderer v9 / writer v27
+
+The captured fresh-brief carousel rendered its comparison with the identical row renderer used by checklist. A page-image regression failed first because both embedded PNG hashes were equal. Comparison now uses two aligned columns for two or more options, with common row height computed from complete wrapped content. Two-option pages retain a minimum380px panel height; three/four options form two rows. Existing framework geometry remains unchanged after review caught an unintended shared-baseline change. A historical or new single-item comparison keeps the row renderer; comparison.singleItem and an explicit rule expose its exact alternate limits to the writer.
+
+Comparison column labels use23characters/4lines, bodies24/10lines; fields still share vertical space and overflow fails before a PDF is returned. Renderer manifest advances to pdf-lib-sharp-v9 and writer prompt provenance to v27 because the writing layout context changes. No historical snapshot or production media was rewritten.
+
+Validation: renderer+adapter49tests/257assertions pass, including2longoptions,3/4conciseoptions and4excessiveoptions rejected; full bun run check exited0; diffcheck passed. Standards and Spec review concerns resolved. Pixel regression proves comparison differs from checklist, not semantic alignment by itself.
+
+Visual inspection: rerendered unchanged native fresh-brief v26 draft and inspected its comparison page at800px; two options appear alongside one another, readable without clipping. Separately authored geometry fixtures with2/3/4options, unequal label lengths and a longer opposing body render with aligned text starts and complete copy, no overlaps. These fixtures test geometry, not factual or editorial quality. Private artifacts: noosphere-fresh-brief-v26-columns-v9.pdf and noosphere-comparison-geometry-v9.pdf. The older diagnostic PDF filename was replaced during rerender; its prior PNG previews remain and the immutable captured draft/result remain available. No native writer-v27 generation has yet been evaluated.
+
+The underlying captured draft still has weak comparison semantics (observation versus instruction) and generic caveats. Better typography is not sufficient Inbound acceptance. No deployment, publication, or production-state mutation.

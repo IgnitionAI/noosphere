@@ -95,7 +95,7 @@ export class DeterministicContentMediaRenderer implements ContentMediaRenderer {
       height: HEIGHT,
       pageCount: plan.slides.length,
       durationSeconds: null,
-      manifest: { renderer: "pdf-lib-sharp-v8", slides: plan.slides.length, ratio: "4:5", narrativeLayouts: layouts, logo: Boolean(logoBytes) },
+      manifest: { renderer: "pdf-lib-sharp-v9", slides: plan.slides.length, ratio: "4:5", narrativeLayouts: layouts, logo: Boolean(logoBytes) },
     };
   }
 
@@ -330,21 +330,30 @@ function renderEditorialRows(input: Parameters<typeof renderLayoutContent>[0]): 
 }
 
 function renderFramework(input: Parameters<typeof renderLayoutContent>[0]): string {
-  const title = layoutWrap(input, input.input.title, DOCUMENT_LAYOUT_TEXT_LIMITS.framework.title, "title");
-  const intro = layoutWrap(input, input.input.body, DOCUMENT_LAYOUT_TEXT_LIMITS.framework.body, "body");
+  return renderOptionGrid(input, DOCUMENT_LAYOUT_TEXT_LIMITS.framework, 0);
+}
+
+function renderOptionGrid(
+  input: Parameters<typeof renderLayoutContent>[0],
+  limits: typeof DOCUMENT_LAYOUT_TEXT_LIMITS.framework,
+  minimumHeight: number,
+): string {
+  const title = layoutWrap(input, input.input.title, limits.title, "title");
+  const intro = layoutWrap(input, input.input.body, limits.body, "body");
   const introY = 290 + (title.length - 1) * 68 + 60;
   let y = introY + (intro.length - 1) * 35 + 48;
   const items = input.input.items;
   const cards: string[] = [];
   for (let offset = 0; offset < items.length; offset += 2) {
     const row = items.slice(offset, offset + 2).map((item) => ({
-      label: layoutWrap(input, item.label, DOCUMENT_LAYOUT_TEXT_LIMITS.framework.itemLabel, "items[].label"), text: layoutWrap(input, item.text, DOCUMENT_LAYOUT_TEXT_LIMITS.framework.itemText, "items[].text"),
+      label: layoutWrap(input, item.label, limits.itemLabel, "items[].label"), text: layoutWrap(input, item.text, limits.itemText, "items[].text"),
     }));
-    const height = Math.max(...row.map((item) => 78 + item.label.length * 28 + item.text.length * 36));
+    const labelLines = (item: typeof row[number]) => input.input.layout === "comparison" ? Math.max(...row.map(option => option.label.length)) : item.label.length;
+    const height = Math.max(minimumHeight, ...row.map((item) => 78 + labelLines(item) * 28 + item.text.length * 36));
     if (y + height > (input.input.callout ? 1060 : 1150)) recordLayoutOverflow(input);
     row.forEach((item, column) => {
       const x = 88 + column * 464;
-      const textY = y + 46 + item.label.length * 28 + 24;
+      const textY = y + 46 + labelLines(item) * 28 + 24;
       cards.push(`<rect x="${x}" y="${y}" width="440" height="${height}" rx="18" fill="${input.accent}" opacity="0.12"/>
         <text x="${x + 28}" y="${y + 42}" font-family="${input.fontFamily}" font-size="24" font-weight="780" fill="${input.text}">${tspans(item.label, y + 42, 28, x + 28)}</text>
         <text x="${x + 28}" y="${textY}" font-family="${input.fontFamily}" font-size="28" fill="${input.text}">${tspans(item.text, textY, 36, x + 28)}</text>`);
@@ -363,7 +372,9 @@ function renderRowCallout(input: Parameters<typeof renderLayoutContent>[0]): str
 }
 
 function renderComparison(input: Parameters<typeof renderLayoutContent>[0]): string {
-  return renderEditorialRows(input);
+  // Historical single-item comparisons have no second option to place alongside.
+  if (input.input.items.length < 2) return renderEditorialRows(input);
+  return renderOptionGrid(input, DOCUMENT_LAYOUT_TEXT_LIMITS.comparison, input.input.items.length === 2 ? 380 : 0);
 }
 
 function renderProcess(input: Parameters<typeof renderLayoutContent>[0]): string {

@@ -94,6 +94,8 @@ describe("DeterministicContentMediaRenderer", () => {
     });
     const full = "La priorité est attribuée à l’aide d’une matrice définie qui prend en compte l’impact métier et l’urgence, et s’aligne directement sur les niveaux de SLA.";
     expect((await render(full)).pageCount).toBe(3);
+    expect((await render(full, 2)).pageCount).toBe(3);
+    for (const count of [3, 4]) expect((await render("Une explication concise.", count)).pageCount).toBe(3);
     await expect(render(full, 4)).rejects.toThrow("CONTENT_MEDIA_TEXT_OVERFLOW");
   });
 
@@ -243,6 +245,25 @@ describe("DeterministicContentMediaRenderer", () => {
     await expect(render(source.repeat(20))).rejects.toMatchObject({ message: "CONTENT_MEDIA_TEXT_OVERFLOW", slideNumber: 3, layout: "closing" });
   });
 
+  test("renders comparison differently from checklist for identical options", async () => {
+    const render = async (layout: "comparison" | "checklist") => {
+      const result = await new DeterministicContentMediaRenderer().render({
+        format: "linkedin_document", body: "Comparer", brandKit: DEFAULT_CONTENT_BRAND_KIT,
+        outputDirectory: `/tmp/noosphere-comparison-columns-${crypto.randomUUID()}`,
+        plan: { format: "linkedin_document", visualTone: "editorial", title: "Comparer", subtitle: null, altText: "Options", scenes: [], slides: [
+          { title: "Comparer", body: "Deux options." },
+          { layout, title: "Les options", body: "Choisir selon le contexte.", items: [{ label: "Première option", text: "Observer les résultats disponibles." }, { label: "Seconde option", text: "Vérifier les conditions applicables." }] },
+          { title: "Décider", body: "Garder le contexte." },
+        ] },
+      });
+      const { PDFDict, PDFName, PDFRawStream } = await import("pdf-lib");
+      const pdf = await PDFDocument.load(result.bytes);
+      const images = pdf.getPage(1).node.Resources()!.lookup(PDFName.of("XObject"), PDFDict);
+      return images.entries().map(([, ref]) => pdf.context.lookup(ref)).flatMap(x => x instanceof PDFRawStream ? [new Bun.CryptoHasher("sha256").update(x.getContents()).digest("hex")] : []);
+    };
+    expect(await render("comparison")).not.toEqual(await render("checklist"));
+  });
+
   test("renders a LinkedIn carousel as a multi-page PDF document", async () => {
     const renderer = new DeterministicContentMediaRenderer();
     const result = await renderer.render({
@@ -270,7 +291,7 @@ describe("DeterministicContentMediaRenderer", () => {
     expect(result.mimeType).toBe("application/pdf");
     expect(document.getPageCount()).toBe(5);
     expect(result.pageCount).toBe(5);
-    expect(result.manifest).toEqual(expect.objectContaining({ renderer: "pdf-lib-sharp-v8", narrativeLayouts: ["cover", "insight", "comparison", "process", "closing"] }));
+    expect(result.manifest).toEqual(expect.objectContaining({ renderer: "pdf-lib-sharp-v9", narrativeLayouts: ["cover", "insight", "comparison", "process", "closing"] }));
   });
 
   const ffmpeg = Bun.which("ffmpeg");
