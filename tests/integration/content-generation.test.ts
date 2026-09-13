@@ -264,6 +264,8 @@ databaseDescribe("CNT-101 durable content generation", () => {
     expect(improvementContext).toMatchObject({
       run: { stage: "writer" },
       brief,
+      draft,
+      audit,
       recentBodies: [],
     });
     await repository.startRun({ workspaceId, runId: improved.id, now });
@@ -326,6 +328,8 @@ databaseDescribe("CNT-101 durable content generation", () => {
     expect(await repository.loadContext({ workspaceId, runId: evidenceChanged.id })).toMatchObject({
       run: { stage: "brief" },
       brief: null,
+      draft: criticRepairedDraft,
+      audit: refreshedAudit,
     });
     await database.client`update content_idea_sources set content_hash = ${"claim-hash"} where workspace_id = ${workspaceId} and idea_id = ${ideaId}`;
 
@@ -620,6 +624,32 @@ databaseDescribe("CNT-101 durable content generation", () => {
       requestKey: "autopilot:integration:operational-proof:cancel",
       now: operationalSlot,
     });
+
+    // A new improvement must not erase the negative history of an immutable blocked version.
+    const blockedIdeaId = crypto.randomUUID();
+    const [originalIdea] = await database.db.select().from(contentIdeas).where(inArray(contentIdeas.id, [ideaId]));
+    const [originalSource] = await database.db.select().from(contentIdeaSources).where(inArray(contentIdeaSources.ideaId, [ideaId]));
+    await database.db.insert(contentIdeas).values({ ...originalIdea!, id: blockedIdeaId, fingerprint: blockedIdeaId, status: "discovered" });
+    await database.db.insert(contentIdeaSources).values({ ...originalSource!, id: crypto.randomUUID(), ideaId: blockedIdeaId });
+    const blockedRun = await repository.createGeneration({ workspaceId, userId, ideaId: blockedIdeaId, operation: "asset.generate", requestKey: "content:blocked-history", now: new Date(now.getTime() + 100_000) });
+    await repository.startRun({ workspaceId, runId: blockedRun.id, now });
+    await repository.saveBrief({ workspaceId, runId: blockedRun.id, brief, now });
+    await repository.saveDraft({ workspaceId, runId: blockedRun.id, draft, now });
+    await repository.saveAudit({ workspaceId, runId: blockedRun.id, audit: negativeCheckpoint, now });
+    await repository.completeRun({ workspaceId, runId: blockedRun.id, critique, readiness: { ready: false, blockers: ["unresolved_audit_topic", "unresolved_audit_scenario"] }, now });
+    const blockedVersion = (await repository.findAssetByIdea({ workspaceId, ideaId: blockedIdeaId }))!.latest!;
+    const retryBlocked = await repository.createGeneration({ workspaceId, userId, assetId: blockedRun.assetId, operation: "asset.improve", requestKey: "content:improve-blocked-history", instruction: "Corriger les objections sans changer le sujet.", now: new Date(now.getTime() + 101_000) });
+    const restartedRepository = new PostgresContentGenerationRepository(database.db);
+    expect(await restartedRepository.loadContext({ workspaceId, runId: retryBlocked.id })).toMatchObject({
+      run: { stage: "writer", instruction: "Corriger les objections sans changer le sujet." },
+      draft,
+      audit: negativeCheckpoint,
+    });
+    await expect(restartedRepository.loadContext({ workspaceId: otherWorkspaceId, runId: retryBlocked.id })).rejects.toThrow("CONTENT_GENERATION_RUN_NOT_FOUND");
+    await restartedRepository.startRun({ workspaceId, runId: retryBlocked.id, now });
+    await restartedRepository.saveDraft({ workspaceId, runId: retryBlocked.id, draft: { ...draft, hook: "Une révision conserve ses objections." }, now });
+    expect((await restartedRepository.loadContext({ workspaceId, runId: retryBlocked.id })).audit).toMatchObject(negativeCheckpoint);
+    expect((await repository.findAssetByIdea({ workspaceId, ideaId: blockedIdeaId }))!.latest).toEqual(blockedVersion);
 
     await expectRejected(() => database.client`update content_asset_versions set body = 'mutated' where workspace_id = ${workspaceId}`, "CONTENT_SNAPSHOT_IMMUTABLE");
     await expectRejected(() => database.client`update content_publications set content_snapshot = '{"body":"mutated"}'::jsonb where workspace_id = ${workspaceId}`, "CONTENT_PUBLICATION_SNAPSHOT_IMMUTABLE");

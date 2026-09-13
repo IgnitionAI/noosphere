@@ -105,6 +105,17 @@ export class PostgresContentGenerationRepository implements ContentGenerationRep
         `${source.type}:${source.sourceRef}`,
         source.contentHash,
       ]));
+      const previousVersion = input.operation === "asset.improve" && asset.latestVersion > 0
+        ? (await tx.select({
+            id: contentAssetVersions.id,
+            draft: contentAssetVersions.draft,
+            audit: contentAssetVersions.audit,
+          }).from(contentAssetVersions).where(and(
+            eq(contentAssetVersions.workspaceId, input.workspaceId),
+            eq(contentAssetVersions.assetId, asset.id),
+            eq(contentAssetVersions.version, asset.latestVersion),
+          )).limit(1))[0]
+        : undefined;
       const previousBrief = input.operation === "asset.improve" && asset.latestVersion > 0
         ? (await tx.select({
             id: contentBriefs.id,
@@ -138,6 +149,9 @@ export class PostgresContentGenerationRepository implements ContentGenerationRep
         status: "queued",
         stage: reusableBrief ? "writer" : "brief",
         briefSnapshot: reusableBrief?.snapshot ?? null,
+        // Pin the immutable version being improved, even when new evidence requires a new brief.
+        draftSnapshot: previousVersion?.draft ?? null,
+        auditSnapshot: previousVersion?.audit ?? null,
         instruction: input.instruction?.trim() || null,
         createdBy: input.userId,
         createdAt: input.now,
@@ -168,7 +182,7 @@ export class PostgresContentGenerationRepository implements ContentGenerationRep
         payload: { runId }, idempotencyKey: `content-generation:${runId}:v1`, correlationId: input.correlationId ?? `content-generation:${runId}`,
         maxAttempts: 4, priority: CONTENT_GENERATION_JOB_PRIORITY, availableAt: input.now, createdAt: input.now, updatedAt: input.now,
       });
-      await appendEvent(tx, { workspaceId: input.workspaceId, userId: input.userId, runId, eventType: "ContentGenerationScheduled", changes: { ideaId: idea.id, assetId: asset.id, operation: input.operation } });
+      await appendEvent(tx, { workspaceId: input.workspaceId, userId: input.userId, runId, eventType: "ContentGenerationScheduled", changes: { ideaId: idea.id, assetId: asset.id, operation: input.operation, sourceVersionId: previousVersion?.id ?? null } });
       if (reusableBrief) {
         await appendEvent(tx, {
           workspaceId: input.workspaceId,
