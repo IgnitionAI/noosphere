@@ -508,3 +508,21 @@ The actual private repair loop resumed the captured draft at the critic stage, r
 Manual review confirms the wording now explains the distinction without discussing unpromised business results. The image remains a simple legible typographic card rather than an illustrated diagnostic. Remaining limits: the acronym KCS is not expanded, the CTA is broad, and the audit did not flag the hook/title absent from the verbatim factual ledger. Their source-supported meaning does not demonstrate exhaustive ledger coverage. These observations remain separate from the model's positive readiness verdict; no production publication occurred.
 
 Private artifacts: `noosphere-skills-qualification-repair-{result,trace}.json` and `noosphere-skills-qualification-repair-rendered.png`.
+
+
+### Audit coverage probes before changing the policy
+
+Four native Luna-medium audit-v6 probes reused the final qualification-repair draft and its actual KCS source. Three deliberately unsupported variants inserted the same claim (that the method eliminates support response errors) into the opening/body, image title, or body plus `opinionStatements`. All three returned an unsupported claim and an ungrounded statement for that assertion. A fourth variant added a genuine personal layout preference; it was not treated as an unsupported empirical claim. Each case required one invocation. The auditor sometimes additionally reviewed source-supported statements outside the writer ledger; verbatim-ledger completeness is therefore not consistently reported, but these probes do not show a material unsupported-claim bypass. No policy was weakened or modified based on them.
+
+Private fixture/results: `noosphere-audit-surface-baseline.json`. These four probes are not an exhaustive adversarial audit, do not validate all real outcomes, and do not establish that every factual sentence always appears in the writer ledger. They justify moving to another subject rather than adding speculative instructions.
+
+A fresh bounded crawler search for document access controls then found and read four pages. One first-party Microsoft Agent Loop/security filters article was selected for the next private generation. The other Microsoft Learn result's 8,000-character excerpt was cut at the access-control section, so it was not used to substantiate access-control instructions. The chosen source is vendor-specific; the writer must retain that scope and must not transform its claims into verified capabilities of IgnitionRAG. Discovery was real, followed by explicit primary-source selection, not an unsupervised source-selection acceptance test. Private extracted evidence: `noosphere-quality-access-control-sources-v21.json`.
+
+
+### New access-control document exposes imprecise overflow feedback
+
+After the actual crawler search and first-party source selection, the private pipeline generated a new idea (8,968 ms), new brief (12,980 ms), and two writer attempts (44,327 / 31,641 ms). Both writers failed preflight on cover slide 1 before evidence audit. The second attempt shortened the cover body but retained the same kicker. No PDF was accepted, scheduled or published. This is a new-subject failure, not a successful end-to-end trial.
+
+A renderer experiment isolated the cause using the exact first draft: unchanged cover fails; shortening only its body still fails; shortening only `NOOSPHERE · ACCÈS GOUVERNÉ` to `ACCÈS GOUVERNÉ` renders all five pages. `renderCover` requires kicker text to fit one 24-character line. The application reports slide/layout but no field, so the repair writer receives no indication that its unchanged kicker is the offending text. The next correction must make overflow feedback identify the relevant field rather than ask for a general rewrite or weaken clipping checks.
+
+Private evidence: `noosphere-skills-access-control-document-v21-{result,trace}.json`. Diagnostic script `.scratch/inbound-quality/isolate-cover-overflow.ts` uses the exact saved inputs and the real renderer locally; it does not alter repository snapshots or publish an authored variant. Rendering five pages in this diagnostic proves only layout feasibility, not editorial or factual acceptance.
