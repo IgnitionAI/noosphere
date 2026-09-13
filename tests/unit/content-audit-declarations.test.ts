@@ -34,7 +34,7 @@ test("requires every declaration verdict even when field review treats the title
     passageReviews: [{passageId:"body",classification:"non_factual",nonFactualReason:"The wording is presented as an editorial distinction.",claims:[]},
       {passageId:"mediaPlan.title",classification:"non_factual",nonFactualReason:"The title is presented as an editorial distinction.",claims:[]}],
     declarationReviews: Object.fromEntries(contentAuditDeclarations(draft).map(d => [d.id, verdict])),
-    reviewedScenarios: [], forbiddenTopicMatches: [],
+    reviewedScenarios: [], forbiddenTopicMatches: [], topicFindings: [], topicReviews: {},
   };
   const result = spec.decode(output);
   expect(result.reviewedClaims).toContainEqual({statement,sourceKeys:verdict.sourceKeys,verdict:"supported",reason:verdict.reason});
@@ -77,7 +77,7 @@ test("legacy receipts cannot use a body review to cover an omitted title", () =>
       {passageId:"mediaPlan.title",classification:"non_factual",nonFactualReason:"An editorial heading without a field review.",claims:[]},
     ],
     declarationReviews:Object.fromEntries(contentAuditDeclarations(draft).map(d => [d.id, {kind:verdict.kind,sourceKeys:verdict.sourceKeys,verdict:verdict.verdict,reason:verdict.reason}])),
-    reviewedScenarios:[],forbiddenTopicMatches:[],
+    reviewedScenarios:[],forbiddenTopicMatches:[],topicFindings:[],topicReviews:{},
   });
   const {declarations: _declarations, ...legacyCoverage} = audit.coverage!;
   const legacyAudit = {...audit,coverage:legacyCoverage};

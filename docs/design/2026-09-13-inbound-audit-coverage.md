@@ -1,6 +1,6 @@
 # Complete audit coverage for unchanged Inbound content
 
-Status: field-aware audit response, coverage receipt, readiness enforcement and durable historical-checkpoint reassessment implemented. Unsupported reviewed assertions now survive re-audits and restarts while their exact public text remains. Ledger synchronization is implemented for fully audited supported exact spans. Exact-text scenario tracking is implemented. Topic tracking and explicit evidence-based resolution remain unimplemented. Not accepted for deployment.
+Status: field-aware audit response, coverage receipt, readiness enforcement and durable historical-checkpoint reassessment implemented. Unsupported reviewed assertions now survive re-audits and restarts while their exact public text remains. Ledger synchronization is implemented for fully audited supported exact spans. Exact-text scenario tracking is implemented. Located topic tracking and conservative historical-topic retention are implemented. Explicit evidence-based resolution remains unimplemented. Not accepted for deployment.
 
 ## Problem
 
@@ -79,3 +79,15 @@ The private same-draft Luna v10 assessment decoded 36 field reviews, 15 mandator
 Application-owned unresolvedScenarios retain earlier misleading scenario statements while their exact text remains in public fields, even after a declaration is removed or the text moves into media. A later silent or favorable audit cannot clear the objection. Genuine removal releases that exact finding; replacement copy still needs the independent current audit. The persisted optional field is bounded to six distinct statement/reason objections; overflow fails rather than truncating. Current model-supplied history is ignored.
 
 Readiness blocks retained scenarios, audit repair receives the original statement/reason, metadata-only repair is ineligible, and editorial repair cannot open an extra repair budget after the two audit repairs. Regression checks cover checkpoint serialization, PostgreSQL reload and draft-repair continuity. This does not implement semantic paraphrase tracking, evidence adjudication or forbidden-topic continuity.
+
+
+## Located forbidden-topic continuity
+
+Audit v13 requires topicFindings with a topic, current public field, exact contiguous quotation and reason. Topic labels and findings must cover one another in both directions. The decoder rejects foreign/missing quotations and the readiness boundary independently rejects inconsistent stored receipts. A topic objection disallows the technical misplaced-quotation reassessment.
+
+Application-owned unresolvedTopics retain located quotations while they remain anywhere in public copy, including after moving them to media. Actual removal releases the exact finding, not a semantic paraphrase. History supplied by the current model is ignored. Twenty distinct objections fit; overflow fails instead of truncating. Located objections receive at most the existing two substantive audit repairs and cannot open another editorial repair budget.
+
+Historical topic labels without locations become explicit unresolved entries with null field/statement. Rewriting unrelated copy or a later silent audit cannot resolve them. Such entries stop automatic writer repairs because those repairs cannot prove what the original objection referred to. They require a separate explicit resolution; no automated or human resolution workflow is claimed here. Optional persisted fields preserve historical snapshot readability.
+
+
+Each configured forbidden topic now has a required provider topicReviews slot (including an explicit reason for absence), not merely a requirement to locate topics the model chooses to report. Persisted reviews retain those decisions. hasCompleteContentTopicAudit compares the receipt with the strategy's complete expected set, rejects missing/duplicate/foreign reviews and incoherent verdicts or quotations, and is shared by readiness and critic-checkpoint reopening. Historical critic checkpoints with configured topics but no reviews reopen audit without rewriting the draft. The existing strategy contract permits thirty topics, including one-character names; all thirty obligations are supported while the distinct objection capacity remains twenty.

@@ -217,7 +217,7 @@ describe("LangChainContentPipelineAgent", () => {
     expect(recorded.map(({ purpose, model, promptVersion, contentGenerationRunId }) => ({ purpose, model, promptVersion, contentGenerationRunId }))).toEqual([
       { purpose: "content_brief", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-brief-v11", contentGenerationRunId: context.run.id },
       { purpose: "content_writer", model: "k3", promptVersion: "noosphere-content-writer-v31", contentGenerationRunId: context.run.id },
-      { purpose: "content_audit", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-audit-v12", contentGenerationRunId: context.run.id },
+      { purpose: "content_audit", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-audit-v13", contentGenerationRunId: context.run.id },
       { purpose: "content_critic", model: "k3", promptVersion: "noosphere-content-critic-v21", contentGenerationRunId: context.run.id },
     ]);
   });
@@ -238,7 +238,7 @@ function pipelineContext(): ContentGenerationContext {
 function evidence(now: Date) { return { key: "proof:1", type: "public_web" as const, sourceRef: "https://example.com", canonicalUrl: "https://example.com", title: "Preuve", excerpt: "Noosphere relie le contenu aux conversations.", contentHash: "proof", collectedAt: now }; }
 function brief() { return { objective: "explain" as const, audience: "Équipes juridiques", problem: "Les preuves sont dispersées dans les dossiers juridiques.", angle: "Relier une recherche documentaire à une décision commerciale.", format: "linkedin_text" as const, evidenceKeys: ["proof:1"], allowedClaimIds: [], callToAction: "Comment vérifiez-vous vos preuves ?", constraints: ["Aucun fait sans preuve"] }; }
 function draft() { return { hook: "Une clause introuvable coûte plus qu’une recherche.", body: "Une clause introuvable coûte plus qu’une recherche. Les équipes juridiques ont besoin d’une preuve résoluble avant de décider. Noosphere relie le contenu aux conversations.", callToAction: "Comment vérifiez-vous vos preuves ?", factualClaims: [{ statement: "Noosphere relie le contenu aux conversations.", sourceKeys: ["proof:1"] }], opinionStatements: ["Une clause introuvable coûte plus qu’une recherche."] }; }
-function audit() { return { reviewedClaims: [{ statement: "Noosphere relie le contenu aux conversations.", sourceKeys: ["proof:1"], verdict: "supported" as const, reason: "La source le dit explicitement." }], ungroundedStatements: [], forbiddenTopicMatches: [] }; }
+function audit() { return { reviewedClaims: [{ statement: "Noosphere relie le contenu aux conversations.", sourceKeys: ["proof:1"], verdict: "supported" as const, reason: "La source le dit explicitement." }], ungroundedStatements: [], forbiddenTopicMatches: [], topicFindings: [] }; }
 function critique() { return { qualityAssessment: Object.fromEntries(editorialQualityCriteria.map((key) => [key, { verdict: "pass", reason: "Fixture assessment for the content pipeline orchestration test.", excerpts: ["Noosphere relie le contenu aux conversations."] }])) as unknown as ContentQualityAssessment, genericPhrases: [], repeatedConcepts: [], callToActionAligned: true, distinctFromHistory: true, issues: [], summary: "Texte spécifique, étayé et aligné." }; }
 
 test("repairs stale critic citations against the same draft without invoking the writer", async () => {
@@ -407,7 +407,7 @@ test("requires an audit assessment for every public field and retains unsupporte
     wire = { passageReviews: [
       { passageId: "body", classification: "mixed", nonFactualReason: "The opening expresses the author's point of view.", claims: audit().reviewedClaims.map(c => ({...c, kind: "factual" as const})) },
       { passageId: "mediaPlan.title", classification: "factual", nonFactualReason: null, claims: [{ statement: candidate.mediaPlan.title, sourceKeys: [], kind: "factual", verdict: "unsupported", reason: "No supplied evidence establishes this guaranteed outcome." }] },
-    ], declarationReviews: declaredReviews(candidate), reviewedScenarios: [], forbiddenTopicMatches: [] };
+    ], declarationReviews: declaredReviews(candidate), reviewedScenarios: [], forbiddenTopicMatches: [], topicFindings: [], topicReviews: {} };
     return { output: wire, metadata: { provider: "codex-cli", model: "gpt-5.6-luna" } };
   } } as unknown as WorkspaceStructuredModel;
   const result = await new LangChainContentPipelineAgent({}, undefined, undefined, undefined, routed).audit({ ...context, brief: brief(), draft: candidate });
@@ -421,7 +421,7 @@ function modelAudit(payload: unknown) {
   return {passageReviews: passages.map(p => {
     const claims = audit().reviewedClaims.map(c => ({...c, kind: "factual" as const})).filter(c => p.text.includes(c.statement));
     return {passageId: p.id, classification: claims.length ? "mixed" : "non_factual", nonFactualReason: "The remaining wording expresses editorial context rather than factual assertions.", claims};
-  }), declarationReviews: declaredReviews((payload as {draft: ReturnType<typeof draft>}).draft), reviewedScenarios: [], forbiddenTopicMatches: []};
+  }), declarationReviews: declaredReviews((payload as {draft: ReturnType<typeof draft>}).draft), reviewedScenarios: [], forbiddenTopicMatches: [], topicFindings: [], topicReviews: Object.fromEntries(((payload as any).topicObligations ?? []).map((item: any) => [item.id,{violated:false,reason:"This fixture draft does not violate the configured topic."}]))};
 }
 
 test("re-audits corrected copy without presenting the previous audit as current evidence", async () => {
@@ -459,7 +459,7 @@ test("exposes consistent factual classifications in the provider schema", async 
 test("rejects missing, duplicated, invented or ungrounded audit coverage", async () => {
   const context = pipelineContext();
   const candidate = contentDraftSnapshotSchema.parse(draft());
-  const valid = { passageReviews: [{passageId: "body", classification: "mixed", nonFactualReason: "The opening expresses a personal point of view.", claims: audit().reviewedClaims.map(c => ({...c, kind: "factual" as const}))}], declarationReviews: declaredReviews(candidate), reviewedScenarios: [], forbiddenTopicMatches: [] };
+  const valid = { passageReviews: [{passageId: "body", classification: "mixed", nonFactualReason: "The opening expresses a personal point of view.", claims: audit().reviewedClaims.map(c => ({...c, kind: "factual" as const}))}], declarationReviews: declaredReviews(candidate), reviewedScenarios: [], forbiddenTopicMatches: [], topicFindings: [], topicReviews: {} };
   const review = valid.passageReviews[0]!;
   const factual = review.claims[0]!;
   for (const output of [
@@ -486,7 +486,7 @@ test("retains opposing audit verdicts for the same statement repeated in two pub
     passageReviews: [
       {passageId: "body", classification: "mixed", nonFactualReason: "The opening expresses a personal point of view.", claims: audit().reviewedClaims.map(c => ({...c, kind: "factual" as const}))},
       {passageId: "mediaPlan.title", classification: "factual", nonFactualReason: null, claims: [negative]},
-    ], declarationReviews: declaredReviews(candidate), reviewedScenarios: [], forbiddenTopicMatches: [],
+    ], declarationReviews: declaredReviews(candidate), reviewedScenarios: [], forbiddenTopicMatches: [], topicFindings: [], topicReviews: {},
   }, metadata: {provider: "codex-cli", model: "gpt-5.6-luna"}}; } } as unknown as WorkspaceStructuredModel;
   const result = await new LangChainContentPipelineAgent({}, undefined, undefined, undefined, routed).audit({...pipelineContext(), brief: brief(), draft: candidate});
   expect(result.reviewedClaims).toHaveLength(2);
@@ -499,7 +499,7 @@ test("records verified bibliographic attribution without inventing a missing sub
   const routed = {async invoke() {return {output: {passageReviews: [
     {passageId: "body", classification: "mixed", nonFactualReason: "The opening expresses a personal point of view.", claims: audit().reviewedClaims.map(c => ({...c, kind: "factual" as const}))},
     {passageId: "mediaPlan.title", classification: "factual", nonFactualReason: null, claims: [{statement: credit, kind: "attribution", verdict: "supported", sourceKeys: ["proof:1"], reason: "The source title identifies the cited guide."}]},
-  ], declarationReviews: declaredReviews(candidate), reviewedScenarios: [], forbiddenTopicMatches: []}, metadata: {provider: "codex-cli", model: "gpt-5.6-luna"}};}} as unknown as WorkspaceStructuredModel;
+  ], declarationReviews: declaredReviews(candidate), reviewedScenarios: [], forbiddenTopicMatches: [], topicFindings: [], topicReviews: {}}, metadata: {provider: "codex-cli", model: "gpt-5.6-luna"}};}} as unknown as WorkspaceStructuredModel;
   const result = await new LangChainContentPipelineAgent({}, undefined, undefined, undefined, routed).audit({...pipelineContext(), brief: brief(), draft: candidate});
   expect(result.ungroundedStatements).toEqual([]);
   expect(result.coverage?.passages[1]?.claims[0]?.kind).toBe("attribution");
@@ -507,7 +507,7 @@ test("records verified bibliographic attribution without inventing a missing sub
 
 test("audits source-free proposed advice while prohibiting invented evidence keys", async () => {
   const candidate = {...contentDraftSnapshotSchema.parse(draft()), body: "Je propose de commencer par un cas simple et de noter les questions qui restent ouvertes avant de poursuivre.", factualClaims: []};
-  const output = {passageReviews: [{passageId: "body", classification: "non_factual", nonFactualReason: "This passage proposes an approach without claiming a measured result.", claims: []}], declarationReviews: declaredReviews(candidate), reviewedScenarios: [], forbiddenTopicMatches: []};
+  const output = {passageReviews: [{passageId: "body", classification: "non_factual", nonFactualReason: "This passage proposes an approach without claiming a measured result.", claims: []}], declarationReviews: declaredReviews(candidate), reviewedScenarios: [], forbiddenTopicMatches: [], topicFindings: [], topicReviews: {}};
   const routed = {async invoke(input: any) {
     expect(input.schema.safeParse({...output, passageReviews: [{...output.passageReviews[0], classification: "factual", nonFactualReason: null, claims: [{statement: candidate.body, kind: "factual", verdict: "supported", sourceKeys: ["invented:key"], reason: "An invented source must be rejected."}]}]}).success).toBe(false);
     return {output, metadata: {provider: "codex-cli", model: "gpt-5.6-luna"}};
@@ -524,7 +524,7 @@ test.each([{count: 21, existing: 0}, {count: 31, existing: 20}])("rejects aggreg
   const output = {passageReviews: [
     {passageId: "body", classification: "mixed", nonFactualReason: "The introductory wording provides context for the claims.", claims: claims.slice(0, split)},
     {passageId: "mediaPlan.title", classification: "factual", nonFactualReason: null, claims: claims.slice(split)},
-  ], declarationReviews: declaredReviews(candidate), reviewedScenarios: [], forbiddenTopicMatches: []};
+  ], declarationReviews: declaredReviews(candidate), reviewedScenarios: [], forbiddenTopicMatches: [], topicFindings: [], topicReviews: {}};
   const routed = {async invoke(input: any) {
     expect(input.schema.safeParse(output).success).toBe(true);
     return {output, metadata: {provider: "codex-cli", model: "gpt-5.6-luna"}};
@@ -536,7 +536,7 @@ test.each(["duplicate", "cross_field"])("rejects %s field assignments even when 
   const candidate = {...contentDraftSnapshotSchema.parse(draft()), mediaPlan: {format: "linkedin_image" as const, visualTone: "editorial" as const, title: "Un titre propre au visuel.", subtitle: null, altText: "Le titre", slides: [], scenes: []}};
   const first = {passageId: "body", classification: "mixed", nonFactualReason: "The opening expresses a personal point of view.", claims: audit().reviewedClaims.map(c => ({...c, kind: "factual" as const}))};
   const second = {passageId: "mediaPlan.title", classification: "factual", nonFactualReason: null, claims: [{statement: candidate.mediaPlan.title, kind: "factual", sourceKeys: ["proof:1"], verdict: "supported", reason: "This title is reviewed in its own media context."}]};
-  const output = {passageReviews: failure === "duplicate" ? [first, first] : [{...first, claims: second.claims}, second], declarationReviews: declaredReviews(candidate), reviewedScenarios: [], forbiddenTopicMatches: []};
+  const output = {passageReviews: failure === "duplicate" ? [first, first] : [{...first, claims: second.claims}, second], declarationReviews: declaredReviews(candidate), reviewedScenarios: [], forbiddenTopicMatches: [], topicFindings: [], topicReviews: {}};
   const routed = {async invoke(input: any) {
     expect(input.schema.safeParse(output).success).toBe(true);
     return {output, metadata: {provider: "codex-cli", model: "gpt-5.6-luna"}};
@@ -579,9 +579,45 @@ test.each(["negative_claim", "negative_declaration", "missing_source", "misleadi
     if (kind === "missing_source") output.passageReviews[0].claims[0].sourceKeys = [];
     if (kind === "negative_declaration") Object.values(output.declarationReviews).forEach((v: any) => v.verdict = "unsupported");
     if (kind === "misleading_scenario") output.reviewedScenarios = [{statement: "A fictional claim that implies an observed outcome.", verdict: "misleading", reason: "The example misleadingly implies that this was actually observed."}];
-    if (kind === "forbidden_topic") output.forbiddenTopicMatches = ["A forbidden public topic"];
+    if (kind === "forbidden_topic") { output.forbiddenTopicMatches = ["A forbidden public topic"]; output.topicFindings = [{topic: output.forbiddenTopicMatches[0], field: "body", statement: input.payload.draft.body.slice(0, 30), reason: "This current passage falls within the forbidden topic."}]; }
     return {output, metadata: {provider: "codex-cli", model: "gpt-5.6-luna"}};
   }} as unknown as WorkspaceStructuredModel;
   await expect(new LangChainContentPipelineAgent({}, undefined, undefined, undefined, routed).audit({...pipelineContext(), brief: brief(), draft: contentDraftSnapshotSchema.parse(draft())})).rejects.toThrow("CONTENT_AUDIT_COVERAGE_INVALID");
   expect(calls).toBe(kind === "repeated_misplacement" ? 2 : 1);
+});
+
+test.each(["valid", "missing", "orphan", "wrong_field", "foreign_quote"])("requires exact forbidden-topic locations: %s", async kind => {
+  let calls = 0;
+  const routed = {async invoke(input: any) {
+    calls++;
+    const output = modelAudit(input.payload) as any;
+    output.forbiddenTopicMatches = kind === "orphan" ? [] : ["Promesse non vérifiée"];
+    output.topicFindings = kind === "missing" ? [] : [{topic: "Promesse non vérifiée", field: kind === "wrong_field" ? "mediaPlan.title" : "body", statement: kind === "foreign_quote" ? "Une citation qui n’existe pas ici." : input.payload.draft.body.slice(0, 30), reason: "Ce passage présente une promesse interdite par la stratégie."}];
+    return {output,metadata:{provider:"codex-cli",model:"gpt-5.6-luna"}};
+  }} as unknown as WorkspaceStructuredModel;
+  const pending = new LangChainContentPipelineAgent({}, undefined, undefined, undefined, routed).audit({...pipelineContext(),brief:brief(),draft:contentDraftSnapshotSchema.parse(draft())});
+  if (kind === "valid") expect((await pending).topicFindings).toHaveLength(1);
+  else await expect(pending).rejects.toThrow();
+  expect(calls).toBe(1);
+});
+
+test.each(["missing", "silent", "reviewed"])("requires each configured topic assessment: %s", async kind => {
+ const routed={async invoke(input:any){
+  const output=modelAudit(input.payload) as any;
+  if(kind==='missing')delete output.topicReviews.topic_0;
+  else output.topicReviews.topic_0={violated:true,reason:"The quoted result violates this configured prohibition."};
+  if(kind==='reviewed'){output.forbiddenTopicMatches=['Résultats non prouvés'];output.topicFindings=[{topic:'Résultats non prouvés',field:'body',statement:input.payload.draft.body.slice(0,30),reason:'This quotation contains the result forbidden by the strategy.'}];}
+  return {output,metadata:{provider:'codex-cli',model:'gpt-5.6-luna'}};
+ }} as unknown as WorkspaceStructuredModel;
+ const base=pipelineContext();const context={...base,strategy:{...base.strategy,forbiddenTopics:['Résultats non prouvés']}};
+ const pending=new LangChainContentPipelineAgent({},undefined,undefined,undefined,routed).audit({...context,brief:brief(),draft:contentDraftSnapshotSchema.parse(draft())});
+ if(kind==='reviewed')expect((await pending).topicReviews).toMatchObject([{topic:'Résultats non prouvés',violated:true}]);
+ else await expect(pending).rejects.toThrow();
+});
+
+test.each([1,30])("accepts all valid strategy topic obligations: %s",async count=>{
+ const base=pipelineContext();const topics=Array.from({length:count},(_,i)=>i===0?'X':`Topic ${i}`);
+ const routed={async invoke(input:any){return {output:modelAudit(input.payload),metadata:{provider:'codex-cli',model:'gpt-5.6-luna'}};}} as unknown as WorkspaceStructuredModel;
+ const result=await new LangChainContentPipelineAgent({},undefined,undefined,undefined,routed).audit({...base,strategy:{...base.strategy,forbiddenTopics:topics},brief:brief(),draft:contentDraftSnapshotSchema.parse(draft())});
+ expect(result.topicReviews?.map(r=>r.topic)).toEqual(topics);
 });

@@ -9,6 +9,9 @@ export function retainUnresolvedAuditFindings(draft: ContentDraftSnapshot, curre
   const scenarios = [...(previous?.unresolvedScenarios ?? []), ...(previous?.reviewedScenarios ?? []).flatMap(scenario => scenario.verdict === "misleading" ? [{ ...scenario, verdict: "misleading" as const }] : [])];
   const unresolvedScenarios = [...new Map(scenarios.filter(scenario => text.includes(scenario.statement)).map(scenario => [JSON.stringify([scenario.statement, scenario.reason]), scenario])).values()];
   if (unresolvedScenarios.length > 6) throw new Error("CONTENT_AUDIT_FINDINGS_CAPACITY_EXCEEDED");
-  const { unresolvedClaims: _untrustedClaims, unresolvedScenarios: _untrustedScenarios, ...review } = current;
-  return { ...review, ...(unresolvedClaims.length ? { unresolvedClaims } : {}), ...(unresolvedScenarios.length ? { unresolvedScenarios } : {}) };
+  const topics = [...(previous?.unresolvedTopics ?? []), ...(previous?.topicFindings ?? []), ...(previous?.forbiddenTopicMatches ?? []).filter(topic => !previous?.topicFindings?.some(finding => finding.topic === topic)).map(topic => ({ topic, field: null, statement: null, reason: "L’audit historique ne localise pas cette objection. Cette objection exige une résolution distincte avant publication." }))];
+  const unresolvedTopics = [...new Map(topics.filter(finding => finding.statement === null || text.includes(finding.statement)).map(finding => [JSON.stringify([finding.topic, finding.statement, finding.reason]), finding])).values()];
+  if (unresolvedTopics.length > 20) throw new Error("CONTENT_AUDIT_FINDINGS_CAPACITY_EXCEEDED");
+  const { unresolvedClaims: _untrustedClaims, unresolvedScenarios: _untrustedScenarios, unresolvedTopics: _untrustedTopics, ...review } = current;
+  return { ...review, ...(unresolvedClaims.length ? { unresolvedClaims } : {}), ...(unresolvedScenarios.length ? { unresolvedScenarios } : {}), ...(unresolvedTopics.length ? { unresolvedTopics } : {}) };
 }

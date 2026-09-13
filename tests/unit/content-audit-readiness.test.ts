@@ -49,3 +49,18 @@ test("a retained scenario objection blocks a favorable current audit", () => {
   const assessment = { ...audit, unresolvedScenarios: [{ statement, verdict: "misleading" as const, reason: "Une objection antérieure reste présente dans le texte courant." }] };
   expect(readiness(draft, assessment)).toMatchObject({ ready: false, blockers: expect.arrayContaining(["unresolved_audit_scenario"]) });
 });
+
+test.each(["missing", "orphan", "foreign_quote", "wrong_field"])("readiness refuses inconsistent topic evidence: %s", kind => {
+  const finding = {topic:"Sujet interdit", field: kind === "wrong_field" ? "mediaPlan.title" : "body", statement: kind === "foreign_quote" ? "Citation absente de ce contenu." : statement, reason:"Cette citation démontre la violation du sujet interdit."};
+  expect(readiness(draft,{...audit,forbiddenTopicMatches:kind === "orphan" ? [] : [finding.topic],topicFindings:kind === "missing" ? [] : [finding]})).toMatchObject({ready:false,blockers:expect.arrayContaining(["topic_audit_invalid"])});
+});
+test("retained topic objections block readiness independently of current topic votes", () => {
+  expect(readiness(draft,{...audit,unresolvedTopics:[{topic:"Sujet interdit",field:"body",statement,reason:"L’objection antérieure demeure dans le texte courant."}]})).toMatchObject({ready:false,blockers:expect.arrayContaining(["unresolved_audit_topic"])});
+});
+
+test.each(["missing","partial","complete"])("compares stored topic reviews with configured obligations: %s",kind=>{
+ const topics=['Premier sujet','Deuxième sujet'];
+ const topicReviews=topics.slice(0,kind==='complete'?2:kind==='partial'?1:0).map(topic=>({topic,violated:false,reason:'Ce contenu ne mentionne pas ce sujet interdit dans ses passages.'}));
+ const result=evaluateContentReadiness({draft,audit:{...audit,topicReviews},critique,evidenceFingerprint:fingerprint,availableEvidenceKeys:['source:1'],recentBodies:[],forbiddenTopics:topics});
+ expect(result.ready).toBe(kind==='complete');
+});

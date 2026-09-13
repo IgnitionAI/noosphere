@@ -640,7 +640,9 @@ describe("CNT-101 grounded content pipeline", () => {
   test("repairs a removable forbidden topic before the final critic", async () => {
     const calls: string[] = [];
     const feedback: Array<readonly string[] | undefined> = [];
-    const context = pipelineContext("audit");
+    const forbidden = "Le produit remplace tous les juristes.";
+    const base = pipelineContext("audit");
+    const context = {...base,draft:{...draft(),body:draft().body + " " + forbidden}};
     const repository = {
       async loadContext() { return context; },
       async startRun() { calls.push("start"); },
@@ -658,7 +660,7 @@ describe("CNT-101 grounded content pipeline", () => {
         calls.push("audit");
         auditAttempt += 1;
         return auditAttempt === 1
-          ? { ...audit(input.draft, input.evidence), forbiddenTopicMatches: ["Capacité produit non sourcée"] }
+          ? { ...audit(input.draft, input.evidence), forbiddenTopicMatches: ["Capacité produit non sourcée"], topicFindings:[{topic:"Capacité produit non sourcée",field:"body",statement:forbidden,reason:"Cette promesse produit ne peut pas être publiée sans preuve."}] }
           : audit(input.draft, input.evidence);
       },
       async critique() { calls.push("critic"); return critique(); },
@@ -666,7 +668,8 @@ describe("CNT-101 grounded content pipeline", () => {
 
     await processor.process(job(context.run.workspaceId, context.run.id));
 
-    expect(feedback).toEqual([["CONTENT_AUDIT_FORBIDDEN_TOPIC: Capacité produit non sourcée"]]);
+    expect(feedback[0]?.[0]).toContain("CONTENT_AUDIT_FORBIDDEN_TOPIC: Capacité produit non sourcée");
+    expect(feedback[0]?.[0]).toContain(forbidden);
     expect(calls).toEqual(["start", "audit", "writer_repair", "draft_repaired", "audit", "audit_saved", "critic", "ready", "ack"]);
   });
 });
@@ -750,10 +753,10 @@ test("does not approve a historical audit without current field coverage", () =>
   expect(result.blockers).toContain("audit_coverage_missing");
 });
 
-test.each(["historical", "source_changed", "text_changed"] as const)("reassesses a critic checkpoint before approval when its audit is %s", async change => {
+test.each(["historical", "source_changed", "text_changed", "topic_missing"] as const)("reassesses a critic checkpoint before approval when its audit is %s", async change => {
   const base = pipelineContext("audit");
   const storedAudit = change === "historical" ? { ...audit(), coverage: undefined } : audit();
-  const context = { ...base, run: { ...base.run, stage: "critic" as const }, audit: storedAudit,
+  const context = { ...base, strategy: {...base.strategy,forbiddenTopics:change === "topic_missing" ? ["Résultats chiffrés non prouvés"] : []}, run: { ...base.run, stage: "critic" as const }, audit: storedAudit,
     draft: change === "text_changed" ? { ...draft(), body: draft().body + " Une piste à examiner." } : draft(),
     evidence: change === "source_changed" ? [{ ...evidence(), excerpt: "Texte de la source mis à jour." }] : base.evidence,
   };
@@ -764,7 +767,7 @@ test.each(["historical", "source_changed", "text_changed"] as const)("reassesses
   await new ContentGenerationJobProcessor(repository, {
     async buildBrief() { throw new Error("must preserve the brief"); },
     async write() { throw new Error("must preserve public copy for reassessment"); },
-    async audit(input) { calls.push("audit"); expect(input.draft).toEqual(context.draft); return audit(input.draft, input.evidence); },
+    async audit(input) { calls.push("audit"); expect(input.draft).toEqual(context.draft); return {...audit(input.draft, input.evidence),topicReviews:context.strategy.forbiddenTopics.map(topic=>({topic,violated:false,reason:"Ce texte ne contient pas de résultat chiffré non prouvé."}))}; },
     async critique() { calls.push("critic"); return critique(); },
   }, { async acknowledge() { calls.push("ack"); } } as unknown as JobQueue).process(job(context.run.workspaceId, context.run.id));
   expect(calls).toEqual(["reopen_audit", "audit", "persist_audit", "critic", "ready", "ack"]);
@@ -936,4 +939,17 @@ test("misleading scenario objections remain checkpointed and reach writer repair
   expect(completed).toMatchObject({readiness: {ready: false, blockers: expect.arrayContaining(["unresolved_audit_scenario"])}});
   expect(checkpoints).toEqual(expect.arrayContaining([expect.objectContaining({ audit: expect.objectContaining({ unresolvedScenarios: expect.arrayContaining([expect.objectContaining({statement: scenario})]) }) })]));
   expect(feedback.some(message => message.includes("CONTENT_AUDIT_UNRESOLVED_SCENARIO"))).toBe(true);
+});
+
+test.each(["located", "historical"] as const)("topic history cannot be approved silently: %s", async kind => {
+  const base = pipelineContext("audit");
+  const topic = "Promesse non vérifiée";
+  const finding = {topic,field:"body",statement:draft().body.slice(0,35),reason:"Ce passage entre dans le thème interdit de la stratégie."};
+  const context = {...base,audit:{...audit(),forbiddenTopicMatches:[topic],...(kind === "located" ? {topicFindings:[finding]} : {})}};
+  let writes=0;let completed:unknown;let persisted:unknown;
+  const repository = {async loadContext(){return context;},async startRun(){},async checkpointAudit(input:unknown){persisted=input;},async reviseDraftAfterAudit(){},async saveAudit(){},async completeRun(input:unknown){completed=input;},async failRun(){}} as unknown as ContentGenerationRepository;
+  await new ContentGenerationJobProcessor(repository,{async buildBrief(){throw new Error("unexpected");},async write(){writes++;return draft();},async audit(input){return audit(input.draft,input.evidence);},async critique(){return critique();}}, {async acknowledge(){}} as unknown as JobQueue).process(job(context.run.workspaceId,context.run.id));
+  expect(writes).toBe(kind === "located" ? 2 : 0);
+  expect(completed).toMatchObject({readiness:{ready:false,blockers:expect.arrayContaining(["unresolved_audit_topic"])}});
+  expect(persisted).toMatchObject({audit:{unresolvedTopics:expect.any(Array)}});
 });

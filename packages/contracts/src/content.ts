@@ -226,6 +226,9 @@ export const contentBrandDirectionProposalSchema = z.object({
 }).strict();
 
 export const contentEvidenceAuditSchema: z.ZodType<ContentEvidenceAudit> = z.object({
+  topicReviews: z.array(z.object({topic: z.string().min(1).max(300), violated: z.boolean(), reason: z.string().min(20).max(1_000)}).strict()).max(30).optional(),
+  topicFindings: z.array(z.object({ topic: z.string().min(1).max(300), field: z.string().min(1), statement: z.string().min(3).max(1_000), reason: z.string().min(20).max(1_000) }).strict()).max(20).optional(),
+  unresolvedTopics: z.array(z.object({ topic: z.string().min(1).max(300), field: z.string().min(1).nullable(), statement: z.string().min(3).max(1_000).nullable(), reason: z.string().min(20).max(1_000) }).strict()).max(20).optional(),
   unresolvedScenarios: z.array(z.object({ statement: z.string().min(20).max(600), verdict: z.literal("misleading"), reason: z.string().min(20).max(1_000) }).strict()).max(6).optional(),
   unresolvedClaims: z.array(z.object({ statement: z.string().min(3).max(1_000), sourceKeys: z.array(z.string()).max(12), verdict: z.literal("unsupported"), reason: z.string().min(3).max(1_000) })).max(30).optional(),
   coverage: z.object({
@@ -256,7 +259,7 @@ export const contentEvidenceAuditSchema: z.ZodType<ContentEvidenceAudit> = z.obj
     reason: z.string().trim().min(3).max(1_000),
   }).strict()).max(30),
   ungroundedStatements: z.array(z.string().trim().min(3).max(1_000)).max(20),
-  forbiddenTopicMatches: z.array(z.string().trim().min(2).max(500)).max(20),
+  forbiddenTopicMatches: z.array(z.string().trim().min(1).max(500)).max(20),
 }).strict();
 
 const contentQualityCriterionSchema = z.object({

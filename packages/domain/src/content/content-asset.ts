@@ -70,6 +70,14 @@ export interface ContentDraftSnapshot {
 }
 
 export interface ContentEvidenceAudit {
+  readonly topicReviews?: readonly { readonly topic: string; readonly violated: boolean; readonly reason: string }[] | undefined;
+  readonly topicFindings?: readonly {
+    readonly topic: string; readonly field: string; readonly statement: string; readonly reason: string;
+  }[] | undefined;
+  /** A null quotation is a historical objection whose location was never recorded. */
+  readonly unresolvedTopics?: readonly {
+    readonly topic: string; readonly field: string | null; readonly statement: string | null; readonly reason: string;
+  }[] | undefined;
   /** Earlier misleading scenarios still present in public copy, even if no longer declared. */
   readonly unresolvedScenarios?: readonly {
     readonly statement: string; readonly verdict: "misleading"; readonly reason: string;
@@ -372,6 +380,20 @@ function isAnsweredDecisionQuestion(line: string): boolean {
     && answer.length >= 40;
 }
 
+/** Every configured topic needs a current explicit verdict, including absence. */
+export function hasCompleteContentTopicAudit(draft: ContentDraftSnapshot, audit: ContentEvidenceAudit, expectedTopics: readonly string[]): boolean {
+  const expected = new Set(expectedTopics);
+  const reviews = audit.topicReviews ?? [];
+  if (reviews.length !== expected.size || new Set(reviews.map(review => review.topic)).size !== reviews.length
+    || reviews.some(review => !expected.has(review.topic) || review.reason.trim().length < 20 || review.violated !== audit.forbiddenTopicMatches.includes(review.topic))) return false;
+  const findings = audit.topicFindings ?? [];
+  const fields = contentPublicFields(draft);
+  return !audit.forbiddenTopicMatches.some(topic => !expected.has(topic) || !findings.some(finding => finding.topic === topic))
+    && !findings.some(finding => !audit.forbiddenTopicMatches.includes(finding.topic)
+      || !fields.find(field => field.field === finding.field)?.text.includes(finding.statement)
+      || finding.statement.length < 3 || finding.reason.trim().length < 20);
+}
+
 export function evaluateContentReadiness(input: {
   readonly draft: ContentDraftSnapshot;
   readonly audit: ContentEvidenceAudit;
@@ -379,6 +401,7 @@ export function evaluateContentReadiness(input: {
   readonly availableEvidenceKeys: readonly string[];
   readonly recentBodies: readonly string[];
   readonly evidenceFingerprint?: string;
+  readonly forbiddenTopics?: readonly string[];
 }): { readonly ready: boolean; readonly blockers: readonly string[] } {
   assertGroundedContentDraft(input.draft, input.availableEvidenceKeys);
   const blockers = new Set<string>();
@@ -386,6 +409,8 @@ export function evaluateContentReadiness(input: {
   if (coverageStatus !== "current") blockers.add(coverageStatus === "missing" ? "audit_coverage_missing" : "audit_coverage_invalid");
   if (input.audit.unresolvedClaims?.length) blockers.add("unresolved_audit_claim");
   if (input.audit.unresolvedScenarios?.length) blockers.add("unresolved_audit_scenario");
+  if (input.audit.unresolvedTopics?.length) blockers.add("unresolved_audit_topic");
+  if (!hasCompleteContentTopicAudit(input.draft, input.audit, input.forbiddenTopics ?? [])) blockers.add("topic_audit_invalid");
   const assessment = input.critique.qualityAssessment;
   if (!assessment) blockers.add("editorial_assessment_missing");
   else {

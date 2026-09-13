@@ -99,7 +99,7 @@ export class LangChainContentPipelineAgent implements ContentPipelineAgent {
       model,
       promptVersion: role === "writer"
         ? "noosphere-content-writer-v31"
-        : role === "critic" ? "noosphere-content-critic-v21" : role === "audit" ? "noosphere-content-audit-v12" : "noosphere-content-brief-v11",
+        : role === "critic" ? "noosphere-content-critic-v21" : role === "audit" ? "noosphere-content-audit-v13" : "noosphere-content-brief-v11",
       shadow: false,
       inputHash: new Bun.CryptoHasher("sha256").update(JSON.stringify(original)).digest("hex"),
       output: recordedOutput,

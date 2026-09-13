@@ -52,3 +52,33 @@ test("scenario capacity overflow fails instead of dropping historical objections
   const prior = { ...scenarioPrior, unresolvedScenarios: Array.from({length: 6}, (_, i) => ({ ...misleading, reason: `Motif historique différent numéro ${i} de ce scénario trompeur.` })) };
   expect(() => retainUnresolvedAuditFindings(scenarioDraft, fresh, prior)).toThrow("CONTENT_AUDIT_FINDINGS_CAPACITY_EXCEEDED");
 });
+
+const topicFinding = { topic: "Promesses non vérifiées", field: "body", statement, reason: "Cette garantie absolue entre dans le thème interdit de la stratégie." };
+const topicAudit = { ...fresh, forbiddenTopicMatches: [topicFinding.topic], topicFindings: [topicFinding] };
+test("a forbidden-topic objection survives silence, serialization and moving its text", () => {
+  const retained = retainUnresolvedAuditFindings(draft, fresh, topicAudit);
+  expect(retained).toMatchObject({unresolvedTopics: [topicFinding]});
+  const moved = { ...draft, body: "Un autre contenu.", factualClaims: [], mediaPlan: { format: "linkedin_image" as const, visualTone: "editorial" as const, title: statement, subtitle: null, altText: null, slides: [], scenes: [] } };
+  expect(retainUnresolvedAuditFindings(moved, fresh, JSON.parse(JSON.stringify(retained)))).toMatchObject({unresolvedTopics: [topicFinding]});
+});
+test("removing a located topic quotation releases only that objection", () => {
+  expect(retainUnresolvedAuditFindings({...draft, body: "Un autre contenu.", factualClaims: []}, fresh, topicAudit)).not.toHaveProperty("unresolvedTopics");
+});
+test("a historical unlocated topic cannot be cleared by silence or an unrelated edit", () => {
+  const old = {...fresh, forbiddenTopicMatches: [topicFinding.topic]};
+  const retained = retainUnresolvedAuditFindings(draft, fresh, old);
+  expect(structuredClone(retained)).toMatchObject({unresolvedTopics: [expect.objectContaining({topic: topicFinding.topic, statement: null})]});
+  expect(retainUnresolvedAuditFindings({...draft,body: "Texte modifié."}, fresh, retained)).toMatchObject({unresolvedTopics: [expect.objectContaining({topic: topicFinding.topic, statement: null})]});
+});
+
+test("topic history round-trips through the stored schema and ignores model-supplied history", async () => {
+  const {contentEvidenceAuditSchema}=await import("@outbound/contracts/content");
+  const retained=retainUnresolvedAuditFindings(draft,fresh,{...fresh,forbiddenTopicMatches:[topicFinding.topic]});
+  const stored=contentEvidenceAuditSchema.parse(JSON.parse(JSON.stringify(retained)));
+  expect(stored.unresolvedTopics).toEqual(retained.unresolvedTopics);
+  expect(retainUnresolvedAuditFindings(draft,stored,null)).not.toHaveProperty("unresolvedTopics");
+});
+test("topic capacity overflow cannot truncate persistent objections", () => {
+  const prior={...fresh,unresolvedTopics:Array.from({length:21},(_,i)=>({...topicFinding,topic:`Sujet interdit ${i}`,statement:null,field:null}))};
+  expect(()=>retainUnresolvedAuditFindings(draft,fresh,prior)).toThrow("CONTENT_AUDIT_FINDINGS_CAPACITY_EXCEEDED");
+});

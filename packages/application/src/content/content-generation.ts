@@ -18,7 +18,7 @@ import type {
   ContentGenerationStage,
   ContentGenerationStatus,
 } from "@outbound/domain/content/content-asset";
-import { MAX_CONTENT_FACTUAL_CLAIMS, unauditedContentClaims, contentAuditCoverageStatus, contentAuditStructureStatus, contentPublicText, ContentDraftUnsourcedNumberError, MAX_CONTENT_BODY_LENGTH, assertGroundedContentDraft, assertMediaPlanMatchesBrief, evaluateContentReadiness } from "@outbound/domain/content/content-asset";
+import { MAX_CONTENT_FACTUAL_CLAIMS, hasCompleteContentTopicAudit, unauditedContentClaims, contentAuditCoverageStatus, contentAuditStructureStatus, contentPublicText, ContentDraftUnsourcedNumberError, MAX_CONTENT_BODY_LENGTH, assertGroundedContentDraft, assertMediaPlanMatchesBrief, evaluateContentReadiness } from "@outbound/domain/content/content-asset";
 
 export const CONTENT_GENERATION_JOB_TYPE = "content.asset.generate";
 export const CONTENT_GENERATION_JOB_PRIORITY = 60;
@@ -170,6 +170,7 @@ export class ContentGenerationJobProcessor {
       }
       if (context.run.stage === "critic" && context.draft
         && (!context.audit || contentAuditCoverageStatus(context.draft, context.audit, contentAuditEvidenceFingerprint(context.evidence)) !== "current"
+          || !hasCompleteContentTopicAudit(context.draft, context.audit, context.strategy.forbiddenTopics)
           || unauditedContentClaims(context.draft, context.audit).length > 0)) {
         await this.repository.reopenAudit({ workspaceId: job.workspaceId, runId: payload.runId, now: this.now() });
         context = { ...context, critique: null, run: { ...context.run, stage: "audit" } };
@@ -179,7 +180,7 @@ export class ContentGenerationJobProcessor {
         let { draft, audit } = await this.#auditDraft({ ...context, brief: context.brief, draft: context.draft }, context.audit);
         for (let repairAttempt = 1; repairAttempt <= 2; repairAttempt += 1) {
           const auditFeedback = repairableAuditFeedback(audit);
-          if (auditFeedback.length === 0) break;
+          if (auditFeedback.length === 0 || audit.unresolvedTopics?.some(finding => finding.statement === null)) break;
           draft = await this.#writeGroundedDraft({ ...context, brief: context.brief, draft, audit, repairMode: repairAttempt === 1 && canRepairClaimLedger(draft, audit, context.evidence) ? "claim_ledger" : undefined }, auditFeedback);
           await this.repository.reviseDraftAfterAudit({ workspaceId: job.workspaceId, runId: payload.runId, draft, now: this.now() });
           ({ draft, audit } = await this.#auditDraft({ ...context, brief: context.brief, draft }, audit));
@@ -205,6 +206,7 @@ export class ContentGenerationJobProcessor {
           critique,
           availableEvidenceKeys: context.evidence.map((item) => item.key),
           evidenceFingerprint: contentAuditEvidenceFingerprint(context.evidence),
+          forbiddenTopics: context.strategy.forbiddenTopics,
           recentBodies: context.recentBodies,
         });
         let media: StoredContentMedia | null;
@@ -219,7 +221,7 @@ export class ContentGenerationJobProcessor {
           ({ draft, audit } = await this.#auditDraft({ ...context, brief: context.brief, draft }, audit));
           for (let auditRepairAttempt = 1; auditRepairAttempt <= 2; auditRepairAttempt += 1) {
             const auditFeedback = repairableAuditFeedback(audit);
-            if (auditFeedback.length === 0) break;
+            if (auditFeedback.length === 0 || audit.unresolvedTopics?.some(finding => finding.statement === null)) break;
             draft = await this.#writeGroundedDraft({ ...context, brief: context.brief, draft, audit, repairMode: auditRepairAttempt === 1 && canRepairClaimLedger(draft, audit, context.evidence) ? "claim_ledger" : undefined }, auditFeedback);
             await this.repository.reviseDraftAfterAudit({ workspaceId: job.workspaceId, runId: payload.runId, draft, now: this.now() });
             ({ draft, audit } = await this.#auditDraft({ ...context, brief: context.brief, draft }, audit));
@@ -233,6 +235,7 @@ export class ContentGenerationJobProcessor {
             critique,
             availableEvidenceKeys: context.evidence.map((item) => item.key),
             evidenceFingerprint: contentAuditEvidenceFingerprint(context.evidence),
+          forbiddenTopics: context.strategy.forbiddenTopics,
             recentBodies: context.recentBodies,
           });
           ({ readiness, media } = await this.#renderReadyDraft({ ...context, draft, brief: context.brief }, readiness));
@@ -351,6 +354,7 @@ function canRepairClaimLedger(draft: ContentDraftSnapshot, audit: ContentEvidenc
     && evidence.length > 0 && audit.ungroundedStatements.length > 0 && audit.ungroundedStatements.length <= 8
     && !audit.unresolvedClaims?.length
     && !audit.unresolvedScenarios?.length
+    && !audit.unresolvedTopics?.length
     && audit.forbiddenTopicMatches.length === 0
     && audit.reviewedClaims.every(claim => claim.verdict === "supported")
     && (audit.reviewedScenarios ?? []).every(scenario => scenario.verdict !== "misleading")
@@ -361,10 +365,12 @@ function canRepairClaimLedger(draft: ContentDraftSnapshot, audit: ContentEvidenc
 
 function repairableAuditFeedback(audit: ContentEvidenceAudit): readonly string[] {
   const feedback = [
+    ...(audit.unresolvedTopics ?? []).map(finding => `CONTENT_AUDIT_UNRESOLVED_TOPIC: ${finding.topic} — ${finding.statement ?? "Passage historique non localisé"} — ${finding.reason}`),
     ...(audit.unresolvedScenarios ?? []).map(scenario => `CONTENT_AUDIT_UNRESOLVED_SCENARIO: ${scenario.statement} — ${scenario.reason}`),
     ...(audit.unresolvedClaims ?? []).map(claim => `CONTENT_AUDIT_UNRESOLVED_CLAIM: ${claim.statement} — ${claim.reason}`),
     ...(audit.reviewedScenarios ?? []).filter((item) => item.verdict === "misleading").map((item) => `CONTENT_AUDIT_MISLEADING_SCENARIO: ${item.statement} — ${item.reason}`),
-    ...audit.forbiddenTopicMatches.map((topic) => `CONTENT_AUDIT_FORBIDDEN_TOPIC: ${topic}`),
+    ...(audit.topicFindings ?? []).map(finding => `CONTENT_AUDIT_FORBIDDEN_TOPIC: ${finding.topic} — ${finding.statement} — ${finding.reason}`),
+    ...audit.forbiddenTopicMatches.filter(topic => !audit.topicFindings?.some(finding => finding.topic === topic)).map((topic) => `CONTENT_AUDIT_FORBIDDEN_TOPIC: ${topic}`),
     ...audit.ungroundedStatements.map((statement) => `CONTENT_AUDIT_UNGROUNDED_STATEMENT: ${statement}`),
     ...audit.reviewedClaims
       .filter((claim) => claim.verdict !== "supported")
@@ -378,8 +384,8 @@ function repairableCritiqueFeedback(
   readiness: { readonly ready: boolean; readonly blockers: readonly string[] },
 ): readonly string[] {
   if (readiness.ready) return [];
-  if (readiness.blockers.some(blocker => ["editorial_assessment_missing", "editorial_assessment_invalid", "audit_coverage_missing", "audit_coverage_invalid"].includes(blocker))) return [];
-  const evidenceBlockers = new Set(["unaudited_claim", "unsupported_claim", "unresolved_audit_claim", "unresolved_audit_scenario", "ungrounded_statement", "forbidden_topic"]);
+  if (readiness.blockers.some(blocker => ["editorial_assessment_missing", "editorial_assessment_invalid", "audit_coverage_missing", "audit_coverage_invalid", "topic_audit_invalid"].includes(blocker))) return [];
+  const evidenceBlockers = new Set(["unaudited_claim", "unsupported_claim", "unresolved_audit_claim", "unresolved_audit_scenario", "unresolved_audit_topic", "ungrounded_statement", "forbidden_topic"]);
   if (readiness.blockers.some((blocker) => evidenceBlockers.has(blocker))) return [];
   const feedback = [
     ...Object.entries(critique.qualityAssessment ?? {})
