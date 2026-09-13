@@ -540,7 +540,7 @@ describe("CNT-101 grounded content pipeline", () => {
     const producer = { async checkDraftLayout() { checks++; throw fatal; } } as unknown as import("@outbound/application/content/content-media").ContentMediaProducer;
     const processor = new ContentGenerationJobProcessor(repository, {
       async buildBrief() { throw new Error("must not replay"); },
-      async write() { writes++; return outcome === "fatal" ? candidate : { ...candidate, mediaPlan: null }; },
+      async write() { writes++; return outcome === "fatal" ? candidate : { ...candidate, mediaPlan: { ...candidate.mediaPlan, format: "linkedin_image" as const, slides: [] } }; },
       async audit() { throw new Error("must not audit invalid draft"); }, async critique() { return critique(); },
     }, { async acknowledge() {} } as unknown as JobQueue, undefined, producer);
     const run = processor.process(job(context.run.workspaceId, context.run.id));

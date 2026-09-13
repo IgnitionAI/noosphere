@@ -19,3 +19,8 @@ Insufficient: “Vérifiez le contexte, les droits, la source et la validation h
 Useful worked distinction: in an explicitly fictional case, a user can sign in but cannot open one folder. The proposed response cites a forgotten-password procedure. Show the exact mismatch, then propose checking whether the access issue affects one folder or all folders and finding the applicable access procedure. This demonstrates why a citation alone does not make an instruction relevant. It makes no claim about measured effectiveness or a real product. This is a calibration example, not a topic or template to repeat for other workspaces.
 
 The brief stage returns a brief, the writer stage a draft. Preserve the surrounding role's schema, evidence rules and output limits.
+
+
+## Make the example’s conditions carry its conclusion
+
+Before finalizing a worked example, trace the actor, object, relevant condition and expected or observed outcome. State the condition that distinguishes the chosen outcome from the plausible alternative. Keep these identities and conditions consistent throughout; do not infer missing rights, membership or policy from the desired conclusion. For a fictional test, state what the test should show and what a contrary observation means, without claiming it was actually run. Supply only the detail needed to make the reasoning usable, and keep the illustrativeScenarios metadata synchronized with the public example.
