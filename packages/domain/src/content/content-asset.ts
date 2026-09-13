@@ -230,6 +230,7 @@ export function evaluateContentReadiness(input: {
 }): { readonly ready: boolean; readonly blockers: readonly string[] } {
   assertGroundedContentDraft(input.draft, input.availableEvidenceKeys);
   const blockers = new Set<string>();
+  if (input.draft.mediaPlan?.format === "linkedin_document") blockers.add("format_unavailable");
   const assessment = input.critique.qualityAssessment;
   if (!assessment) blockers.add("editorial_assessment_missing");
   else {

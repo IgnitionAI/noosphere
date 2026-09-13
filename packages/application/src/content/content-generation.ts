@@ -3,7 +3,7 @@ import { requireWorkspaceAi, type WorkspaceAiAvailability } from "@outbound/appl
 import type { JobQueue, LeasedJob } from "@outbound/application/jobs/job-queue";
 import type { EditorialStrategySnapshot } from "@outbound/domain/content/editorial-strategy";
 import type { ContentBrandKitSnapshot, LinkedinContentFormat } from "@outbound/domain/content/content-brand-kit";
-import { selectNextContentFormat } from "@outbound/domain/content/content-brand-kit";
+import { activeContentBrandKit, assertContentFormatAvailable, selectNextContentFormat } from "@outbound/domain/content/content-brand-kit";
 import type { EditorialStrategyGrounding } from "@outbound/application/content/editorial-strategy";
 import type { StoredContentMedia } from "@outbound/application/content/content-media";
 import { ContentMediaProducer } from "@outbound/application/content/content-media";
@@ -151,6 +151,9 @@ export class ContentGenerationJobProcessor {
     if (typeof payload.runId !== "string") throw new Error("CONTENT_GENERATION_JOB_INVALID");
     try {
       let context = await this.repository.loadContext({ workspaceId: job.workspaceId, runId: payload.runId });
+      context = { ...context, brandKit: activeContentBrandKit(context.brandKit) };
+      if (context.brief) assertContentFormatAvailable(context.brief.format);
+      if (context.draft?.mediaPlan) assertContentFormatAvailable(context.draft.mediaPlan.format);
       await this.repository.startRun({ workspaceId: job.workspaceId, runId: payload.runId, now: this.now() });
 
       if (stageAtOrBefore(context.run.stage, "brief")) {

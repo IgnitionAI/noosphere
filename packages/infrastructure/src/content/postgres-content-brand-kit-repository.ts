@@ -1,3 +1,4 @@
+import { activeContentBrandKit } from "@outbound/domain/content/content-brand-kit";
 import { and, eq, sql } from "drizzle-orm";
 import type { ContentBrandKitRepository, ContentBrandKitView } from "@outbound/application/content/content-brand-kit";
 import { contentBrandKitSnapshotSchema } from "@outbound/contracts/content";
@@ -86,7 +87,7 @@ function toView(row: typeof contentBrandKits.$inferSelect): ContentBrandKitView 
   return {
     workspaceId: row.workspaceId,
     version: row.version,
-    snapshot: contentBrandKitSnapshotSchema.parse(row.snapshot),
+    snapshot: activeContentBrandKit(contentBrandKitSnapshotSchema.parse(row.snapshot)),
     updatedAt: row.updatedAt,
   };
 }

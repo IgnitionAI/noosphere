@@ -431,15 +431,18 @@ function toEvidence(row: typeof contentIdeaSources.$inferSelect): ContentIdeaEvi
 function toVersion(row: typeof contentAssetVersions.$inferSelect, media: typeof contentMediaAssets.$inferSelect | null): ContentAssetVersionView {
   const readiness = row.readiness as { policyVersion?: unknown; ready?: unknown; blockers?: unknown };
   const outdated = readiness.policyVersion !== CONTENT_EDITORIAL_POLICY_VERSION;
+  const draft = contentDraftSnapshotSchema.parse(row.draft);
+  const unavailable = draft.mediaPlan?.format === "linkedin_document";
   return {
     id: row.id, assetId: row.assetId, briefId: row.briefId, version: row.version, body: row.body,
-    draft: contentDraftSnapshotSchema.parse(row.draft), audit: contentEvidenceAuditSchema.parse(row.audit), critique: contentEditorialCritiqueSchema.parse(row.critique),
+    draft, audit: contentEvidenceAuditSchema.parse(row.audit), critique: contentEditorialCritiqueSchema.parse(row.critique),
     readiness: {
       ...(typeof readiness.policyVersion === "string" ? { policyVersion: readiness.policyVersion } : {}),
-      ready: readiness.ready === true && !outdated,
+      ready: readiness.ready === true && !outdated && !unavailable,
       blockers: [...new Set([
         ...(Array.isArray(readiness.blockers) ? readiness.blockers.filter((item): item is string => typeof item === "string") : []),
         ...(outdated ? ["editorial_policy_outdated"] : []),
+        ...(unavailable ? ["format_unavailable"] : []),
       ])],
     },
     media: media ? {
