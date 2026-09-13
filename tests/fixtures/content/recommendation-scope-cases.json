@@ -1,0 +1,40 @@
+{
+  "purpose": "Agent-authored semantic reference cases. Policies below are synthetic premises, not claims about law or real deployments. Expected classifications concern the quoted recommendation only, not overall readiness.",
+  "cases": [
+    {
+      "id": "approval-does-not-waive-eligibility",
+      "premise": "Permissions must remain limited to operational need. New access requests require approval.",
+      "statement": "If a permission exceeds operational need, reduce it or obtain approval.",
+      "expected": "revise",
+      "reason": "Approval is an additional requirement, not an alternative to the need criterion."
+    },
+    {
+      "id": "approval-and-eligibility-remain-distinct",
+      "premise": "Permissions must remain limited to operational need. New access requests require approval.",
+      "statement": "Reduce permissions that exceed operational need. Obtain approval for new access requests.",
+      "expected": "supported",
+      "reason": "Both requirements retain their own scope; neither waives the other."
+    },
+    {
+      "id": "planning-tool-does-not-become-mandatory",
+      "premise": "Define roles and their required access. No particular planning format is prescribed.",
+      "statement": "A system is not ready without an access matrix.",
+      "expected": "revise",
+      "reason": "The proposed artifact is promoted to a necessary implementation without that requirement in the premise."
+    },
+    {
+      "id": "optional-planning-tool",
+      "premise": "Define roles and their required access. No particular planning format is prescribed.",
+      "statement": "An access matrix can help compare roles and their required access.",
+      "expected": "proposal",
+      "reason": "A bounded planning suggestion does not declare alternative implementations unready."
+    },
+    {
+      "id": "incomplete-tool-cannot-establish-conclusion",
+      "premise": "A matrix is used to compare required and granted access; the required-access cells have not been filled in.",
+      "statement": "This incomplete matrix does not establish whether the granted access matches the required access.",
+      "expected": "supported",
+      "reason": "A limit on this artifact's evidence does not require every system to use that artifact. Do not infer uniqueness from it."
+    }
+  ]
+}
