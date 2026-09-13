@@ -18,7 +18,7 @@ import type {
   ContentGenerationStage,
   ContentGenerationStatus,
 } from "@outbound/domain/content/content-asset";
-import { MAX_CONTENT_FACTUAL_CLAIMS, unauditedContentClaims, contentAuditCoverageStatus, contentPublicText, ContentDraftUnsourcedNumberError, MAX_CONTENT_BODY_LENGTH, assertGroundedContentDraft, assertMediaPlanMatchesBrief, evaluateContentReadiness } from "@outbound/domain/content/content-asset";
+import { MAX_CONTENT_FACTUAL_CLAIMS, unauditedContentClaims, contentAuditCoverageStatus, contentAuditStructureStatus, contentPublicText, ContentDraftUnsourcedNumberError, MAX_CONTENT_BODY_LENGTH, assertGroundedContentDraft, assertMediaPlanMatchesBrief, evaluateContentReadiness } from "@outbound/domain/content/content-asset";
 
 export const CONTENT_GENERATION_JOB_TYPE = "content.asset.generate";
 export const CONTENT_GENERATION_JOB_PRIORITY = 60;
@@ -281,7 +281,7 @@ export class ContentGenerationJobProcessor {
       ({ draft, audit } = synchronizeAuditedClaimLedger(draft, audit, context.evidence.map(item => item.key), contentAuditEvidenceFingerprint(context.evidence)));
       await this.repository.checkpointAudit({ workspaceId: context.run.workspaceId, runId: context.run.id, draft, audit, now: this.now() });
       const missing = unauditedContentClaims(draft, audit);
-      if (!missing.length || contentAuditCoverageStatus(draft, audit, contentAuditEvidenceFingerprint(context.evidence)) !== "current") break;
+      if (!missing.length || contentAuditStructureStatus(draft, audit, contentAuditEvidenceFingerprint(context.evidence)) !== "current") break;
       validationFeedback = missing.map(claim => `CONTENT_AUDIT_UNREVIEWED_DECLARATION: ${claim.statement} — Review this complete current declaration and its supplied source keys (${claim.sourceKeys.join(", ")}). Return a supported or unsupported verdict based on evidence, not on its declaration. Review every current public field. Do not rewrite public copy.`);
     }
     return { draft, audit: audit! };

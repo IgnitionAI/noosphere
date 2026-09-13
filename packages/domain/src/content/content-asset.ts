@@ -78,6 +78,11 @@ export interface ContentEvidenceAudit {
   readonly coverage?: {
     readonly version: 1;
     readonly evidenceFingerprint: string;
+    readonly declarations?: readonly {
+      readonly field: string; readonly start: number; readonly statement: string;
+      readonly kind: "factual" | "attribution"; readonly sourceKeys: readonly string[];
+      readonly verdict: "supported" | "unsupported"; readonly reason: string;
+    }[] | undefined;
     readonly passages: readonly {
       readonly field: string;
       readonly text: string;
@@ -254,6 +259,15 @@ export function contentPublicFields(draft: ContentDraftSnapshot, omitStructuralN
 
 /** Validate a stored receipt against the current public fields and supplied evidence context. */
 export function contentAuditCoverageStatus(draft: ContentDraftSnapshot, audit: ContentEvidenceAudit, evidenceFingerprint?: string): "missing" | "invalid" | "current" {
+  return auditCoverageStatus(draft, audit, evidenceFingerprint, true);
+}
+
+/** Retry eligibility only; this structural check must never authorize readiness. */
+export function contentAuditStructureStatus(draft: ContentDraftSnapshot, audit: ContentEvidenceAudit, evidenceFingerprint?: string): "missing" | "invalid" | "current" {
+  return auditCoverageStatus(draft, audit, evidenceFingerprint, false);
+}
+
+function auditCoverageStatus(draft: ContentDraftSnapshot, audit: ContentEvidenceAudit, evidenceFingerprint: string | undefined, requireDeclarations: boolean): "missing" | "invalid" | "current" {
   const coverage = audit.coverage;
   if (!coverage) return "missing";
   if (!evidenceFingerprint || !/^[a-f0-9]{64}$/.test(evidenceFingerprint) || coverage.version !== 1 || coverage.evidenceFingerprint !== evidenceFingerprint) return "invalid";
@@ -274,7 +288,30 @@ export function contentAuditCoverageStatus(draft: ContentDraftSnapshot, audit: C
           && sameSourceKeys(reviewed.sourceKeys, claim.sourceKeys))) return "invalid";
     }
   }
-  const passageClaims = coverage.passages.flatMap(passage => passage.claims);
+  const declarations = coverage.declarations ?? [];
+  const locations = new Set<string>();
+  for (const claim of declarations) {
+    const field = fields.find(field => field.field === claim.field);
+    const location = JSON.stringify([claim.field, claim.start, claim.statement]);
+    if (!field || !Number.isInteger(claim.start) || claim.start < 0 || locations.has(location)
+      || field.text.slice(claim.start, claim.start + claim.statement.length) !== claim.statement
+      || !draft.factualClaims.some(declared => normalize(declared.statement) === normalize(claim.statement))
+      || !["factual", "attribution"].includes(claim.kind)
+      || !["supported", "unsupported"].includes(claim.verdict)
+      || claim.reason.trim().length < 3 || (claim.verdict === "supported" && !claim.sourceKeys.length)
+      || !audit.reviewedClaims.some(reviewed => reviewed.statement === claim.statement && reviewed.verdict === claim.verdict && sameSourceKeys(reviewed.sourceKeys, claim.sourceKeys))) return "invalid";
+    locations.add(location);
+  }
+  for (const claim of requireDeclarations ? draft.factualClaims : []) {
+    for (const field of fields) {
+      for (const occurrence of contentClaimOccurrences(field.text, claim.statement)) {
+        const declared = declarations.some(item => item.field === field.field && item.start === occurrence.start && item.statement === occurrence.statement);
+        const fieldReviewed = coverage.passages.find(item => item.field === field.field)?.claims.some(item => reviewedClaimCoversDraftClaim(item, claim));
+        if (!declared && !fieldReviewed) return "invalid";
+      }
+    }
+  }
+  const passageClaims = [...coverage.passages.flatMap(passage => passage.claims), ...declarations];
   if (audit.reviewedClaims.some(reviewed => !passageClaims.some(claim =>
     claim.statement === reviewed.statement && claim.verdict === reviewed.verdict
     && sameSourceKeys(claim.sourceKeys, reviewed.sourceKeys)))) return "invalid";
@@ -399,6 +436,33 @@ export function evaluateContentReadiness(input: {
   if (input.critique.issues.some((issue) => issue.severity === "blocker")) blockers.add("editorial_blocker");
 
   return { ready: blockers.size === 0, blockers: [...blockers] };
+}
+
+/** Match the existing grounding equivalence, but return only complete exact public substrings. */
+export function contentClaimOccurrences(text: string, declaredStatement: string) {
+  const needle = normalize(declaredStatement);
+  if (!needle.length) return [];
+  const positions: {start: number; end: number}[] = [];
+  let normalized = "";
+  let offset = 0;
+  for (const character of text) {
+    const value = normalize(character);
+    const end = offset + character.length;
+    for (let i = 0; i < value.length; i += 1) positions.push({start: offset, end});
+    if (!value.length && positions.length) positions[positions.length - 1]!.end = end;
+    normalized += value;
+    offset = end;
+  }
+  const occurrences: {start: number; statement: string}[] = [];
+  let found = normalized.indexOf(needle);
+  while (found !== -1) {
+    const start = positions[found]!.start;
+    const end = positions[found + needle.length - 1]!.end;
+    const statement = text.slice(start, end);
+    if (normalize(statement) === needle && !occurrences.some(item => item.start === start)) occurrences.push({start, statement});
+    found = normalized.indexOf(needle, found + 1);
+  }
+  return occurrences;
 }
 
 export function unauditedContentClaims(draft: ContentDraftSnapshot, audit: ContentEvidenceAudit) {

@@ -1,3 +1,4 @@
+import { contentAuditDeclarations } from "@outbound/infrastructure/content/content-audit-declarations";
 import { contentDraftSnapshotSchema } from "@outbound/contracts/content";
 import { AiTaskPauseError } from "@outbound/application/ai/ai-task-pause";
 import { ModelGatewayError } from "@outbound/application/ai/model-gateway";
@@ -216,7 +217,7 @@ describe("LangChainContentPipelineAgent", () => {
     expect(recorded.map(({ purpose, model, promptVersion, contentGenerationRunId }) => ({ purpose, model, promptVersion, contentGenerationRunId }))).toEqual([
       { purpose: "content_brief", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-brief-v10", contentGenerationRunId: context.run.id },
       { purpose: "content_writer", model: "k3", promptVersion: "noosphere-content-writer-v29", contentGenerationRunId: context.run.id },
-      { purpose: "content_audit", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-audit-v9", contentGenerationRunId: context.run.id },
+      { purpose: "content_audit", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-audit-v10", contentGenerationRunId: context.run.id },
       { purpose: "content_critic", model: "k3", promptVersion: "noosphere-content-critic-v20", contentGenerationRunId: context.run.id },
     ]);
   });
@@ -406,7 +407,7 @@ test("requires an audit assessment for every public field and retains unsupporte
     wire = { passageReviews: [
       { passageId: "body", classification: "mixed", nonFactualReason: "The opening expresses the author's point of view.", claims: audit().reviewedClaims.map(c => ({...c, kind: "factual" as const})) },
       { passageId: "mediaPlan.title", classification: "factual", nonFactualReason: null, claims: [{ statement: candidate.mediaPlan.title, sourceKeys: [], kind: "factual", verdict: "unsupported", reason: "No supplied evidence establishes this guaranteed outcome." }] },
-    ], reviewedScenarios: [], forbiddenTopicMatches: [] };
+    ], declarationReviews: declaredReviews(candidate), reviewedScenarios: [], forbiddenTopicMatches: [] };
     return { output: wire, metadata: { provider: "codex-cli", model: "gpt-5.6-luna" } };
   } } as unknown as WorkspaceStructuredModel;
   const result = await new LangChainContentPipelineAgent({}, undefined, undefined, undefined, routed).audit({ ...context, brief: brief(), draft: candidate });
@@ -420,7 +421,7 @@ function modelAudit(payload: unknown) {
   return {passageReviews: passages.map(p => {
     const claims = audit().reviewedClaims.map(c => ({...c, kind: "factual" as const})).filter(c => p.text.includes(c.statement));
     return {passageId: p.id, classification: claims.length ? "mixed" : "non_factual", nonFactualReason: "The remaining wording expresses editorial context rather than factual assertions.", claims};
-  }), reviewedScenarios: [], forbiddenTopicMatches: []};
+  }), declarationReviews: declaredReviews((payload as {draft: ReturnType<typeof draft>}).draft), reviewedScenarios: [], forbiddenTopicMatches: []};
 }
 
 test("re-audits corrected copy without presenting the previous audit as current evidence", async () => {
@@ -439,7 +440,7 @@ test("re-audits corrected copy without presenting the previous audit as current 
 test("rejects missing, duplicated, invented or ungrounded audit coverage", async () => {
   const context = pipelineContext();
   const candidate = contentDraftSnapshotSchema.parse(draft());
-  const valid = { passageReviews: [{passageId: "body", classification: "mixed", nonFactualReason: "The opening expresses a personal point of view.", claims: audit().reviewedClaims.map(c => ({...c, kind: "factual" as const}))}], reviewedScenarios: [], forbiddenTopicMatches: [] };
+  const valid = { passageReviews: [{passageId: "body", classification: "mixed", nonFactualReason: "The opening expresses a personal point of view.", claims: audit().reviewedClaims.map(c => ({...c, kind: "factual" as const}))}], declarationReviews: declaredReviews(candidate), reviewedScenarios: [], forbiddenTopicMatches: [] };
   const review = valid.passageReviews[0]!;
   const factual = review.claims[0]!;
   for (const output of [
@@ -466,7 +467,7 @@ test("retains opposing audit verdicts for the same statement repeated in two pub
     passageReviews: [
       {passageId: "body", classification: "mixed", nonFactualReason: "The opening expresses a personal point of view.", claims: audit().reviewedClaims.map(c => ({...c, kind: "factual" as const}))},
       {passageId: "mediaPlan.title", classification: "factual", nonFactualReason: null, claims: [negative]},
-    ], reviewedScenarios: [], forbiddenTopicMatches: [],
+    ], declarationReviews: declaredReviews(candidate), reviewedScenarios: [], forbiddenTopicMatches: [],
   }, metadata: {provider: "codex-cli", model: "gpt-5.6-luna"}}; } } as unknown as WorkspaceStructuredModel;
   const result = await new LangChainContentPipelineAgent({}, undefined, undefined, undefined, routed).audit({...pipelineContext(), brief: brief(), draft: candidate});
   expect(result.reviewedClaims).toHaveLength(2);
@@ -479,7 +480,7 @@ test("records verified bibliographic attribution without inventing a missing sub
   const routed = {async invoke() {return {output: {passageReviews: [
     {passageId: "body", classification: "mixed", nonFactualReason: "The opening expresses a personal point of view.", claims: audit().reviewedClaims.map(c => ({...c, kind: "factual" as const}))},
     {passageId: "mediaPlan.title", classification: "factual", nonFactualReason: null, claims: [{statement: credit, kind: "attribution", verdict: "supported", sourceKeys: ["proof:1"], reason: "The source title identifies the cited guide."}]},
-  ], reviewedScenarios: [], forbiddenTopicMatches: []}, metadata: {provider: "codex-cli", model: "gpt-5.6-luna"}};}} as unknown as WorkspaceStructuredModel;
+  ], declarationReviews: declaredReviews(candidate), reviewedScenarios: [], forbiddenTopicMatches: []}, metadata: {provider: "codex-cli", model: "gpt-5.6-luna"}};}} as unknown as WorkspaceStructuredModel;
   const result = await new LangChainContentPipelineAgent({}, undefined, undefined, undefined, routed).audit({...pipelineContext(), brief: brief(), draft: candidate});
   expect(result.ungroundedStatements).toEqual([]);
   expect(result.coverage?.passages[1]?.claims[0]?.kind).toBe("attribution");
@@ -487,7 +488,7 @@ test("records verified bibliographic attribution without inventing a missing sub
 
 test("audits source-free proposed advice while prohibiting invented evidence keys", async () => {
   const candidate = {...contentDraftSnapshotSchema.parse(draft()), body: "Je propose de commencer par un cas simple et de noter les questions qui restent ouvertes avant de poursuivre.", factualClaims: []};
-  const output = {passageReviews: [{passageId: "body", classification: "non_factual", nonFactualReason: "This passage proposes an approach without claiming a measured result.", claims: []}], reviewedScenarios: [], forbiddenTopicMatches: []};
+  const output = {passageReviews: [{passageId: "body", classification: "non_factual", nonFactualReason: "This passage proposes an approach without claiming a measured result.", claims: []}], declarationReviews: declaredReviews(candidate), reviewedScenarios: [], forbiddenTopicMatches: []};
   const routed = {async invoke(input: any) {
     expect(input.schema.safeParse({...output, passageReviews: [{...output.passageReviews[0], classification: "factual", nonFactualReason: null, claims: [{statement: candidate.body, kind: "factual", verdict: "supported", sourceKeys: ["invented:key"], reason: "An invented source must be rejected."}]}]}).success).toBe(false);
     return {output, metadata: {provider: "codex-cli", model: "gpt-5.6-luna"}};
@@ -504,7 +505,7 @@ test.each([{count: 21, existing: 0}, {count: 31, existing: 20}])("rejects aggreg
   const output = {passageReviews: [
     {passageId: "body", classification: "mixed", nonFactualReason: "The introductory wording provides context for the claims.", claims: claims.slice(0, split)},
     {passageId: "mediaPlan.title", classification: "factual", nonFactualReason: null, claims: claims.slice(split)},
-  ], reviewedScenarios: [], forbiddenTopicMatches: []};
+  ], declarationReviews: declaredReviews(candidate), reviewedScenarios: [], forbiddenTopicMatches: []};
   const routed = {async invoke(input: any) {
     expect(input.schema.safeParse(output).success).toBe(true);
     return {output, metadata: {provider: "codex-cli", model: "gpt-5.6-luna"}};
@@ -516,10 +517,15 @@ test.each(["duplicate", "cross_field"])("rejects %s field assignments even when 
   const candidate = {...contentDraftSnapshotSchema.parse(draft()), mediaPlan: {format: "linkedin_image" as const, visualTone: "editorial" as const, title: "Un titre propre au visuel.", subtitle: null, altText: "Le titre", slides: [], scenes: []}};
   const first = {passageId: "body", classification: "mixed", nonFactualReason: "The opening expresses a personal point of view.", claims: audit().reviewedClaims.map(c => ({...c, kind: "factual" as const}))};
   const second = {passageId: "mediaPlan.title", classification: "factual", nonFactualReason: null, claims: [{statement: candidate.mediaPlan.title, kind: "factual", sourceKeys: ["proof:1"], verdict: "supported", reason: "This title is reviewed in its own media context."}]};
-  const output = {passageReviews: failure === "duplicate" ? [first, first] : [{...first, claims: second.claims}, second], reviewedScenarios: [], forbiddenTopicMatches: []};
+  const output = {passageReviews: failure === "duplicate" ? [first, first] : [{...first, claims: second.claims}, second], declarationReviews: declaredReviews(candidate), reviewedScenarios: [], forbiddenTopicMatches: []};
   const routed = {async invoke(input: any) {
     expect(input.schema.safeParse(output).success).toBe(true);
     return {output, metadata: {provider: "codex-cli", model: "gpt-5.6-luna"}};
   }} as unknown as WorkspaceStructuredModel;
   await expect(new LangChainContentPipelineAgent({}, undefined, undefined, undefined, routed).audit({...pipelineContext(), brief: brief(), draft: candidate})).rejects.toThrow("CONTENT_AUDIT_COVERAGE_INVALID");
 });
+
+// Synthetic verdicts for transport/coverage tests, not semantic source-verification evidence.
+function declaredReviews(candidate: Parameters<typeof contentAuditDeclarations>[0]) {
+  return Object.fromEntries(contentAuditDeclarations(candidate).map(item => [item.id, {kind: "factual" as const, sourceKeys: item.claimedSourceKeys, verdict: "supported" as const, reason: "Synthetic declaration assessment for the model-contract fixture."}]));
+}

@@ -96,7 +96,7 @@ describe("CNT-101 grounded content pipeline", () => {
 
   test("blocks a draft claim that the evidence auditor silently skipped", () => {
     const readiness = evaluateContentReadiness(fixtureReadinessInput({ draft: draft(), audit: { ...audit(), reviewedClaims: [] }, critique: critique(), availableEvidenceKeys: ["proof:1"], recentBodies: [] }));
-    expect(readiness).toEqual({ ready: false, blockers: ["unaudited_claim"] });
+    expect(readiness).toEqual({ ready: false, blockers: ["audit_coverage_invalid", "unaudited_claim"] });
   });
 
   test("blocks generic copy even when the model critique incorrectly passes it", () => {
