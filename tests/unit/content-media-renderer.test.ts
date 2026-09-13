@@ -1,7 +1,9 @@
+import { insightLayoutMetrics } from "@outbound/infrastructure/content/deterministic-content-media-renderer";
 import { describe, expect, test } from "bun:test";
 import { PDFDocument } from "pdf-lib";
 import sharp from "sharp";
 import { DeterministicContentMediaRenderer } from "@outbound/infrastructure/content/deterministic-content-media-renderer";
+import { wrapCarouselText } from "@outbound/domain/content/content-asset";
 import { DEFAULT_CONTENT_BRAND_KIT } from "@outbound/domain/content/content-brand-kit";
 
 describe("DeterministicContentMediaRenderer", () => {
@@ -23,16 +25,26 @@ describe("DeterministicContentMediaRenderer", () => {
     expect(result.altText).not.toContain("trois contrôles");
   });
 
-  test("alternative text describes the displayed copy rather than a clipped suffix", async () => {
+  test("retains complete insight copy when it fits the available vertical space", async () => {
+    const copy = "La méthode proposée conserve le contexte de la demande, puis recherche les informations disponibles avant de décider si un document supplémentaire est nécessaire pour répondre à la question posée.";
     const result = await new DeterministicContentMediaRenderer().render({
+      format: "linkedin_image",
+      plan: {format: "linkedin_image", visualTone: "editorial", title: "Le premier geste", subtitle: copy, altText: "Méthode", slides: [], scenes: []},
+      body: copy,
+      brandKit: DEFAULT_CONTENT_BRAND_KIT,
+      outputDirectory: `/tmp/noosphere-complete-insight-${crypto.randomUUID()}`,
+    });
+    expect(result.altText).toContain(copy);
+  });
+
+  test("rejects oversized image copy instead of silently dropping its suffix", async () => {
+    await expect(new DeterministicContentMediaRenderer().render({
       format: "linkedin_image",
       plan: { format: "linkedin_image", visualTone: "editorial", title: "Une décision", subtitle: "Un contenu volontairement long pour vérifier les limites du cadre et conserver uniquement les lignes effectivement affichées. ".repeat(4) + "SUFFIXE_ABSENT_DU_VISUEL", altText: "Un schéma imaginaire", slides: [], scenes: [] },
       body: "Texte",
       brandKit: DEFAULT_CONTENT_BRAND_KIT,
       outputDirectory: `/tmp/noosphere-image-alt-test-${crypto.randomUUID()}`,
-    });
-    expect(result.altText).toContain("Un contenu volontairement long");
-    expect(result.altText).not.toContain("SUFFIXE_ABSENT_DU_VISUEL");
+    })).rejects.toThrow("CONTENT_MEDIA_TEXT_OVERFLOW");
   });
 
   test("keeps the four image art directions visually distinct", async () => {
@@ -72,6 +84,10 @@ describe("DeterministicContentMediaRenderer", () => {
     expect(branded.manifest).toMatchObject({ logo: true });
   });
 
+  test("breaks overlong carousel words instead of overflowing the card", () => {
+    expect(wrapCarouselText("Anticonstitutionnellement inapplicable", 12, 3).every((line) => line.length <= 12)).toBe(true);
+  });
+
   test("renders a LinkedIn carousel as a multi-page PDF document", async () => {
     const renderer = new DeterministicContentMediaRenderer();
     const result = await renderer.render({
@@ -99,7 +115,7 @@ describe("DeterministicContentMediaRenderer", () => {
     expect(result.mimeType).toBe("application/pdf");
     expect(document.getPageCount()).toBe(5);
     expect(result.pageCount).toBe(5);
-    expect(result.manifest).toEqual(expect.objectContaining({ renderer: "pdf-lib-sharp-v4", narrativeLayouts: ["cover", "insight", "comparison", "process", "closing"] }));
+    expect(result.manifest).toEqual(expect.objectContaining({ renderer: "pdf-lib-sharp-v5", narrativeLayouts: ["cover", "insight", "comparison", "process", "closing"] }));
   });
 
   const ffmpeg = Bun.which("ffmpeg");
@@ -117,4 +133,10 @@ describe("DeterministicContentMediaRenderer", () => {
     expect(new TextDecoder().decode(result.bytes.slice(4, 8))).toBe("ftyp");
     expect(result.bytes.byteLength).toBeGreaterThan(10_000);
   }, 30_000);
+});
+
+test.each([{lines:13, showBody:false, limit:1160}, {lines:10, showBody:true, limit:1010}])("insight panel reserves space for footer and secondary copy: %j", ({lines,showBody,limit}) => {
+  const layout = insightLayoutMetrics(1, lines, showBody);
+  expect(layout.panelTop + layout.panelHeight).toBeLessThanOrEqual(limit);
+  expect(layout.focusFontSize).toBeGreaterThanOrEqual(28);
 });

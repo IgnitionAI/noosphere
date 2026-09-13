@@ -21,7 +21,7 @@ type StrategyModelInvoker = (input: {
   readonly validationIssues: readonly string[];
 }) => Promise<unknown>;
 
-const promptVersion = "noosphere-editorial-strategy-v2";
+const promptVersion = "noosphere-editorial-strategy-v3";
 const maxStructuredOutputAttempts = 2;
 
 export class LangChainEditorialStrategyGenerator implements EditorialStrategyGenerator {
@@ -189,7 +189,7 @@ function strategyModelSpec(
       "Voice traits must be operational. Avoid generic B2B language, empty thought leadership, manufactured urgency and interchangeable hooks.",
       "Keep each voice.traits item to 120 characters maximum and each voice.avoid item to 240 characters maximum. Use short imperatives, never paragraph-length style guides.",
       "Return 3 to 6 pillars, 2 to 8 voice traits, 1 to 12 avoid rules, and only UUIDs supplied in authorizedClaims for allowedClaimIds.",
-      "Enable linkedin_text, linkedin_image and linkedin_document. The brand kit controls which formats are actually used.",
+      "Enable linkedin_text and linkedin_image only. Document/carousel generation is unavailable. The brand kit controls which formats are actually used.",
       "Cadence must be sustainable: default to three posts per week in Europe/Paris unless the inputs justify less.",
       "Write all user-facing text in the offer commercialRules.languages language; default to French when not specified.",
       "Return the complete structured editorial strategy.",

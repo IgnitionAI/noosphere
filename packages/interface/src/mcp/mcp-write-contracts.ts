@@ -75,7 +75,7 @@ export const mcpWriteToolArgumentsSchema = {
   opportunity_change_stage: requestKey.extend({ opportunityId: uuid, stage: z.enum(["new", "qualified", "meeting_booked", "won", "lost"]), reason: z.string().trim().max(2_000).nullish() }).strict(),
   prospect_add_note: requestKey.extend({ contactId: uuid, note: shortText.max(10_000) }).strict(),
   content_idea_create: requestKey.extend({ title: shortText.max(300), brief: shortText.max(10_000), strategyId: uuid.nullish() }).strict(),
-  content_draft_create: requestKey.extend({ ideaId: uuid, body: shortText.max(100_000), format: z.enum(["linkedin_text", "linkedin_image", "linkedin_document", "linkedin_video"]).default("linkedin_text") }).strict(),
+  content_draft_create: requestKey.extend({ ideaId: uuid, body: shortText.max(100_000), format: z.enum(["linkedin_text", "linkedin_image", "linkedin_video"]).default("linkedin_text") }).strict(),
   prospect_schedule_dry_run: requestKey.extend({ contactId: uuid, campaignId: uuid.nullish(), scheduledFor: z.string().datetime({ offset: true }).nullish() }).strict(),
   offer_create: requestKey.extend({ name: z.string().trim().min(1).max(500), category: z.enum(["service", "saas", "licence", "autre"]).default("autre"), targetAudience: z.string().max(5_000).default("") }).strict(),
   offer_update: requestKey.extend({

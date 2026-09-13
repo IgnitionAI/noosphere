@@ -44,7 +44,7 @@ Le détail et les fichiers de preuve sont dans le [rapport de validation Prospec
 - stratégie éditoriale dérivée de l’offre, de l’ICP et du brand kit ;
 - recherche quotidienne d’idées sourcées et dédupliquées ;
 - pipeline `brief → rédaction → audit des preuves → critique` ;
-- posts texte, images et carrousels ;
+- posts texte et images ;
 - calendrier réglable, publication durable et réconciliation provider ;
 - ingestion des réactions, commentaires et réponses pour alimenter l’attribution.
 

@@ -85,3 +85,52 @@ test('multiline slide headings cannot shift numeric claims outside the checked t
   const candidate = {hook:'Méthode',body:'Une proposition.',callToAction:null,factualClaims:[],opinionStatements:[],mediaPlan:{format:'linkedin_document' as const,visualTone:'editorial' as const,title:'Méthode',subtitle:null,altText:'Méthode',slides:[{title:'Introduction\nMéthode',body:'Contexte.'},{title:'Vérification',body:'Procédure.'},{title:'42% de gains',body:'Résultat.'}],scenes:[]}};
   expect(()=>assertGroundedContentDraft(candidate,[])).toThrow('CONTENT_DRAFT_UNSOURCED_NUMBER');
 });
+
+test('a near-verbatim restatement of the source is not ready', () => {
+  const excerpt = 'Les équipes juridiques perdent des heures à chercher des clauses dans des dossiers dispersés, puis décident sans preuve résoluble.';
+  const copy = excerpt;
+  const qualityAssessment = Object.fromEntries(criteria.map((key) => [key, { verdict: 'pass', reason: 'Le texte propose un exercice explicite sans promettre de résultat mesuré.', excerpts: [copy.slice(0, 80)] }]));
+  const result = evaluateContentReadiness({
+    draft: { hook: 'Les équipes juridiques', body: copy, callToAction: null, factualClaims: [], opinionStatements: [copy] },
+    audit: { reviewedClaims: [], ungroundedStatements: [], forbiddenTopicMatches: [] },
+    critique: { qualityAssessment: qualityAssessment as never, genericPhrases: [], repeatedConcepts: [], callToActionAligned: true, distinctFromHistory: true, issues: [], summary: 'Prêt' },
+    availableEvidenceKeys: [],
+    evidenceExcerpts: [excerpt],
+    recentBodies: [],
+  });
+  expect(result.ready).toBe(false);
+  expect(result.blockers).toContain('source_paraphrase');
+});
+
+test('a monotonous paragraph carousel is not publishable', () => {
+  const result = evaluateContentReadiness({
+    draft: {
+      hook: 'Pour tester votre procédure',
+      body,
+      callToAction: null,
+      factualClaims: [],
+      opinionStatements: [body],
+      mediaPlan: {
+        format: 'linkedin_document',
+        visualTone: 'editorial',
+        title: 'Cinq décisions documentées',
+        subtitle: null,
+        altText: 'Carrousel',
+        slides: [
+          { layout: 'cover', kicker: 'Guide', title: 'Le signal ne suffit pas', body: 'Il faut relier chaque observation à une décision.', callout: null, items: [] },
+          { layout: 'insight', kicker: 'Constat', title: 'Observer', body: 'Observer le signal réel avant d’agir.', callout: null, items: [] },
+          { layout: 'insight', kicker: 'Preuve', title: 'Vérifier', body: 'Vérifier chaque fait dans le dossier.', callout: null, items: [] },
+          { layout: 'insight', kicker: 'Décision', title: 'Décider', body: 'Décider seulement avec le contexte.', callout: null, items: [] },
+          { layout: 'closing', kicker: null, title: 'La décision devient traçable', body: 'Le contexte reste attaché à l’action.', callout: 'Quelle décision documenter ?', items: [] },
+        ],
+        scenes: [],
+      },
+    },
+    audit: { reviewedClaims: [], ungroundedStatements: [], forbiddenTopicMatches: [] },
+    critique: { qualityAssessment: assessment() as never, genericPhrases: [], repeatedConcepts: [], callToActionAligned: true, distinctFromHistory: true, issues: [], summary: 'Prêt' },
+    availableEvidenceKeys: [],
+    recentBodies: [],
+  });
+  expect(result.ready).toBe(false);
+  expect(result.blockers).toContain('unpublishable_media');
+});

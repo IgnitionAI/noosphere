@@ -197,6 +197,49 @@ describe("PUB-101 durable LinkedIn publication", () => {
     expect(unknown).toHaveLength(0);
     expect(acknowledgements).toEqual(["job-fixture"]);
   });
+  test("rejects a scheduled carousel before storage access or publishing", async () => {
+    let providerCalls = 0;
+    const failures: unknown[] = [];
+    const unknown: unknown[] = [];
+    const acknowledgements: string[] = [];
+    const processor = new ContentPublicationJobProcessor(
+      {
+        async inspectExecution() { return "ready"; },
+        async claimExecution(input: { executionToken: string }) {
+          return {
+            publicationId,
+            executionToken: input.executionToken,
+            accountId: "account_fixture",
+            text: "Texte figé",
+            requestKey: "publish-media-fixture-2",
+            attempt: 1,
+            attachments: [{ ...mediaSnapshot({ checksumSha256: "0".repeat(64), sizeBytes: 8 }), kind: "document", mimeType: "application/pdf" }],
+          };
+        },
+        async markFailed(input: unknown) { failures.push(input); },
+        async markUnknown(input: unknown) { unknown.push(input); },
+      } as never,
+      accountResolver(),
+      {
+        async observeCapabilities() { return capabilityWithMedia(); },
+        async publishText() { providerCalls += 1; throw new Error("must not publish"); },
+        async publish() { providerCalls += 1; throw new Error("must not publish"); },
+      },
+      queue({ acknowledgements }),
+      () => now,
+      {
+        async put() { throw new Error("must not write"); },
+        async get() { throw new Error("must not read"); },
+      },
+    );
+
+    await processor.process(job());
+    expect(providerCalls).toBe(0);
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toMatchObject({ code: "CONTENT_FORMAT_UNAVAILABLE" });
+    expect(unknown).toHaveLength(0);
+    expect(acknowledgements).toEqual(["job-fixture"]);
+  });
 });
 
 const now = new Date("2026-08-20T10:00:00.000Z");

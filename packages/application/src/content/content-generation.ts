@@ -3,7 +3,7 @@ import { requireWorkspaceAi, type WorkspaceAiAvailability } from "@outbound/appl
 import type { JobQueue, LeasedJob } from "@outbound/application/jobs/job-queue";
 import type { EditorialStrategySnapshot } from "@outbound/domain/content/editorial-strategy";
 import type { ContentBrandKitSnapshot, LinkedinContentFormat } from "@outbound/domain/content/content-brand-kit";
-import { selectNextContentFormat } from "@outbound/domain/content/content-brand-kit";
+import { activeContentBrandKit, assertContentFormatAvailable, selectNextContentFormat } from "@outbound/domain/content/content-brand-kit";
 import type { EditorialStrategyGrounding } from "@outbound/application/content/editorial-strategy";
 import type { StoredContentMedia } from "@outbound/application/content/content-media";
 import { ContentMediaProducer } from "@outbound/application/content/content-media";
@@ -151,6 +151,9 @@ export class ContentGenerationJobProcessor {
     if (typeof payload.runId !== "string") throw new Error("CONTENT_GENERATION_JOB_INVALID");
     try {
       let context = await this.repository.loadContext({ workspaceId: job.workspaceId, runId: payload.runId });
+      context = { ...context, brandKit: activeContentBrandKit(context.brandKit) };
+      if (context.brief) assertContentFormatAvailable(context.brief.format);
+      if (context.draft?.mediaPlan) assertContentFormatAvailable(context.draft.mediaPlan.format);
       await this.repository.startRun({ workspaceId: job.workspaceId, runId: payload.runId, now: this.now() });
 
       if (stageAtOrBefore(context.run.stage, "brief")) {
@@ -170,9 +173,8 @@ export class ContentGenerationJobProcessor {
         if (!context.brief || !context.draft) throw new Error("CONTENT_DRAFT_CHECKPOINT_MISSING");
         let draft = context.draft;
         let audit = await this.agent.audit({ ...context, brief: context.brief, draft });
-        for (let repairAttempt = 1; repairAttempt <= 2; repairAttempt += 1) {
-          const auditFeedback = repairableAuditFeedback(audit);
-          if (auditFeedback.length === 0) break;
+        const auditFeedback = repairableAuditFeedback(audit);
+        if (auditFeedback.length > 0) {
           draft = await writeGroundedDraft(this.agent, { ...context, brief: context.brief, draft }, auditFeedback);
           await this.repository.reviseDraftAfterAudit({ workspaceId: job.workspaceId, runId: payload.runId, draft, now: this.now() });
           audit = await this.agent.audit({ ...context, brief: context.brief, draft });
@@ -186,36 +188,18 @@ export class ContentGenerationJobProcessor {
         let audit = context.audit;
         let critique = await this.agent.critique({ ...context, brief: context.brief, draft, audit });
         assertMediaPlanMatchesBrief(context.brief, draft);
-        let readiness = evaluateContentReadiness({
-          draft,
-          audit,
-          critique,
-          availableEvidenceKeys: context.evidence.map((item) => item.key),
-          recentBodies: context.recentBodies,
-        });
-        for (let repairAttempt = 1; repairAttempt <= 2 && !readiness.ready; repairAttempt += 1) {
+        let readiness = evaluateReadiness(context, draft, audit, critique);
+        if (!readiness.ready) {
           const critiqueFeedback = repairableCritiqueFeedback(critique, readiness);
-          if (critiqueFeedback.length === 0) break;
-          draft = await writeGroundedDraft(this.agent, { ...context, brief: context.brief, draft }, critiqueFeedback);
-          await this.repository.reviseDraftAfterCritique({ workspaceId: job.workspaceId, runId: payload.runId, draft, now: this.now() });
-          audit = await this.agent.audit({ ...context, brief: context.brief, draft });
-          for (let auditRepairAttempt = 1; auditRepairAttempt <= 2; auditRepairAttempt += 1) {
-            const auditFeedback = repairableAuditFeedback(audit);
-            if (auditFeedback.length === 0) break;
-            draft = await writeGroundedDraft(this.agent, { ...context, brief: context.brief, draft }, auditFeedback);
-            await this.repository.reviseDraftAfterAudit({ workspaceId: job.workspaceId, runId: payload.runId, draft, now: this.now() });
+          if (critiqueFeedback.length > 0) {
+            draft = await writeGroundedDraft(this.agent, { ...context, brief: context.brief, draft }, critiqueFeedback);
+            await this.repository.reviseDraftAfterCritique({ workspaceId: job.workspaceId, runId: payload.runId, draft, now: this.now() });
             audit = await this.agent.audit({ ...context, brief: context.brief, draft });
+            await this.repository.saveAudit({ workspaceId: job.workspaceId, runId: payload.runId, audit, now: this.now() });
+            critique = await this.agent.critique({ ...context, brief: context.brief, draft, audit });
+            assertMediaPlanMatchesBrief(context.brief, draft);
+            readiness = evaluateReadiness(context, draft, audit, critique);
           }
-          await this.repository.saveAudit({ workspaceId: job.workspaceId, runId: payload.runId, audit, now: this.now() });
-          critique = await this.agent.critique({ ...context, brief: context.brief, draft, audit });
-          assertMediaPlanMatchesBrief(context.brief, draft);
-          readiness = evaluateContentReadiness({
-            draft,
-            audit,
-            critique,
-            availableEvidenceKeys: context.evidence.map((item) => item.key),
-            recentBodies: context.recentBodies,
-          });
         }
         const media = readiness.ready && context.brief.format !== "linkedin_text"
           ? await this.#produceMedia({ ...context, draft, brief: context.brief })
@@ -267,6 +251,22 @@ async function writeGroundedDraft(
   throw new Error("CONTENT_DRAFT_REPAIR_EXHAUSTED");
 }
 
+function evaluateReadiness(
+  context: ContentGenerationContext,
+  draft: ContentDraftSnapshot,
+  audit: ContentEvidenceAudit,
+  critique: ContentEditorialCritique,
+) {
+  return evaluateContentReadiness({
+    draft,
+    audit,
+    critique,
+    availableEvidenceKeys: context.evidence.map((item) => item.key),
+    evidenceExcerpts: context.evidence.map((item) => item.excerpt),
+    recentBodies: context.recentBodies,
+  });
+}
+
 function repairableAuditFeedback(audit: ContentEvidenceAudit): readonly string[] {
   const feedback = [
     ...(audit.reviewedScenarios ?? []).filter((item) => item.verdict === "misleading").map((item) => `CONTENT_AUDIT_MISLEADING_SCENARIO: ${item.statement} — ${item.reason}`),
@@ -284,7 +284,7 @@ function repairableCritiqueFeedback(
   readiness: { readonly ready: boolean; readonly blockers: readonly string[] },
 ): readonly string[] {
   if (readiness.ready) return [];
-  const evidenceBlockers = new Set(["unaudited_claim", "unsupported_claim", "ungrounded_statement", "forbidden_topic"]);
+  const evidenceBlockers = new Set(["unaudited_claim", "unsupported_claim", "ungrounded_statement", "forbidden_topic", "unaudited_scenario", "misleading_scenario", "scenario_audit_invalid"]);
   if (readiness.blockers.some((blocker) => evidenceBlockers.has(blocker))) return [];
   const feedback = [
     ...Object.entries(critique.qualityAssessment ?? {})

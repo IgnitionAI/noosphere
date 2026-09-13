@@ -1,3 +1,4 @@
+import { assertContentFormatAvailable } from "@outbound/domain/content/content-brand-kit";
 import { and, count, desc, eq, gte, inArray, lt, lte, ne, or, sql } from "drizzle-orm";
 import type {
   ContentPublicationAccountSnapshot,
@@ -82,6 +83,7 @@ export class PostgresContentPublicationRepository implements ContentPublicationR
         eq(contentAssets.id, input.assetId),
       )).limit(1).for("update"))[0];
       if (!asset) throw new Error("CONTENT_ASSET_NOT_FOUND");
+      assertContentFormatAvailable(asset.type);
       if (asset.status !== "ready" || asset.latestVersion < 1) throw new Error("CONTENT_ASSET_NOT_READY");
       const version = (await tx.select().from(contentAssetVersions).where(and(
         eq(contentAssetVersions.workspaceId, input.workspaceId),
@@ -246,6 +248,7 @@ export class PostgresContentPublicationRepository implements ContentPublicationR
       if (replay) return toPublication(replay);
       const row = await lockedPublication(tx, input.workspaceId, input.publicationId);
       if (!row) throw new Error("CONTENT_PUBLICATION_NOT_FOUND");
+      assertContentFormatAvailable(contentSnapshot(row.contentSnapshot).format);
       if (!(["scheduled", "retry"] as const).includes(row.status as "scheduled" | "retry")) throw new Error("CONTENT_PUBLICATION_NOT_RESCHEDULABLE");
       const updated = (await tx.update(contentPublications).set({ scheduledFor: input.scheduledFor, status: "scheduled", lastErrorCode: null, lastErrorMessage: null, updatedAt: input.now }).where(and(eq(contentPublications.workspaceId, input.workspaceId), eq(contentPublications.id, row.id))).returning())[0]!;
       await tx.update(jobs).set({ status: "pending", availableAt: input.scheduledFor, lockedAt: null, lockedUntil: null, lockedBy: null, completedAt: null, lastErrorCode: null, lastErrorMessage: null, updatedAt: input.now }).where(and(eq(jobs.workspaceId, input.workspaceId), eq(jobs.type, CONTENT_PUBLICATION_JOB_TYPE), eq(jobs.idempotencyKey, `content-publication:${row.id}:v1`)));
@@ -285,6 +288,11 @@ export class PostgresContentPublicationRepository implements ContentPublicationR
         await appendEvent(tx, { workspaceId: input.workspaceId, userId: null, publicationId: row.id, eventType: "ContentPublicationResultUnknown", changes: { code: "CONTENT_PUBLICATION_LEASE_LOST" } });
         return "unknown";
       }
+      if ((row.status === "scheduled" || row.status === "retry") && contentSnapshot(row.contentSnapshot).format === "linkedin_document") {
+        await tx.update(contentPublications).set({ status: "failed", lastErrorCode: "CONTENT_FORMAT_UNAVAILABLE", lastErrorMessage: "Les carrousels ne sont plus disponibles.", updatedAt: input.now }).where(and(eq(contentPublications.workspaceId, input.workspaceId), eq(contentPublications.id, row.id)));
+        await appendEvent(tx, { workspaceId: input.workspaceId, userId: null, publicationId: row.id, eventType: "ContentPublicationFailed", changes: { code: "CONTENT_FORMAT_UNAVAILABLE" } });
+        return "terminal";
+      }
       return row.status === "scheduled" || row.status === "retry" ? "ready" : "terminal";
     });
   }
@@ -298,6 +306,7 @@ export class PostgresContentPublicationRepository implements ContentPublicationR
       if (row.attempts >= row.maxAttempts) throw new Error("CONTENT_PUBLICATION_ATTEMPTS_EXHAUSTED");
       const account = accountSnapshot(row.accountSnapshot);
       const content = contentSnapshot(row.contentSnapshot);
+      assertContentFormatAvailable(content.format);
       const policy = policySnapshot(row.policySnapshot);
       if (account.providerAccountId !== input.currentAccountId) throw new Error("CONTENT_PUBLICATION_ACCOUNT_CHANGED");
       if (policy.policyVersion !== "linkedin-publishing-v1" || policy.network !== "linkedin" || policy.claimsGate !== "passed") throw new Error("CONTENT_PUBLICATION_POLICY_INVALID");

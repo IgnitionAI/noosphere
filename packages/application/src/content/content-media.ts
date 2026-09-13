@@ -1,3 +1,4 @@
+import { assertContentFormatAvailable } from "@outbound/domain/content/content-brand-kit";
 import type { ContentBrandKitSnapshot, LinkedinContentFormat } from "@outbound/domain/content/content-brand-kit";
 import type { ContentDraftSnapshot, ContentMediaPlan } from "@outbound/domain/content/content-asset";
 
@@ -83,6 +84,7 @@ export class ContentMediaProducer {
     readonly draft: ContentDraftSnapshot;
     readonly brandKit: ContentBrandKitSnapshot;
   }): Promise<StoredContentMedia | null> {
+    assertContentFormatAvailable(input.format);
     if (input.format === "linkedin_text") return null;
     const plan = input.draft.mediaPlan;
     if (!plan || plan.format !== input.format || !plan.altText) throw new Error("CONTENT_MEDIA_PLAN_INVALID");

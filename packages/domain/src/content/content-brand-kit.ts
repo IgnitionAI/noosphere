@@ -69,11 +69,11 @@ export const DEFAULT_CONTENT_BRAND_KIT: ContentBrandKitSnapshot = {
     rationale: null,
   },
   typography: "inter",
-  enabledFormats: ["linkedin_text", "linkedin_image", "linkedin_document"],
+  enabledFormats: ["linkedin_text", "linkedin_image"],
   weeklyMix: {
     linkedin_text: 6,
     linkedin_image: 5,
-    linkedin_document: 3,
+    linkedin_document: 0,
     linkedin_video: 0,
   },
   imageStyle: "editorial",
@@ -155,10 +155,26 @@ function relativeLuminance(hex: string): number {
   return channels[0]! * 0.2126 + channels[1]! * 0.7152 + channels[2]! * 0.0722;
 }
 
+/** Retain historical document snapshots, but never select them for new content. */
+export function activeContentBrandKit(snapshot: ContentBrandKitSnapshot): ContentBrandKitSnapshot {
+  const enabledFormats = snapshot.enabledFormats.filter((format) => format !== "linkedin_document");
+  return {
+    ...snapshot,
+    enabledFormats: enabledFormats.length ? enabledFormats : ["linkedin_text"],
+    weeklyMix: { ...snapshot.weeklyMix, linkedin_document: 0,
+      ...(enabledFormats.length ? {} : { linkedin_text: 1 }) },
+  };
+}
+
+export function assertContentFormatAvailable(format: string): void {
+  if (format === "linkedin_document") throw new Error("CONTENT_FORMAT_UNAVAILABLE");
+}
+
 export function enabledFormatMix(snapshot: ContentBrandKitSnapshot): readonly {
   readonly format: LinkedinContentFormat;
   readonly target: number;
 }[] {
+  snapshot = activeContentBrandKit(snapshot);
   assertContentBrandKit(snapshot);
   return snapshot.enabledFormats.map((format) => ({ format, target: snapshot.weeklyMix[format] }));
 }

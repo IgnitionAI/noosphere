@@ -22,9 +22,9 @@ describe("LangChainEditorialStrategyGenerator", () => {
     expect(invocations[0]).toEqual({ attempt: 1, validationIssues: [] });
     expect(invocations[1]!.validationIssues.length).toBeGreaterThan(0);
     expect(result.snapshot.pillars).toHaveLength(3);
-    expect(result.metadata).toMatchObject({ provider: "kimi-code", model: "k3", promptVersion: "noosphere-editorial-strategy-v2" });
+    expect(result.metadata).toMatchObject({ provider: "kimi-code", model: "k3", promptVersion: "noosphere-editorial-strategy-v3" });
     expect(recorded).toHaveLength(1);
-    expect(recorded[0]).toMatchObject({ status: "completed", output: snapshot(), promptVersion: "noosphere-editorial-strategy-v2" });
+    expect(recorded[0]).toMatchObject({ status: "completed", output: snapshot(), promptVersion: "noosphere-editorial-strategy-v3" });
   });
 
   test("fails with a stable error and a sanitized AI run after the bounded retry", async () => {
