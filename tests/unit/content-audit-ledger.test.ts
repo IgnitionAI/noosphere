@@ -69,7 +69,7 @@ test("does not invalidate field coverage by promoting a claim repeated in an unr
 
 test("retains the uncovered finding while synchronizing an independent fully reviewed span", () => {
   const independent = "La recherche utilise les droits du lecteur.";
-  const candidate = {...draft, body: statement, mediaPlan: {...draft.mediaPlan, title: independent}};
+  const candidate = {...draft, body: statement, mediaPlan: {...draft.mediaPlan!, title: independent}};
   const reviewed = fixtureAuditCoverage(candidate, {...assessment,
     reviewedClaims: [...assessment.reviewedClaims, {...assessment.reviewedClaims[0]!, statement: independent}],
     ungroundedStatements: [statement, independent],

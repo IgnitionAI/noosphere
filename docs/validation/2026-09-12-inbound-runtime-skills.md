@@ -882,3 +882,6 @@ Red regression reproduced current-to-invalid coverage. Targeted ledger/readiness
 
 
 Full `bun run check` passed for the ledger-promotion correction (`/tmp/noosphere-ledger-repeat-check.log`), followed by the added partial-promotion regression (13ledger tests,24assertions). The dedicated local PostgreSQL content-generation suite passed3tests/150assertions (`/tmp/noosphere-ledger-repeat-integration.log`). GitHub Check run34744273004 completed successfully on d9ccd81226ce51062738ae98dd006977c4f13881, covering the previously pushed audit-classification change. The punctuation and ledger-promotion commits require their own subsequent PR-head CI; this successful run does not cover them.
+
+
+CI34744825565 failed at TypeScript on4be3a54: the additional mixed ledger-promotion test spread a mediaPlan typed as optional, making its required format appear optional. This test was added after the earlier full check, which therefore did not cover its typing. The fixture explicitly initializes mediaPlan; a non-null assertion on that known fixture fixes the test construction without changing runtime behavior. `bun run check:types` and13ledger tests/24assertions pass after the fix. Integration and browser steps were skipped in the failed run and require the new head CI. Dependency audits in that failed run passed independently.
