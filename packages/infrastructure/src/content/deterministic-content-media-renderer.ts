@@ -4,7 +4,7 @@ import { PDFDocument } from "pdf-lib";
 import sharp from "sharp";
 import type { ContentMediaRenderer } from "@outbound/application/content/content-media";
 import type { ContentBrandKitSnapshot } from "@outbound/domain/content/content-brand-kit";
-import type { ContentMediaPlan } from "@outbound/domain/content/content-asset";
+import { wrapCarouselText, type ContentMediaPlan } from "@outbound/domain/content/content-asset";
 
 const WIDTH = 1080;
 const HEIGHT = 1350;
@@ -240,9 +240,9 @@ function renderLayoutContent(input: {
 }
 
 function renderCover(input: Parameters<typeof renderLayoutContent>[0]): string {
-  const title = wrap(input.input.title, 19, 5);
+  const title = wrap(input.input.title, 16, 5);
   const body = wrap(input.input.body, 34, 4);
-  const kicker = input.input.kicker ?? "DOSSIER PRATIQUE";
+  const kicker = (input.input.kicker ?? "DOSSIER PRATIQUE").slice(0, 22);
   return `
     <rect x="88" y="184" width="${Math.min(430, 72 + kicker.length * 16)}" height="52" rx="26" fill="${input.accent}"/>
     <text x="116" y="218" font-family="${input.fontFamily}" font-size="20" font-weight="780" letter-spacing="1.8" fill="${input.primary}">${escapeText(kicker.toUpperCase())}</text>
@@ -374,17 +374,7 @@ function mediaResult(bytes: Uint8Array, mimeType: "image/png", filename: string,
 }
 
 function wrap(value: string, maxCharacters: number, maxLines: number): readonly string[] {
-  const words = value.trim().replace(/\s+/g, " ").split(" ").filter(Boolean);
-  const lines: string[] = [];
-  for (const word of words) {
-    const current = lines.at(-1);
-    if (!current || `${current} ${word}`.length > maxCharacters) lines.push(word);
-    else lines[lines.length - 1] = `${current} ${word}`;
-    if (lines.length > maxLines) break;
-  }
-  const retained = lines.slice(0, maxLines);
-  if (lines.length > maxLines && retained.length) retained[retained.length - 1] = `${retained.at(-1)!.replace(/[.…]+$/, "")}…`;
-  return retained.length ? retained : [""];
+  return wrapCarouselText(value, maxCharacters, maxLines);
 }
 
 function tspans(lines: readonly string[], firstY: number, lineHeight: number, x = 88): string {

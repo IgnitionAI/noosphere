@@ -3,7 +3,7 @@ import type { LinkedinContentFormat } from "@outbound/domain/content/content-bra
 export const contentGenerationStages = ["brief", "writer", "audit", "critic", "completed"] as const;
 export type ContentGenerationStage = (typeof contentGenerationStages)[number];
 
-export const CONTENT_EDITORIAL_POLICY_VERSION = "linkedin-editorial-v3";
+export const CONTENT_EDITORIAL_POLICY_VERSION = "linkedin-editorial-v4";
 
 export const editorialQualityCriteria = ["audienceRelevance", "readerValue", "coherence", "sourceAttribution", "ctaTruthfulness", "brandVoice", "distinctness"] as const;
 export type ContentQualityAssessment = Readonly<Record<(typeof editorialQualityCriteria)[number], {
@@ -204,12 +204,29 @@ function contentPublicText(draft: ContentDraftSnapshot, omitStructuralNumbers = 
   ].filter((value): value is string => Boolean(value)).join("\n");
 }
 
+export function wrapCarouselText(value: string, maxCharacters: number, maxLines: number): readonly string[] {
+  const words = value.trim().replace(/\s+/g, " ").split(" ").filter(Boolean);
+  const lines: string[] = [];
+  for (const word of words) {
+    for (const piece of splitLongToken(word, maxCharacters)) {
+      const current = lines.at(-1);
+      if (!current || `${current} ${piece}`.length > maxCharacters) lines.push(piece);
+      else lines[lines.length - 1] = `${current} ${piece}`;
+    }
+    if (lines.length > maxLines) break;
+  }
+  const retained = lines.slice(0, maxLines);
+  if (lines.length > maxLines && retained.length) retained[retained.length - 1] = `${retained.at(-1)!.replace(/[.…]+$/, "")}…`;
+  return retained.length ? retained : [""];
+}
+
 export function evaluateContentReadiness(input: {
   readonly draft: ContentDraftSnapshot;
   readonly audit: ContentEvidenceAudit;
   readonly critique: ContentEditorialCritique;
   readonly availableEvidenceKeys: readonly string[];
   readonly recentBodies: readonly string[];
+  readonly evidenceExcerpts?: readonly string[];
 }): { readonly ready: boolean; readonly blockers: readonly string[] } {
   assertGroundedContentDraft(input.draft, input.availableEvidenceKeys);
   const blockers = new Set<string>();
@@ -275,8 +292,81 @@ export function evaluateContentReadiness(input: {
   ) blockers.add("repetition");
   if (!input.critique.callToActionAligned) blockers.add("cta_misaligned");
   if (input.critique.issues.some((issue) => issue.severity === "blocker")) blockers.add("editorial_blocker");
+  if (isSourceParaphrase(input.draft.body, input.evidenceExcerpts ?? [])) blockers.add("source_paraphrase");
+  if (unpublishableMediaReasons(input.draft).length > 0) blockers.add("unpublishable_media");
 
   return { ready: blockers.size === 0, blockers: [...blockers] };
+}
+
+function unpublishableMediaReasons(draft: ContentDraftSnapshot): readonly string[] {
+  const plan = normalizedMediaPlan(draft);
+  if (plan.format === "linkedin_text") return [];
+  const reasons: string[] = [];
+  if (!plan.title || genericVisualTitle(plan.title)) reasons.push("generic_title");
+  if (plan.format === "linkedin_image") {
+    if ((plan.subtitle ?? "").length > 220) reasons.push("too_dense");
+    return reasons;
+  }
+  if (plan.format === "linkedin_video") {
+    if (plan.scenes.some((scene) => scene.body.length > 180 || scene.title.length > 80)) reasons.push("too_dense");
+    return reasons;
+  }
+  const slides = plan.slides;
+  const titles = slides.map((slide) => normalize(slide.title));
+  if (new Set(titles).size !== titles.length) reasons.push("duplicate_slide");
+  if (slides.some((slide) => substantiallySimilar(slide.body, draft.body))) reasons.push("visual_copies_body");
+  const middleLayouts = [...new Set(slides.slice(1, -1).map((slide, index) => inferredSlideLayout(slide, index + 1, slides.length)))];
+  const structured = slides.filter((slide) => (slide.items?.length ?? 0) >= 2 && (slide.items?.length ?? 0) <= 4);
+  if (middleLayouts.length < 2 || structured.length < 1) reasons.push("monotone_carousel");
+  if (slides.some((slide) => slideTooDense(slide))) reasons.push("too_dense");
+  return reasons;
+}
+
+function inferredSlideLayout(
+  slide: ContentMediaPlan["slides"][number],
+  index: number,
+  total: number,
+): "cover" | "insight" | "checklist" | "framework" | "comparison" | "process" | "closing" {
+  if (index === 0) return "cover";
+  if (index === total - 1) return "closing";
+  if (slide.layout && slide.layout !== "auto" && slide.layout !== "cover" && slide.layout !== "closing") return slide.layout;
+  const count = slide.items?.length ?? 0;
+  if (count === 2) return "comparison";
+  if (count >= 3) return index % 2 === 0 ? "framework" : "process";
+  if (slide.callout) return "insight";
+  return index % 2 === 0 ? "checklist" : "insight";
+}
+
+function slideTooDense(slide: ContentMediaPlan["slides"][number]): boolean {
+  const itemText = (slide.items ?? []).reduce((sum, item) => sum + item.label.length + item.text.length, 0);
+  return slide.title.length > 80 || slide.body.length > 220 || itemText > 520 || Boolean(slide.callout && slide.callout.length > 160);
+}
+
+function genericVisualTitle(title: string): boolean {
+  return ["insight", "idee", "point cle", "carousel", "carrousel", "slide", "titre", "visual", "visuel"].includes(normalize(title));
+}
+
+function isSourceParaphrase(body: string, excerpts: readonly string[]): boolean {
+  const combined = excerpts.map((excerpt) => excerpt.trim()).filter(Boolean).join("\n");
+  if (!combined) return false;
+  if (excerpts.some((excerpt) => excerpt.trim().length >= 40 && substantiallySimilar(body, excerpt))) return true;
+  const bodyTokens = meaningfulTokens(body);
+  const sourceTokens = meaningfulTokens(combined);
+  if (bodyTokens.size < 8 || sourceTokens.size === 0) return false;
+  let overlap = 0;
+  for (const token of bodyTokens) if (sourceTokens.has(token)) overlap += 1;
+  return overlap / bodyTokens.size >= 0.72;
+}
+
+function meaningfulTokens(value: string): Set<string> {
+  return new Set(lexicalTokens(value).filter((token) => token.length >= 4 && !similarityStopWords.has(token)));
+}
+
+function splitLongToken(word: string, maxCharacters: number): readonly string[] {
+  if (word.length <= maxCharacters) return [word];
+  const parts: string[] = [];
+  for (let index = 0; index < word.length; index += maxCharacters) parts.push(word.slice(index, index + maxCharacters));
+  return parts;
 }
 
 function reviewedClaimCoversDraftClaim(

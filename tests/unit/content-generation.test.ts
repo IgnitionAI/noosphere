@@ -229,7 +229,7 @@ describe("CNT-101 grounded content pipeline", () => {
     expect(calls).toEqual(["start", "audit", "audit_saved", "critic", "ready", "ack"]);
   });
 
-  test("repairs a repeatedly audit-rejected draft with a bounded second pass before the critic sees it", async () => {
+  test("repairs a repeatedly audit-rejected draft once, then finalizes as blocked", async () => {
     const calls: string[] = [];
     const feedback: Array<readonly string[] | undefined> = [];
     const context = pipelineContext("audit");
@@ -260,9 +260,8 @@ describe("CNT-101 grounded content pipeline", () => {
 
     expect(feedback).toEqual([
       ["CONTENT_AUDIT_UNGROUNDED_STATEMENT: Le hook factuel manque au registre (audit 1)."],
-      ["CONTENT_AUDIT_UNGROUNDED_STATEMENT: Le hook factuel manque au registre (audit 2)."],
     ]);
-    expect(calls).toEqual(["start", "audit", "writer_repair", "draft_repaired", "audit", "writer_repair", "draft_repaired", "audit", "audit_saved", "critic", "ready", "ack"]);
+    expect(calls).toEqual(["start", "audit", "writer_repair", "draft_repaired", "audit", "audit_saved", "critic", "blocked", "ack"]);
   });
 
   test.each(["issue", "assessment"] as const)("repairs a critic rejection from %s and re-audits before readiness", async (kind) => {
@@ -300,6 +299,43 @@ describe("CNT-101 grounded content pipeline", () => {
       ? [["CONTENT_CRITIQUE_BLOCKER [META_FRAMING_LABELS]: Supprimer le méta-discours et écrire le fait directement."]]
       : [["CONTENT_CRITIQUE_BLOCKER [readerValue]: Expliquer une décision concrète que le lecteur peut prendre.", "CONTENT_READINESS_BLOCKER: editorial_readerValue"]]);
     expect(calls).toEqual(["start", "audit", "audit_saved", "critic", "writer_repair", "draft_repaired_after_critique", "audit", "audit_saved", "critic", "ready", "ack"]);
+  });
+
+  test("does not nest extra audit rewrites inside a critic repair", async () => {
+    const calls: string[] = [];
+    const context = pipelineContext("audit");
+    const repository = {
+      async loadContext() { return context; },
+      async startRun() { calls.push("start"); },
+      async reviseDraftAfterCritique() { calls.push("draft_repaired_after_critique"); },
+      async reviseDraftAfterAudit() { calls.push("nested_audit_repair"); },
+      async saveAudit() { calls.push("audit_saved"); },
+      async completeRun(input: { readiness: { ready: boolean } }) { calls.push(input.readiness.ready ? "ready" : "blocked"); },
+      async failRun() {},
+    } as unknown as ContentGenerationRepository;
+    const queue = { async acknowledge() { calls.push("ack"); } } as unknown as JobQueue;
+    let criticAttempt = 0;
+    let auditAttempt = 0;
+    const processor = new ContentGenerationJobProcessor(repository, {
+      async buildBrief() { throw new Error("brief must not replay"); },
+      async write() { calls.push("writer_repair"); return draft(); },
+      async audit() {
+        calls.push("audit");
+        auditAttempt += 1;
+        return auditAttempt === 1 ? audit() : { ...audit(), ungroundedStatements: ["Une capacité produit a été ajoutée sans preuve."] };
+      },
+      async critique() {
+        calls.push("critic");
+        criticAttempt += 1;
+        return criticAttempt === 1
+          ? { ...critique(), issues: [{ severity: "blocker" as const, code: "NO_ACTIONABLE_ADVICE", message: "Ajouter une action exécutable." }] }
+          : critique();
+      },
+    }, queue);
+
+    await processor.process(job(context.run.workspaceId, context.run.id));
+
+    expect(calls).toEqual(["start", "audit", "audit_saved", "critic", "writer_repair", "draft_repaired_after_critique", "audit", "audit_saved", "critic", "blocked", "ack"]);
   });
 
   test("preserves editorial feedback when a repair itself needs deterministic correction", async () => {

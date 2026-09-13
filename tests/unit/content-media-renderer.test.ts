@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { PDFDocument } from "pdf-lib";
 import sharp from "sharp";
 import { DeterministicContentMediaRenderer } from "@outbound/infrastructure/content/deterministic-content-media-renderer";
+import { wrapCarouselText } from "@outbound/domain/content/content-asset";
 import { DEFAULT_CONTENT_BRAND_KIT } from "@outbound/domain/content/content-brand-kit";
 
 describe("DeterministicContentMediaRenderer", () => {
@@ -70,6 +71,10 @@ describe("DeterministicContentMediaRenderer", () => {
     });
     expect(new Bun.CryptoHasher("sha256").update(branded.bytes).digest("hex")).not.toBe(new Bun.CryptoHasher("sha256").update(plain.bytes).digest("hex"));
     expect(branded.manifest).toMatchObject({ logo: true });
+  });
+
+  test("breaks overlong carousel words instead of overflowing the card", () => {
+    expect(wrapCarouselText("Anticonstitutionnellement inapplicable", 12, 3).every((line) => line.length <= 12)).toBe(true);
   });
 
   test("renders a LinkedIn carousel as a multi-page PDF document", async () => {
