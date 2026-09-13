@@ -19,12 +19,23 @@ export function contentAuditModelSpec(context: unknown, system: string) {
   const declarationShape: Record<string, typeof declarationReview> = Object.fromEntries(declaredOccurrences.map(item => [item.id, declarationReview]));
   const schema = z.object({
     declarationReviews: z.object(declarationShape).strict(),
-    passageReviews: z.array(z.object({
-      passageId: z.enum(publicPassages.map(p => p.id) as [string, ...string[]]),
-      classification: z.enum(["factual", "non_factual", "mixed"]),
-      nonFactualReason: z.string().min(20).max(1_000).nullable(),
-      claims: z.array(claim).max(30),
-    }).strict()).length(publicPassages.length),
+    passageReviews: z.array(z.union([
+      z.object({
+        passageId: z.enum(publicPassages.map(p => p.id) as [string, ...string[]]),
+        classification: z.literal("factual"), nonFactualReason: z.null(),
+        claims: z.array(claim).min(1).max(30),
+      }).strict(),
+      z.object({
+        passageId: z.enum(publicPassages.map(p => p.id) as [string, ...string[]]),
+        classification: z.literal("non_factual"), nonFactualReason: z.string().min(20).max(1_000),
+        claims: z.array(claim).max(0),
+      }).strict(),
+      z.object({
+        passageId: z.enum(publicPassages.map(p => p.id) as [string, ...string[]]),
+        classification: z.literal("mixed"), nonFactualReason: z.string().min(20).max(1_000),
+        claims: z.array(claim).min(1).max(30),
+      }).strict(),
+    ])).length(publicPassages.length),
     reviewedScenarios: z.array(z.object({ statement: z.string().min(20).max(600), verdict: z.enum(["hypothetical", "misleading"]), reason: z.string().min(20).max(1_000) }).strict()).max(2),
     forbiddenTopicMatches: z.array(z.string().min(2).max(500)).max(20),
   }).strict();

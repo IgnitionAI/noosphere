@@ -217,7 +217,7 @@ describe("LangChainContentPipelineAgent", () => {
     expect(recorded.map(({ purpose, model, promptVersion, contentGenerationRunId }) => ({ purpose, model, promptVersion, contentGenerationRunId }))).toEqual([
       { purpose: "content_brief", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-brief-v11", contentGenerationRunId: context.run.id },
       { purpose: "content_writer", model: "k3", promptVersion: "noosphere-content-writer-v31", contentGenerationRunId: context.run.id },
-      { purpose: "content_audit", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-audit-v10", contentGenerationRunId: context.run.id },
+      { purpose: "content_audit", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-audit-v11", contentGenerationRunId: context.run.id },
       { purpose: "content_critic", model: "k3", promptVersion: "noosphere-content-critic-v21", contentGenerationRunId: context.run.id },
     ]);
   });
@@ -435,6 +435,25 @@ test("re-audits corrected copy without presenting the previous audit as current 
   } } as unknown as WorkspaceStructuredModel;
   await new LangChainContentPipelineAgent({}, undefined, undefined, undefined, routed).audit(context);
   expect(context.audit).toEqual(previous);
+});
+
+test("exposes consistent factual classifications in the provider schema", async () => {
+  const candidate = contentDraftSnapshotSchema.parse(draft());
+  const routed = { async invoke(input: {schema: z.ZodType; payload: unknown}) {
+    const valid = modelAudit(input.payload);
+    const review = valid.passageReviews[0]!;
+    const assess = (replacement: unknown) => input.schema.safeParse({...valid, passageReviews: [replacement]}).success;
+    expect(assess(review)).toBe(true);
+    expect(assess({...review, classification: "mixed", claims: []})).toBe(false);
+    expect(assess({...review, classification: "factual", claims: [], nonFactualReason: null})).toBe(false);
+    expect(assess({...review, classification: "factual", nonFactualReason: null})).toBe(true);
+    expect(assess({...review, classification: "factual"})).toBe(false);
+    expect(assess({...review, classification: "non_factual"})).toBe(false);
+    expect(assess({...review, classification: "non_factual", claims: []})).toBe(true);
+    expect(assess({...review, classification: "non_factual", claims: [], nonFactualReason: null})).toBe(false);
+    return {output: valid, metadata: {provider: "codex-cli", model: "gpt-5.6-luna"}};
+  }} as unknown as WorkspaceStructuredModel;
+  await new LangChainContentPipelineAgent({}, undefined, undefined, undefined, routed).audit({...pipelineContext(), brief: brief(), draft: candidate});
 });
 
 test("rejects missing, duplicated, invented or ungrounded audit coverage", async () => {
