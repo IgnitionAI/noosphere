@@ -70,6 +70,24 @@ export interface ContentDraftSnapshot {
 }
 
 export interface ContentEvidenceAudit {
+  /** Present on current complete audits; historical snapshots remain readable. */
+  readonly coverage?: {
+    readonly version: 1;
+    readonly evidenceFingerprint: string;
+    readonly passages: readonly {
+      readonly field: string;
+      readonly text: string;
+      readonly classification: "factual" | "non_factual" | "mixed";
+      readonly nonFactualReason: string | null;
+      readonly claims: readonly {
+        readonly statement: string;
+        readonly kind: "factual" | "attribution";
+        readonly sourceKeys: readonly string[];
+        readonly verdict: "supported" | "unsupported";
+        readonly reason: string;
+      }[];
+    }[];
+  } | undefined;
   readonly reviewedScenarios?: readonly {
     readonly statement: string;
     readonly verdict: "hypothetical" | "misleading";
@@ -198,7 +216,7 @@ export function contentPublicText(draft: ContentDraftSnapshot, omitStructuralNum
   return contentPublicFields(draft, omitStructuralNumbers).map(entry => entry.text).join("\n");
 }
 
-function contentPublicFields(draft: ContentDraftSnapshot, omitStructuralNumbers = false) {
+export function contentPublicFields(draft: ContentDraftSnapshot, omitStructuralNumbers = false) {
   const plan = normalizedMediaPlan(draft);
   const titles = plan.slides.map(slide => slide.title);
   const slideTitles = omitStructuralNumbers ? stripOrderedListMarkers(titles) : titles;

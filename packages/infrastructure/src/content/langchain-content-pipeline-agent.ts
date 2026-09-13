@@ -1,3 +1,4 @@
+import { contentAuditModelSpec } from "./content-audit-coverage";
 import { claimLedgerModelSpec } from "./content-claim-ledger-repair";
 import { DOCUMENT_WRITING_LAYOUT_CONSTRAINTS } from "./content-document-layout";
 import { AiTaskPauseError } from "@outbound/application/ai/ai-task-pause";
@@ -87,7 +88,7 @@ export class LangChainContentPipelineAgent implements ContentPipelineAgent {
       model,
       promptVersion: role === "writer"
         ? "noosphere-content-writer-v29"
-        : role === "critic" ? "noosphere-content-critic-v20" : role === "audit" ? "noosphere-content-audit-v7" : "noosphere-content-brief-v10",
+        : role === "critic" ? "noosphere-content-critic-v20" : role === "audit" ? "noosphere-content-audit-v8" : "noosphere-content-brief-v10",
       shadow: false,
       inputHash: new Bun.CryptoHasher("sha256").update(JSON.stringify(original)).digest("hex"),
       output: recordedOutput,
@@ -302,22 +303,16 @@ function pipelineModelSpec(role: PipelineRole, context: unknown) {
     ].join("\n"),
     context,
   };
-  if (role === "audit") return {
-    name: "submit_evidence_audit",
-    description: "Submit an adversarial evidence audit of every factual LinkedIn statement.",
-    schema: contentEvidenceAuditSchema,
-    system: [
+  if (role === "audit") return contentAuditModelSpec(context, [
       "You are Noosphere's bounded evidence auditor, independent from the writer.",
       ...editorialPlaybook.audit,
       "Inspect the full draft sentence by sentence. Review every factual claim, number, capability and outcome against the exact supplied evidence excerpts.",
       "The media plan is public content too. Audit its title, subtitle, slides and scenes with the same strictness as body.",
       "For substantive factual claims, a source key is not enough: mark unsupported when its excerpt does not prove the wording. Verify bibliographic credits against source title, URL and excerpt as instructed, including credits already listed in factualClaims. A hosting platform does not establish author affiliation or institutional endorsement. Never repair, rewrite or excuse a claim.",
-      "Conversely, a factual claim that is a faithful verbatim excerpt of an active supplied source must be supported. Never return verdict unsupported with a reason saying the source proves or repeats the statement exactly.",
-      "List factual statements omitted from the writer's claim ledger as ungroundedStatements. Match forbidden topics exactly and conservatively.",
+      "Evaluate a quotation in its public context; matching source text alone does not prove implied attribution, scope or endorsement.",
+      "Review omitted factual claims with supported or unsupported verdicts too. Match forbidden topics exactly and conservatively.",
       "Do not schedule or publish. Call submit_evidence_audit exactly once.",
-    ].join("\n"),
-    context,
-  };
+    ].join("\n"));
   return {
     name: "submit_editorial_critique",
     description: "Submit the independent final anti-generic editorial critique.",

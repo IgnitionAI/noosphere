@@ -226,6 +226,17 @@ export const contentBrandDirectionProposalSchema = z.object({
 }).strict();
 
 export const contentEvidenceAuditSchema: z.ZodType<ContentEvidenceAudit> = z.object({
+  coverage: z.object({
+    version: z.literal(1), evidenceFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    passages: z.array(z.object({
+      field: z.string().min(1), text: z.string().min(1),
+      classification: z.enum(["factual", "non_factual", "mixed"]),
+      nonFactualReason: z.string().nullable(), claims: z.array(z.object({
+        statement: z.string().min(3).max(1_000), kind: z.enum(["factual", "attribution"]),
+        sourceKeys: z.array(z.string()).max(12), verdict: z.enum(["supported", "unsupported"]), reason: z.string().min(3).max(1_000),
+      }).strict()).max(30),
+    }).strict()).min(1),
+  }).strict().optional(),
   reviewedScenarios: z.array(z.object({
     statement: z.string().trim().min(20).max(600),
     verdict: z.enum(["hypothetical", "misleading"]),

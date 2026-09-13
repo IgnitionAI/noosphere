@@ -1,6 +1,6 @@
 # Complete audit coverage for unchanged Inbound content
 
-Status: design from native failure evidence; not implemented or accepted for deployment.
+Status: field-aware audit response and coverage receipt implemented; readiness enforcement, synchronization, historical-checkpoint handling and prior-finding resolution remain unimplemented. Not accepted for deployment.
 
 ## Problem
 
