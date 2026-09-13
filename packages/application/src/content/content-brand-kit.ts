@@ -1,6 +1,6 @@
 import { requireWorkspaceAi, type WorkspaceAiAvailability } from "@outbound/application/ai/ai-availability";
 import type { ContentBrandKitSnapshot, ContentBrandPaletteContrast } from "@outbound/domain/content/content-brand-kit";
-import { assertContentBrandKit, contentBrandPaletteContrast, DEFAULT_CONTENT_BRAND_KIT } from "@outbound/domain/content/content-brand-kit";
+import { activeContentBrandKit, assertContentBrandKit, contentBrandPaletteContrast, DEFAULT_CONTENT_BRAND_KIT } from "@outbound/domain/content/content-brand-kit";
 
 export interface ContentBrandKitView {
   readonly workspaceId: string;
@@ -112,6 +112,7 @@ export class ContentBrandKitApplication {
     const replay = await this.repository.findRequest({ workspaceId: input.workspaceId, requestKey: input.requestKey });
     if (replay) return replay;
     assertContentBrandKit(input.snapshot);
+    input = { ...input, snapshot: activeContentBrandKit(input.snapshot) };
     if (input.snapshot.logo && !input.snapshot.logo.objectKey.startsWith(`${input.workspaceId}/brand-assets/`)) {
       throw new Error("CONTENT_BRAND_KIT_LOGO_WORKSPACE_MISMATCH");
     }

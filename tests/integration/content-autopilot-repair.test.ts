@@ -22,6 +22,7 @@ import { PostgresContentPublicationRepository } from "@outbound/infrastructure/c
 import { PostgresOperationalViews } from "@outbound/infrastructure/workspaces/postgres-operational-views";
 import { ContentAutopilotReconciler } from "@outbound/application/content/content-autopilot";
 import type { ContentPublicationApplication } from "@outbound/application/content/content-publications";
+import { CONTENT_EDITORIAL_POLICY_VERSION } from "@outbound/domain/content/content-asset";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const databaseDescribe = databaseUrl ? describe : describe.skip;
@@ -183,7 +184,7 @@ databaseDescribe("AUT-101 bounded automatic editorial repair", () => {
     expect(await reconciler.reconcile()).toBe(1);
     expect(await autopilot.listRepairCandidates({ workspaceId, strategyVersionId, limit: 10 })).toEqual([]);
 
-    const firstRepair = await generation.findRequest({ workspaceId, operation: "asset.improve", requestKey: `autopilot:repair:${initial.assetId}:linkedin-editorial-v3:v1` });
+    const firstRepair = await generation.findRequest({ workspaceId, operation: "asset.improve", requestKey: `autopilot:repair:${initial.assetId}:${CONTENT_EDITORIAL_POLICY_VERSION}:v1` });
     expect(firstRepair?.instruction).toContain("ungrounded_statement");
     await completeBlocked(firstRepair!.id, new Date(now.getTime() + 1_000));
     expect(await autopilot.listRepairCandidates({ workspaceId, strategyVersionId, limit: 10 })).toEqual([
@@ -191,7 +192,7 @@ databaseDescribe("AUT-101 bounded automatic editorial repair", () => {
     ]);
 
     expect(await reconciler.reconcile()).toBe(1);
-    const secondRepair = await generation.findRequest({ workspaceId, operation: "asset.improve", requestKey: `autopilot:repair:${initial.assetId}:linkedin-editorial-v3:v2` });
+    const secondRepair = await generation.findRequest({ workspaceId, operation: "asset.improve", requestKey: `autopilot:repair:${initial.assetId}:${CONTENT_EDITORIAL_POLICY_VERSION}:v2` });
     await completeBlocked(secondRepair!.id, new Date(now.getTime() + 2_000));
     expect(await reconciler.reconcile()).toBe(0);
     expect(await autopilot.listRepairCandidates({ workspaceId, strategyVersionId, limit: 10 })).toEqual([]);

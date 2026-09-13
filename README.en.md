@@ -44,7 +44,7 @@ See the [Prospect 360 validation report](docs/performance/2026-08-23-prospect-36
 - editorial strategy derived from the offer, ICP and brand kit;
 - daily sourced and deduplicated idea discovery;
 - `brief → writer → evidence audit → critic` pipeline;
-- text posts, images and carousels;
+- text posts and images;
 - configurable calendar, durable publishing and provider reconciliation;
 - reaction, comment and reply ingestion for attribution.
 

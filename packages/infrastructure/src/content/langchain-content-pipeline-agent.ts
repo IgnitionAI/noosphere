@@ -95,8 +95,8 @@ export class LangChainContentPipelineAgent implements ContentPipelineAgent {
       provider,
       model,
       promptVersion: role === "writer"
-        ? "noosphere-content-writer-v8"
-        : role === "critic" ? "noosphere-content-critic-v6" : role === "audit" ? "noosphere-content-audit-v6" : "noosphere-content-brief-v5",
+        ? "noosphere-content-writer-v9"
+        : role === "critic" ? "noosphere-content-critic-v6" : role === "audit" ? "noosphere-content-audit-v6" : "noosphere-content-brief-v6",
       shadow: false,
       inputHash: new Bun.CryptoHasher("sha256").update(JSON.stringify(original)).digest("hex"),
       output,
@@ -158,7 +158,7 @@ function pipelineModelSpec(role: PipelineRole, context: unknown) {
       ...editorialPlaybook.brief,
       "Turn the supplied idea into one precise brief. Use only exact evidence keys and authorized claim IDs from the input.",
       "The problem, angle and objective must be specific to the offer and audience. Choose only a CTA from the strategy, or null.",
-      "Choose exactly one format enabled by brandKit. Use its weeklyMix and recentFormats to favor the most underrepresented enabled format, while matching the idea: linkedin_text for nuance, linkedin_image for one memorable point, linkedin_document for a 3-9 page educational carousel, linkedin_video for a 12-60 second motion story.",
+      "Choose exactly one format enabled by brandKit. Use its weeklyMix and recentFormats to favor the most underrepresented enabled format, while matching the idea: linkedin_text for nuance, linkedin_image for one memorable point, linkedin_video for a 12-60 second motion story.",
       "Treat strategy.formats as historical guidance, but brandKit.enabledFormats is the current authoritative capability list.",
       "Constraints must include factual grounding, no invented metrics, no generic hook and no unsupported urgency.",
       "Do not write the post, schedule it or call a provider. Call submit_content_brief exactly once.",
@@ -180,8 +180,7 @@ function pipelineModelSpec(role: PipelineRole, context: unknown) {
       "Use recentBodies to choose a genuinely different problem, mechanism and takeaway. A paraphrase of a recent post is not distinct.",
       "Every factual statement, number, performance claim or product capability must appear verbatim in factualClaims with exact supplied source keys.",
       "Every factualClaims.statement must also be a verbatim contiguous excerpt of body; never paraphrase the ledger separately.",
-      "Always return mediaPlan. Its format must exactly match brief.format. For linkedin_text, leave title/subtitle/altText null and slides/scenes empty. For linkedin_image, provide a sharp title, optional subtitle and useful alt text. For linkedin_document, provide 5-8 concise slides that form a visual narrative. For linkedin_video, provide 3-8 concise scenes totaling 12-60 seconds. Never copy the whole post into the visual.",
-      "For linkedin_document, design every slide deliberately. Slide 1 uses layout cover, the last uses closing. Across the middle slides use at least two different layouts among insight, checklist, framework, comparison and process. Never output a monotonous sequence of numbered paragraph slides.",
+      "Document/carousel generation is unavailable. Always return mediaPlan. Its format must exactly match brief.format. For linkedin_text, leave title/subtitle/altText null and slides/scenes empty. For linkedin_image, provide a sharp title, optional subtitle and useful alt text. For linkedin_video, provide 3-8 concise scenes totaling 12-60 seconds. Never copy the whole post into the visual.",
       "Use kicker to orient the reader, callout for one memorable sentence, and 2-4 structured items for checklist, framework, comparison or process. Each item needs a short label and one concrete sentence. Keep each slide focused on one job and favor visual hierarchy over filling space.",
       "All factual statements and numbers shown in the media plan are public copy and obey the same evidence ledger as body.",
       "If validationFeedback contains CONTENT_DRAFT_UNSOURCED_NUMBER, remove every number absent from evidence or add the exact sourced sentence to factualClaims.",

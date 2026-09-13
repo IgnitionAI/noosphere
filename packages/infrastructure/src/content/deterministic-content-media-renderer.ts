@@ -4,7 +4,7 @@ import { PDFDocument } from "pdf-lib";
 import sharp from "sharp";
 import type { ContentMediaRenderer } from "@outbound/application/content/content-media";
 import type { ContentBrandKitSnapshot } from "@outbound/domain/content/content-brand-kit";
-import type { ContentMediaPlan } from "@outbound/domain/content/content-asset";
+import { wrapCarouselText, type ContentMediaPlan } from "@outbound/domain/content/content-asset";
 
 const WIDTH = 1080;
 const HEIGHT = 1350;
@@ -34,7 +34,7 @@ export class DeterministicContentMediaRenderer implements ContentMediaRenderer {
         });
         const visibleText = insightTextLines({ title: input.plan.title!, body: input.plan.subtitle ?? excerpt(input.body, 180), callout: null });
         return {
-          ...mediaResult(bytes, "image/png", "linkedin-image.png", { renderer: "sharp-svg-v3", cards: 1, logo: Boolean(input.logoBytes) }, 1),
+          ...mediaResult(bytes, "image/png", "linkedin-image.png", { renderer: "sharp-svg-v4", cards: 1, logo: Boolean(input.logoBytes) }, 1),
           // The layout contains text, not arbitrary diagrams imagined by the writer.
           altText: [input.brandKit.brandName, visibleText.title.join(" "), visibleText.focus.join(" "), input.brandKit.tagline]
             .filter(Boolean).join(". "),
@@ -80,7 +80,7 @@ export class DeterministicContentMediaRenderer implements ContentMediaRenderer {
       height: HEIGHT,
       pageCount: plan.slides.length,
       durationSeconds: null,
-      manifest: { renderer: "pdf-lib-sharp-v4", slides: plan.slides.length, ratio: "4:5", narrativeLayouts: layouts, logo: Boolean(logoBytes) },
+      manifest: { renderer: "pdf-lib-sharp-v5", slides: plan.slides.length, ratio: "4:5", narrativeLayouts: layouts, logo: Boolean(logoBytes) },
     };
   }
 
@@ -133,7 +133,7 @@ export class DeterministicContentMediaRenderer implements ContentMediaRenderer {
       height: HEIGHT,
       pageCount: null,
       durationSeconds,
-      manifest: { renderer: "ffmpeg-motion-graphics-v1", scenes: plan.scenes.length, ratio: "4:5", codec: "h264" },
+      manifest: { renderer: "ffmpeg-motion-graphics-v2", scenes: plan.scenes.length, ratio: "4:5", codec: "h264" },
     };
   }
 }
@@ -240,9 +240,9 @@ function renderLayoutContent(input: {
 }
 
 function renderCover(input: Parameters<typeof renderLayoutContent>[0]): string {
-  const title = wrap(input.input.title, 19, 5);
+  const title = wrap(input.input.title, 16, 5);
   const body = wrap(input.input.body, 34, 4);
-  const kicker = input.input.kicker ?? "DOSSIER PRATIQUE";
+  const kicker = (input.input.kicker ?? "DOSSIER PRATIQUE").slice(0, 22);
   return `
     <rect x="88" y="184" width="${Math.min(430, 72 + kicker.length * 16)}" height="52" rx="26" fill="${input.accent}"/>
     <text x="116" y="218" font-family="${input.fontFamily}" font-size="20" font-weight="780" letter-spacing="1.8" fill="${input.primary}">${escapeText(kicker.toUpperCase())}</text>
@@ -254,20 +254,31 @@ function renderCover(input: Parameters<typeof renderLayoutContent>[0]): string {
 function insightTextLines(input: { readonly title: string; readonly body: string; readonly callout: string | null }) {
   return {
     title: wrap(input.title, 24, 4),
-    focus: wrap(input.callout ?? input.body, 29, 5),
+    focus: wrap(input.callout ?? input.body, 29, Number.MAX_SAFE_INTEGER),
     body: wrap(input.body, 45, 3),
   };
+}
+
+export function insightLayoutMetrics(titleLines: number, focusLines: number, showBody: boolean) {
+  const panelTop = 410 + titleLines * 68;
+  const panelBottomLimit = showBody ? 1010 : 1160;
+  const lineHeight = Math.min(52, Math.floor((panelBottomLimit - panelTop - 96) / Math.max(1, focusLines - 1 + 0.8)));
+  const focusFontSize = Math.min(41, Math.floor(lineHeight * 0.8));
+  const panelHeight = Math.max(260, 96 + (focusLines - 1) * lineHeight + focusFontSize);
+  if (focusFontSize < 28 || panelTop + panelHeight > panelBottomLimit) throw new Error("CONTENT_MEDIA_TEXT_OVERFLOW");
+  return {focusStart: panelTop + 75, lineHeight, focusFontSize, panelTop, panelHeight};
 }
 
 function renderInsight(input: Parameters<typeof renderLayoutContent>[0]): string {
   const { title, focus: focusLines, body } = insightTextLines(input.input);
   const showBody = Boolean(input.input.callout);
+  const {focusStart, lineHeight, focusFontSize, panelHeight} = insightLayoutMetrics(title.length, focusLines.length, showBody);
   return `
     ${renderKicker(input, 205)}
     <text x="88" y="290" font-family="${input.fontFamily}" font-size="62" font-weight="790" fill="${input.text}">${tspans(title, 290, 68)}</text>
-    <rect x="88" y="${410 + title.length * 68}" width="904" height="${Math.max(260, 96 + focusLines.length * 52)}" rx="34" fill="${input.accent}" opacity="0.12"/>
-    <rect x="88" y="${410 + title.length * 68}" width="12" height="${Math.max(260, 96 + focusLines.length * 52)}" rx="6" fill="${input.accent}"/>
-    <text x="136" y="${485 + title.length * 68}" font-family="${input.fontFamily}" font-size="41" font-weight="690" fill="${input.text}">${tspans(focusLines, 485 + title.length * 68, 52, 136)}</text>
+    <rect x="88" y="${410 + title.length * 68}" width="904" height="${panelHeight}" rx="34" fill="${input.accent}" opacity="0.12"/>
+    <rect x="88" y="${410 + title.length * 68}" width="12" height="${panelHeight}" rx="6" fill="${input.accent}"/>
+    <text x="136" y="${485 + title.length * 68}" font-family="${input.fontFamily}" font-size="${focusFontSize}" font-weight="690" fill="${input.text}">${tspans(focusLines, focusStart, lineHeight, 136)}</text>
     ${showBody ? `<text x="88" y="1050" font-family="${input.fontFamily}" font-size="29" font-weight="450" fill="${input.text}" opacity="0.72">${tspans(body, 1050, 38)}</text>` : ""}`;
 }
 
@@ -311,11 +322,12 @@ function renderComparison(input: Parameters<typeof renderLayoutContent>[0]): str
     const x = index === 0 ? 88 : 550;
     const fill = index === 0 ? input.primary : input.accent;
     const foreground = index === 0 ? input.background : escapeAttribute(bestContrastColor(input.accent, input.primary, input.background));
-    const text = wrap(item.text, 23, 7);
+    const text = wrap(item.text, 20, Number.MAX_SAFE_INTEGER);
+    if (text.length > 10) throw new Error("CONTENT_MEDIA_TEXT_OVERFLOW");
     return `<rect x="${x}" y="470" width="442" height="570" rx="34" fill="${fill}"/>
       <text x="${x + 34}" y="535" font-family="${input.fontFamily}" font-size="22" font-weight="790" letter-spacing="2" fill="${foreground}">${escapeText(item.label.toUpperCase())}</text>
       <line x1="${x + 34}" y1="570" x2="${x + 408}" y2="570" stroke="${foreground}" stroke-width="2" opacity="0.24"/>
-      <text x="${x + 34}" y="640" font-family="${input.fontFamily}" font-size="34" font-weight="590" fill="${foreground}">${tspans(text, 640, 43, x + 34)}</text>`;
+      <text x="${x + 34}" y="640" font-family="${input.fontFamily}" font-size="32" font-weight="590" fill="${foreground}">${tspans(text, 640, 43, x + 34)}</text>`;
   }).join("");
   return `${renderKicker(input, 205)}<text x="88" y="290" font-family="${input.fontFamily}" font-size="62" font-weight="790" fill="${input.text}">${tspans(title, 290, 68)}</text>${cards}`;
 }
@@ -374,17 +386,7 @@ function mediaResult(bytes: Uint8Array, mimeType: "image/png", filename: string,
 }
 
 function wrap(value: string, maxCharacters: number, maxLines: number): readonly string[] {
-  const words = value.trim().replace(/\s+/g, " ").split(" ").filter(Boolean);
-  const lines: string[] = [];
-  for (const word of words) {
-    const current = lines.at(-1);
-    if (!current || `${current} ${word}`.length > maxCharacters) lines.push(word);
-    else lines[lines.length - 1] = `${current} ${word}`;
-    if (lines.length > maxLines) break;
-  }
-  const retained = lines.slice(0, maxLines);
-  if (lines.length > maxLines && retained.length) retained[retained.length - 1] = `${retained.at(-1)!.replace(/[.…]+$/, "")}…`;
-  return retained.length ? retained : [""];
+  return wrapCarouselText(value, maxCharacters, maxLines);
 }
 
 function tspans(lines: readonly string[], firstY: number, lineHeight: number, x = 88): string {

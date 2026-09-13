@@ -229,7 +229,7 @@ function automaticRepairInstruction(blockers: readonly string[]): string {
   return [
     "Produis une nouvelle version autonome à partir du même brief et des mêmes preuves.",
     `Répare strictement ces blocages sans ajouter de fait ni de claim : ${bounded.join(", ") || "editorial_blocker"}.`,
-    "Supprime toute phrase non prouvée, formulation générique ou répétition signalée. Garde un hook spécifique et un seul CTA aligné.",
+    "Ne résume pas la source : donne un conseil applicable cette semaine. Si le visuel est bloqué, raccourcis chaque slide et varie les layouts.",
   ].join(" ");
 }
 

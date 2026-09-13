@@ -43,6 +43,7 @@ import { PostgresContentIdeaRepository } from "@outbound/infrastructure/content/
 import { ContentPublicationOutcomeReconciler } from "@outbound/application/content/content-publication-reconciliation";
 import { PostgresContentPublicationReconciliationRepository } from "@outbound/infrastructure/content/postgres-content-publication-reconciliation-repository";
 import { PostgresJobOutcomeReconciler } from "@outbound/infrastructure/jobs/postgres-job-outcome-reconciler";
+import { CONTENT_EDITORIAL_POLICY_VERSION } from "@outbound/domain/content/content-asset";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const databaseDescribe = databaseUrl ? describe : describe.skip;
@@ -205,7 +206,7 @@ databaseDescribe("CNT-101 durable content generation", () => {
       })).rejects.toThrow("CONTENT_ASSET_EDITORIAL_POLICY_OUTDATED");
     } finally {
       await database.client`alter table content_asset_versions disable trigger content_asset_versions_immutable_trg`;
-      await database.client`update content_asset_versions set readiness = jsonb_set(readiness, '{policyVersion}', to_jsonb(${'linkedin-editorial-v3'}::text), true) where workspace_id = ${workspaceId} and id = ${asset!.latest!.id}`;
+      await database.client`update content_asset_versions set readiness = jsonb_set(readiness, '{policyVersion}', to_jsonb(${CONTENT_EDITORIAL_POLICY_VERSION}::text), true) where workspace_id = ${workspaceId} and id = ${asset!.latest!.id}`;
       await database.client`alter table content_asset_versions enable trigger content_asset_versions_immutable_trg`;
     }
     const autopilotClock = { now: () => now };
@@ -334,7 +335,7 @@ databaseDescribe("CNT-101 durable content generation", () => {
       expect((await publicationRepository.find({ workspaceId, publicationId: scheduled.id }))?.status).toBe("scheduled");
     } finally {
       await database.client`alter table content_asset_versions disable trigger content_asset_versions_immutable_trg`;
-      await database.client`update content_asset_versions set readiness = jsonb_set(readiness, '{policyVersion}', '"linkedin-editorial-v3"'::jsonb) where workspace_id = ${workspaceId} and id = ${scheduled.assetVersionId}`;
+      await database.client`update content_asset_versions set readiness = jsonb_set(readiness, '{policyVersion}', to_jsonb(${CONTENT_EDITORIAL_POLICY_VERSION}::text), true) where workspace_id = ${workspaceId} and id = ${scheduled.assetVersionId}`;
       await database.client`alter table content_asset_versions enable trigger content_asset_versions_immutable_trg`;
     }
 

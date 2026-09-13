@@ -1,6 +1,6 @@
 "use client";
 
-import { FileText, Image, Type } from "lucide-react";
+import { Image, Type } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import type { ContentBrandKit, LinkedinContentFormat } from "@/lib/api";
@@ -9,15 +9,15 @@ import { updateBrandKitAction } from "./actions";
 const formats: readonly { format: LinkedinContentFormat; label: string; detail: string; icon: typeof Type; fallback: number }[] = [
   { format: "linkedin_text", label: "Texte", detail: "Idées et prises de position", icon: Type, fallback: 6 },
   { format: "linkedin_image", label: "Image", detail: "Un message visuel mémorable", icon: Image, fallback: 4 },
-  { format: "linkedin_document", label: "Carrousel", detail: "PDF éducatif de 3 à 9 pages", icon: FileText, fallback: 3 },
 ];
 
 export function FormatControls({ workspaceSlug, initial }: { workspaceSlug: string; initial: ContentBrandKit["snapshot"] }) {
   const router = useRouter();
+  const enabledFormats = initial.enabledFormats.filter((format) => format === "linkedin_text" || format === "linkedin_image");
   const [brandKit, setBrandKit] = useState<ContentBrandKit["snapshot"]>({
     ...initial,
-    enabledFormats: initial.enabledFormats.filter((format) => format !== "linkedin_video"),
-    weeklyMix: { ...initial.weeklyMix, linkedin_video: 0 },
+    enabledFormats: enabledFormats.length ? enabledFormats : ["linkedin_text"],
+    weeklyMix: { ...initial.weeklyMix, linkedin_video: 0, linkedin_document: 0, ...(enabledFormats.length ? {} : { linkedin_text: 1 }) },
   });
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -49,7 +49,7 @@ export function FormatControls({ workspaceSlug, initial }: { workspaceSlug: stri
   }
 
   return <div className="mt-4">
-    <div className="grid gap-2 sm:grid-cols-3">
+    <div className="grid gap-2 sm:grid-cols-2">
       {formats.map((item) => {
         const enabled = brandKit.enabledFormats.includes(item.format);
         const Icon = item.icon;

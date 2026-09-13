@@ -208,6 +208,7 @@ export class ContentPublicationJobProcessor {
 
     let attachments: readonly SocialPublishAttachment[];
     try {
+      if (execution.attachments?.some((attachment) => attachment.kind === "document")) throw new Error("CONTENT_FORMAT_UNAVAILABLE");
       attachments = await this.#loadAttachments(execution.attachments ?? []);
       this.#assertMediaCapabilities(attachments, capability);
       if (attachments.length > 0 && !this.publisher.publish) throw new Error("CONTENT_MEDIA_PUBLISHING_UNAVAILABLE");
