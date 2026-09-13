@@ -50,3 +50,9 @@ This also conservatively retains unsupported attribution entries flattened into 
 Complete, current field coverage can now append missing supported substantive spans with one complete reviewed source set each. Existing ledger entries, all public fields, opinions and scenario declarations remain unchanged. Attribution, unsupported and unresolved spans are excluded; unrelated findings remain blocking. Unknown source keys or stale coverage prevent synchronization. Exhausting ledger capacity leaves the complete original inputs for bounded substantive repair.
 
 The application checkpoints the synchronized draft and audit atomically before repair/critique. The repository permits only a normalized non-ledger-identical draft with the original ledger retained as a prefix. A resumed critic checkpoint can use its still-current independent audit to complete references without a new model call, through a guarded audit-stage transition. Crashes before or after the atomic checkpoint resume through ordinary pending-audit handling.
+
+## Independent model input after a repair
+
+Audit v9 excludes the previous audit snapshot from the model payload. The current draft, evidence and business context remain available. Durable previous objections stay in application state and are reconciled after the independent assessment; they are not supplied as candidate current quotations.
+
+A private native Luna capture reproduced v8 quoting “La vérification utile comporte deux niveaux :” from the previous audit even though the current caption instead said “Pour décider si le contrôle est suffisant, séparez deux niveaux :”. All 36 field IDs were covered, but that non-current quotation correctly failed exact coverage. The fix removes this input contamination path without accepting approximate quotations or suppressing unresolved negatives. Model validity and editorial usefulness still require native verification.

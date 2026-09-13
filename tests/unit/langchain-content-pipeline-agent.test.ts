@@ -216,7 +216,7 @@ describe("LangChainContentPipelineAgent", () => {
     expect(recorded.map(({ purpose, model, promptVersion, contentGenerationRunId }) => ({ purpose, model, promptVersion, contentGenerationRunId }))).toEqual([
       { purpose: "content_brief", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-brief-v10", contentGenerationRunId: context.run.id },
       { purpose: "content_writer", model: "k3", promptVersion: "noosphere-content-writer-v29", contentGenerationRunId: context.run.id },
-      { purpose: "content_audit", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-audit-v8", contentGenerationRunId: context.run.id },
+      { purpose: "content_audit", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-audit-v9", contentGenerationRunId: context.run.id },
       { purpose: "content_critic", model: "k3", promptVersion: "noosphere-content-critic-v20", contentGenerationRunId: context.run.id },
     ]);
   });
@@ -422,6 +422,19 @@ function modelAudit(payload: unknown) {
     return {passageId: p.id, classification: claims.length ? "mixed" : "non_factual", nonFactualReason: "The remaining wording expresses editorial context rather than factual assertions.", claims};
   }), reviewedScenarios: [], forbiddenTopicMatches: []};
 }
+
+test("re-audits corrected copy without presenting the previous audit as current evidence", async () => {
+  const previous = { ...audit(), ungroundedStatements: ["La vérification utile comporte deux niveaux :"] };
+  const context = { ...pipelineContext(), brief: brief(), draft: contentDraftSnapshotSchema.parse(draft()), audit: previous };
+  const routed = { async invoke(input: { payload: unknown }) {
+    expect(input.payload).not.toHaveProperty("audit");
+    expect(input.payload).toMatchObject({ draft: context.draft, evidence: context.evidence });
+    expect(JSON.stringify(input.payload)).not.toContain("La vérification utile comporte deux niveaux :");
+    return { output: modelAudit(input.payload), metadata: { provider: "codex-cli", model: "gpt-5.6-luna" } };
+  } } as unknown as WorkspaceStructuredModel;
+  await new LangChainContentPipelineAgent({}, undefined, undefined, undefined, routed).audit(context);
+  expect(context.audit).toEqual(previous);
+});
 
 test("rejects missing, duplicated, invented or ungrounded audit coverage", async () => {
   const context = pipelineContext();

@@ -59,7 +59,10 @@ export class LangChainContentPipelineAgent implements ContentPipelineAgent {
   }
 
   async audit(input: Parameters<ContentPipelineAgent["audit"]>[0]) {
-    return contentEvidenceAuditSchema.parse(await this.invoke("audit", input.run.workspaceId, input.run.id, boundedContext(input), input));
+    // Previous findings are retained by the application after this independent review.
+    // Sending old verdicts here can make the auditor quote superseded public copy.
+    const { audit: _previousAudit, ...context } = boundedContext(input);
+    return contentEvidenceAuditSchema.parse(await this.invoke("audit", input.run.workspaceId, input.run.id, context, input));
   }
 
   async critique(input: Parameters<ContentPipelineAgent["critique"]>[0]) {
@@ -88,7 +91,7 @@ export class LangChainContentPipelineAgent implements ContentPipelineAgent {
       model,
       promptVersion: role === "writer"
         ? "noosphere-content-writer-v29"
-        : role === "critic" ? "noosphere-content-critic-v20" : role === "audit" ? "noosphere-content-audit-v8" : "noosphere-content-brief-v10",
+        : role === "critic" ? "noosphere-content-critic-v20" : role === "audit" ? "noosphere-content-audit-v9" : "noosphere-content-brief-v10",
       shadow: false,
       inputHash: new Bun.CryptoHasher("sha256").update(JSON.stringify(original)).digest("hex"),
       output: recordedOutput,
