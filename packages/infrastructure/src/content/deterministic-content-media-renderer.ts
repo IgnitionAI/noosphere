@@ -2,7 +2,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { PDFDocument } from "pdf-lib";
 import sharp from "sharp";
-import { ContentMediaTextOverflowError, type ContentMediaRenderer, type ContentMediaTextConstraint } from "@outbound/application/content/content-media";
+import { ContentMediaTextOverflowsError, ContentMediaTextOverflowError, type ContentMediaRenderer, type ContentMediaTextConstraint } from "@outbound/application/content/content-media";
 import type { ContentBrandKitSnapshot } from "@outbound/domain/content/content-brand-kit";
 import type { ContentMediaPlan } from "@outbound/domain/content/content-asset";
 
@@ -50,6 +50,7 @@ export class DeterministicContentMediaRenderer implements ContentMediaRenderer {
   async #renderDocument(plan: ContentMediaPlan, brandKit: ContentBrandKitSnapshot, logoBytes?: Uint8Array) {
     const pdf = await PDFDocument.create();
     const layouts: CarouselLayout[] = [];
+    const overflows: ContentMediaTextOverflowError[] = [];
     for (const [index, slide] of plan.slides.entries()) {
       const layout = resolveSlideLayout(slide, index, plan.slides.length);
       layouts.push(layout);
@@ -71,13 +72,18 @@ export class DeterministicContentMediaRenderer implements ContentMediaRenderer {
         ...(logoBytes ? { logoBytes } : {}),
         });
       } catch (error) {
-        if (error instanceof Error && error.message === "CONTENT_MEDIA_TEXT_OVERFLOW") throw new ContentMediaTextOverflowError(index + 1, layout, error instanceof ContentMediaFieldOverflowError ? error.constraint : undefined);
+        if (error instanceof Error && error.message === "CONTENT_MEDIA_TEXT_OVERFLOW") {
+          overflows.push(new ContentMediaTextOverflowError(index + 1, layout, error instanceof ContentMediaFieldOverflowError ? error.constraint : undefined));
+          continue;
+        }
         throw error;
       }
       const embedded = await pdf.embedPng(png);
       const page = pdf.addPage([WIDTH, HEIGHT]);
       page.drawImage(embedded, { x: 0, y: 0, width: WIDTH, height: HEIGHT });
     }
+    if (overflows.length === 1) throw overflows[0];
+    if (overflows.length > 1) throw new ContentMediaTextOverflowsError(overflows);
     const bytes = await pdf.save({ useObjectStreams: false });
     return {
       bytes,

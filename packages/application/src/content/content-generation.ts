@@ -5,7 +5,7 @@ import type { EditorialStrategySnapshot } from "@outbound/domain/content/editori
 import type { ContentBrandKitSnapshot, LinkedinContentFormat } from "@outbound/domain/content/content-brand-kit";
 import type { ContentBusinessContext } from "@outbound/application/content/editorial-strategy";
 import type { StoredContentMedia } from "@outbound/application/content/content-media";
-import { ContentMediaProducer, ContentMediaTextOverflowError } from "@outbound/application/content/content-media";
+import { ContentMediaProducer, ContentMediaTextOverflowsError, ContentMediaTextOverflowError } from "@outbound/application/content/content-media";
 import type { ContentIdeaEvidence, ContentIdeaView } from "@outbound/application/content/content-ideas";
 import type {
   ContentBriefSnapshot,
@@ -277,23 +277,35 @@ async function writeGroundedDraft(
   let candidate = input.draft;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     const draft = await agent.write({ ...input, ...(candidate ? { draft: candidate } : {}), ...(validationFeedback.length ? { validationFeedback } : {}) });
-    try {
-      if (draft.body.trim().length > MAX_CONTENT_BODY_LENGTH) throw new Error("CONTENT_DRAFT_TOO_LONG");
-      assertGroundedContentDraft(draft, evidenceKeys);
-      assertMediaPlanMatchesBrief(input.brief, draft);
-      await validateLayout?.(draft);
-      return draft;
-    } catch (error) {
-      if (!isRepairableDraftError(error) || attempt === 2) throw error;
-      candidate = draft;
-      validationFeedback = [...initialValidationFeedback, error.message === "CONTENT_DRAFT_TOO_LONG"
-        ? `${error.message}: body has ${draft.body.trim().length} characters; maximum ${MAX_CONTENT_BODY_LENGTH}. Rewrite concisely while retaining the explanation and source attribution. Do not truncate. Resynchronize the claim ledger with the rewritten public copy.`
-        : error instanceof ContentMediaTextOverflowError
-          ? `CONTENT_READINESS_BLOCKER: media_text_overflow on slide ${error.slideNumber} (${error.layout}). ${error.textConstraint ? `Field ${error.textConstraint.field} currently has ${error.textConstraint.actualCharacters} characters and must fit within ${error.textConstraint.maxLines} line(s) of at most ${error.textConstraint.maxCharactersPerLine} characters each. Rewrite that field without truncation; preserve the other fields unless they also need correction.` : "Shorten or redistribute that page while preserving its complete reasoning and the other pages."}`
-          : error.message === "CONTENT_MEDIA_TEXT_OVERFLOW" ? "CONTENT_READINESS_BLOCKER: media_text_overflow" : error.message];
+    const errors: Error[] = [];
+    const collect = (error: unknown) => {
+      if (!isRepairableDraftError(error)) throw error;
+      errors.push(...(error instanceof ContentMediaTextOverflowsError ? error.errors : [error]));
+    };
+    if (draft.body.trim().length > MAX_CONTENT_BODY_LENGTH) collect(new Error("CONTENT_DRAFT_TOO_LONG"));
+    try { assertGroundedContentDraft(draft, evidenceKeys); } catch (error) { collect(error); }
+    // Layout requires a compatible media plan, but is independent of copy grounding and length.
+    let compatiblePlan = true;
+    try { assertMediaPlanMatchesBrief(input.brief, draft); } catch (error) { compatiblePlan = false; collect(error); }
+    if (compatiblePlan) {
+      try { await validateLayout?.(draft); } catch (error) { collect(error); }
     }
+    if (!errors.length) return draft;
+    if (attempt === 2) throw errors[0];
+    candidate = draft;
+    validationFeedback = [...initialValidationFeedback, ...errors.map(error => draftValidationFeedback(error, draft))];
   }
   throw new Error("CONTENT_DRAFT_REPAIR_EXHAUSTED");
+}
+
+function draftValidationFeedback(error: Error, draft: ContentDraftSnapshot): string {
+  if (error.message === "CONTENT_DRAFT_TOO_LONG") {
+    return `${error.message}: body has ${draft.body.trim().length} characters; maximum ${MAX_CONTENT_BODY_LENGTH}. Rewrite concisely while retaining the explanation and source attribution. Do not truncate. Resynchronize the claim ledger with the rewritten public copy.`;
+  }
+  if (error instanceof ContentMediaTextOverflowError) {
+    return `CONTENT_READINESS_BLOCKER: media_text_overflow on slide ${error.slideNumber} (${error.layout}). ${error.textConstraint ? `Field ${error.textConstraint.field} currently has ${error.textConstraint.actualCharacters} characters and must fit within ${error.textConstraint.maxLines} line(s) of at most ${error.textConstraint.maxCharactersPerLine} characters each. Rewrite that field without truncation; preserve the other fields unless they also need correction.` : "Shorten or redistribute that page while preserving its complete reasoning and the other pages."}`;
+  }
+  return error.message === "CONTENT_MEDIA_TEXT_OVERFLOW" ? "CONTENT_READINESS_BLOCKER: media_text_overflow" : error.message;
 }
 
 function repairableAuditFeedback(audit: ContentEvidenceAudit): readonly string[] {

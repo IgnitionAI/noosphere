@@ -82,6 +82,13 @@ export class ContentMediaTextOverflowError extends Error {
   }
 }
 
+export class ContentMediaTextOverflowsError extends Error {
+  constructor(readonly errors: readonly ContentMediaTextOverflowError[]) {
+    super("CONTENT_MEDIA_TEXT_OVERFLOW");
+    this.name = "ContentMediaTextOverflowsError";
+  }
+}
+
 export class ContentMediaProducer {
   constructor(
     private readonly storage: ContentMediaObjectStorage,

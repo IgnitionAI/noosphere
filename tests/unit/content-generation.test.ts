@@ -1,4 +1,4 @@
-import { ContentMediaTextOverflowError } from "@outbound/application/content/content-media";
+import { ContentMediaTextOverflowsError, ContentMediaTextOverflowError } from "@outbound/application/content/content-media";
 import { editorialQualityCriteria, type ContentQualityAssessment } from "@outbound/domain/content/content-asset";
 import { describe, expect, test } from "bun:test";
 import { assertGroundedContentDraft, evaluateContentReadiness } from "@outbound/domain/content/content-asset";
@@ -524,6 +524,37 @@ describe("CNT-101 grounded content pipeline", () => {
     expect(critiques).toBe(3);
   });
 
+  test.each(["fatal", "incompatible"] as const)("keeps preflight error boundaries when copy is too long: %s", async (outcome) => {
+    const base = pipelineContext("writer");
+    const context = { ...base, brief: { ...brief(), format: "linkedin_document" as const } };
+    const candidate = { ...draft(), body: draft().body + " Texte".repeat(300), mediaPlan: {
+      format: "linkedin_document" as const, visualTone: "editorial" as const, title: "Accès", subtitle: null, altText: "Accès", scenes: [],
+      slides: Array.from({ length: 3 }, () => ({ title: "Vérifier", body: "Examiner les preuves." })),
+    } };
+    const repository = { async loadContext() { return context; }, async startRun() {}, async failRun() {},
+      async saveDraft() { throw new Error("Invalid draft must not be saved"); },
+    } as unknown as ContentGenerationRepository;
+    const fatal = new Error("STORAGE_UNAVAILABLE");
+    let checks = 0;
+    let writes = 0;
+    const producer = { async checkDraftLayout() { checks++; throw fatal; } } as unknown as import("@outbound/application/content/content-media").ContentMediaProducer;
+    const processor = new ContentGenerationJobProcessor(repository, {
+      async buildBrief() { throw new Error("must not replay"); },
+      async write() { writes++; return outcome === "fatal" ? candidate : { ...candidate, mediaPlan: null }; },
+      async audit() { throw new Error("must not audit invalid draft"); }, async critique() { return critique(); },
+    }, { async acknowledge() {} } as unknown as JobQueue, undefined, producer);
+    const run = processor.process(job(context.run.workspaceId, context.run.id));
+    if (outcome === "fatal") {
+      await expect(run).rejects.toBe(fatal);
+      expect(writes).toBe(1);
+      expect(checks).toBe(1);
+    } else {
+      await expect(run).rejects.toThrow("CONTENT_DRAFT_TOO_LONG");
+      expect(writes).toBe(2);
+      expect(checks).toBe(0);
+    }
+  });
+
   test("gives the writer the failing field and limits during layout preflight repair", async () => {
     const base = pipelineContext("writer");
     const candidate = { ...draft(), mediaPlan: { format: "linkedin_document" as const, visualTone: "editorial" as const,
@@ -548,6 +579,40 @@ describe("CNT-101 grounded content pipeline", () => {
     expect(feedback).toHaveLength(2);
     expect(feedback[1]?.[0]).toContain("slide 1 (cover)");
     expect(feedback[1]?.[0]).toContain("Field kicker currently has 26 characters and must fit within 1 line(s) of at most 24 characters each");
+    expect(checks).toBe(2);
+  });
+
+  test("reports excessive post length and independent page overflows in the same bounded repair", async () => {
+    const base = pipelineContext("writer");
+    const candidate = { ...draft(), mediaPlan: { format: "linkedin_document" as const, visualTone: "editorial" as const,
+      title: "Accès", subtitle: null, altText: "Accès", scenes: [],
+      slides: Array.from({ length: 3 }, () => ({ title: "Vérifier les droits", body: "Examiner les preuves." })),
+    } };
+    const context = { ...base, brief: { ...brief(), format: "linkedin_document" as const } };
+    const feedback: Array<readonly string[] | undefined> = [];
+    const repository = { async loadContext() { return context; }, async startRun() {}, async saveDraft() {},
+      async saveAudit() {}, async completeRun() {}, async failRun() {},
+    } as unknown as ContentGenerationRepository;
+    let checks = 0;
+    const producer = { async checkDraftLayout() {
+      if (++checks === 1) throw new ContentMediaTextOverflowsError([
+        new ContentMediaTextOverflowError(1, "cover", { field: "kicker", maxCharactersPerLine: 24, maxLines: 1, actualCharacters: 26 }),
+        new ContentMediaTextOverflowError(3, "closing", { field: "body", maxCharactersPerLine: 34, maxLines: 5, actualCharacters: 185 }),
+      ]);
+    }, async produce() { return {}; } } as unknown as import("@outbound/application/content/content-media").ContentMediaProducer;
+    const processor = new ContentGenerationJobProcessor(repository, {
+      async buildBrief() { throw new Error("must not replay"); },
+      async write(input) { feedback.push(input.validationFeedback); return feedback.length === 1 ? { ...candidate, body: candidate.body + " ".repeat(1) + "Texte ".repeat(300) } : candidate; },
+      async audit() { return audit(); }, async critique() { return critique(); },
+    }, { async acknowledge() {} } as unknown as JobQueue, undefined, producer);
+    await processor.process(job(context.run.workspaceId, context.run.id));
+    expect(feedback).toHaveLength(2);
+    expect(feedback[1]).toHaveLength(3);
+    expect(feedback[1]?.[0]).toContain("CONTENT_DRAFT_TOO_LONG");
+    expect(feedback[1]?.[1]).toContain("slide 1 (cover)");
+    expect(feedback[1]?.[1]).toContain("Field kicker currently has 26 characters");
+    expect(feedback[1]?.[2]).toContain("slide 3 (closing)");
+    expect(feedback[1]?.[2]).toContain("Field body currently has 185 characters");
     expect(checks).toBe(2);
   });
 

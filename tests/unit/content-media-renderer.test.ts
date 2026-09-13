@@ -17,6 +17,21 @@ describe("DeterministicContentMediaRenderer", () => {
     expect((await render()).pageCount).toBe(3);
   });
 
+  test("reports overflowing cover and closing pages together without returning a partial PDF", async () => {
+    await expect(new DeterministicContentMediaRenderer().render({
+      format: "linkedin_document", body: "Texte", brandKit: DEFAULT_CONTENT_BRAND_KIT,
+      outputDirectory: `/tmp/noosphere-multiple-overflows-${crypto.randomUUID()}`,
+      plan: { format: "linkedin_document", visualTone: "editorial", title: "Accès", subtitle: null, altText: "Accès", scenes: [], slides: [
+        { layout: "cover", title: "Authentifié ≠ autorisé", body: "Examiner les droits.", kicker: "NOOSPHERE · ACCÈS GOUVERNÉ" },
+        { layout: "insight", title: "Le contrôle", body: "Comparer les documents autorisés." },
+        { layout: "closing", title: "Vérifier", body: "Métadonnée → filtre → exclusion avant génération. La source décrit Azure Logic Apps et Azure AI Search. Elle ne valide pas une autre solution ni la conformité complète d’un déploiement." },
+      ] },
+    })).rejects.toMatchObject({ message: "CONTENT_MEDIA_TEXT_OVERFLOW", errors: [
+      { slideNumber: 1, layout: "cover", textConstraint: { field: "kicker", actualCharacters: 26 } },
+      { slideNumber: 3, layout: "closing", textConstraint: { field: "body", maxCharactersPerLine: 34, maxLines: 5 } },
+    ] });
+  });
+
   test.each(["checklist", "comparison"] as const)("fits a long explanation in %s and rejects excessive copy rather than clipping it", async (layout) => {
     const render = (text: string, count = 1) => new DeterministicContentMediaRenderer().render({
       format: "linkedin_document",
