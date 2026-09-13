@@ -15,7 +15,7 @@ import type {
   ContentGenerationStage,
   ContentGenerationStatus,
 } from "@outbound/domain/content/content-asset";
-import { ContentDraftUnsourcedNumberError, MAX_CONTENT_BODY_LENGTH, assertGroundedContentDraft, assertMediaPlanMatchesBrief, evaluateContentReadiness } from "@outbound/domain/content/content-asset";
+import { MAX_CONTENT_FACTUAL_CLAIMS, contentPublicText, ContentDraftUnsourcedNumberError, MAX_CONTENT_BODY_LENGTH, assertGroundedContentDraft, assertMediaPlanMatchesBrief, evaluateContentReadiness } from "@outbound/domain/content/content-asset";
 
 export const CONTENT_GENERATION_JOB_TYPE = "content.asset.generate";
 export const CONTENT_GENERATION_JOB_PRIORITY = 60;
@@ -102,6 +102,7 @@ export interface ContentPipelineAgent {
     readonly brief: ContentBriefSnapshot;
     readonly draft?: ContentDraftSnapshot | null;
     readonly validationFeedback?: readonly string[];
+    readonly repairMode?: "claim_ledger" | undefined;
     readonly audit?: ContentEvidenceAudit | null;
   }): Promise<ContentDraftSnapshot>;
   audit(input: Pick<ContentGenerationContext, "businessContext" | "run" | "strategy" | "evidence"> & { readonly brief: ContentBriefSnapshot; readonly draft: ContentDraftSnapshot }): Promise<ContentEvidenceAudit>;
@@ -169,7 +170,7 @@ export class ContentGenerationJobProcessor {
         for (let repairAttempt = 1; repairAttempt <= 2; repairAttempt += 1) {
           const auditFeedback = repairableAuditFeedback(audit);
           if (auditFeedback.length === 0) break;
-          draft = await this.#writeGroundedDraft({ ...context, brief: context.brief, draft, audit }, auditFeedback);
+          draft = await this.#writeGroundedDraft({ ...context, brief: context.brief, draft, audit, repairMode: repairAttempt === 1 && canRepairClaimLedger(draft, audit, context.evidence) ? "claim_ledger" : undefined }, auditFeedback);
           await this.repository.reviseDraftAfterAudit({ workspaceId: job.workspaceId, runId: payload.runId, draft, now: this.now() });
           audit = await this.agent.audit({ ...context, brief: context.brief, draft });
         }
@@ -202,7 +203,7 @@ export class ContentGenerationJobProcessor {
           for (let auditRepairAttempt = 1; auditRepairAttempt <= 2; auditRepairAttempt += 1) {
             const auditFeedback = repairableAuditFeedback(audit);
             if (auditFeedback.length === 0) break;
-            draft = await this.#writeGroundedDraft({ ...context, brief: context.brief, draft, audit }, auditFeedback);
+            draft = await this.#writeGroundedDraft({ ...context, brief: context.brief, draft, audit, repairMode: auditRepairAttempt === 1 && canRepairClaimLedger(draft, audit, context.evidence) ? "claim_ledger" : undefined }, auditFeedback);
             await this.repository.reviseDraftAfterAudit({ workspaceId: job.workspaceId, runId: payload.runId, draft, now: this.now() });
             audit = await this.agent.audit({ ...context, brief: context.brief, draft });
           }
@@ -276,7 +277,7 @@ async function writeGroundedDraft(
   let validationFeedback = initialValidationFeedback;
   let candidate = input.draft;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
-    const draft = await agent.write({ ...input, ...(candidate ? { draft: candidate } : {}), ...(validationFeedback.length ? { validationFeedback } : {}) });
+    const draft = await agent.write({ ...input, repairMode: attempt === 1 ? input.repairMode : undefined, ...(candidate ? { draft: candidate } : {}), ...(validationFeedback.length ? { validationFeedback } : {}) });
     const errors: Error[] = [];
     const collect = (error: unknown) => {
       if (!isRepairableDraftError(error)) throw error;
@@ -309,6 +310,17 @@ function draftValidationFeedback(error: Error, draft: ContentDraftSnapshot): str
     return `CONTENT_READINESS_BLOCKER: media_text_overflow on slide ${error.slideNumber} (${error.layout}). ${error.textConstraint ? `Field ${error.textConstraint.field} currently has ${error.textConstraint.actualCharacters} characters and must fit within ${error.textConstraint.maxLines} line(s) of at most ${error.textConstraint.maxCharactersPerLine} characters each. Rewrite that field without truncation; preserve the other fields unless they also need correction.` : "Shorten or redistribute that page while preserving its complete reasoning and the other pages."}`;
   }
   return error.message === "CONTENT_MEDIA_TEXT_OVERFLOW" ? "CONTENT_READINESS_BLOCKER: media_text_overflow" : error.message;
+}
+
+function canRepairClaimLedger(draft: ContentDraftSnapshot, audit: ContentEvidenceAudit, evidence: readonly ContentIdeaEvidence[]): boolean {
+  return draft.factualClaims.length + new Set(audit.ungroundedStatements).size <= MAX_CONTENT_FACTUAL_CLAIMS
+    && evidence.length > 0 && audit.ungroundedStatements.length > 0 && audit.ungroundedStatements.length <= 8
+    && audit.forbiddenTopicMatches.length === 0
+    && audit.reviewedClaims.every(claim => claim.verdict === "supported")
+    && (audit.reviewedScenarios ?? []).every(scenario => scenario.verdict !== "misleading")
+    && audit.ungroundedStatements.every(statement => statement.length > 0 && statement.length <= 1_000
+      && contentPublicText(draft).includes(statement)
+      && !draft.factualClaims.some(claim => claim.statement === statement));
 }
 
 function repairableAuditFeedback(audit: ContentEvidenceAudit): readonly string[] {

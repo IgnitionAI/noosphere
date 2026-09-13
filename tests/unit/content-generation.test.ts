@@ -732,3 +732,24 @@ test("an invalid critic assessment blocks without rewriting the post to match in
   await processor.process(job(context.run.workspaceId, context.run.id));
   expect(result).toMatchObject({ readiness: { ready: false, blockers: expect.arrayContaining(["editorial_assessment_invalid"]) } });
 });
+
+test.each([1, 20])("bounds ledger repair and keeps substantive rewriting available with %i existing claims", async existingClaims => {
+  const context = pipelineContext("audit");
+  const statement = draft().hook;
+  context.draft = { ...draft(), factualClaims: Array.from({ length: existingClaims }, () => draft().factualClaims[0]!) };
+  const modes: unknown[] = [];
+  let audits = 0;
+  const saved: unknown[] = [];
+  const repository = { loadContext: async () => context, startRun: async () => {},
+    reviseDraftAfterAudit: async (input: {draft: unknown}) => { saved.push(input.draft); },
+    saveAudit: async () => {}, completeRun: async () => {}, failRun: async () => {},
+  } as unknown as ContentGenerationRepository;
+  const agent = { buildBrief: async () => brief(), write: async (input: any) => { modes.push(input.repairMode); return draft(); },
+    audit: async () => ++audits <= 2 ? { ...audit(), ungroundedStatements: [statement] } : audit(),
+    critique: async () => critique(),
+  };
+  await new ContentGenerationJobProcessor(repository, agent, { acknowledge: async () => {} } as unknown as JobQueue).process(job(context.run.workspaceId, context.run.id));
+  expect(modes).toEqual([existingClaims === 20 ? undefined : "claim_ledger", undefined]);
+  expect(audits).toBe(3);
+  expect(saved).toHaveLength(2);
+});

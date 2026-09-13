@@ -1,3 +1,4 @@
+import { MAX_CONTENT_FACTUAL_CLAIMS } from "@outbound/domain/content/content-asset";
 import { z } from "zod";
 import type { EditorialStrategySnapshot } from "@outbound/domain/content/editorial-strategy";
 import type { ContentIdeaCandidate } from "@outbound/domain/content/content-idea";
@@ -100,7 +101,7 @@ const contentDraftObjectSchema = z.object({
   factualClaims: z.array(z.object({
     statement: z.string().trim().min(3).max(1_000),
     sourceKeys: z.array(z.string().trim().min(1).max(500)).min(1).max(12),
-  }).strict()).max(20),
+  }).strict()).max(MAX_CONTENT_FACTUAL_CLAIMS),
   opinionStatements: z.array(z.string().trim().min(3).max(1_000)).max(20),
   illustrativeScenarios: z.array(z.string().trim().min(20).max(600)).max(2).optional().default([]),
   mediaPlan: contentMediaPlanSchema.optional().default({

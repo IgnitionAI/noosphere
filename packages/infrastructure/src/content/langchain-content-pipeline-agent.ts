@@ -1,3 +1,4 @@
+import { claimLedgerModelSpec } from "./content-claim-ledger-repair";
 import { DOCUMENT_WRITING_LAYOUT_CONSTRAINTS } from "./content-document-layout";
 import { AiTaskPauseError } from "@outbound/application/ai/ai-task-pause";
 import { ModelGatewayError } from "@outbound/application/ai/model-gateway";
@@ -85,7 +86,7 @@ export class LangChainContentPipelineAgent implements ContentPipelineAgent {
       provider,
       model,
       promptVersion: role === "writer"
-        ? "noosphere-content-writer-v28"
+        ? "noosphere-content-writer-v29"
         : role === "critic" ? "noosphere-content-critic-v20" : role === "audit" ? "noosphere-content-audit-v7" : "noosphere-content-brief-v10",
       shadow: false,
       inputHash: new Bun.CryptoHasher("sha256").update(JSON.stringify(original)).digest("hex"),
@@ -172,6 +173,7 @@ function boundedContext(input: Partial<ContentGenerationContext> & Record<string
     draft: input.draft,
     audit: input.audit,
     validationFeedback: input.validationFeedback,
+    repairMode: input.repairMode,
     recentBodies: input.recentBodies?.slice(0, 12),
     recentFormats: input.recentFormats?.slice(0, 14),
   };
@@ -262,6 +264,7 @@ function pipelineModelSpec(role: PipelineRole, context: unknown) {
     ].join("\n"),
     context,
   };
+  if (role === "writer" && z.object({ repairMode: z.literal("claim_ledger") }).safeParse(context).success) return claimLedgerModelSpec(context);
   if (role === "writer") return {
     name: "submit_linkedin_draft",
     description: "Submit one grounded LinkedIn draft, its media plan and explicit claim ledger.",

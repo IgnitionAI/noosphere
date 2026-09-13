@@ -215,7 +215,7 @@ describe("LangChainContentPipelineAgent", () => {
     ]);
     expect(recorded.map(({ purpose, model, promptVersion, contentGenerationRunId }) => ({ purpose, model, promptVersion, contentGenerationRunId }))).toEqual([
       { purpose: "content_brief", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-brief-v10", contentGenerationRunId: context.run.id },
-      { purpose: "content_writer", model: "k3", promptVersion: "noosphere-content-writer-v28", contentGenerationRunId: context.run.id },
+      { purpose: "content_writer", model: "k3", promptVersion: "noosphere-content-writer-v29", contentGenerationRunId: context.run.id },
       { purpose: "content_audit", model: "kimi-for-coding-highspeed", promptVersion: "noosphere-content-audit-v7", contentGenerationRunId: context.run.id },
       { purpose: "content_critic", model: "k3", promptVersion: "noosphere-content-critic-v20", contentGenerationRunId: context.run.id },
     ]);
@@ -361,3 +361,38 @@ function modelCritique(payload: unknown, candidate: ReturnType<typeof critique>)
     ...criterion, passageIds: excerpts.map(excerpt => passages.find(p => p.text.includes(excerpt))!.id),
   }])) as Record<string, { verdict: string; reason: string; passageIds: string[] }> };
 }
+
+test("repairs only missing claim metadata while preserving every other draft field", async () => {
+  const original = contentDraftSnapshotSchema.parse(draft());
+  const statement = original.body;
+  const sourceKey = pipelineContext().evidence[0]!.key;
+  const routed = { async invoke(input: any) {
+    expect(input.payload.claimStatements).toEqual([{ id: "s1", statement }]);
+    expect(input.schema.safeParse({ reviews: [{ statementId: "s1", sourceKeys: [sourceKey], supported: true, reason: "The supplied evidence supports this passage." }], body: "changed" }).success).toBe(false);
+    return { output: { reviews: [{ statementId: "s1", sourceKeys: [sourceKey], supported: true, reason: "The supplied evidence supports this passage." }] }, metadata: { provider: "codex-cli", model: "gpt-5.6-luna" } };
+  } } as unknown as WorkspaceStructuredModel;
+  const result = await new LangChainContentPipelineAgent({}, undefined, undefined, undefined, routed).write({ ...pipelineContext(), brief: brief(), draft: original,
+    audit: { ...audit(), ungroundedStatements: [statement] }, repairMode: "claim_ledger" });
+  expect(result).toEqual({ ...original, factualClaims: [...original.factualClaims, { statement, sourceKeys: [sourceKey] }] });
+});
+
+test("keeps unsupported ledger statements unchanged and rejects invalid review selections", async () => {
+  const original = contentDraftSnapshotSchema.parse(draft());
+  const statements = [original.hook, original.body];
+  const key = pipelineContext().evidence[0]!.key;
+  const reviews = statements.map((_, i) => ({ statementId: `s${i + 1}`, sourceKeys: [] as string[], supported: false, reason: "No supplied evidence supports this statement." }));
+  const invokeWith = async (output: unknown) => {
+    const routed = { async invoke() { return { output, metadata: {provider: "codex-cli", model: "gpt-5.6-luna"} }; } } as unknown as WorkspaceStructuredModel;
+    return new LangChainContentPipelineAgent({}, undefined, undefined, undefined, routed).write({ ...pipelineContext(), brief: brief(), draft: original, audit: { ...audit(), ungroundedStatements: statements }, repairMode: "claim_ledger" });
+  };
+  expect(await invokeWith({reviews})).toEqual(original);
+  for (const invalid of [
+    { reviews: [reviews[0], reviews[0]] },
+    { reviews: [reviews[0]] },
+    { reviews: [{ ...reviews[0], statementId: "s99" }, reviews[1]] },
+    { reviews: [{ ...reviews[0], supported: true, sourceKeys: ["invented:key"] }, reviews[1]] },
+    { reviews: [{ ...reviews[0], supported: true }, reviews[1]] },
+    { reviews: [{ ...reviews[0], sourceKeys: [key] }, reviews[1]] },
+    { reviews, illustrativeScenarios: ["rewritten"] },
+  ]) await expect(invokeWith(invalid)).rejects.toThrow();
+});

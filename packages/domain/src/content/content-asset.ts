@@ -1,3 +1,4 @@
+export const MAX_CONTENT_FACTUAL_CLAIMS = 20;
 import type { LinkedinContentFormat } from "@outbound/domain/content/content-brand-kit";
 
 export const contentGenerationStages = ["brief", "writer", "audit", "critic", "completed"] as const;
